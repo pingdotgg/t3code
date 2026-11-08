@@ -1619,7 +1619,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
      }
    }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..4b4663075faf6c463468c2bf023f1f687d40cfd2 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..157ff0ced154c482b8808ca4d647d8c10b1c56f9 100644
 --- a/react.js
 +++ b/react.js
 @@ -1426,7 +1426,7 @@ function listenForScrollEnd(ctx, params) {
@@ -1638,10 +1638,10 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..4b4663075faf6c463468c2bf023f1f68
 -    if (!state.maintainingScrollAtEnd) {
 -      const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
 -      const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
++    const jump = instant && !!maintainScrollAtEnd.animated;
 +    const animated = !instant && maintainScrollAtEnd.animated;
-+    const isAnimating = state.maintainingScrollAtEnd === "pending-animated" || state.maintainingScrollAtEnd === "animated";
-+    // An instant scroll write halts an in-flight smooth one, so it need not wait for it.
-+    if (!state.maintainingScrollAtEnd || !animated && isAnimating) {
++    // An instant scroll write halts an in-flight one; a queued instant rAF already reaches the end.
++    if (!state.maintainingScrollAtEnd || jump && state.maintainingScrollAtEnd !== "pending-instant") {
 +      const pendingState = animated ? "pending-animated" : "pending-instant";
 +      const activeState = animated ? "animated" : "instant";
        const scrollAtRequest = state.scroll;
@@ -1663,7 +1663,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..4b4663075faf6c463468c2bf023f1f68
              });
            }
            setTimeout(
-@@ -1480,7 +1483,7 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1480,14 +1483,14 @@ function doMaintainScrollAtEnd(ctx) {
                  }
                }
              },
@@ -1672,6 +1672,14 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..4b4663075faf6c463468c2bf023f1f68
            );
          } else if (state.maintainingScrollAtEnd === pendingState) {
            state.maintainingScrollAtEnd = void 0;
+           state.pendingMaintainScrollAtEnd = false;
+         }
+       });
+-    } else {
++    } else if (!jump) {
+       state.pendingMaintainScrollAtEnd = true;
+     }
+     return true;
 @@ -1908,6 +1911,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
    state.scrollTime = currentTime;
    const scrollDelta = Math.abs(newScroll - prevScroll);
@@ -1962,7 +1970,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..4b4663075faf6c463468c2bf023f1f68
      checkThresholds(ctx);
      if (state) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..06a9d04a623b59058de1767436ea57dcf561f70e 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..3551685de11d2d6dfdd78436d1435f4d5598027c 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -1405,7 +1405,7 @@ function listenForScrollEnd(ctx, params) {
@@ -1981,10 +1989,10 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..06a9d04a623b59058de1767436ea57dc
 -    if (!state.maintainingScrollAtEnd) {
 -      const pendingState = maintainScrollAtEnd.animated ? "pending-animated" : "pending-instant";
 -      const activeState = maintainScrollAtEnd.animated ? "animated" : "instant";
++    const jump = instant && !!maintainScrollAtEnd.animated;
 +    const animated = !instant && maintainScrollAtEnd.animated;
-+    const isAnimating = state.maintainingScrollAtEnd === "pending-animated" || state.maintainingScrollAtEnd === "animated";
-+    // An instant scroll write halts an in-flight smooth one, so it need not wait for it.
-+    if (!state.maintainingScrollAtEnd || !animated && isAnimating) {
++    // An instant scroll write halts an in-flight one; a queued instant rAF already reaches the end.
++    if (!state.maintainingScrollAtEnd || jump && state.maintainingScrollAtEnd !== "pending-instant") {
 +      const pendingState = animated ? "pending-animated" : "pending-instant";
 +      const activeState = animated ? "animated" : "instant";
        const scrollAtRequest = state.scroll;
@@ -2006,7 +2014,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..06a9d04a623b59058de1767436ea57dc
              });
            }
            setTimeout(
-@@ -1459,7 +1462,7 @@ function doMaintainScrollAtEnd(ctx) {
+@@ -1459,14 +1462,14 @@ function doMaintainScrollAtEnd(ctx) {
                  }
                }
              },
@@ -2015,6 +2023,14 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..06a9d04a623b59058de1767436ea57dc
            );
          } else if (state.maintainingScrollAtEnd === pendingState) {
            state.maintainingScrollAtEnd = void 0;
+           state.pendingMaintainScrollAtEnd = false;
+         }
+       });
+-    } else {
++    } else if (!jump) {
+       state.pendingMaintainScrollAtEnd = true;
+     }
+     return true;
 @@ -1887,6 +1890,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
    state.scrollTime = currentTime;
    const scrollDelta = Math.abs(newScroll - prevScroll);
