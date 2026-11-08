@@ -197,9 +197,10 @@ export function SavedBackendListRow({
   const diagnosis = resumingServerUpdate ? null : currentDiagnosis;
   const prepared = usePreparedConnection(environmentId);
   const connectedTarget = isConnected && prepared._tag === "Some" ? prepared.value.target : null;
+  const relayHttpBaseUrl = discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl;
   const mcpUrl = environmentMcpUrl({
     entry: environment.entry,
-    relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
+    relayHttpBaseUrl,
     connectedTarget,
   });
   const machineKind = resolveEnvironmentMachineKind(
@@ -335,7 +336,9 @@ export function SavedBackendListRow({
           {routesOpen && (
             <EnvironmentRoutesList
               environment={environment}
+              relayHttpBaseUrl={relayHttpBaseUrl}
               onAddRoute={() => onAddRoute(environment)}
+              onCopyMcpUrl={(url) => copyMcpUrl(url, { url })}
             />
           )}
           {permissionsOpen && (
