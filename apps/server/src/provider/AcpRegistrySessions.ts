@@ -12,7 +12,7 @@ import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/s
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
@@ -66,7 +66,7 @@ const make = Effect.gen(function* () {
   const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
   const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
   const agentSessionImporter = yield* AgentSessionImporter.AgentSessionImporter;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
 
   const project = Effect.fn("AcpRegistrySessions.project")(function* (projectId: ProjectId) {
     const found = yield* projectService.getById(projectId).pipe(
@@ -163,7 +163,7 @@ const make = Effect.gen(function* () {
       provider?.models.find((candidate) => candidate.isDefault)?.slug ??
       provider?.models[0]?.slug ??
       "default";
-    const commandId = CommandId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+    const commandId = CommandId.make(yield* random.uuidV4());
     const launched = yield* Effect.result(
       startup.enqueueCommand(
         threadLaunch.launch({
