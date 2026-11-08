@@ -655,22 +655,26 @@ export function PullRequestSummaryTab({
               <span>{reviewStateLabel(comment.reviewState)}</span>
             ) : null}
           </div>
-          {onFixFinding && finding ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
-              onClick={() => onFixFinding(finding)}
-            >
-              <HammerIcon />
-              {pendingFinding === pullRequestFindingKey(finding)
-                ? "Preparing..."
-                : pullRequestFixFindingLabel(finding, fixInThisThread)}
-            </Button>
-          ) : null}
-          {onAddToChat && chat !== null ? (
-            <AddToChatButton onClick={() => onAddToChat(chat)} />
+          {(onFixFinding && finding) || (onAddToChat && chat !== null) ? (
+            <div className="flex shrink-0 items-center gap-0.5">
+              {onFixFinding && finding ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0"
+                  disabled={pendingFinding !== null && pendingFinding !== undefined}
+                  onClick={() => onFixFinding(finding)}
+                >
+                  <HammerIcon />
+                  {pendingFinding === pullRequestFindingKey(finding)
+                    ? "Preparing..."
+                    : pullRequestFixFindingLabel(finding, fixInThisThread)}
+                </Button>
+              ) : null}
+              {onAddToChat && chat !== null ? (
+                <AddToChatButton onClick={() => onAddToChat(chat)} />
+              ) : null}
+            </div>
           ) : null}
           {reactionBarFor(comment)}
         </div>

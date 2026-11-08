@@ -256,28 +256,33 @@ export function ReviewThreadCard({
           {headerLabel}
         </button>
         {thread.isOutdated ? <span>outdated</span> : null}
-        {onFix ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            className="shrink-0"
-            disabled={pending || fixPending}
-            onClick={onFix}
-          >
-            <HammerIcon />
-            {fixPending ? "Preparing..." : fixLabel}
-          </Button>
-        ) : null}
-        {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            className="shrink-0"
-            onClick={() => onAddToChat({ ...thread, comments })}
-          >
-            <MessageSquarePlusIcon className="size-3" />
-            Add to chat
-          </Button>
+        {onFix ||
+        (onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null)) ? (
+          <div className="flex shrink-0 items-center gap-0.5">
+            {onFix ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pending || fixPending}
+                onClick={onFix}
+              >
+                <HammerIcon />
+                {fixPending ? "Preparing..." : fixLabel}
+              </Button>
+            ) : null}
+            {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                onClick={() => onAddToChat({ ...thread, comments })}
+              >
+                <MessageSquarePlusIcon />
+                Add to chat
+              </Button>
+            ) : null}
+          </div>
         ) : null}
         {canResolve ? (
           <Button
