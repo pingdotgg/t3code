@@ -783,10 +783,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-card: 12px;
   /* Rows painted inside a bordered card: the card radius inside its 1px border. */
   --radius-card-inner: calc(var(--radius-card) - 1px);
+  /* Nested fills stay concentric: the container's radius minus the inset. */
+  --radius-card-list-row: calc(var(--radius-card) - 8px);
+  --radius-card-thumbnail: calc(var(--radius-card) - 9px);
   --radius-row-card: 10px;
   --radius-pane: 14px;
-  /* The composer's top corners, 1px inside the rounded-2xl tray so they stay concentric. */
+  /* The composer, 1px inside the rounded-2xl tray, and the send pill 8px inside it. */
   --radius-composer: calc(var(--radius-2xl) - 1px);
+  --radius-composer-pill: calc(var(--radius-composer) - 8px);
+  --radius-composer-pill-button: calc(var(--radius-composer-pill) - 1px);
   --radius-thread-details: 20px;
   --radius-project-icon: 9px;
   @keyframes skeleton {
@@ -5365,20 +5370,38 @@ body {
   --composer-actions-gap: calc(var(--spacing) * 1.5);
 }
 
-.composer-prompt-body:not([data-composer-overflow]) [data-testid="composer-editor"]::before {
+.composer-prompt-body [data-testid="composer-editor"]::before {
   content: "";
   float: inline-end;
   width: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
   height: 1lh;
 }
 
-.composer-prompt-body[data-composer-multiline]:not([data-composer-overflow])
-  [data-testid="composer-editor"]::before {
+.composer-prompt-body[data-composer-multiline] [data-testid="composer-editor"]::before {
   height: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
 }
 
+/* The float scrolls away with the text, so a scrolled prompt fades out under the
+   buttons' corner instead of running beneath them. */
 .composer-prompt-body[data-composer-overflow] [data-testid="composer-editor"] {
-  margin-inline-end: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
+  --composer-corner-w: calc(var(--composer-actions-width, 100px) + var(--composer-actions-gap));
+  --composer-corner-h: calc(var(--composer-actions-height, 2rem) + var(--composer-actions-gap));
+  mask-image:
+    linear-gradient(
+      to right,
+      black calc(100% - var(--composer-corner-w)),
+      transparent calc(100% - var(--composer-corner-w) + 0.75rem)
+    ),
+    linear-gradient(
+      to bottom,
+      transparent calc(var(--composer-corner-h) - 0.75rem),
+      black var(--composer-corner-h)
+    );
+}
+
+.composer-prompt-body[data-composer-overflow]
+  [data-testid="composer-editor"]::-webkit-scrollbar-track {
+  margin-top: var(--composer-corner-h);
 }
 
 .composer-prompt-body [data-composer-placeholder] {
