@@ -6,10 +6,11 @@ import {
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { act, render } from "../../test/render";
+import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
@@ -18,6 +19,7 @@ import { useProjects, useQuietThreadShells } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
+import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
 
@@ -25,6 +27,16 @@ vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
+vi.mock(import("../state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
+  // The desktop defaults: holding Mod alone already matches a thread jump.
+  const keybindings = compileResolvedKeybindingsConfig([
+    { key: "mod+1", command: "thread.jump.1" },
+    { key: "mod+2", command: "thread.jump.2" },
+  ]);
+  return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
+});
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
@@ -143,7 +155,7 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
 
 describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads
-  it("does not re-render thread rows when the route thread's terminal opens, takes focus, or a modifier is pressed", async () => {
+  it("does not re-render thread rows when a quick Mod shortcut opens and focuses the terminal", async () => {
     using stack = new DisposableStack();
     const activeProject = project("active");
     const threads = Array.from({ length: 5 }, (_, index) => threadShell(activeProject.id, index));
@@ -180,29 +192,32 @@ describe("sidebar render isolation", () => {
     await expect.element(screen.getByText("Thread 4").first()).toBeInTheDocument();
     const rowRenders = () => vi.mocked(SortableThreadRow).mock.calls.length;
 
-    const beforeToggle = rowRenders();
+    using _timers = fakeTimers();
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    const beforeShortcut = rowRenders();
+    await userEvent.keyboard(`{${modifier}>}`);
     await act(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, true));
-    expect
-      .soft(rowRenders() - beforeToggle, "thread rows re-rendered when the terminal drawer opened")
-      .toBe(0);
-
-    const beforeFocus = rowRenders();
     await act(() => terminalInput.focus());
+    await userEvent.keyboard(`{/${modifier}}`);
     await act(() => terminalInput.blur());
-    expect
-      .soft(
-        rowRenders() - beforeFocus,
-        "thread rows re-rendered when focus moved into and out of the terminal",
-      )
-      .toBe(0);
+    expect(
+      rowRenders() - beforeShortcut,
+      "thread rows re-rendered while opening the terminal with a quick Mod shortcut",
+    ).toBe(0);
 
-    const beforeModifier = rowRenders();
-    await userEvent.keyboard("{Meta>}{/Meta}");
-    expect
-      .soft(
-        rowRenders() - beforeModifier,
-        "thread rows re-rendered when a bare modifier was pressed and released",
-      )
-      .toBe(0);
+    const jumpLabelsSince = (start: number) =>
+      vi
+        .mocked(SortableThreadRow)
+        .mock.calls.slice(start)
+        .map(([props]) => props.jumpLabel)
+        .filter((label) => label !== null);
+    const beforeHold = rowRenders();
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    expect(jumpLabelsSince(beforeHold), "holding Mod showed no jump hints").toHaveLength(2);
+    const beforeRelease = rowRenders();
+    await userEvent.keyboard(`{/${modifier}}`);
+    expect(rowRenders()).toBeGreaterThan(beforeRelease);
+    expect(jumpLabelsSince(beforeRelease)).toEqual([]);
   });
 });

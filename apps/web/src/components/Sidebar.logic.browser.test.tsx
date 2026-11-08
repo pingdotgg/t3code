@@ -6,7 +6,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../test/render";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
-  useShouldShowThreadJumpHints,
+  THREAD_JUMP_HINT_SHOW_DELAY_MS,
   useSnoozeWakeClock,
   useThreadJumpHintsVisible,
 } from "./Sidebar.logic";
@@ -40,44 +40,47 @@ describe("useSnoozeWakeClock", () => {
   });
 });
 
-function JumpHints(props: { readonly held: boolean }) {
-  return <output>{useThreadJumpHintsVisible(props.held) ? "shown" : "hidden"}</output>;
-}
-
-describe("useThreadJumpHintsVisible", () => {
-  it("waits for the delay again on a second hold", async () => {
-    // The first render reads the clock.
-    using _timers = fakeTimers({ now: 0 });
-    await using screen = await render(<JumpHints held />, {
-      // A bare hook host; nothing here links or navigates.
-      router: false,
-    });
-    await act(() => vi.advanceTimersByTime(1_000));
-    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
-
-    await screen.rerender(<JumpHints held={false} />);
-    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
-    await act(() => vi.advanceTimersByTime(1_000));
-
-    await screen.rerender(<JumpHints held />);
-    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
-    await act(() => vi.advanceTimersByTime(1_000));
-    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
-  });
-});
-
 const ROUTE_THREAD_REF = {
   environmentId: EnvironmentId.make("local"),
   threadId: ThreadId.make("thread-1"),
 };
 
-function ShouldShowJumpHints(props: { readonly keybindings: ResolvedKeybindingsConfig }) {
-  const shown = useShouldShowThreadJumpHints(props.keybindings, ROUTE_THREAD_REF);
+function JumpHints(props: { readonly keybindings: ResolvedKeybindingsConfig }) {
+  const shown = useThreadJumpHintsVisible(props.keybindings, ROUTE_THREAD_REF);
   return <output>{shown ? "shown" : "hidden"}</output>;
 }
 
-describe("useShouldShowThreadJumpHints", () => {
-  it("follows the held modifier, terminal focus and the route thread's terminal", async () => {
+describe("useThreadJumpHintsVisible", () => {
+  it("waits for the delay again on a second hold", async () => {
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    using _timers = fakeTimers();
+    const output = screen.getByRole("status");
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
+
+    await userEvent.keyboard(`{/${modifier}}`);
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS - 1));
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1));
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+  });
+
+  it("follows terminal focus and the route thread's terminal while the modifier is held", async () => {
     using stack = new DisposableStack();
     const terminal = document.createElement("div");
     terminal.dataset.terminalOwner = "drawer";
@@ -90,13 +93,15 @@ describe("useShouldShowThreadJumpHints", () => {
       { key: "mod+1", command: "thread.jump.1", when: "terminalOpen" },
     ]);
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
-    await using screen = await render(<ShouldShowJumpHints keybindings={keybindings} />, {
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
       // A bare hook host; nothing here links or navigates.
       router: false,
     });
+    using _timers = fakeTimers();
     const output = screen.getByRole("status");
 
     await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
     await expect.element(output).toHaveTextContent("hidden");
     await act(() => useTerminalUiStateStore.getState().setTerminalOpen(ROUTE_THREAD_REF, true));
     await expect.element(output).toHaveTextContent("shown");

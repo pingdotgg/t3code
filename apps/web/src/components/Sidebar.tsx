@@ -204,7 +204,6 @@ import {
   sortWorkingThreadsBySend,
   useSnoozeWakeClock,
   threadShortcutContext,
-  useShouldShowThreadJumpHints,
   useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
@@ -2915,8 +2914,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threadByKey,
   ]);
 
-  const shouldShowJumpHintsNow = useShouldShowThreadJumpHints(keybindings, routeThreadRef);
-  const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
+  const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
     if (

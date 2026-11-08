@@ -41,14 +41,14 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
-import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
+import { deadlineAfter, deadlineStore, type ClockStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
 import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
-import { shortcutModifierStore } from "../shortcutModifierState";
+import { shortcutModifierStore, type ShortcutModifierState } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 
 export function shouldNavigateAfterThreadPark(input: {
@@ -67,7 +67,7 @@ export function shouldNavigateAfterThreadPark(input: {
   );
 }
 
-const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
+export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {
   readonly title: string;
@@ -678,21 +678,6 @@ type ThreadStatusInput = Pick<
   blockedOnThreadWait?: boolean | undefined;
 };
 
-/**
- * Thread jump hints appear once the jump modifier has been held for a moment,
- * so a quick shortcut never flashes them, and hide as soon as it is released.
- */
-export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
-  const [showAt, setShowAt] = React.useState<number | null>(null);
-  // The clock is read inside the updater: the compiler caches a bare clock read
-  // in render once per instance, so a second hold would reuse the first deadline.
-  // React discards this render and re-runs with the update.
-  if (shouldShow !== (showAt !== null)) {
-    setShowAt(shouldShow ? () => deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS) : null);
-  }
-  return useDeadlinePassed(showAt);
-}
-
 // Read at event time: subscribing Sidebar to terminal or modifier state re-renders every row.
 export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {
   return {
@@ -709,26 +694,81 @@ export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {
   };
 }
 
+function hasHeldModifier(modifiers: ShortcutModifierState): boolean {
+  return modifiers.metaKey || modifiers.ctrlKey || modifiers.altKey || modifiers.shiftKey;
+}
+
+/** Whether the current modifier combination has been held, unchanged, for `delayMs`. */
+function createModifierHoldStore(delayMs: number): ClockStore<boolean> {
+  const listeners = new Set<() => void>();
+  let held = false;
+  let stopDeadline = () => {};
+  let stopModifiers: (() => void) | null = null;
+
+  const setHeld = (next: boolean) => {
+    if (held === next) return;
+    held = next;
+    for (const listener of listeners) listener();
+  };
+  const onModifiersChange = () => {
+    stopDeadline();
+    stopDeadline = hasHeldModifier(shortcutModifierStore.getSnapshot())
+      ? deadlineStore(deadlineAfter(delayMs)).subscribe(() => setHeld(true))
+      : () => {};
+    setHeld(false);
+  };
+
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      if (stopModifiers === null) {
+        stopModifiers = shortcutModifierStore.subscribe(onModifiersChange);
+        onModifiersChange();
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size > 0) return;
+        stopModifiers?.();
+        stopModifiers = null;
+        stopDeadline();
+        stopDeadline = () => {};
+        held = false;
+      };
+    },
+    getSnapshot: () => held,
+  };
+}
+
+const threadJumpModifierHold = createModifierHoldStore(THREAD_JUMP_HINT_SHOW_DELAY_MS);
+
 function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
-  const unsubscribeModifiers = shortcutModifierStore.subscribe(listener);
+  const unsubscribeHold = threadJumpModifierHold.subscribe(listener);
   const unsubscribeFocus = subscribeToTerminalFocusChanges(listener);
   const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
   return () => {
-    unsubscribeModifiers();
+    unsubscribeHold();
     unsubscribeFocus();
     unsubscribeTerminals();
   };
 }
 
-export function useShouldShowThreadJumpHints(
+/**
+ * Thread jump hints appear once the jump modifier has been held for a moment,
+ * so a quick shortcut never flashes them, and hide as soon as it is released.
+ * The snapshot is the visibility itself, so a quick shortcut never re-renders the caller.
+ */
+export function useThreadJumpHintsVisible(
   keybindings: ResolvedKeybindingsConfig,
   routeThreadRef: ScopedThreadRef | null,
 ): boolean {
-  return React.useSyncExternalStore(subscribeToThreadJumpHintInputs, () =>
-    shouldShowThreadJumpHintsForModifiers(shortcutModifierStore.getSnapshot(), keybindings, {
-      platform: navigator.platform,
-      context: threadShortcutContext(routeThreadRef),
-    }),
+  return React.useSyncExternalStore(
+    subscribeToThreadJumpHintInputs,
+    () =>
+      threadJumpModifierHold.getSnapshot() &&
+      shouldShowThreadJumpHintsForModifiers(shortcutModifierStore.getSnapshot(), keybindings, {
+        platform: navigator.platform,
+        context: threadShortcutContext(routeThreadRef),
+      }),
   );
 }
 
