@@ -1993,6 +1993,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (workingHeaderShown) {
       items.push({ kind: "marker", marker: "working-header" });
       items.push(...rowsOf(visibleWorkingThreads, "working"));
+    } else if (projectFolders !== null) {
+      // Folders draw their own working rows; listing them keeps their composer drags alive.
+      items.push(...rowsOf(workingThreads, "working"));
     }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
@@ -3529,8 +3532,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       ];
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          // Folders draw active rows in their own place below.
-                          if (projectFolders !== null && item.section === "active") continue;
+                          // Folders draw active and working rows in their own place below.
+                          if (
+                            projectFolders !== null &&
+                            (item.section === "active" || item.section === "working")
+                          )
+                            continue;
                           if (sectionLabels.has(item.key)) {
                             const group = sectionLabels.get(item.key) ?? null;
                             items.push(
