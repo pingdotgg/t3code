@@ -5978,6 +5978,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { markerSize: "3", attributes: "changed" },
       { markerSize: "5.0", attributes: "committed" },
       { markerSize: "7", attributes: "encoded" },
+      { markerSize: "7", attributes: "encoding removed" },
     ])(
       "rejects files that still contain conflict markers outside a merge (size $markerSize, $attributes)",
       ({ markerSize, attributes }) =>
@@ -5991,13 +5992,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const setSize = (size: string) =>
             writeTextFile(cwd, ".gitattributes", `/README.md -diff conflict-marker-size=${size}\n`);
           // Git stores working-tree-encoding files as UTF-8 but writes their markers in that encoding.
+          const encoded = attributes === "encoded" || attributes === "encoding removed";
           const writeReadme = (contents: string) =>
-            attributes === "encoded"
+            encoded
               ? Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
                   fileSystem.writeFile(`${cwd}/README.md`, Buffer.from(contents, "utf16le")),
                 )
               : writeTextFile(cwd, "README.md", contents);
-          if (attributes === "encoded") {
+          if (encoded) {
             yield* writeTextFile(
               cwd,
               ".gitattributes",
@@ -6031,6 +6033,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(pop.exitCode, 1);
           if (attributes === "staged" || attributes === "changed") yield* setSize("7");
           if (attributes === "changed") yield* git(cwd, ["add", ".gitattributes"]);
+          if (attributes === "encoding removed") yield* writeTextFile(cwd, ".gitattributes", "");
           yield* writeTextFile(cwd, "other.txt", "other\n");
           const head = yield* git(cwd, ["rev-parse", "HEAD"]);
           const unmerged = yield* git(cwd, ["ls-files", "--unmerged"]);
@@ -6050,6 +6053,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(yield* git(cwd, ["ls-files", "--unmerged"]), unmerged);
           yield* driver.commit(cwd, "Add other", "", { stage: { filePaths: ["other.txt"] } });
           assert.equal(yield* git(cwd, ["show", "--pretty=", "--name-only", "HEAD"]), "other.txt");
+          if (encoded) {
+            yield* writeReadme("resolved version\n");
+            yield* driver.commit(cwd, "Resolve", "", { stage: {} });
+          }
         }),
     );
 

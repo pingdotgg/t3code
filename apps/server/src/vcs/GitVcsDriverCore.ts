@@ -2523,8 +2523,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             new GitCommandError({ operation, command: "git", cwd, detail: checkFailed, cause }),
         }),
       );
-      // Markers use the size from before the conflict; afterwards it may survive only in HEAD, the
-      // index or the worktree. An unborn HEAD leaves the default.
+      // Markers use the size and encoding from before the conflict; afterwards they may survive only in
+      // HEAD, the index or the worktree. An unborn HEAD leaves the defaults.
       const lookups = yield* Effect.all(
         [
           readAttributes([], envOptions),
@@ -2533,26 +2533,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ],
         { concurrency: 3 },
       );
-      const filesBySize = new Map<number, Set<string>>();
-      const encodedFiles = new Set<string>();
+      const checks = new Map<
+        string,
+        { size: number; encoding: string | null; files: Set<string> }
+      >();
       files.forEach((file, index) => {
         for (const values of lookups) {
           const size = parseConflictMarkerSize(values[index * 6 + 2]);
-          filesBySize.set(size, (filesBySize.get(size) ?? new Set()).add(file));
-          const encoding = values[index * 6 + 5];
-          if (encoding !== "unspecified" && encoding !== "unset") encodedFiles.add(file);
+          const value = values[index * 6 + 5] ?? "unspecified";
+          const encoding = ["unspecified", "unset", "set"].includes(value) ? null : value;
+          const key = `${size} ${encoding ?? ""}`;
+          const check = checks.get(key) ?? { size, encoding, files: new Set<string>() };
+          check.files.add(file);
+          checks.set(key, check);
         }
       });
       const grepMarkers = Effect.fn("GitVcsDriver.commit.grepMarkers")(function* (
         size: number,
         group: readonly string[],
-        source: readonly string[],
+        command: readonly string[],
         options: { env?: NodeJS.ProcessEnv },
       ) {
         // Git writes exactly `size` marker characters, then whitespace and a label.
         const args = [
-          "grep",
-          ...source,
+          ...command,
           "-l",
           "-z",
           "--full-name",
@@ -2578,20 +2582,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
         return splitNullSeparatedGitStdoutPaths(markers);
       });
-      // Git stages working-tree-encoding files as UTF-8, so grep that content from a throwaway index.
+      // Git writes markers in the working-tree encoding. A throwaway repository's info/attributes
+      // outranks .gitattributes, so its index holds the files decoded from that encoding.
       const grepEncodedMarkers = Effect.fn("GitVcsDriver.commit.grepEncodedMarkers")(
-        function* (size: number, group: readonly string[]) {
+        function* (size: number, encoding: string, group: readonly string[]) {
           const directory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3code-encoded-index-",
+            prefix: "t3code-encoded-",
           });
-          const options = { env: { ...env, GIT_INDEX_FILE: path.join(directory, "index") } };
-          yield* runGit(
-            "GitVcsDriver.commit.encodedIndex",
-            root,
-            [...isolatedIndexConfig, "update-index", "--add", "--remove", "--", ...group],
-            options,
+          yield* runGit("GitVcsDriver.commit.encodedRepository", root, [
+            "init",
+            "--bare",
+            "--quiet",
+            "--template=",
+            directory,
+          ]);
+          yield* fileSystem.makeDirectory(path.join(directory, "info"), { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(directory, "info", "attributes"),
+            `* -filter working-tree-encoding=${encoding}\n`,
           );
-          return yield* grepMarkers(size, group, ["--cached"], options);
+          const repository = [`--git-dir=${directory}`, `--work-tree=${root}`];
+          const options = { env: { ...env, GIT_INDEX_FILE: path.join(directory, "index") } };
+          // One file per call: a file that does not decode in this encoding is skipped, not fatal.
+          yield* Effect.forEach(
+            group,
+            (file) =>
+              executeGit(
+                "GitVcsDriver.commit.encodedIndex",
+                root,
+                [...repository, ...isolatedIndexConfig, "update-index", "--add", "--", file],
+                { ...options, allowNonZeroExit: true },
+              ),
+            { discard: true },
+          );
+          return yield* grepMarkers(size, group, [...repository, "grep", "--cached"], options);
         },
         Effect.scoped,
         Effect.catchTags({
@@ -2600,14 +2624,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }),
       );
       const markedPaths = new Set<string>();
-      for (const [size, group] of filesBySize) {
-        const plain: string[] = [];
-        const encoded: string[] = [];
-        for (const file of group) (encodedFiles.has(file) ? encoded : plain).push(file);
-        const found = [
-          ...(plain.length > 0 ? yield* grepMarkers(size, plain, [], envOptions) : []),
-          ...(encoded.length > 0 ? yield* grepEncodedMarkers(size, encoded) : []),
-        ];
+      for (const { size, encoding, files: group } of checks.values()) {
+        const found =
+          encoding === null
+            ? yield* grepMarkers(size, [...group], ["grep"], envOptions)
+            : yield* grepEncodedMarkers(size, encoding, [...group]);
         for (const file of found) markedPaths.add(file);
       }
       if (markedPaths.size > 0) {
