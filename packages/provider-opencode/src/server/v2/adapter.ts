@@ -2757,6 +2757,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 ShellNotFoundError: () => Effect.succeed(false),
                 LocationNotFoundError: () => Effect.succeed(false),
               }),
+              Effect.timeout(ACTIVE_CHECK_TIMEOUT),
+              // Only prunes stale shells, so a failed check keeps the shell rather than the stream.
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not check an OpenCode background shell.", { cause }).pipe(
+                  Effect.as(true),
+                ),
+              ),
             );
           if (!running) state.shells.delete(id);
         }

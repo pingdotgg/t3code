@@ -1011,6 +1011,29 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a background shell tracked when its check fails after a reconnect", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" } as const,
+        out("event.subscribe"),
+        out("session.active"),
+        replyData("session.active", {}),
+        out("shell.get", { id: "sh_1", "location[directory]": WORK }),
+        reply("shell.get", { status: 500, body: { name: "UnknownError", data: {} } }),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+      ]);
+      assert.isTrue(watch.state.pending);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("clears a background shell from the roster when the stream cannot reconnect", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
