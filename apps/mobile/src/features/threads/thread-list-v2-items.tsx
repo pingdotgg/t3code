@@ -5,7 +5,6 @@ import {
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
   THREAD_LIST_V2_ROW_DIVIDERS,
   selectedThreadRowColors,
-  getThreadListV2NewBranchMenuTitle,
   getThreadListV2RowAppearance,
 } from "./thread-list-v2-row-appearance";
 import { RowPressable } from "../../components/ui/RowPressable";
@@ -61,9 +60,9 @@ import {
 import { useThreadPr } from "../../state/use-thread-pr";
 import { useSwipeRowDormant } from "../home/swipe-row-activation";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
-import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regeneration-menu";
 import { canTurnThreadIntoProject, turnThreadIntoProject } from "./turnThreadIntoProject";
 import { threadCanArchive } from "../home/threadArchive";
+import { buildThreadListV2RowMenuActions } from "./thread-list-v2-row-menu";
 import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -73,7 +72,6 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
-  layoutThreadListV2RowMenuActions,
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
@@ -164,26 +162,6 @@ function ThreadListV2Duration(props: {
     </>
   );
 }
-
-const CARD_MENU_ACTIONS: MenuAction[] = [
-  { id: "settle", title: "Settle", image: "checkmark" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-const SLIM_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsettle", title: "Un-settle", image: "arrow.uturn.backward" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-const SNOOZED_MENU_ACTIONS: MenuAction[] = [
-  { id: "unsnooze", title: "Wake thread", image: "clock" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
-
-const LEGACY_MENU_ACTIONS: MenuAction[] = [
-  { id: "archive", title: "Archive", image: "archivebox" },
-  { id: "delete", title: "Delete", image: "trash", attributes: { destructive: true } },
-];
 
 function ThreadListV2Section(props: {
   readonly label: string;
@@ -849,168 +827,42 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ],
     [snoozePresets],
   );
-  const reorderMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.reorderSupported === true
-        ? [
-            { id: "arrange", title: "Arrange threads…", image: "line.3.horizontal" },
-            {
-              id: "move-up",
-              title: "Move up",
-              image: "arrow.up",
-              attributes: { disabled: props.canMoveUp !== true },
-            } satisfies MenuAction,
-            {
-              id: "move-down",
-              title: "Move down",
-              image: "arrow.down",
-              attributes: { disabled: props.canMoveDown !== true },
-            } satisfies MenuAction,
-          ]
-        : [],
-    [props.canMoveDown, props.canMoveUp, props.reorderSupported],
-  );
-  const pinMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.pinningSupported
-        ? [
-            thread.pinnedAt != null
-              ? { id: "unpin", title: "Unpin", image: "pin.slash" }
-              : { id: "pin", title: "Pin", image: "pin" },
-          ]
-        : [],
-    [props.pinningSupported, thread.pinnedAt],
-  );
-  const autoSettleMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.autoSettleOptOutSupported
-        ? [
-            {
-              id: "auto-settle",
-              title: "Auto-settle behavior",
-              image: "timer",
-              subactions: [
-                {
-                  id: "auto-settle:enabled",
-                  title: "Follow settings",
-                  state: thread.autoSettleDisabledAt == null ? "on" : "off",
-                },
-                {
-                  id: "auto-settle:disabled",
-                  title: "Never",
-                  state: thread.autoSettleDisabledAt == null ? "off" : "on",
-                },
-              ],
-            } satisfies MenuAction,
-          ]
-        : [],
-    [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
-  );
   const canTurnIntoProject = canTurnThreadIntoProject(thread);
-  const titleMenuItems = useMemo<MenuAction[]>(
-    () => [
-      { id: "rename", title: "Rename", image: "square.and.pencil" },
-      ...buildThreadTitleRegenerationMenuItems({
-        supported: props.titleRegenerationSupported,
-        isRegenerating: isRegeneratingTitle,
+  const menuActions = useMemo(
+    () =>
+      buildThreadListV2RowMenuActions({
+        thread,
+        nested: Platform.OS === "ios",
+        settlementSupported: props.settlementSupported,
+        snoozed: snoozedRow,
+        settled: canUnsettle,
+        includeSnooze: swipeActions.secondary === "snooze",
+        snoozePresetActions,
+        pinningSupported: props.pinningSupported,
+        reorderSupported: props.reorderSupported === true,
+        canMoveUp: props.canMoveUp,
+        canMoveDown: props.canMoveDown,
+        titleRegenerationSupported: props.titleRegenerationSupported,
+        canTurnIntoProject,
+        turnIntoProjectDisabled: !threadCanArchive(thread.runtime),
+        autoSettleOptOutSupported: props.autoSettleOptOutSupported === true,
       }),
-      ...(canTurnIntoProject
-        ? [
-            {
-              id: "turn-into-project",
-              title: "Turn into project",
-              image: "folder.badge.plus",
-              attributes: { disabled: !threadCanArchive(thread.runtime) },
-            } satisfies MenuAction,
-          ]
-        : []),
+    [
+      canTurnIntoProject,
+      canUnsettle,
+      props.autoSettleOptOutSupported,
+      props.canMoveDown,
+      props.canMoveUp,
+      props.pinningSupported,
+      props.reorderSupported,
+      props.settlementSupported,
+      props.titleRegenerationSupported,
+      snoozePresetActions,
+      snoozedRow,
+      swipeActions.secondary,
+      thread,
     ],
-    [canTurnIntoProject, props.titleRegenerationSupported, thread.runtime, isRegeneratingTitle],
   );
-  const menuActions = useMemo<MenuAction[]>(() => {
-    const nested = Platform.OS === "ios";
-    const direct: MenuAction[] = [
-      ...(thread.branch
-        ? [
-            {
-              id: "new-thread-on-branch",
-              title: getThreadListV2NewBranchMenuTitle(thread.branch),
-              image: "square.and.pencil",
-            },
-          ]
-        : []),
-      { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
-      { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
-    ];
-    if (snoozedRow) {
-      return layoutThreadListV2RowMenuActions({
-        nested,
-        direct: [...direct, SNOOZED_MENU_ACTIONS[0]!],
-        reorder: [],
-        pin: [],
-        secondary: [
-          ...titleMenuItems,
-          ...autoSettleMenuItems,
-          LEGACY_MENU_ACTIONS[0]!,
-          SNOOZED_MENU_ACTIONS[1]!,
-        ],
-      });
-    }
-    if (!props.settlementSupported) {
-      return layoutThreadListV2RowMenuActions({
-        nested,
-        direct: [...direct, LEGACY_MENU_ACTIONS[0]!],
-        reorder: reorderMenuItems,
-        pin: pinMenuItems,
-        secondary: [...titleMenuItems, LEGACY_MENU_ACTIONS[1]!],
-      });
-    }
-    if (canUnsettle) {
-      return layoutThreadListV2RowMenuActions({
-        nested,
-        direct: [...direct, SLIM_MENU_ACTIONS[0]!],
-        reorder: reorderMenuItems.filter(
-          (action) => action.id !== "move-up" && action.id !== "move-down",
-        ),
-        pin: pinMenuItems,
-        secondary: [
-          ...titleMenuItems,
-          ...autoSettleMenuItems,
-          LEGACY_MENU_ACTIONS[0]!,
-          SLIM_MENU_ACTIONS[1]!,
-        ],
-      });
-    }
-    return layoutThreadListV2RowMenuActions({
-      nested,
-      direct: [
-        ...direct,
-        CARD_MENU_ACTIONS[0]!,
-        ...(swipeActions.secondary === "snooze"
-          ? [{ id: "snooze", title: "Snooze", image: "clock", subactions: snoozePresetActions }]
-          : []),
-      ],
-      reorder: reorderMenuItems,
-      pin: pinMenuItems,
-      secondary: [
-        ...titleMenuItems,
-        ...autoSettleMenuItems,
-        LEGACY_MENU_ACTIONS[0]!,
-        CARD_MENU_ACTIONS[1]!,
-      ],
-    });
-  }, [
-    autoSettleMenuItems,
-    canUnsettle,
-    pinMenuItems,
-    props.settlementSupported,
-    reorderMenuItems,
-    snoozePresetActions,
-    snoozedRow,
-    swipeActions.secondary,
-    thread.branch,
-    titleMenuItems,
-  ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);

@@ -23,6 +23,7 @@ export function appBarMenuItemsFromActions(
           iconColor: action.imageColor,
           selected: action.state === "on",
           disabled: action.attributes?.disabled,
+          destructive: action.attributes?.destructive,
           onPress: () => onSelect(id),
         };
   });
