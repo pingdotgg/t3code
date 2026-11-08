@@ -250,23 +250,37 @@ describe("attachmentUploadQueue", () => {
     expect(TestXmlHttpRequest.requests).toHaveLength(3);
   });
 
-  it("keeps an upload failed when verification cannot reach the server", async () => {
-    const image = makeImage("connection-failure");
-    useAttachmentUploadStore.setState({
-      uploadsByImageId: {
-        [image.id]: {
-          status: "ready",
-          environmentId: firstEnvironment,
-          attachmentId: "pending-original",
+  it.each([false, true])(
+    "retains cleanup identity after verification fails (retry: %s)",
+    async (retry) => {
+      const image = makeImage("connection-failure");
+      useAttachmentUploadStore.setState({
+        uploadsByImageId: {
+          [image.id]: {
+            status: "ready",
+            environmentId: firstEnvironment,
+            attachmentId: "pending-original",
+          },
         },
-      },
-    });
-    mocks.executeAtomQuery.mockRejectedValueOnce(new Error("offline"));
-    await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [image] });
-    expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
-    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [image] })).toBeNull();
-    expect(TestXmlHttpRequest.requests).toHaveLength(0);
-  });
+      });
+      mocks.executeAtomQuery.mockRejectedValueOnce(new Error("offline"));
+      await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [image] });
+      expect(readAttachmentUpload(image.id)).toMatchObject({ status: "failed" });
+      expect(
+        getUploadedAttachments({ environmentId: firstEnvironment, images: [image] }),
+      ).toBeNull();
+      expect(TestXmlHttpRequest.requests).toHaveLength(0);
+      if (retry) retryAttachmentUpload({ environmentId: firstEnvironment, image });
+      releaseAttachmentUpload(image.id);
+      expect(readAttachmentUpload(image.id)).toBeUndefined();
+      expect(mocks.runAtomCommand).toHaveBeenCalledExactlyOnceWith(
+        expect.anything(),
+        mocks.removeUpload,
+        { environmentId: firstEnvironment, input: { attachmentId: "pending-original" } },
+        expect.anything(),
+      );
+    },
+  );
 
   it("reuploads local bytes for a connection without read permission", async () => {
     const image = makeImage("operate-only");

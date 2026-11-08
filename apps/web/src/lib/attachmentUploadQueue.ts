@@ -627,6 +627,7 @@ export async function refreshExpiredAttachmentUploads(input: {
       setUploadState(image.id, {
         status: "failed",
         environmentId: input.environmentId,
+        previous: upload,
         reason:
           verification.status === "missing"
             ? "Uploaded attachment expired. Remove it and attach it again."

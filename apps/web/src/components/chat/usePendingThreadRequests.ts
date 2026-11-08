@@ -313,7 +313,7 @@ export function usePendingThreadRequests(input: {
     setRespondingUserInputRequestIds((existing) =>
       existing.includes(requestId) ? existing : [...existing, requestId],
     );
-    try {
+    const prepareAndRespond = async () => {
       const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
       const providerAnswers = { ...answers };
       for (const question of pendingInput.questions) {
@@ -377,10 +377,11 @@ export function usePendingThreadRequests(input: {
         );
       }
       return result;
-    } finally {
+    };
+    return prepareAndRespond().finally(() => {
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
-    }
+    });
   };
 
   const onDismissUserInput = async (requestId: RuntimeRequestId) => {
