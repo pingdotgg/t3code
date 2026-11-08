@@ -197,6 +197,38 @@ it.effect("starts other hosts while one host is still starting", () =>
   }).pipe(Effect.provide(ServerSettings.layerTest({ enableDeviceSupport: true }))),
 );
 
+it.effect("reads host summaries outside the lifecycle lock when agent tools start", () =>
+  Effect.gen(function* () {
+    const summaryEntered = yield* Deferred.make<void>();
+    const finishSummary = yield* Deferred.make<void>();
+    let pauseSummary = false;
+    const { host: agentHost } = yield* pausedHost("ensureReady", "agent");
+    const { host: otherHost } = yield* pausedHost("ensureAgentReady", "other");
+    const summary = Effect.suspend(() =>
+      pauseSummary
+        ? Deferred.succeed(summaryEntered, undefined).pipe(
+            Effect.andThen(Deferred.await(finishSummary)),
+            Effect.andThen(otherHost.summary),
+          )
+        : otherHost.summary,
+    );
+    const hosts = new Map([agentHost, { ...otherHost, summary }].map((host) => [host.id, host]));
+    const service = yield* DeviceService.makeWithHosts(hosts).pipe(
+      Effect.provide(NodeCrypto.layer),
+    );
+    pauseSummary = true;
+    const agent = yield* service.agentReadinessIfSupported("agent").pipe(Effect.forkChild);
+    yield* Deferred.await(summaryEntered);
+    expect((yield* service.readiness("other")).hostId).toBe("other");
+    yield* Deferred.succeed(finishSummary, undefined);
+    expect((yield* Fiber.join(agent))?.hostId).toBe("agent");
+  }).pipe(
+    Effect.provide(
+      ServerSettings.layerTest({ enableDeviceSupport: true, enableAgentDeviceAccess: true }),
+    ),
+  ),
+);
+
 it.effect("stops a start that fails after device support was turned off before it began", () =>
   Effect.gen(function* () {
     const summaryEntered = yield* Deferred.make<void>();

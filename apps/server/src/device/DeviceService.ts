@@ -614,13 +614,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           ),
           stopIfRevoked(host, true),
         );
+      const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
       return yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
           if (!(yield* confirmStarted(host, true))) return null;
-          const hostSummaries = yield* Effect.forEach(
-            hosts.values(),
-            (candidate) => candidate.summary,
-          );
           yield* publish((state) => ({ ...state, hosts: hostSummaries }));
           yield* setHostStatus(host.id, { status: "ready" });
           return { hostId: host.id, ...ready };
