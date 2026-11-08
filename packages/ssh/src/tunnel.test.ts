@@ -139,7 +139,11 @@ describe("ssh tunnel scripts", () => {
         const fs = yield* FileSystem.FileSystem;
         const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-login-" });
         const startupFile = `${directory}/bash-env`;
-        // BASH_ENV checks login mode without replacing or relying on a user's profile.
+        const bash = `${directory}/bash`;
+        // System profiles can reset HOME. Suppress profile reads while BASH_ENV
+        // checks that the launcher still requests Bash login mode.
+        yield* fs.writeFileString(bash, '#!/bin/sh\nexec /bin/bash --noprofile "$@"\n');
+        yield* fs.chmod(bash, 0o755);
         yield* fs.writeFileString(
           startupFile,
           "if shopt -q login_shell; then export T3_SSH_LOGIN_ENV=loaded; fi\n",
@@ -162,7 +166,7 @@ describe("ssh tunnel scripts", () => {
         );
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const cases = [
-          { shell: "/bin/bash", outerShell: "/bin/sh", expected: "loaded" },
+          { shell: bash, outerShell: "/bin/sh", expected: "loaded" },
           { shell: "/bin/sh", outerShell: "/bin/sh", expected: "missing" },
           { shell: "", outerShell: "/bin/sh", expected: "missing" },
           { shell: "/unavailable/csh", outerShell: "/bin/sh", expected: "missing" },
@@ -178,6 +182,7 @@ describe("ssh tunnel scripts", () => {
           const child = yield* spawner.spawn(
             ChildProcess.make(outerShell, ["-c", remoteCommand], {
               env: {
+                HOME: directory,
                 SHELL: shell,
                 BASH_ENV: startupFile,
                 ZDOTDIR: directory,
@@ -214,7 +219,7 @@ describe("ssh tunnel scripts", () => {
           assert.equal(Number(exitCode), 0, stderr);
           assert.match(stdout, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
         }
-      }).pipe(Effect.provide(NodeServices.layer)),
+      }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("accepts pretty-printed pairing JSON after remote shell startup noise", () => {
