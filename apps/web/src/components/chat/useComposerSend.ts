@@ -98,6 +98,8 @@ import {
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
+  awaitAttachmentUploads,
+  getUploadedAttachments,
   readAttachmentUpload,
   releaseDraftAttachments,
   retryAttachmentUpload,
@@ -889,6 +891,22 @@ export function useComposerSend(input: ComposerSendInput) {
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
       return;
+    }
+    // Declining is irreversible, so a redirect waits for its uploads instead of failing after.
+    if (
+      turnUsesAttachmentUploads &&
+      composerAttachmentsSnapshot.length > 0 &&
+      (sendCtx?.shownPendingApprovalIds.length ?? 0) > 0
+    ) {
+      await awaitAttachmentUploads(composerAttachmentsSnapshot.map((attachment) => attachment.id));
+      if (getUploadedAttachments({ environmentId, images: composerAttachmentsSnapshot }) === null) {
+        sendInFlightRef.current = false;
+        setThreadError(threadIdForSend, "Retry or remove failed uploads before sending.");
+        setDockedDraftHeroThreadKey((currentThreadKey) =>
+          currentThreadKey === activeThreadKey ? null : currentThreadKey,
+        );
+        return;
+      }
     }
     // A message sent while approvals are pending redirects the agent. They are declined only
     // here, after everything above has accepted the send, so local commands and rejected
