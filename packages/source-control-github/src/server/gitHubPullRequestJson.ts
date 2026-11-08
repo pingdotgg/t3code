@@ -1023,6 +1023,7 @@ export function toPullRequestWatchFingerprint(
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
   readonly maintainerCanModify: boolean;
+  readonly mergeQueue?: boolean;
   readonly canEditMaintainerEdits: boolean;
   readonly reviewRequestTeams: ReadonlyArray<PullRequestActor>;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
@@ -1070,6 +1071,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
     }),
     headRepositoryNameWithOwner: trimmed(pr.headRepository?.nameWithOwner),
     maintainerCanModify: pr.maintainerCanModify,
+    ...(pr.isMergeQueueEnabled === undefined ? {} : { mergeQueue: pr.isMergeQueueEnabled }),
     canEditMaintainerEdits:
       pr.state === "OPEN" &&
       pr.isCrossRepository &&

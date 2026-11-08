@@ -117,6 +117,33 @@ function hostedChangeRequest(body: string, additions = 1) {
   };
 }
 
+it.effect(
+  "passes on whether a merge joins the host's queue, and says nothing it was not told",
+  () =>
+    Effect.gen(function* () {
+      let mergeQueue: boolean | undefined = true;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () =>
+              Effect.sync(() => ({
+                ...hostedChangeRequest("Body"),
+                ...(mergeQueue === undefined ? {} : { mergeQueue }),
+              })),
+          }),
+        ],
+      });
+      const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      assert.strictEqual((yield* service.detail(ref)).mergeQueue, true);
+      mergeQueue = undefined;
+      const other = { ...ref, number: 2 };
+      assert.isFalse("mergeQueue" in (yield* service.detail(other)));
+    }),
+);
+
 it.effect("reads maintainer edits and changes them through the update command", () =>
   Effect.gen(function* () {
     let enabled = true;

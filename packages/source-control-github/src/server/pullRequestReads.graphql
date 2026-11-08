@@ -88,6 +88,8 @@ query PullRequestCore(
       headRefOid
       isCrossRepository
       maintainerCanModify
+      # Older Enterprise servers lack it, as they lack `isRequired`.
+      isMergeQueueEnabled @include(if: $required)
       headRepositoryOwner {
         login
       }

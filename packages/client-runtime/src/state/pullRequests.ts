@@ -326,11 +326,20 @@ function pullRequestReference(input: PullRequestRef): PullRequestRef {
   };
 }
 
-/** What an action changes, left out where only the host knows, as when a queue takes a merge. */
-function actionEdit(input: PullRequestActionInput): PullRequestPendingEdit | null {
+/** What an action changes, left out where only the host knows, as a merge where queues are unknown. */
+function actionEdit(
+  input: PullRequestActionInput,
+  mergeQueue: boolean | undefined,
+): PullRequestPendingEdit | null {
   if (input.stackNumber !== undefined) return null;
   const reference = pullRequestReference(input);
   switch (input.action) {
+    case "merge":
+      return mergeQueue === undefined
+        ? null
+        : mergeQueue
+          ? { reference, autoMergeEnabled: true }
+          : { reference, state: "merged" };
     case "close":
       return { reference, state: "closed" };
     case "reopen":
@@ -812,6 +821,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       detail({ ...target, input: { ...target.input, allowStale: undefined } }),
       detail({ ...target, input: { ...target.input, allowStale: false } }),
     ].filter((atom) => registry.getNodes().has(atom));
+  const loadedMergeQueue = (
+    registry: AtomRegistry.AtomRegistry,
+    target: { readonly environmentId: EnvironmentId; readonly input: PullRequestRef },
+  ) =>
+    loadedDetails(registry, target)
+      .map((atom) => Option.getOrUndefined(loadedValue<PullRequestDetail>(registry, atom)))
+      .find((shown) => shown?.mergeQueue !== undefined)?.mergeQueue;
   const detailReadVersions = Atom.family((source: ReturnType<typeof detail>) =>
     Atom.family((answer: ReturnType<typeof detailAnswers>) =>
       Atom.make((get) => {
@@ -1019,6 +1035,36 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       );
     }
   });
+  const checksLabel = "environment-data:pull-requests:checks";
+  const checksPersistence = persistQuery(Schema.NullOr(PullRequestChecks));
+  // Panels take the state from the newest of detail and checks, so checks show writes too.
+  const checks = normalizePullRequestQuery(
+    actionPatchedQuery(
+      createEnvironmentRpcQueryAtomFamily(runtime, {
+        label: checksLabel,
+        persistence: checksPersistence,
+        tag: WS_METHODS.pullRequestsChecks,
+        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+        staleTimeMs: 45_000,
+        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
+      }),
+      {
+        label: checksLabel,
+        persistence: checksPersistence,
+        onAnswer: onAnswer.checks,
+        concerns: samePullRequest,
+        patch: (_input, value, _reference, reply) =>
+          value === null || value.state === reply.state || isStalePullRequestReply(value, reply)
+            ? value
+            : { ...value, state: reply.state },
+        edit: (_input, value, edit) =>
+          value === null || edit.state === undefined || value.state === edit.state
+            ? value
+            : { ...value, state: edit.state },
+      },
+    ),
+  );
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
 
@@ -1092,17 +1138,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     detailReadVersion,
     preview,
     previewCard,
-    checks: normalizePullRequestQuery(
-      createEnvironmentRpcQueryAtomFamily(runtime, {
-        label: "environment-data:pull-requests:checks",
-        persistence: persistQuery(Schema.NullOr(PullRequestChecks)),
-        tag: WS_METHODS.pullRequestsChecks,
-        execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
-        staleTimeMs: 45_000,
-        refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
-        ...(onAnswer.checks === undefined ? {} : { onAnswer: onAnswer.checks }),
-      }),
-    ),
+    checks,
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
@@ -1193,14 +1229,19 @@ export function createPullRequestEnvironmentAtoms<R, E>(
             Effect.andThen(
               Effect.sync(() => {
                 if (reply === undefined)
-                  settleEdit(registry, environmentId, actionEdit(input), true);
+                  settleEdit(
+                    registry,
+                    environmentId,
+                    actionEdit(input, loadedMergeQueue(registry, { environmentId, input })),
+                    true,
+                  );
               }),
             ),
           ),
         scheduler: commandScheduler,
         concurrency: serialPerEnvironment,
       }),
-      (_registry, { input }) => actionEdit(input),
+      (registry, target) => actionEdit(target.input, loadedMergeQueue(registry, target)),
     ),
     update: showWhileInFlight(
       createEnvironmentRpcCommand(runtime, {

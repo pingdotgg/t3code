@@ -1853,6 +1853,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.maintainerCanModify === undefined
               ? {}
               : { maintainerCanModify: changeRequest.maintainerCanModify }),
+            ...(changeRequest.mergeQueue === undefined
+              ? {}
+              : { mergeQueue: changeRequest.mergeQueue }),
             ...(changeRequest.workflowApprovalsRequired === undefined
               ? {}
               : { workflowApprovalsRequired: changeRequest.workflowApprovalsRequired }),

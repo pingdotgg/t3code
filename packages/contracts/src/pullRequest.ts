@@ -638,6 +638,8 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent means the host does not report auto-merge state, not that it is off. */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
+  /** Whether a merge joins a queue rather than landing at once; absent where the host cannot say. */
+  mergeQueue: Schema.optional(Schema.Boolean),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
   maintainerCanModify: Schema.optional(Schema.Boolean),
 });

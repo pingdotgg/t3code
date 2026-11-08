@@ -403,6 +403,7 @@ describe("pull request detail decoding", () => {
             headRef: null,
             author: null,
             autoMergeRequest: null,
+            isMergeQueueEnabled: false,
             viewerCanUpdate: true,
             viewerDidAuthor: false,
             viewerCanUpdateBranch: false,
@@ -556,6 +557,11 @@ describe("pull request detail decoding", () => {
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+  });
+
+  it("reads whether a merge joins the base branch's merge queue", () => {
+    expect(detailOf([], { isMergeQueueEnabled: true }).mergeQueue).toBe(true);
+    expect(detailOf([]).mergeQueue).toBe(false);
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
