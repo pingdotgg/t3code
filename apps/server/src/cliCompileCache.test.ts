@@ -74,6 +74,23 @@ it.live("loads the CLI with its cache settings only when the command needs it", 
     expect(globalFlags.exitCode).toBe(0);
     expect(globalFlags.stderr).toContain("CACHE=disabled");
     expect(yield* fs.exists(`${root}/home`)).toBe(false);
+    const nested = yield* run({}, ["service", "update", "--check"]);
+    expect(nested.stderr.replaceAll("\\", "/")).toContain(
+      `CACHE=${root}/cache/t3code/compile-cache`.replaceAll("\\", "/"),
+    );
+    const pathArgument = yield* run({}, ["--base-dir", "update", "--check"]);
+    expect(pathArgument.stderr.replaceAll("\\", "/")).toContain(
+      `CACHE=${root}/cache/t3code/compile-cache`.replaceAll("\\", "/"),
+    );
+    const equalsFlag = yield* run({}, [
+      "--log-level=debug",
+      "update",
+      "--base-dir",
+      `${root}/other`,
+      "--check",
+      "--json",
+    ]);
+    expect(equalsFlag.stderr).toContain("CACHE=disabled");
     const launcher = yield* run({ T3CODE_HOME: "" }, ["__service-launcher"]);
     expect(launcher.exitCode).toBe(1);
     expect(launcher.stderr).toContain("[service-launcher] T3CODE_HOME is required");

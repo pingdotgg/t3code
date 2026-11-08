@@ -140,11 +140,15 @@ export const listen: Effect.Effect<
       Effect.gen(function* () {
         const reservation = yield* command.reserve;
         if (reservation === null) {
+          const prepared = yield* Ref.get(preparedUpdateRef);
           yield* publishReport(
             yield* updates.getState,
             {
               outcome: "failed",
-              reason: "A desktop update or confirmation is already in progress.",
+              reason:
+                Option.isSome(prepared) && prepared.value.status === "committing"
+                  ? "A prepared desktop update is already in progress."
+                  : "A desktop update or confirmation is already in progress.",
             },
             request.requestId,
           );
@@ -500,7 +504,13 @@ export const listen: Effect.Effect<
         }
         return;
       }
-      const reservation = yield* command.reserve;
+      if (yield* updates.isInstallActive) {
+        yield* logInfo("remote update commit joining an in-progress install", {
+          requestId: commit.requestId,
+        });
+        return;
+      }
+      const reservation = yield* command.reserveForPreparedInstall;
       if (reservation === null) {
         const reason = "A desktop update or confirmation is already in progress.";
         yield* recordPreparedFailure(commit.requestId, reason);

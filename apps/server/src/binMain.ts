@@ -31,8 +31,14 @@ export async function runCliCommand() {
     const { runNativeSpeechWorker } = await import("./speech/native.ts");
     await runNativeSpeechWorker(mode, process.argv[4]);
   } else {
-    if (!(process.argv.slice(2).includes("update") && process.argv.includes("--check")))
+    const args = process.argv.slice(2);
+    let index = 0;
+    while (args[index] === "--log-level" || args[index]?.startsWith("--log-level=")) {
+      index += args[index] === "--log-level" ? 2 : 1;
+    }
+    if (!(args[index] === "update" && args.slice(index + 1).includes("--check"))) {
       enableCliCompileCache();
+    }
     // Windows desktop launches without stdin; attach before reading, except on fast paths using pipes.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();

@@ -79,11 +79,7 @@ function runRemoteUpdatesTest(
     Effect.provide(
       Layer.mergeAll(
         TestClock.layer(),
-        harness.layer,
-        Layer.mock(DesktopUpdateCommand.DesktopUpdateCommand, {
-          reserve: Effect.succeed("test-reservation"),
-          finish: () => Effect.void,
-        }),
+        DesktopUpdateCommand.layer.pipe(Layer.provideMerge(harness.layer)),
       ),
     ),
   );

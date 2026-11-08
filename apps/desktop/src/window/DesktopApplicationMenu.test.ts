@@ -62,6 +62,7 @@ const electronDialog = ElectronDialog.ElectronDialog.of({
 const desktopUpdates = DesktopUpdates.DesktopUpdates.of({
   getState: Effect.die("unexpected getState"),
   isActionActive: Effect.succeed(false),
+  isCheckActive: Effect.succeed(false),
   isInstallActive: Effect.succeed(false),
   subscribe: Effect.die("unexpected subscribe"),
   emitState: Effect.void,
@@ -128,6 +129,15 @@ const configureMenu = (
         ),
         Layer.provide(
           Layer.mock(DesktopUpdateCommand.DesktopUpdateCommand, {
+            inspect: Effect.succeed({
+              schema: "t3.update-check.v1",
+              owner: "desktop",
+              pathway: "desktop-coordinated",
+              coordinated: true,
+              currentVersion: "1.2.3",
+              targetVersion: null,
+              state: "ready",
+            } as const),
             request: (request) =>
               Effect.succeed({
                 version: 1,
@@ -152,6 +162,91 @@ const configureMenu = (
   );
 
 describe("DesktopApplicationMenu", () => {
+  it.effect(
+    "checks locally before a renderer is ready, without bypassing a held update lease",
+    () =>
+      Effect.gen(function* () {
+        for (const busy of [false, true]) {
+          const template = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+          const shown = yield* Deferred.make<Electron.MessageBoxOptions>();
+          let checks = 0;
+          yield* configureMenu(
+            yield* Deferred.make<string>(),
+            template,
+            { platform: "darwin" },
+            {
+              command: {
+                inspect: Effect.succeed({
+                  schema: "t3.update-check.v1",
+                  owner: "desktop",
+                  pathway: "desktop-coordinated",
+                  coordinated: false,
+                  currentVersion: "1.2.3",
+                  targetVersion: null,
+                  state: "unavailable",
+                }),
+                reserve: Effect.succeed(busy ? null : "startup-check"),
+                finish: () => Effect.void,
+                request: (request) =>
+                  Effect.succeed({
+                    version: 1,
+                    requestId: request.requestId,
+                    ok: false,
+                    code: "renderer-unavailable",
+                    message: "The renderer is not ready.",
+                  }),
+              },
+              updates: {
+                check: () =>
+                  Effect.sync(() => {
+                    checks += 1;
+                    return {
+                      checked: true,
+                      state: {
+                        enabled: true,
+                        status: "up-to-date" as const,
+                        channel: "latest" as const,
+                        currentVersion: "1.2.3",
+                        availableVersion: null,
+                        downloadedVersion: null,
+                        hostArch: "arm64",
+                        appArch: "arm64",
+                        runningUnderArm64Translation: false,
+                        releaseNotes: [],
+                        omittedReleaseCount: 0,
+                        downloadPercent: null,
+                        checkedAt: null,
+                        message: null,
+                        errorContext: null,
+                        canRetry: false,
+                      },
+                    };
+                  }),
+              },
+              dialog: {
+                showMessageBox: (options) =>
+                  Deferred.succeed(shown, options).pipe(
+                    Effect.as({ response: 0, checkboxChecked: false }),
+                  ),
+              },
+            },
+          );
+          const application = (yield* Deferred.await(template))[0];
+          if (!Array.isArray(application?.submenu)) throw new Error("Expected app menu.");
+          const item = application.submenu.find((item) => item.label === "Check for Updates...");
+          if (typeof item?.click !== "function") throw new Error("Expected update menu action.");
+          item.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+          const message = yield* Deferred.await(shown);
+          assert.equal(checks, busy ? 0 : 1);
+          assert.equal(message.type, busy ? "warning" : "info");
+          assert.include(
+            `${message.message} ${message.detail ?? ""}`,
+            busy ? "already in progress" : "Connected machines and providers have not been checked",
+          );
+        }
+      }),
+  );
+
   it.effect("shows why the shared updater could not accept a menu request", () =>
     Effect.gen(function* () {
       const template = yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();

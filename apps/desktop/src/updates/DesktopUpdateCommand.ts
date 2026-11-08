@@ -25,6 +25,7 @@ export class DesktopUpdateCommand extends Context.Service<
     readonly cancel: (callerId: string) => Effect.Effect<void>;
     readonly complete: (response: DesktopUpdateCommandResponse) => Effect.Effect<boolean>;
     readonly reserve: Effect.Effect<string | null>;
+    readonly reserveForPreparedInstall: Effect.Effect<string | null>;
     readonly reserveForRenderer: Effect.Effect<string | null>;
     readonly finish: (reservation: string) => Effect.Effect<void>;
   }
@@ -40,19 +41,31 @@ interface UpdateReservation {
   readonly owner: string | null;
   readonly rendererId: string | null;
   readonly next: number;
+  readonly phase: "confirming" | "running" | null;
 }
 
 const make = Effect.gen(function* () {
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const windows = yield* ElectronWindow.ElectronWindow;
   const ready = yield* Ref.make<string | null>(null);
-  const lock = yield* Ref.make<UpdateReservation>({ owner: null, rendererId: null, next: 0 });
+  const lock = yield* Ref.make<UpdateReservation>({
+    owner: null,
+    rendererId: null,
+    next: 0,
+    phase: null,
+  });
   const isAbandoned = (reservation: UpdateReservation, rendererId: string | null) =>
     reservation.rendererId !== null && rendererId !== null && reservation.rendererId !== rendererId;
   const pending = yield* Ref.make<Option.Option<PendingCommand>>(Option.none());
   const finish = (reservation: string) =>
     Ref.update(lock, (current) =>
-      current.owner === reservation ? { ...current, owner: null } : current,
+      current.owner === reservation ? { ...current, owner: null, phase: null } : current,
+    );
+  const finishConfirmation = (reservation: string) =>
+    Ref.update(lock, (current) =>
+      current.owner === reservation && current.phase === "confirming"
+        ? { ...current, owner: null, phase: null }
+        : current,
     );
   const clearPending = (reservation: string) =>
     Ref.update(pending, (current) =>
@@ -76,8 +89,14 @@ const make = Effect.gen(function* () {
           : ([Option.none(), value] as const),
     );
     if (Option.isNone(current)) return false;
-    if (!response.ok || !("status" in response) || response.status !== "started")
-      yield* finish(current.value.requestId);
+    if (response.ok && "status" in response && response.status === "started") {
+      const accepted = yield* Ref.modify(lock, (reservation) =>
+        reservation.owner === response.requestId && reservation.phase === "confirming"
+          ? ([true, { ...reservation, phase: "running" as const }] as const)
+          : ([false, reservation] as const),
+      );
+      if (!accepted) return false;
+    } else yield* finishConfirmation(current.value.requestId);
     yield* Deferred.succeed(current.value.reply, {
       ...response,
       requestId: current.value.callerId,
@@ -86,17 +105,19 @@ const make = Effect.gen(function* () {
   });
   const reserveOwned = Effect.fn("DesktopUpdateCommand.reserve")(function* (
     rendererId: string | null,
+    phase: "confirming" | "running" = "running",
+    allowCheck = false,
   ) {
-    if (yield* updates.isActionActive) return null;
-    const registeredRenderer = yield* Ref.get(ready);
+    if ((yield* updates.isActionActive) && !(allowCheck && (yield* updates.isCheckActive)))
+      return null;
     return yield* Ref.modify(lock, (current) => {
-      if (current.owner !== null && !isAbandoned(current, registeredRenderer))
-        return [null, current] as const;
+      if (current.owner !== null) return [null, current] as const;
       const owner = `desktop-update-${current.next}`;
-      return [owner, { owner, rendererId, next: current.next + 1 }] as const;
+      return [owner, { owner, rendererId, phase, next: current.next + 1 }] as const;
     });
   });
   const reserve = reserveOwned(null);
+  const reserveForPreparedInstall = reserveOwned(null, "running", true);
   const reserveForRenderer = Effect.gen(function* () {
     const rendererId = yield* Ref.get(ready);
     return rendererId === null ? null : yield* reserveOwned(rendererId);
@@ -108,9 +129,7 @@ const make = Effect.gen(function* () {
     const available =
       registeredRenderer !== null && Option.isSome(main) && !main.value.webContents.isDestroyed();
     const reservation = yield* Ref.get(lock);
-    const occupied =
-      (reservation.owner !== null && !isAbandoned(reservation, registeredRenderer)) ||
-      (yield* updates.isActionActive);
+    const occupied = reservation.owner !== null || (yield* updates.isActionActive);
     const targetVersion = state.downloadedVersion ?? state.availableVersion;
     return {
       schema: "t3.update-check.v1",
@@ -130,12 +149,21 @@ const make = Effect.gen(function* () {
               : "ready",
       reason: !available
         ? "Open or update T3 Code so its coordinated updater is available."
-        : "Cached desktop update state only; connected machines and providers have not been checked.",
+        : occupied
+          ? reservation.phase === "running" && isAbandoned(reservation, registeredRenderer)
+            ? "A coordinated update outlived its interface. Check the affected machines before restarting T3 Code; the run cannot be safely reclaimed."
+            : "A T3 Code update or confirmation is already in progress."
+          : !state.enabled
+            ? (state.message ?? "Desktop updates are disabled.")
+            : state.status === "error"
+              ? (state.message ?? "The desktop update check failed.")
+              : "Cached desktop update state only; connected machines and providers have not been checked.",
     } satisfies T3UpdateCheck;
   });
   return DesktopUpdateCommand.of({
     inspect,
     reserve,
+    reserveForPreparedInstall,
     reserveForRenderer,
     finish,
     complete,
@@ -174,7 +202,8 @@ const make = Effect.gen(function* () {
           request.requestId,
           "Open or update T3 Code, then run t3 update again. No standalone update was attempted.",
         );
-      const reservation = yield* reserveForRenderer;
+      const rendererId = yield* Ref.get(ready);
+      const reservation = yield* reserveOwned(rendererId, "confirming");
       if (reservation === null)
         return failure(
           request.requestId,
@@ -212,10 +241,10 @@ const make = Effect.gen(function* () {
         Effect.tap((response) =>
           response.ok && "status" in response && response.status === "started"
             ? Effect.void
-            : finish(reservation),
+            : finishConfirmation(reservation),
         ),
         Effect.ensuring(clearPending(reservation)),
-        Effect.onInterrupt(() => finish(reservation)),
+        Effect.onInterrupt(() => finishConfirmation(reservation)),
       );
     }),
   });

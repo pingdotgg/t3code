@@ -23,7 +23,9 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import { Command } from "effect/cli";
-import { describe, expect } from "vite-plus/test";
+import { describe, expect, vi } from "vite-plus/test";
+import * as appControl from "./app.ts";
+import { requestDesktopUpdate } from "./desktopUpdate.ts";
 
 import { makeCli } from "../binCli.ts";
 import { PersistedServerRuntimeState } from "../serverRuntimeState.ts";
@@ -477,5 +479,99 @@ it.effect("routes a legacy desktop shim's update and read-only check through des
       yield* Effect.promise(() => desktop.close());
       yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
     }
+  }),
+);
+
+it.effect("classifies desktop update transport failures without exposing paths", () =>
+  Effect.gen(function* () {
+    using send = vi.spyOn(appControl, "sendDesktopAppControlRequest");
+    const unavailable = Object.assign(new Error("secret /private/socket"), { code: "ENOENT" });
+    const refused = Object.assign(new Error("secret /private/socket"), { code: "ECONNREFUSED" });
+    const unknown = Object.assign(new Error("secret /private/socket"), { code: "EACCES" });
+    const cases = [
+      [unavailable, "unavailable", "Open or update T3 Code"],
+      [refused, "unavailable", "Open or update T3 Code"],
+      [unknown, "error", "Could not communicate"],
+      [
+        new Error("The desktop app socket directory is not private or owned by this user."),
+        "error",
+        "socket directory is not private",
+      ],
+      [new Error("The desktop app response is too large."), "error", "response is too large"],
+      [new Error("The desktop app response is not valid JSON."), "error", "not valid JSON"],
+      [new Error("The desktop app response is invalid."), "error", "response is invalid"],
+      [new Error("The desktop app response did not match this request."), "error", "did not match"],
+      [new Error("The desktop app did not respond in time."), "error", "did not confirm"],
+      [new Error("The desktop app closed the connection."), "error", "did not confirm"],
+    ] as const;
+    for (const [error, state, reason] of cases) {
+      send.mockRejectedValue(error);
+      const check = yield* requestDesktopUpdate({
+        baseDir: "/secret",
+        currentVersion: "1",
+        check: true,
+      });
+      if (typeof check === "string") return yield* Effect.die("Expected an update-check response.");
+      expect(check.state).toBe(state);
+      expect(check.reason).toContain(reason);
+      expect(check.reason).not.toContain("/secret");
+      expect(check.reason).not.toContain("/private");
+      expect(check.reason).toContain("No standalone update was attempted.");
+      const failure = yield* requestDesktopUpdate({
+        baseDir: "/secret",
+        currentVersion: "1",
+        check: false,
+      }).pipe(Effect.flip);
+      expect(failure).toMatchObject({ _tag: "DesktopCliUpdateError", reason: check.reason });
+    }
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "reports a non-private desktop socket directory in check mode without writing state",
+  () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcess.Platform;
+      const userId = yield* HostProcess.UserId;
+      if (platform === "win32") return;
+      const root = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-private-check-")),
+      );
+      const address = resolveDesktopAppControlAddress({
+        stateDir: NodePath.join(root, "userdata"),
+        platform,
+        userId,
+        tempDir: NodeOS.tmpdir(),
+        joinPath: NodePath.join,
+      });
+      if (address.directory === null) return;
+      try {
+        yield* Effect.promise(() =>
+          NodeFSP.mkdir(address.directory!, { recursive: true, mode: 0o755 }),
+        );
+        yield* Effect.promise(() => NodeFSP.chmod(address.directory!, 0o755));
+        const check = yield* requestDesktopUpdate({
+          baseDir: root,
+          currentVersion: "1",
+          check: true,
+        });
+        if (typeof check === "string")
+          return yield* Effect.die("Expected an update-check response.");
+        expect(check.state).toBe("error");
+        expect(check.reason).toContain("socket directory is not private");
+        expect(yield* Effect.promise(() => NodeFSP.readdir(root))).toEqual([]);
+      } finally {
+        yield* Effect.promise(() =>
+          NodeFSP.rm(address.directory!, { recursive: true, force: true }),
+        );
+        yield* Effect.promise(() => NodeFSP.rm(root, { recursive: true, force: true }));
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses the generic update error for json without check", () =>
+  Effect.gen(function* () {
+    const failure = yield* runCli(["update", "--json"]).pipe(Effect.flip);
+    expect(failure).toMatchObject({ _tag: "CliUpdateError", reason: "--json requires --check." });
   }),
 );

@@ -360,13 +360,15 @@ export async function runUpdateEverything<Providers, Servers>(
   readonly providers: Providers;
   readonly servers: Servers;
 }> {
-  const [localReady, remote] = await Promise.all([
-    steps.downloadLocal?.() ?? Promise.resolve(true),
-    steps
-      .updateProviders()
+  const [local, remote] = await Promise.allSettled([
+    Promise.resolve().then(() => steps.downloadLocal?.() ?? true),
+    Promise.resolve()
+      .then(() => steps.updateProviders())
       .then(async (providers) => ({ providers, servers: await steps.updateServers() })),
   ]);
-  return { localReady, ...remote };
+  if (local.status === "rejected") throw local.reason;
+  if (remote.status === "rejected") throw remote.reason;
+  return { localReady: local.value, ...remote.value };
 }
 
 export type UpdateRunMachineStatus =

@@ -295,7 +295,7 @@ export const runUpdateCommand = Effect.fn("cli.update.command")(function* (flags
   const desktopOwned =
     environment.T3CODE_DESKTOP_CLI === "1" || Boolean(environment.T3CODE_CLI_PATH?.trim());
   if (flags.json && !flags.check)
-    return yield* new DesktopCliUpdateError({ reason: "--json requires --check." });
+    return yield* new CliUpdateError({ reason: "--json requires --check." });
   if (desktopOwned) {
     if (
       Option.isSome(flags.version) ||

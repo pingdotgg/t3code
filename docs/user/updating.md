@@ -38,6 +38,8 @@ below.
 
 Manual checks from the sidebar, **Settings → About**, and the desktop menu review the same
 connected servers and providers even when this app is current.
+Before the app's interface is ready, the desktop menu can check this app only;
+open the app to review and install updates for connected machines too.
 
 ## Update from a terminal
 
@@ -45,20 +47,17 @@ The `t3` command installed by the desktop app uses the same coordinated updater 
 Settings → About. Run `t3 update` with the app open, then review its confirmation in the app. Cancelling
 the confirmation starts no update. Another update cannot start while that confirmation or run is active.
 The command reports when the run starts; follow its progress and restart result in the app.
+If the interface reloads during a run, another update stays blocked. Check the affected
+machines before restarting T3 Code and retrying; a reload does not cancel their updates.
 
 Desktop updates use the app's update track and confirmation. Exact versions, `--channel`,
 `--allow-downgrade`, and `--yes` are refused for this command; switch tracks in Settings → About.
-If the desktop app is closed or too old to coordinate the request, the command asks you to open or
-update it. It does not install a separate CLI runtime instead. A standalone CLI without a desktop
-launcher retains `t3 update` and its background-service restart options. The deprecated
-`t3 service update` command follows the same routing.
+If the desktop app is closed or too old to coordinate the request, open or update it and try again.
+The deprecated `t3 service update` command follows the same routing. For a standalone CLI, it
+selects the newest release on its channel; use `t3 service install` to install the invoking CLI version.
 
-Maintenance tools can run `t3 update --check --json`. The `t3.update-check.v1` result reports the
-installation owner, coordinated-updater availability, cached local version and offered target, and
-readiness. This inspection does not check the network, open the app, download, install, restart, or
-rewrite launchers. `ready` means the desktop coordinator is available, not that an update exists or
-that every connected server and provider has been checked. A closed or old app reports unavailable;
-a standalone CLI reports its separate update pathway. Use the normal update action for a fresh check.
+Run `t3 update --check --json` to inspect cached update availability without changing the installation.
+Use the normal update action for a fresh check.
 
 The startup recovery screen can still install an app update when the normal interface cannot load.
 That recovery updates this app only; it cannot plan updates for unavailable connections.

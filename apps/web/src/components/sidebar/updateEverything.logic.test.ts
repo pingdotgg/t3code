@@ -316,6 +316,29 @@ describe("collectRestartingMachines", () => {
 });
 
 describe("runUpdateEverything", () => {
+  it("waits for remote work to settle before reporting a rejected local download", async () => {
+    const remote = Promise.withResolvers<void>();
+    const local = Promise.withResolvers<boolean>();
+    const localFailure = new Error("download failed unexpectedly");
+    let finished = false;
+    const result = runUpdateEverything({
+      downloadLocal: () => local.promise,
+      updateProviders: () => remote.promise,
+      updateServers: async () => "handed-off",
+    }).then(
+      () => undefined,
+      (error: unknown) => {
+        finished = true;
+        return error;
+      },
+    );
+    local.reject(localFailure);
+    await local.promise.catch(() => undefined).then(() => undefined);
+    expect(finished).toBe(false);
+    remote.resolve();
+    expect(await result).toBe(localFailure);
+  });
+
   it("still updates remote machines when the local download fails", async () => {
     const calls: string[] = [];
     const result = await runUpdateEverything({

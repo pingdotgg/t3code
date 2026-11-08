@@ -1,4 +1,5 @@
 import * as DesktopUpdateCommand from "../updates/DesktopUpdateCommand.ts";
+import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -33,6 +34,7 @@ export class DesktopApplicationMenu extends Context.Service<
 
 type DesktopApplicationMenuRuntimeServices =
   | DesktopUpdateCommand.DesktopUpdateCommand
+  | DesktopUpdates.DesktopUpdates
   | DesktopWindow.DesktopWindow
   | ElectronDialog.ElectronDialog;
 
@@ -63,7 +65,39 @@ const runMainContentsCommand = Effect.fn("desktop.menu.runMainContentsCommand")(
 
 const checkForUpdatesFromMenu = Effect.gen(function* () {
   const electronDialog = yield* ElectronDialog.ElectronDialog;
-  const response = yield* (yield* DesktopUpdateCommand.DesktopUpdateCommand).request({
+  const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
+  if (!(yield* command.inspect).coordinated) {
+    const reservation = yield* command.reserve;
+    if (reservation === null) {
+      yield* electronDialog.showMessageBox({
+        type: "warning",
+        title: "Could not check for updates",
+        message: "A T3 Code update or confirmation is already in progress.",
+        detail: "Wait for that update to finish before checking again.",
+        buttons: ["OK"],
+      });
+      return;
+    }
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    const { checked, state } = yield* updates
+      .check("menu")
+      .pipe(Effect.ensuring(command.finish(reservation)));
+    const failed = !state.enabled || state.status === "error" || !checked;
+    yield* electronDialog.showMessageBox({
+      type: failed ? "warning" : "info",
+      title: failed ? "Could not check for updates" : "Desktop update check",
+      message: failed
+        ? (state.message ?? "The desktop update check could not start.")
+        : state.availableVersion !== null || state.downloadedVersion !== null
+          ? "A desktop update is available."
+          : "No desktop update is currently offered.",
+      detail:
+        "Connected machines and providers have not been checked. Open T3 Code to review and install coordinated updates.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+  const response = yield* command.request({
     version: 1,
     requestId: "menu-update",
     type: "update",

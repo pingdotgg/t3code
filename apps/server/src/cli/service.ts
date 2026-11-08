@@ -240,11 +240,23 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
   ),
 );
 
-const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
+const serviceUpdateFlags = {
+  ...projectLocationFlags,
+  allowDowngrade: Flag.Boolean("allow-downgrade").pipe(
+    Flag.withDescription(
+      "Allow updating to the newest channel release even if it is older than the installed version.",
+    ),
+    Flag.withDefault(false),
+  ),
+};
+
+const serviceUpdateCommand = Command.make("update", serviceUpdateFlags).pipe(
   Command.withDescription("Deprecated alias for t3 update."),
   Command.unlisted,
   Command.withHandler((flags) =>
-    Console.log("`t3 service update` is deprecated; using `t3 update`.").pipe(
+    Console.log(
+      "`t3 service update` is deprecated; it selects the newest channel release via `t3 update`. To install the invoking CLI version, use `t3 service install`.",
+    ).pipe(
       Effect.andThen(
         runUpdateCommand({
           ...flags,

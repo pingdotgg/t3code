@@ -115,8 +115,16 @@ export function DesktopUpdateCoordinator() {
         ok: true,
         status: "started",
       }))
-    )
+    ) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not update T3 Code",
+          description: "This update request expired or was replaced. Start the update again.",
+        }),
+      );
       return;
+    }
     try {
       const bridge = window.desktopBridge!;
       await everything

@@ -135,6 +135,7 @@ function RootRouteView() {
   return (
     <ToastProvider>
       <AnchoredToastProvider>
+        {isElectron ? <DesktopUpdateCoordinator /> : null}
         <RootRouteBranch />
       </AnchoredToastProvider>
     </ToastProvider>
@@ -194,7 +195,6 @@ function RootRouteBranch() {
   return (
     <>
       <ChatGptWelcomeCoordinator />
-      {isElectron ? <DesktopUpdateCoordinator /> : null}
       <FirstRunGate
         enabled={primaryEnvironmentAuthenticated}
         hostedStatic={authGateState.status === "hosted-static"}

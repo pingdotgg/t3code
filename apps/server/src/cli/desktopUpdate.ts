@@ -17,6 +17,46 @@ export class DesktopCliUpdateError extends Schema.TaggedError<DesktopCliUpdateEr
     return this.reason;
   }
 }
+const safeTransportMessages = new Set([
+  "The desktop app socket directory is not private or owned by this user.",
+  "The desktop app response is too large.",
+  "The desktop app response is not valid JSON.",
+  "The desktop app response is invalid.",
+  "The desktop app response did not match this request.",
+]);
+
+function transportFailure(error: unknown): { state: "unavailable" | "error"; reason: string } {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    if (error.code === "ENOENT" || error.code === "ECONNREFUSED") {
+      return {
+        state: "unavailable",
+        reason:
+          "Open or update T3 Code, then run t3 update again. No standalone update was attempted.",
+      };
+    }
+    return {
+      state: "error",
+      reason:
+        "Could not communicate with T3 Code. Check the desktop app and try again. No standalone update was attempted.",
+    };
+  }
+  const message = error instanceof Error ? error.message : "";
+  if (
+    message === "The desktop app did not respond in time." ||
+    message === "The desktop app closed the connection."
+  ) {
+    return {
+      state: "error",
+      reason:
+        "The desktop app did not confirm the request. Check T3 Code for its status. No standalone update was attempted.",
+    };
+  }
+  const reason = safeTransportMessages.has(message)
+    ? `${message} Check T3 Code and try again.`
+    : "Could not communicate with T3 Code. Check the desktop app and try again.";
+  return { state: "error", reason: `${reason} No standalone update was attempted.` };
+}
+
 export const requestDesktopUpdate = Effect.fn("cli.update.desktop")(function* (input: {
   readonly baseDir: string;
   readonly currentVersion: string;
@@ -53,13 +93,15 @@ export const requestDesktopUpdate = Effect.fn("cli.update.desktop")(function* (i
         },
         timeoutMs: input.check ? 5_000 : 5 * 60_000,
       }),
-    catch: () => new DesktopCliUpdateError({ reason: check.reason! }),
-  }).pipe(Effect.option);
-  if (response._tag === "None") {
-    if (input.check) return check;
-    return yield* new DesktopCliUpdateError({ reason: check.reason! });
+    catch: transportFailure,
+  }).pipe(
+    Effect.match({ onFailure: (failure) => ({ failure }), onSuccess: (result) => ({ result }) }),
+  );
+  if ("failure" in response) {
+    if (input.check) return { ...check, ...response.failure };
+    return yield* new DesktopCliUpdateError({ reason: response.failure.reason });
   }
-  const result = response.value;
+  const result = response.result;
   if (!result.ok) {
     const reason =
       result.code === "invalid-request"

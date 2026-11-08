@@ -187,6 +187,7 @@ export class DesktopUpdates extends Context.Service<
   {
     readonly getState: Effect.Effect<DesktopUpdateState>;
     readonly isActionActive: Effect.Effect<boolean>;
+    readonly isCheckActive: Effect.Effect<boolean>;
     readonly isInstallActive: Effect.Effect<boolean>;
     readonly subscribe: Effect.Effect<
       {
@@ -1099,6 +1100,9 @@ export const make = Effect.gen(function* () {
   return DesktopUpdates.of({
     getState: Ref.get(updateStateRef),
     isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
+    isCheckActive: activeUpdateAction.pipe(
+      Effect.map((action) => Option.isSome(action) && action.value === "check"),
+    ),
     isInstallActive: activeUpdateAction.pipe(
       Effect.map((action) => Option.isSome(action) && action.value === "install"),
     ),

@@ -82,6 +82,8 @@ it.effect("checks cached coordinator availability without activating, checking o
     yield* command.setReady(true, "replacement");
     assert.isNull(yield* command.reserveForRenderer);
     yield* command.setReady(true, "new-document");
+    assert.isNull(yield* command.reserveForRenderer);
+    yield* command.finish(rendererReservation!);
     const resumed = yield* command.reserveForRenderer;
     assert.isNotNull(resumed);
     yield* command.finish(rendererReservation!);
@@ -218,12 +220,14 @@ it.effect("an older request's cleanup cannot clear or release its successor", ()
 );
 
 it.effect(
-  "recovers an abandoned renderer run after native work settles, without its old finally",
+  "holds the run lease after local download completes while remote work survives renderer replacement",
   () =>
     Effect.gen(function* () {
       const firstSent = yield* Deferred.make<DesktopUpdateCommandRequest>();
       const secondSent = yield* Deferred.make<DesktopUpdateCommandRequest>();
       const nativeActive = yield* Ref.make(false);
+      const remoteStarted = yield* Deferred.make<void>();
+      const releaseRemote = yield* Deferred.make<void>();
       let sent = 0;
       yield* Effect.gen(function* () {
         const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
@@ -244,12 +248,23 @@ it.effect(
         yield* command.setReady(true, "renderer");
         assert.isNull(yield* command.reserve);
         yield* Ref.set(nativeActive, true);
-        // A real renderer replacement loses that promise, but native work must still finish.
+        const remoteRun = yield* Deferred.succeed(remoteStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseRemote)),
+          Effect.ensuring(command.finish(incoming.requestId)),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(remoteStarted);
+        yield* Ref.set(nativeActive, false);
         yield* command.setReady(false, "renderer");
         yield* command.setReady(true, "replacement");
         assert.isNull(yield* command.reserve);
+        assert.isNull(yield* command.reserveForRenderer);
+        assert.isFalse(
+          (yield* command.request({ version: 1, requestId: "overlapping", type: "update" })).ok,
+        );
         assert.equal((yield* command.inspect).state, "busy");
-        yield* Ref.set(nativeActive, false);
+        yield* Deferred.succeed(releaseRemote, undefined);
+        yield* Fiber.join(remoteRun);
         assert.equal((yield* command.inspect).state, "ready");
         const retry = yield* command
           .request({ version: 1, requestId: "retry", type: "update" })
@@ -273,4 +288,37 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("request interruption cannot release an accepted run", () =>
+  Effect.gen(function* () {
+    const sent = yield* Deferred.make<DesktopUpdateCommandRequest>();
+    yield* Effect.gen(function* () {
+      const command = yield* DesktopUpdateCommand.DesktopUpdateCommand;
+      yield* command.setReady(true, "renderer");
+      const request = yield* command
+        .request({ version: 1, requestId: "interrupted", type: "update" })
+        .pipe(Effect.forkScoped);
+      const incoming = yield* Deferred.await(sent);
+      assert.isTrue(
+        yield* command.complete({
+          version: 1,
+          requestId: incoming.requestId,
+          ok: true,
+          status: "started",
+        }),
+      );
+      yield* Fiber.interrupt(request);
+      assert.equal((yield* command.inspect).state, "busy");
+      assert.isNull(yield* command.reserve);
+      yield* command.finish(incoming.requestId);
+      assert.equal((yield* command.inspect).state, "ready");
+    }).pipe(
+      Effect.provide(
+        layer((request) => {
+          Deferred.doneUnsafe(sent, Effect.succeed(request));
+        }),
+      ),
+    );
+  }),
 );

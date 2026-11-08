@@ -8,6 +8,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render, stubGlobal } from "../../../test/render";
 import "../../index.css";
 import { DesktopUpdateCoordinator } from "./DesktopUpdateCoordinator";
+import { ToastProvider } from "../ui/toast";
 
 const mocks = vi.hoisted(() => ({ run: vi.fn(async () => undefined) }));
 vi.mock("../sidebar/useUpdateEverything", () => ({
@@ -135,4 +136,35 @@ it("replaces a disconnected confirmation and ignores its late preparation", asyn
   );
   await vi.waitFor(() => expect(finish).toHaveBeenCalledWith("new"));
   expect(finish).not.toHaveBeenCalledWith("old");
+});
+
+it("explains an expired confirmation without starting an update", async () => {
+  mocks.run.mockClear();
+  let listener: ((request: DesktopUpdateCommandRequest) => void) | undefined;
+  using _bridge = stubGlobal("desktopBridge", {
+    getUpdateState: async () => state,
+    updateCommand: {
+      setReady: async () => undefined,
+      complete: async () => false,
+      finish: async () => undefined,
+      onRequest: (callback: typeof listener) => {
+        listener = callback;
+        return () => {
+          listener = undefined;
+        };
+      },
+    },
+  });
+  await using screen = await render(
+    <ToastProvider>
+      <DesktopUpdateCoordinator />
+    </ToastProvider>,
+  );
+  await act(async () => listener?.({ version: 1, requestId: "expired", type: "update" }));
+  await expect.element(page.getByRole("alertdialog", { name: "Update 1 machine?" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Update", exact: true }));
+  await expect
+    .element(page.getByText("This update request expired or was replaced. Start the update again."))
+    .toBeVisible();
+  expect(mocks.run).not.toHaveBeenCalled();
 });
