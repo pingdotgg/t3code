@@ -38,7 +38,7 @@ describe("EnvironmentOwnedDataCleanup", () => {
     });
     return Effect.gen(function* () {
       harness.clearOutbox.mockRejectedValue(new Error("Some queued messages could not be read."));
-      harness.clearDrafts.mockReturnValue(
+      harness.clearDrafts.mockImplementation(() =>
         new Promise<void>((resolve) => {
           releaseDrafts = resolve;
         }).then(() => {
