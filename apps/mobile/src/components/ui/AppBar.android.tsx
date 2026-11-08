@@ -155,13 +155,15 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
     </Menu>
   ));
   const confirmButton = props.confirm ? (
-    <Button
-      label={props.confirm.label}
-      tone="text"
-      loading={props.confirm.loading}
-      disabled={props.confirm.disabled}
-      onPress={props.confirm.onPress}
-    />
+    <View className="self-center">
+      <Button
+        label={props.confirm.label}
+        tone="text"
+        loading={props.confirm.loading}
+        disabled={props.confirm.disabled}
+        onPress={props.confirm.onPress}
+      />
+    </View>
   ) : null;
   const options =
     props.embedded || props.sheet ? null : (
