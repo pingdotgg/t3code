@@ -476,6 +476,7 @@ function FontFamilySettingsRow({
           };
         }}
         onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "Enter") flushDraft();
           if (event.key === "Escape") {
             // Discard uncommitted typing without closing the settings page,
