@@ -21,7 +21,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
-import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
@@ -93,7 +93,7 @@ import { useSelectedThreadWorktree } from "../../state/use-selected-thread-workt
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import { threadAllowsProviderSwitch } from "../../state/thread-provider-switching";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
-import { mobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { ScreenContent } from "../../components/ui/ScreenContent";
@@ -475,7 +475,19 @@ function ThreadSettingsSessionProvider(
     });
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
-  const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savedProviderFilter = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.modelPickerProviderFilter ?? null)
+    : null;
+  // A saved provider can be removed or belong to another environment; show everything then.
+  const providerFilter =
+    savedProviderFilter === FAVORITES_PROVIDER_FILTER ||
+    providerGroups.some((group) => group.providerKey === savedProviderFilter)
+      ? savedProviderFilter
+      : null;
+  const setProviderFilter = (next: string | null) => {
+    savePreferences({ modelPickerProviderFilter: next });
+  };
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
