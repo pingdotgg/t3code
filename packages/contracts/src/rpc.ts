@@ -1466,7 +1466,7 @@ const WsSubscribeVcsBranchRpc = Rpc.make(WS_METHODS.subscribeVcsBranch, {
 
 const WsVcsRefreshBranchRpc = Rpc.make(WS_METHODS.vcsRefreshBranch, {
   payload: VcsStatusInput,
-  success: VcsBranchStatus,
+  success: Schema.Void,
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 

@@ -497,11 +497,7 @@ export const refreshVcsBranch = Effect.fn("EnvironmentRpc.refreshVcsBranch")(fun
   if (config.environment.capabilities.vcsBranchStatus === true) {
     return yield* requestInSession(session, WS_METHODS.vcsRefreshBranch, input);
   }
-  const status = yield* requestInSession(session, WS_METHODS.vcsRefreshStatus, {
-    ...input,
-    localOnly: true,
-  });
-  return { refName: status.refName };
+  // Older hosts retain their existing status stream without adding per-row wake scans.
 });
 
 export const request = <TTag extends Exclude<EnvironmentUnaryRpcTag, ClientGuardedRpcTag>>(

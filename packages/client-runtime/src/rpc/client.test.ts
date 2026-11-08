@@ -427,7 +427,7 @@ it.effect.each([true, false])(
           input: unknown,
         ) => {
           inputs.push(input);
-          return Effect.succeed({ refName: "external" });
+          return Effect.void;
         },
       } as unknown as WsRpcProtocolClient;
       yield* SubscriptionRef.set(
@@ -443,8 +443,8 @@ it.effect.each([true, false])(
         yield* refreshVcsBranch({ cwd: "/repo" }).pipe(
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         ),
-      ).toEqual({ refName: "external" });
-      expect(inputs).toEqual([supported ? { cwd: "/repo" } : { cwd: "/repo", localOnly: true }]);
+      ).toBeUndefined();
+      expect(inputs).toEqual(supported ? [{ cwd: "/repo" }] : []);
     }).pipe(Effect.scoped),
 );
 
@@ -453,8 +453,10 @@ it.effect("binds branch capability selection and execution to one session", () =
     const { activeSession, supervisor } = yield* makeHarness();
     const configRequested = yield* Deferred.make<void>();
     const config = yield* Deferred.make<ServerConfig>();
+    const executed = yield* Deferred.make<void>();
     const original = {
-      [WS_METHODS.vcsRefreshBranch]: () => Effect.succeed({ refName: "original" }),
+      [WS_METHODS.vcsRefreshBranch]: () =>
+        Deferred.succeed(executed, undefined).pipe(Effect.asVoid),
     } as unknown as WsRpcProtocolClient;
     const replacement = {
       [WS_METHODS.vcsRefreshStatus]: () => Effect.succeed({ refName: "replacement" }),
@@ -477,6 +479,7 @@ it.effect("binds branch capability selection and execution to one session", () =
     yield* Deferred.succeed(config, {
       environment: { capabilities: { vcsBranchStatus: true } },
     } as ServerConfig);
-    expect(yield* Fiber.join(refresh)).toEqual({ refName: "original" });
+    expect(yield* Fiber.join(refresh)).toBeUndefined();
+    yield* Deferred.await(executed);
   }).pipe(Effect.scoped),
 );
