@@ -1008,23 +1008,16 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         event("session.execution.succeeded", { sessionID: SESSION }),
         { type: "runtime_exit", status: "success" } as const,
       ]);
-      const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(turnInput(thread));
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["completed"]);
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+      ]);
       yield* TestClock.adjust("1 minute");
-      const last = (yield* Fiber.join(events))
-        .filter(
-          (event) =>
-            event.type === "provider_thread.updated" && event.providerThread.id === thread.id,
-        )
-        .at(-1);
-      assert.deepEqual(
-        last?.type === "provider_thread.updated"
-          ? [last.providerThread.pendingBackgroundTasks, last.pendingBackgroundWork]
-          : undefined,
-        [[], false],
-      );
+      yield* watch.until(() => watch.state.roster?.length === 0);
+      assert.isFalse(watch.state.pending);
     }).pipe(Effect.scoped),
   );
 
