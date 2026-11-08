@@ -84,104 +84,101 @@ const toEnvelope = Schema.encodeEffect(
 );
 
 /** `stateDir/fleet-drain/<environment>/<drainId>/thread-<id>.json`. */
-export const fileDrainSink = (input: {
+export const fileDrainSink = Effect.fn("DrainSink.make")(function* (input: {
   readonly stateDir: string;
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
-}): Effect.Effect<DrainSink> =>
-  Effect.fn("DrainSink.make")(function* () {
-    const { fs, path, stateDir } = input;
-    // Attachment hashes come from the digest service; the sink is built once
-    // per drain and carries it.
-    const digest = yield* Digest.Digest;
-    return {
-      write: Effect.fn("DrainSink.write")(
-        function* (input: {
-          readonly environmentId: EnvironmentId;
-          readonly drainId: string;
-          readonly threadId: string;
-          readonly body: string;
-          readonly snapshotSequence: number | null;
-          readonly attachments?: DrainAttachments;
-        }) {
-          const environment = segmentOf(input.environmentId);
-          const drain = segmentOf(input.drainId);
-          const thread = segmentOf(input.threadId);
-          if (environment === null || drain === null || thread === null) {
+}) {
+  const { fs, path, stateDir } = input;
+  // Attachment hashes come from the digest service; the sink is built once
+  // per drain and carries it.
+  const digest = yield* Digest.Digest;
+  return {
+    write: Effect.fn("DrainSink.write")(
+      function* (input: {
+        readonly environmentId: EnvironmentId;
+        readonly drainId: string;
+        readonly threadId: string;
+        readonly body: string;
+        readonly snapshotSequence: number | null;
+        readonly attachments?: DrainAttachments;
+      }) {
+        const environment = segmentOf(input.environmentId);
+        const drain = segmentOf(input.drainId);
+        const thread = segmentOf(input.threadId);
+        if (environment === null || drain === null || thread === null) {
+          return yield* new FleetDrainStepError({
+            step: "write",
+            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+          });
+        }
+        const dir = path.join(stateDir, "fleet-drain", environment, drain);
+        const target = path.join(dir, `thread-${thread}.json`);
+        yield* fs.makeDirectory(dir, { recursive: true });
+        // Attachments land as sibling files so the manifest in the envelope stays
+        // small; the hash keys the file name and is what read-back verifies.
+        const manifest: Array<DrainAttachmentManifestEntry> = [];
+        for (const file of input.attachments?.files ?? []) {
+          const decoded = Base64.decode(file.bytes.replace(/\s/g, ""));
+          if (Result.isFailure(decoded)) {
             return yield* new FleetDrainStepError({
               step: "write",
-              message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+              message: `Attachment ${file.name} was not valid base64.`,
             });
           }
-          const dir = path.join(stateDir, "fleet-drain", environment, drain);
-          const target = path.join(dir, `thread-${thread}.json`);
-          yield* fs.makeDirectory(dir, { recursive: true });
-          // Attachments land as sibling files so the manifest in the envelope stays
-          // small; the hash keys the file name and is what read-back verifies.
-          const manifest: Array<DrainAttachmentManifestEntry> = [];
-          for (const file of input.attachments?.files ?? []) {
-            const decoded = Base64.decode(file.bytes.replace(/\s/g, ""));
-            if (Result.isFailure(decoded)) {
-              return yield* new FleetDrainStepError({
-                step: "write",
-                message: `Attachment ${file.name} was not valid base64.`,
-              });
-            }
-            const bytes = decoded.success;
-            const hash = Hex.encode(yield* digest.digest(Digest.sha256, bytes));
-            yield* fs.writeFile(
-              path.join(dir, `thread-${thread}-att-${hash.slice(0, 16)}.bin`),
-              bytes,
-            );
-            manifest.push({ name: file.name, hash, size: bytes.byteLength });
-          }
-          // Write then rename: a retry must never accept a half-written copy as done.
-          const envelope = yield* toEnvelope({
-            threadId: input.threadId,
-            snapshotSequence: input.snapshotSequence,
-            body: input.body,
-            ...(manifest.length === 0 ? {} : { attachments: manifest }),
-            ...(input.attachments?.oversizeSkipped === true ? { attachmentsSkipped: true } : {}),
-          });
-          yield* fs.writeFileString(`${target}.partial`, envelope);
-          yield* fs.rename(`${target}.partial`, target);
-          return { bytes: new TextEncoder().encode(envelope).byteLength };
-        },
-        Effect.mapError(
-          (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
-        ),
-      ),
-      read: Effect.fn("DrainSink.read")(
-        function* (input: {
-          readonly environmentId: EnvironmentId;
-          readonly drainId: string;
-          readonly threadId: string;
-        }) {
-          const environment = segmentOf(input.environmentId);
-          const drain = segmentOf(input.drainId);
-          const thread = segmentOf(input.threadId);
-          if (environment === null || drain === null || thread === null) {
-            return yield* new FleetDrainStepError({
-              step: "read",
-              message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
-            });
-          }
-          const file = path.join(
-            stateDir,
-            "fleet-drain",
-            environment,
-            drain,
-            `thread-${thread}.json`,
+          const bytes = decoded.success;
+          const hash = Hex.encode(yield* digest.digest(Digest.sha256, bytes));
+          yield* fs.writeFile(
+            path.join(dir, `thread-${thread}-att-${hash.slice(0, 16)}.bin`),
+            bytes,
           );
-          const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
-          return raw === null ? null : decodeEnvelope(raw);
-        },
-        Effect.mapError(
-          (cause) => new FleetDrainStepError({ step: "read", message: String(cause) }),
-        ),
+          manifest.push({ name: file.name, hash, size: bytes.byteLength });
+        }
+        // Write then rename: a retry must never accept a half-written copy as done.
+        const envelope = yield* toEnvelope({
+          threadId: input.threadId,
+          snapshotSequence: input.snapshotSequence,
+          body: input.body,
+          ...(manifest.length === 0 ? {} : { attachments: manifest }),
+          ...(input.attachments?.oversizeSkipped === true ? { attachmentsSkipped: true } : {}),
+        });
+        yield* fs.writeFileString(`${target}.partial`, envelope);
+        yield* fs.rename(`${target}.partial`, target);
+        return { bytes: new TextEncoder().encode(envelope).byteLength };
+      },
+      Effect.mapError(
+        (cause) => new FleetDrainStepError({ step: "write", message: String(cause) }),
       ),
-    };
-  })().pipe(Effect.provide(Digest.layerWebCrypto));
+    ),
+    read: Effect.fn("DrainSink.read")(
+      function* (input: {
+        readonly environmentId: EnvironmentId;
+        readonly drainId: string;
+        readonly threadId: string;
+      }) {
+        const environment = segmentOf(input.environmentId);
+        const drain = segmentOf(input.drainId);
+        const thread = segmentOf(input.threadId);
+        if (environment === null || drain === null || thread === null) {
+          return yield* new FleetDrainStepError({
+            step: "read",
+            message: `Refused a drain path segment for ${input.environmentId} / ${input.drainId} / ${input.threadId}.`,
+          });
+        }
+        const file = path.join(
+          stateDir,
+          "fleet-drain",
+          environment,
+          drain,
+          `thread-${thread}.json`,
+        );
+        const raw = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => null));
+        return raw === null ? null : decodeEnvelope(raw);
+      },
+      Effect.mapError((cause) => new FleetDrainStepError({ step: "read", message: String(cause) })),
+    ),
+  } satisfies DrainSink;
+}, Effect.provide(Digest.layerWebCrypto));
 
 const toJsonBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const fromJsonBody = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
