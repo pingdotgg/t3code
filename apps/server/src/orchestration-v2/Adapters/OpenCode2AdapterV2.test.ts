@@ -970,7 +970,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         ...backgroundShell("sh_1"),
-        out("shell.remove", { id: "sh_1" }),
+        out("shell.remove", { id: "sh_1", "location[directory]": WORK }),
         reply("shell.remove", null),
         out("session.interrupt", { sessionID: SESSION }),
         reply("session.interrupt", { interrupted: true }),
@@ -1005,6 +1005,63 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a subagent's background shell under the subagent that started it", () =>
+    Effect.gen(function* () {
+      const tool = { sessionID: CHILD, assistantMessageID: "msg_child", id: "call-child-shell" };
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.tool.input.started", { ...tool, name: "shell" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "shell",
+          input: { command: SHELL_COMMAND, background: true },
+          executed: false,
+        }),
+        {
+          type: "emit_inbound",
+          frame: {
+            type: "sdk.event",
+            event: {
+              id: "evt_toolsuccess_child_shell",
+              created: 1,
+              type: "session.tool.success",
+              data: {
+                ...tool,
+                content: [{ type: "text", text: "Command moved to the background." }],
+                metadata: { status: "running", truncated: false, shellID: "sh_child" },
+                executed: false,
+              },
+              durable: { aggregateID: CHILD, seq: 1, version: 2 },
+            },
+          },
+        },
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const roster = (yield* Fiber.join(events))
+        .flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.id === thread.id
+            ? [event.providerThread.pendingBackgroundTasks]
+            : [],
+        )
+        .at(-1);
+      const [subagent, shell] = roster ?? [];
+      assert.equal(subagent?.kind, "subagent");
+      assert.deepEqual(shell, {
+        taskId: "sh_child",
+        kind: "command",
+        description: SHELL_COMMAND,
+        parentTaskId: subagent?.taskId,
+      });
     }).pipe(Effect.scoped),
   );
 
