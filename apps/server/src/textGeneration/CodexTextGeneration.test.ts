@@ -30,6 +30,7 @@ import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { repositoryConventionsTextGenerationPolicy } from "./TextGenerationPresets.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -175,6 +176,8 @@ function withFakeCodexEnv<A, E, R>(
     defaultModel?: string;
     customModels?: ReadonlyArray<string>;
     managedRuntime?: boolean;
+    managedHomePath?: string;
+    shadowHomePath?: string;
     homePath?: string;
     desktopConfig?: string;
   },
@@ -191,6 +194,7 @@ function withFakeCodexEnv<A, E, R>(
     const config = decodeCodexSettings({
       binaryPath: codexPath,
       homePath: input.homePath ?? tempDir,
+      shadowHomePath: input.shadowHomePath,
       launchArgs: input.launchArgs,
       customModels: input.customModels,
     });
@@ -208,8 +212,12 @@ function withFakeCodexEnv<A, E, R>(
       ),
       input.managedRuntime
         ? Effect.succeed({
-            config,
-            environment: input.environment ?? process.env,
+            config: input.managedHomePath ? { ...config, homePath: input.managedHomePath } : config,
+            environment: {
+              ...process.env,
+              ...input.environment,
+              ...(input.managedHomePath ? { CODEX_HOME: input.managedHomePath } : {}),
+            },
             revision: "test",
           })
         : undefined,
@@ -219,6 +227,49 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
+  it.effect.each([false, true])(
+    "uses the managed shared config with a conflicting ambient home, shadow: %s",
+    (shadow) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const sharedHome = path.join(home, ".codex");
+        const ambientHome = path.join(home, "ambient-codex");
+        const shadowHome = path.join(home, "shadow-codex");
+        yield* fs.makeDirectory(sharedHome);
+        yield* fs.makeDirectory(ambientHome);
+        yield* fs.writeFileString(
+          path.join(sharedHome, "config.toml"),
+          '[desktop]\ngit-commit-instructions = "Use the managed instance instructions."',
+        );
+        yield* fs.writeFileString(
+          path.join(ambientHome, "config.toml"),
+          '[desktop]\ngit-commit-instructions = "Wrong ambient instructions"',
+        );
+        yield* withFakeCodexEnv(
+          {
+            output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+            homePath: "",
+            shadowHomePath: shadow ? shadowHome : "",
+            managedRuntime: true,
+            managedHomePath: shadow ? shadowHome : sharedHome,
+            environment: { CODEX_HOME: ambientHome },
+            stdinMustContain: "Use the managed instance instructions.",
+            stdinMustNotContain: "Wrong ambient instructions",
+          },
+          (generation) =>
+            generation.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "fix/settings",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }),
+        ).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+      }).pipe(Effect.scoped),
+  );
+
   it.effect.each(["environment", "default"] as const)(
     "reads Git instructions from the %s Codex home",
     (source) =>
@@ -275,11 +326,11 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("uses Codex desktop config commit instructions in the CLI prompt", () =>
+  it.effect("includes Codex desktop instructions with the default GitManager commit policy", () =>
     withFakeCodexEnv(
       {
         output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
-        stdinMustContain: "Include the issue number in each commit subject.",
+        stdinMustContain: `${repositoryConventionsTextGenerationPolicy.commitInstructions}\n\nInclude the issue number in each commit subject.`,
         stdinMustNotContain: "PR-only instruction",
         desktopConfig:
           '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
@@ -291,6 +342,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           stagedSummary: "M README.md",
           stagedPatch: "diff --git a/README.md b/README.md",
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          policy: repositoryConventionsTextGenerationPolicy,
         }),
     ),
   );
@@ -303,7 +355,9 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
           output: JSON.stringify({ title: "Preserve Git settings", body: "A description" }),
           desktopConfig:
             '[desktop]\ngit-pr-instructions = "Include a rollout section."\ngit-commit-instructions = "Commit-only instruction"\n',
-          stdinMustContain: override ? "Use the team PR format." : "Include a rollout section.",
+          stdinMustContain: override
+            ? "Use the team PR format."
+            : `${repositoryConventionsTextGenerationPolicy.changeRequestInstructions}\n\nInclude a rollout section.`,
           stdinMustNotContain: override ? "Include a rollout section." : "Commit-only instruction",
         },
         (generation) =>
@@ -323,7 +377,7 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
                     changeRequestInstructions: "Use the team PR format.",
                   },
                 }
-              : {}),
+              : { policy: repositoryConventionsTextGenerationPolicy }),
           }),
       ),
   );

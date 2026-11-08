@@ -33,6 +33,7 @@ import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { readCodexGitInstructions } from "./CodexGitInstructions.ts";
 import type * as TextGeneration from "./TextGeneration.ts";
+import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -415,12 +416,14 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
   const operations = TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
   const home = yield* HostProcess.HomeDirectory;
-  const gitSettingsHome = expandHomePath(
-    codexConfig.homePath.trim() ||
-      resolvedEnvironment.CODEX_HOME?.trim() ||
-      path.join(home, ".codex"),
-    home,
-  );
+  const gitSettingsHome = resolveRuntime
+    ? (yield* resolveCodexHomeLayout(codexConfig)).sharedHomePath
+    : expandHomePath(
+        codexConfig.homePath.trim() ||
+          resolvedEnvironment.CODEX_HOME?.trim() ||
+          path.join(home, ".codex"),
+        home,
+      );
   const withGitInstructions = Effect.fn("CodexTextGeneration.withGitInstructions")(function* (
     policy: TextGeneration.CommitMessageGenerationInput["policy"],
   ) {
@@ -428,13 +431,25 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+    const resolveInstructions = (
+      styleInstructions: string | undefined,
+      desktopInstructions: string | undefined,
+    ) =>
+      policy?.kind === "repo_conventions" && desktopInstructions
+        ? [styleInstructions, desktopInstructions].filter(Boolean).join("\n\n")
+        : (styleInstructions ?? desktopInstructions);
     return {
       kind: "default" as const,
       inferRepositoryConventions: false,
       ...policy,
-      commitInstructions: policy?.commitInstructions ?? instructions.commitInstructions,
-      changeRequestInstructions:
-        policy?.changeRequestInstructions ?? instructions.changeRequestInstructions,
+      commitInstructions: resolveInstructions(
+        policy?.commitInstructions,
+        instructions.commitInstructions,
+      ),
+      changeRequestInstructions: resolveInstructions(
+        policy?.changeRequestInstructions,
+        instructions.changeRequestInstructions,
+      ),
     };
   });
   return {
