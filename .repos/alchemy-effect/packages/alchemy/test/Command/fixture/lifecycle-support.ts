@@ -1,9 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
 
 export const pidAlive = (pid: number) =>
   Effect.sync(() => {
@@ -11,12 +11,7 @@ export const pidAlive = (pid: number) =>
       process.kill(pid, 0);
       return true;
     } catch (error) {
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ESRCH"
-      )
+      if (typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH")
         return false;
       throw error;
     }
@@ -30,17 +25,13 @@ export const assertDead = (pid: number) =>
       times: 120,
     }),
     Effect.flatMap((alive) =>
-      alive
-        ? Effect.fail(new Error(`Fixture PID ${pid} survived cleanup`))
-        : Effect.void,
+      alive ? Effect.fail(new Error(`Fixture PID ${pid} survived cleanup`)) : Effect.void,
     ),
   );
 
 export const pgid = (pid: number) =>
   ChildProcess.make("ps", ["-o", "pgid=", "-p", String(pid)]).pipe(
-    Effect.flatMap((child) =>
-      child.stdout.pipe(Stream.decodeText, Stream.mkString),
-    ),
+    Effect.flatMap((child) => child.stdout.pipe(Stream.decodeText, Stream.mkString)),
     Effect.map((text) => Number(text.trim())),
     Effect.scoped,
   );
@@ -52,17 +43,11 @@ export const lifecycleFixture = Effect.fn(function* (mode = "cooperative") {
     directory: "/tmp",
     prefix: "command-lifecycle-",
   });
-  const entry = yield* path.fromFileUrl(
-    new URL("./lifecycle.ts", import.meta.url),
-  );
+  const entry = yield* path.fromFileUrl(new URL("./lifecycle.ts", import.meta.url));
   const manifest = path.join(directory, "pids.json");
   const read = fs
     .readFileString(manifest)
-    .pipe(
-      Effect.map(
-        (text) => JSON.parse(text) as { wrapper: number; leaf: number },
-      ),
-    );
+    .pipe(Effect.map((text) => JSON.parse(text) as { wrapper: number; leaf: number }));
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       if (!(yield* fs.exists(manifest))) return;

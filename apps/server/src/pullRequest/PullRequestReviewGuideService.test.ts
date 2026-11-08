@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -221,7 +222,7 @@ const layerBase = Layer.mergeAll(
     Layer.provideMerge(VcsProcess.layer),
   ),
   SqlitePersistence.layerMemory,
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 type Repositories = Effect.Success<typeof makeRepositories>;
 
@@ -466,7 +467,7 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
-  it.effect("keeps excerpts of source lines a configured diff driver would convert away", () =>
+  it.effect("keeps excerpts despite the checkout's diff driver and a failing hook", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const repositories = yield* makeRepositories;
@@ -476,6 +477,9 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           "feature.txt diff=blank\n",
         );
         yield* git(repositories.workspace, ["config", "diff.blank.textconv", "true"]);
+        const hook = `${repositories.workspace}/.git/hooks/post-checkout`;
+        yield* fs.writeFileString(hook, "#!/bin/sh\nexit 1\n");
+        yield* fs.chmod(hook, 0o755);
         const stored = yield* Deferred.make<void>();
         const context = yield* Layer.build(
           makeLayer({
@@ -501,9 +505,10 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           context,
           PullRequestReviewGuideService.PullRequestReviewGuideService,
         );
-        yield* service.generate(reference);
-        yield* Deferred.await(stored);
-        const result = yield* service.get(reference);
+        const runs = yield* watchRuns;
+        yield* runs.generate(service, reference);
+        const result = yield* runs.settled(service, reference);
+        assert.notStrictEqual(result.run?._tag, "Failed", JSON.stringify(result.run));
         assert.deepStrictEqual(result.guide?.stops[0]?.excerpts, [
           { path: "feature.txt", side: "new", start: 1, end: 3, caption: "" },
         ]);
