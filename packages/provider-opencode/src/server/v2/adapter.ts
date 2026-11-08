@@ -309,7 +309,8 @@ interface ThreadState {
     string,
     {
       readonly inboxId: string;
-      readonly childId: string;
+      /** The child session or background shell that reported. */
+      readonly sourceId: string;
       readonly report: BackgroundWorkReport;
       readonly text: string;
     }
@@ -321,7 +322,8 @@ interface ThreadState {
   >;
   /** Shells whose end arrived before their launch result; OpenCode does not wait for the launch to return. */
   readonly endedShells: Set<string>;
-  readonly stoppedChildren: Set<string>;
+  /** Child sessions and shells the user stopped; a wake their reports alone cause runs nothing. */
+  readonly stopped: Set<string>;
   readonly strandedSteers: Set<string>;
   mcp:
     | { readonly name: string; readonly directory: string; readonly credential: string }
@@ -780,7 +782,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       reports: new Map(),
       shells: new Map(),
       endedShells: new Set(),
-      stoppedChildren: new Set(),
+      stopped: new Set(),
       strandedSteers: new Set(),
       mcp: undefined,
       instructions: undefined,
@@ -1269,25 +1271,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     });
 
     const syncRoster = Effect.fnUntraced(function* (state: ThreadState) {
-      const subagents = runningCalls(state)
-        .filter((call) => call.background)
-        .map((call) => ({
-          taskId: call.nativeId,
-          kind: "subagent" as const,
-          ...(call.title?.trim() ? { description: call.title.trim() } : {}),
-          ...(call.child?.subagent === undefined
-            ? {}
-            : { childThreadId: call.child.subagent.appThread.id }),
-        }));
+      const background = runningCalls(state).filter((call) => call.background);
+      const subagents = background.map((call) => ({
+        taskId: call.nativeId,
+        kind: "subagent" as const,
+        ...(call.title?.trim() ? { description: call.title.trim() } : {}),
+        ...(call.child?.subagent === undefined
+          ? {}
+          : { childThreadId: call.child.subagent.appThread.id }),
+      }));
       // Restart recovery reads a subagent before the shells naming it as their parent.
       const shells = sessionsOf(state).flatMap((session) =>
         [...session.shells].map(([taskId, shell]) => ({
           taskId,
           kind: "command" as const,
           ...(shell.command === undefined ? {} : { description: shell.command }),
-          ...(session === state || session.subagent === undefined
-            ? {}
-            : { parentTaskId: session.subagent.call.nativeId }),
+          ...(session.subagent !== undefined && background.includes(session.subagent.call)
+            ? { parentTaskId: session.subagent.call.nativeId }
+            : {}),
         })),
       );
       const roster: ReadonlyArray<OrchestrationV2PendingBackgroundTask> = [...subagents, ...shells];
@@ -2228,9 +2229,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const delivered = [...state.reports.values()];
       state.reports.clear();
       const stopped =
-        delivered.length > 0 &&
-        delivered.every((entry) => state.stoppedChildren.has(entry.childId));
-      for (const entry of delivered) state.stoppedChildren.delete(entry.childId);
+        delivered.length > 0 && delivered.every((entry) => state.stopped.has(entry.sourceId));
+      for (const entry of delivered) state.stopped.delete(entry.sourceId);
       if (stopped) {
         markUnsettled(state);
         yield* client.session
@@ -2285,7 +2285,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
         inboxId,
-        childId,
+        sourceId: childId,
         text: payload.text,
         report: {
           kind: "subagent",
@@ -2294,7 +2294,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           outcome,
         },
       });
-      const status = state.stoppedChildren.has(childId)
+      const status = state.stopped.has(childId)
         ? "interrupted"
         : outcome === "failed"
           ? "failed"
@@ -2349,11 +2349,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const trackShellEnd = (
       state: ThreadState,
-      metadata: Readonly<Record<string, unknown>> | undefined,
+      inboxId: string,
+      payload: {
+        readonly text: string;
+        readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+      },
     ) => {
-      const shellId = stringField(metadata, "shellID");
-      if (stringField(metadata, "source") !== "shell" || shellId === undefined) return;
+      const shellId = stringField(payload.metadata, "shellID");
+      if (stringField(payload.metadata, "source") !== "shell" || shellId === undefined) return;
+      const shell = state.shells.get(shellId);
       if (!state.shells.delete(shellId)) state.endedShells.add(shellId);
+      // Removing a shell reports it to its session, which wakes that session.
+      if (!state.stopped.has(shellId)) return;
+      state.reports.set(inboxId, {
+        inboxId,
+        sourceId: shellId,
+        text: payload.text,
+        report: { kind: "command", label: shell?.command, outcome: "cancelled" },
+      });
     };
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
@@ -2493,7 +2506,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.subagent.queued ??= event.data.inboxID;
       }
       if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
-        trackShellEnd(state, event.data.item.payload.metadata);
+        trackShellEnd(state, event.data.inboxID, event.data.item.payload);
         return yield* onReport(state, event.data.inboxID, event.data.item.payload);
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
@@ -2553,6 +2566,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.shells.clear();
         state.endedShells.clear();
       }
+      for (const state of threads.values()) yield* syncRoster(state);
       yield* setSessionStatus("error", message);
       yield* Queue.end(events);
     });
@@ -3295,7 +3309,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         childOwners.delete(childId);
         strays.set(childId, caller);
         retired.add(childId);
-        threads.get(info.parentID ?? "")?.stoppedChildren.add(childId);
+        threads.get(info.parentID ?? "")?.stopped.add(childId);
       };
       for (const wake of wakes) {
         wake.dropped = true;
@@ -3388,6 +3402,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const shells = callers.flatMap((caller) =>
         [...caller.shells].map(([id, shell]) => ({ caller, id, directory: shell.directory })),
       );
+      // OpenCode reports and wakes the shell's session before the remove returns.
+      for (const { caller, id } of shells) caller.stopped.add(id);
       const removed = yield* Effect.filter(shells, ({ id, directory }) =>
         client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
           // OpenCode declares no not-found error for remove; only the directory can be gone.
@@ -3402,7 +3418,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       const unreached = new Set<string>();
       for (const [childId, caller] of children) {
-        caller.stoppedChildren.add(childId);
+        caller.stopped.add(childId);
         const reached = yield* client.session
           .interrupt({ sessionID: Session.ID.make(childId) })
           .pipe(
@@ -3432,9 +3448,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(call, "interrupted");
           }
           for (const caller of callers) {
-            for (const report of caller.reports.values()) {
-              caller.stoppedChildren.add(report.childId);
-            }
+            for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
           }
           for (const { caller, id } of removed) caller.shells.delete(id);
           for (const caller of new Set(removed.map(({ caller }) => caller))) {

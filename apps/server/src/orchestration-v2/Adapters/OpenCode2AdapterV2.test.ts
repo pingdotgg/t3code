@@ -904,12 +904,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   );
 
   const SHELL_COMMAND = "sleep 300; echo done";
-  const backgroundShell = (shellID: string): ReadonlyArray<ProviderReplayEntry> => {
-    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: `call-${shellID}` };
+  const shellLaunched = (
+    sessionID: string,
+    shellID: string,
+  ): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID, assistantMessageID: "msg_assistant", id: `call-${shellID}` };
     return [
-      out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-      promptAccepted,
-      event("session.execution.started", { sessionID: SESSION }),
       event("session.tool.input.started", { ...tool, name: "shell" }),
       event("session.tool.called", {
         ...tool,
@@ -933,12 +933,43 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               metadata: { status: "running", truncated: false, shellID },
               executed: false,
             },
-            durable: { aggregateID: SESSION, seq: 1, version: 2 },
+            durable: { aggregateID: sessionID, seq: 1, version: 2 },
           },
         },
       },
     ];
   };
+  const backgroundShell = (shellID: string): ReadonlyArray<ProviderReplayEntry> => [
+    out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+    promptAccepted,
+    event("session.execution.started", { sessionID: SESSION }),
+    ...shellLaunched(SESSION, shellID),
+  ];
+  // OpenCode reports a removed shell to its session and wakes it before the remove returns.
+  const shellRemoved = (sessionID: string, shellID: string): ReadonlyArray<ProviderReplayEntry> => [
+    out("shell.remove", { id: shellID, "location[directory]": WORK }),
+    event("session.inbox.enqueued", {
+      inboxID: `msg_removed_${shellID}`,
+      sessionID,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<shell id="${shellID}" state="error">Shell.NotFoundError</shell>`,
+          metadata: { source: "shell", shellID, state: "error" },
+        },
+        delivery: "steer",
+      },
+    }),
+    event("session.execution.started", { sessionID }),
+    reply("shell.remove", null),
+    out("session.interrupt", { sessionID }),
+    reply("session.interrupt", { interrupted: true }),
+    event("session.execution.interrupted", { sessionID }),
+  ];
+  const drained = event("session.model.selected", {
+    sessionID: SESSION,
+    model: { providerID: "opencode", id: "big-pickle", variant: "drained" },
+  });
 
   it.effect("lists a background shell still running after the turn as pending work", () =>
     Effect.gen(function* () {
@@ -966,79 +997,111 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("removes a running background shell on a user Stop", () =>
+  it.effect("clears a background shell from the roster when the stream cannot reconnect", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
         ...backgroundShell("sh_1"),
-        out("shell.remove", { id: "sh_1", "location[directory]": WORK }),
-        reply("shell.remove", null),
-        out("session.interrupt", { sessionID: SESSION }),
-        reply("session.interrupt", { interrupted: true }),
-        event("session.execution.interrupted", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        { type: "runtime_exit", status: "success" } as const,
       ]);
-      const launched = yield* Deferred.make<void>();
-      const terminal = yield* runtime.events.pipe(
-        Stream.tap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId?.endsWith("call-sh_1") === true &&
-          event.turnItem.type === "command_execution" &&
-          event.turnItem.output !== undefined
-            ? Deferred.succeed(launched, undefined)
-            : Effect.void,
-        ),
-        Stream.filter(
-          (
-            event,
-          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
-            event.type === "turn.terminal",
-        ),
-        Stream.runHead,
-        Effect.map(Option.getOrUndefined),
-        Effect.forkScoped,
-      );
+      const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
       yield* runtime.startTurn(turnInput(thread));
-      yield* Deferred.await(launched);
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* TestClock.adjust("1 minute");
+      const last = (yield* Fiber.join(events))
+        .filter(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.id === thread.id,
+        )
+        .at(-1);
+      assert.deepEqual(
+        last?.type === "provider_thread.updated"
+          ? [last.providerThread.pendingBackgroundTasks, last.pendingBackgroundWork]
+          : undefined,
+        [[], false],
+      );
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a running background shell on a user Stop", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...shellRemoved(SESSION, "sh_1"),
+        drained,
+      ]).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       yield* runtime.interruptTurn({
         providerThread: thread,
         providerTurnId: yield* providerTurnId,
         requestRuntimeRestart: true,
       });
-      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+      yield* Effect.raceFirst(
+        watch.until(() => watch.state.variant === "drained"),
+        Deferred.await(offered),
+      );
+      assert.isFalse(yield* Deferred.isDone(offered));
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("lists a finished subagent's background shell as a plain command a Stop removes", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundLaunch(CHILD),
+        returnedRunning("call-background"),
+        event("session.execution.started", { sessionID: CHILD }),
+        ...shellLaunched(CHILD, "sh_child"),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report", "CHILD_OK"),
+        event("session.inbox.delivered", { sessionID: SESSION, inboxID: "msg_report" }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...shellRemoved(CHILD, "sh_child"),
+        drained,
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* watch.until(() => watch.calls.get("Sleep")?.status === "completed");
+      assert.deepEqual(watch.state.roster, [
+        { taskId: "sh_child", kind: "command", description: SHELL_COMMAND },
+      ]);
+      const childTurns = watch.childTurns.size;
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* watch.until(
+        () => watch.state.variant === "drained" || watch.childTurns.size > childTurns,
+      );
+      assert.equal(watch.childTurns.size, childTurns);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
   );
 
   it.effect("lists a subagent's background shell under the subagent that started it", () =>
     Effect.gen(function* () {
-      const tool = { sessionID: CHILD, assistantMessageID: "msg_child", id: "call-child-shell" };
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.started", { sessionID: CHILD }),
-        event("session.tool.input.started", { ...tool, name: "shell" }),
-        event("session.tool.called", {
-          ...tool,
-          name: "shell",
-          input: { command: SHELL_COMMAND, background: true },
-          executed: false,
-        }),
-        {
-          type: "emit_inbound",
-          frame: {
-            type: "sdk.event",
-            event: {
-              id: "evt_toolsuccess_child_shell",
-              created: 1,
-              type: "session.tool.success",
-              data: {
-                ...tool,
-                content: [{ type: "text", text: "Command moved to the background." }],
-                metadata: { status: "running", truncated: false, shellID: "sh_child" },
-                executed: false,
-              },
-              durable: { aggregateID: CHILD, seq: 1, version: 2 },
-            },
-          },
-        },
+        ...shellLaunched(CHILD, "sh_child"),
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       const events = yield* runtime.events.pipe(
@@ -1258,7 +1321,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         string,
         Record<string, { status: string; result: string | null }>
       >();
-      const state: { roster: ReadonlyArray<unknown> | undefined } = { roster: undefined };
+      const state: {
+        roster: ReadonlyArray<unknown> | undefined;
+        pending: boolean | undefined;
+        variant: unknown;
+      } = { roster: undefined, pending: undefined, variant: undefined };
       let wake = yield* Deferred.make<void>();
       yield* runtime.events.pipe(
         Stream.tap((event) =>
@@ -1271,6 +1338,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             }
             if (event.type === "provider_thread.updated" && event.providerThread.id === thread.id) {
               state.roster = event.providerThread.pendingBackgroundTasks;
+              state.pending = event.pendingBackgroundWork;
+              state.variant =
+                event.providerThread.nativeMetadata?.modelSelection?.options?.[0]?.value;
             }
             const id =
               event.type === "provider_turn.updated"
