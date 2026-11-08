@@ -1,6 +1,5 @@
 import { AppActivityIndicator } from "./AppActivityIndicator";
-import { Column, Row, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
-import { weight } from "@expo/ui/jetpack-compose/modifiers";
+import { Column, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { use, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
@@ -109,25 +108,21 @@ export function AndroidScreenHeader(props: {
               {props.title}
             </NativeText>
           ) : props.compact ? (
-            <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
-              <NativeText
-                color={colors["--color-header-foreground"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={titleTypography}
-              >
-                {props.title}
-              </NativeText>
+            // One paragraph, so the smaller subtitle shares the title's baseline.
+            <NativeText
+              color={colors["--color-header-foreground"]}
+              maxLines={1}
+              overflow="ellipsis"
+              style={titleTypography}
+            >
+              {props.title}
               <NativeText
                 color={colors["--color-foreground-muted"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={subtitleTypography}
-                modifiers={[weight(1)]}
+                style={{ fontSize: subtitleTypography.fontSize }}
               >
-                {props.subtitle}
+                {`  ${props.subtitle}`}
               </NativeText>
-            </Row>
+            </NativeText>
           ) : (
             <Column>
               <NativeText
