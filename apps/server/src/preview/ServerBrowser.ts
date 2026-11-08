@@ -581,7 +581,8 @@ export const prepareContext = (context: BrowserContext) => {
   if (prepared) return prepared;
   const preparing = context
     .grantPermissions(["clipboard-write"])
-    .then(() => context.addInitScript(CLIPBOARD_WRITE_SCRIPT));
+    .then(() => context.addInitScript(CLIPBOARD_WRITE_SCRIPT))
+    .then(constVoid);
   preparedContexts.set(context, preparing);
   return preparing;
 };
