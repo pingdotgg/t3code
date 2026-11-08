@@ -112,11 +112,12 @@ export function createWorkspaceFocusController(doc: Document) {
       workspaceArea(element) === area &&
       isWorkspaceElementVisible(element) &&
       !element.matches(":disabled");
+    // Nested areas count here: a side chat's message input sits in its own area inside the panel.
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
         '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
-    ).find(belongs);
+    ).find((element) => isWorkspaceElementVisible(element) && !element.matches(":disabled"));
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
       (element) => element.tabIndex >= 0 && belongs(element),
     );

@@ -249,6 +249,24 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
+  it("focuses a side chat's message input when the panel opens on it", () => {
+    using fixture = setup();
+    const panel = fixture.area("panel", 3);
+    const content = document.createElement("div");
+    content.setAttribute("data-right-panel-surface-content", "");
+    const bringBack = document.createElement("button");
+    bringBack.textContent = "Bring back";
+    content.append(bringBack);
+    panel.element.append(content);
+    fixture.area("conversation", 1, content);
+    const composer = fixture.area("composer", 2, content);
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    composer.element.append(editor);
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);
