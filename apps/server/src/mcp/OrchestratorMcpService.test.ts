@@ -26,6 +26,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1287,35 +1288,52 @@ describe("OrchestratorMcpService provider resolution", () => {
     "declined",
     "the run ending",
     "an answer before the wait",
+    "an answer during the first read",
     "no answer",
   ] as const)("a secret request returns on %s", (outcome) =>
     Effect.gen(function* () {
-      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent, Cause.Done>();
       const subscribed = yield* Deferred.make<void>();
       const secretRef = SecretRef.make("secret-ref:mcp-secret");
       const eventType = outcome === "the run ending" ? "run.updated" : "turn-item.updated";
       let runStatus = "running";
       let card: { readonly id: string; secretStatus: string } | undefined;
+      let sequence = 0;
+      const commit = (type: string, payload: unknown) =>
+        Queue.offer(events, {
+          sequence: ++sequence,
+          event: { type, threadId: parentThreadId, payload },
+        } as unknown as OrchestrationV2StoredEvent);
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () =>
-            Effect.sync(() => {
+            Effect.gen(function* () {
               const projection = parentProjection([]);
-              return {
+              const records = {
                 ...projection,
                 runs: projection.runs.map((run) => ({ ...run, status: runStatus })),
                 turnItems: card === undefined ? [] : [{ ...card, type: "secret_request" }],
               } as unknown as OrchestrationV2ThreadProjection;
+              // The answer commits after this read's snapshot, before the wait subscribes.
+              if (
+                outcome === "an answer during the first read" &&
+                card?.secretStatus === "pending"
+              ) {
+                card = { id: card.id, secretStatus: "saved" };
+                yield* commit("turn-item.updated", card);
+              }
+              return records;
             }),
-          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadEventSequence: () => Effect.sync(() => sequence),
           streamStoredEventsFrom: (input) =>
             input?.eventType === eventType
               ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
                   Stream.drain,
                   Stream.concat(Stream.fromQueue(events)),
+                  Stream.filter((stored) => stored.sequence > (input.afterSequence ?? 0)),
                 )
-              : Stream.never,
+              : Stream.empty,
           dispatch: (command) =>
             Effect.sync(() => {
               if (command.type === "secret_request.record") {
@@ -1325,7 +1343,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                     outcome === "an answer before the wait" ? "saved" : command.secretStatus,
                 };
               }
-              return { sequence: 1, storedEvents: [] } as never;
+              return { sequence: ++sequence, storedEvents: [] } as never;
             }),
         }),
         ServerSettings.layerTest(),
@@ -1346,23 +1364,22 @@ describe("OrchestratorMcpService provider resolution", () => {
         if (outcome !== "an answer before the wait") yield* Deferred.await(subscribed);
         if (outcome === "saved" || outcome === "declined") {
           card = { id: card!.id, secretStatus: outcome };
-          yield* Queue.offer(events, {
-            sequence: 2,
-            event: { type: "turn-item.updated", threadId: parentThreadId, payload: card },
-          } as unknown as OrchestrationV2StoredEvent);
+          yield* commit("turn-item.updated", card);
         } else if (outcome === "the run ending") {
           runStatus = "interrupted";
-          yield* Queue.offer(events, {
-            sequence: 2,
-            event: { type: "run.updated", threadId: parentThreadId, payload: { id: parentRunId } },
-          } as unknown as OrchestrationV2StoredEvent);
+          yield* commit("run.updated", { id: parentRunId });
+        } else if (outcome === "an answer during the first read") {
+          // Nothing else arrives, so a wait that skipped the answer ends without one.
+          yield* Queue.end(events);
         } else if (outcome === "no answer") {
           yield* TestClock.adjust("10 minutes");
         }
         const result = yield* Fiber.join(waiting);
         assert.deepEqual(
           result,
-          outcome === "saved" || outcome === "an answer before the wait"
+          outcome === "saved" ||
+            outcome === "an answer before the wait" ||
+            outcome === "an answer during the first read"
             ? { status: "saved", secretRef }
             : outcome === "declined"
               ? { status: "declined" }
