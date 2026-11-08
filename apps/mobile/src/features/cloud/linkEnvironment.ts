@@ -173,13 +173,18 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
     Effect.mapError(cloudEnvironmentLinkError("Could not load the mobile device id.")),
   );
   const liveActivitiesEnabled = input.liveActivitiesEnabled;
+  // Without managed tunnels, the relay brokers the address this device already reaches.
+  const managedTunnelsEnabled = resolveCloudPublicConfig().relay.managedTunnels;
+  const providerKind = managedTunnelsEnabled
+    ? MANAGED_ENDPOINT_PROVIDER_KIND
+    : ("manual" satisfies RelayManagedEndpointProviderKind);
   const challenge = yield* relayClient
     .createEnvironmentLinkChallenge({
       clerkToken: input.clerkToken,
       payload: {
         notificationsEnabled: true,
         liveActivitiesEnabled,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled,
       },
     })
     .pipe(
@@ -197,7 +202,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         endpoint: {
           httpBaseUrl: input.connection.httpBaseUrl,
           wsBaseUrl: input.connection.wsBaseUrl,
-          providerKind: MANAGED_ENDPOINT_PROVIDER_KIND,
+          providerKind,
         },
         origin: endpointOrigin(input.connection.httpBaseUrl),
       },
@@ -211,7 +216,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
         proof,
         notificationsEnabled: true,
         liveActivitiesEnabled,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled,
       },
     })
     .pipe(
@@ -219,7 +224,7 @@ export const linkEnvironmentToCloudWithPreference = Effect.fn(
     );
   yield* ensureLinkedEnvironmentMatches({
     expectedEnvironmentId: input.connection.environmentId,
-    expectedProviderKind: MANAGED_ENDPOINT_PROVIDER_KIND,
+    expectedProviderKind: providerKind,
     link,
   });
 

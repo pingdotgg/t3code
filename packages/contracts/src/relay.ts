@@ -822,6 +822,20 @@ export const RelayProtectedResourceMetadata = Schema.Struct({
   dpop_signing_alg_values_supported: Schema.Array(Schema.Literal("ES256")),
 });
 
+/** What a client needs to use a relay given only its URL. */
+export const RelayServiceMetadata = Schema.Struct({
+  oidc: Schema.NullOr(
+    Schema.Struct({
+      issuer: TrimmedNonEmptyString,
+      clientId: TrimmedNonEmptyString,
+    }),
+  ).annotate({ description: "The OpenID Connect provider clients sign in with; null for Clerk." }),
+  managedTunnels: Schema.Boolean.annotate({
+    description: "Whether the relay can provision managed tunnels for linked environments.",
+  }),
+});
+export type RelayServiceMetadata = typeof RelayServiceMetadata.Type;
+
 export const RelayEnvironmentUnlinkParams = Schema.Struct({
   environmentId: EnvironmentId,
 });
@@ -1021,8 +1035,11 @@ const RelayMetadataGroup = HttpApiGroup.make("metadata")
     HttpApiEndpoint.get("protectedResource", "/.well-known/oauth-protected-resource", {
       success: RelayProtectedResourceMetadata,
     }).annotate(OpenApi.Summary, "Read OAuth protected-resource metadata"),
+    HttpApiEndpoint.get("service", "/.well-known/t3-relay", {
+      success: RelayServiceMetadata,
+    }).annotate(OpenApi.Summary, "Read how clients sign in to this relay"),
   )
-  .annotate(OpenApi.Description, "OAuth and DPoP discovery metadata.");
+  .annotate(OpenApi.Description, "OAuth, DPoP and relay discovery metadata.");
 
 export const RelayRegisterDeviceEndpoint = HttpApiEndpoint.post(
   "registerDevice",

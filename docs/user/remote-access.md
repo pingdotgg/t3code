@@ -64,6 +64,38 @@ opens and approve. The new limit applies the next time you add a machine. If you
 cancel or downgrade T3 Chat, machines you already linked stay linked, but you
 cannot add more until you are under the limit again.
 
+### Use your own relay
+
+T3 Connect can run through a relay you host, with sign-in from your own OpenID
+Connect provider instead of a T3 account. Set up the relay first with
+[the self-hosting guide](../../infra/relay/selfhost/README.md).
+
+On each web, desktop, and mobile app, open **Settings → Connections → T3 Connect
+service**, choose **Self-hosted relay**, and enter the relay's address. The app
+reads the sign-in provider from the relay, reloads, and asks you to sign in.
+Choose **T3 Connect** there to switch back. Environments you linked through your
+relay stay linked to it until you turn T3 Connect off and on again.
+
+A self-hosted relay has no managed tunnels. Linking an environment still works,
+but your other devices reach it only at an HTTPS address you expose yourself,
+such as a reverse proxy or [Tailscale HTTPS](#tailscale-https). Start the host
+with that address in `T3CODE_PUBLIC_URL`. Tailscale and LAN addresses also need
+`RELAY_MANUAL_ENDPOINTS=private` on the relay.
+
+For a command-line host, set the relay before `t3 connect`:
+
+```bash
+export T3CODE_RELAY_URL=https://relay.example.com
+export T3CODE_OIDC_ISSUER=https://sso.example.com
+export T3CODE_OIDC_CLIENT_ID=t3-code
+t3 connect
+```
+
+To sign in from app.t3.codes, your identity provider must also allow
+`https://app.t3.codes/oidc/callback` as a redirect URI. Push notifications and
+Live Activities need the mobile app publisher's credentials, so a self-hosted
+relay does not send them.
+
 ## Pair over a LAN or private network
 
 Use direct pairing when the other device can reach the host's network address.

@@ -64,6 +64,8 @@ export type ManualEndpointsMode = typeof ManualEndpointsMode.Type;
 export interface OidcSettings {
   // Must equal the issuer's discovery `issuer` exactly, so a path prefix or trailing slash matters.
   readonly issuer: string;
+  /** The apps' OAuth client id, which is also the ID token audience the relay accepts. */
+  readonly clientId: string;
   readonly verify: (
     token: string,
   ) => Effect.Effect<VerifiedSubject, SubjectTokenVerificationFailed>;

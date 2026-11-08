@@ -22,7 +22,7 @@ import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-g
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useCloudAuth } from "../cloud/cloudAuth";
-import { hasCloudPublicConfig } from "../cloud/publicConfig";
+import { hasCloudPublicConfig, readSelfHostedRelay } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
@@ -129,6 +129,7 @@ function ConfiguredSettingsRouteScreen() {
           onPress: () => navigation.navigate("SettingsAuth"),
         },
         environmentsRow(Object.keys(savedConnectionsById).length),
+        connectServiceRow(),
         {
           id: "SettingsNotifications",
           icon: "bell.badge",
@@ -142,7 +143,23 @@ function ConfiguredSettingsRouteScreen() {
 
 function LocalSettingsRouteScreen() {
   const { savedConnectionsById } = useSavedRemoteConnections();
-  return <SettingsList connections={[environmentsRow(Object.keys(savedConnectionsById).length)]} />;
+  return (
+    <SettingsList
+      connections={[environmentsRow(Object.keys(savedConnectionsById).length), connectServiceRow()]}
+    />
+  );
+}
+
+function connectServiceRow(): SettingsListRow {
+  const relay = readSelfHostedRelay();
+  return {
+    id: "SettingsConnectService",
+    icon: "server.rack",
+    label: "T3 Connect service",
+    value: relay ? new URL(relay.relayUrl).host : "T3 Connect",
+    valuePosition: "trailing",
+    target: "SettingsConnectService",
+  };
 }
 
 function environmentsRow(count: number): SettingsListRow {

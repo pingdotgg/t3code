@@ -18,6 +18,7 @@ import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useCloudAuth } from "./cloudAuth";
 import { isCloudEnvironmentLinkError } from "./linkEnvironment";
+import { resolveCloudPublicConfig } from "./publicConfig";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkEnvironment as linkEnvironmentAtom,
@@ -95,7 +96,13 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
 
   const linkData = cloudLinkState.data;
   const linkRevoked = linkData?.linkRevoked ?? false;
-  const managedTunnelActive = linkData ? isManagedTunnelActive(linkData, relayProviderKind) : false;
+  // Without managed tunnels, a link is how other devices find the environment's own address.
+  const { managedTunnels } = resolveCloudPublicConfig();
+  const managedTunnelActive = linkData
+    ? managedTunnels
+      ? isManagedTunnelActive(linkData, relayProviderKind)
+      : linkData.linked && linkData.linkRevoked !== true
+    : false;
   const managedTunnelOutOfSync =
     linkData !== null && !managedTunnelActive && isManagedTunnelActive(linkData, undefined);
   const publishAgentActivity = cloudLinkState.data?.publishAgentActivity ?? false;
@@ -174,15 +181,16 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         return false;
       }
       const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
+      const desiredManagedTunnel = desired.managedTunnel && managedTunnels;
       if (
         !currentLinkState.linked ||
         currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desired.managedTunnel
+        currentManagedTunnel !== desiredManagedTunnel
       ) {
         const linkResult = await linkEnvironment({
           target,
           clerkToken,
-          mode: desired.managedTunnel ? "managed" : "publish_only",
+          mode: desiredManagedTunnel ? "managed" : "publish_only",
         });
         // Any link attempt can change the account's tunnel count.
         refreshManagedTunnelUsage();

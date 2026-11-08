@@ -69,7 +69,7 @@ const settingsWith = (verify: RelayConfiguration.OidcSettings["verify"]) =>
     clerkSecretKey: Redacted.make("clerk-secret-key"),
     clerkPublishableKey: "pk_test",
     clerkJwtAudience: CLERK_AUDIENCE,
-    oidc: { issuer: ISSUER, verify },
+    oidc: { issuer: ISSUER, clientId: "t3-code", verify },
   }) as unknown as RelayConfiguration.RelayConfiguration["Service"];
 
 const requestUrl = (input: RequestInfo | URL) =>

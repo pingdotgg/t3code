@@ -2,6 +2,12 @@ import {
   clerkFrontendApiHostnameFromPublishableKey,
   relayClerkTokenOptions,
 } from "@t3tools/shared/relayAuth";
+import {
+  encodeSelfHostedRelay,
+  parseStoredSelfHostedRelay,
+  SELF_HOSTED_RELAY_STORAGE_KEY,
+  type SelfHostedRelay,
+} from "@t3tools/client-runtime/relay/self-hosted";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
 
@@ -22,6 +28,8 @@ export interface CloudPublicConfig {
   readonly oidcIssuer: string | null;
   readonly oidcClientId: string | null;
   readonly relayUrl: string | null;
+  /** False for a relay that cannot provision tunnels, so links use the environment's own address. */
+  readonly managedTunnels: boolean;
   readonly relayTracing: {
     readonly tracesUrl: string | null;
     readonly tracesDataset: string | null;
@@ -42,17 +50,55 @@ function normalizeSecureUrl(value: string): string | null {
   }
 }
 
+let selfHostedRelay: SelfHostedRelay | null | undefined;
+
+/** The relay the user chose in settings; it replaces the build's T3 Connect until cleared. */
+export function readSelfHostedRelay(): SelfHostedRelay | null {
+  if (selfHostedRelay !== undefined) return selfHostedRelay;
+  try {
+    selfHostedRelay = parseStoredSelfHostedRelay(
+      window.localStorage.getItem(SELF_HOSTED_RELAY_STORAGE_KEY),
+    );
+  } catch {
+    selfHostedRelay = null;
+  }
+  return selfHostedRelay;
+}
+
+/** Sign-in is wired once at startup, so callers reload the page after a change. */
+export function saveSelfHostedRelay(relay: SelfHostedRelay | null): void {
+  if (relay === null) window.localStorage.removeItem(SELF_HOSTED_RELAY_STORAGE_KEY);
+  else window.localStorage.setItem(SELF_HOSTED_RELAY_STORAGE_KEY, encodeSelfHostedRelay(relay));
+  selfHostedRelay = relay;
+}
+
 export function resolveCloudPublicConfig(): CloudPublicConfig {
+  const selfHosted = typeof window === "undefined" ? null : readSelfHostedRelay();
+  if (selfHosted !== null) {
+    return {
+      clerkPublishableKey: null,
+      clerkJwtTemplate: null,
+      oidcIssuer: selfHosted.oidcIssuer,
+      oidcClientId: selfHosted.oidcClientId,
+      relayUrl: selfHosted.relayUrl,
+      managedTunnels: selfHosted.managedTunnels,
+      // The build's relay telemetry belongs to its own T3 Connect, not to this relay.
+      relayTracing: { tracesUrl: null, tracesDataset: null, tracesToken: null },
+    };
+  }
+  const oidcIssuer = trimNonEmpty(import.meta.env.VITE_OIDC_ISSUER as string | undefined);
   return {
     clerkPublishableKey: trimNonEmpty(
       import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined,
     ),
     clerkJwtTemplate: trimNonEmpty(import.meta.env.VITE_CLERK_JWT_TEMPLATE as string | undefined),
-    oidcIssuer: trimNonEmpty(import.meta.env.VITE_OIDC_ISSUER as string | undefined),
+    oidcIssuer,
     oidcClientId: trimNonEmpty(import.meta.env.VITE_OIDC_CLIENT_ID as string | undefined),
     relayUrl: normalizeSecureRelayUrl(
       (import.meta.env.VITE_T3CODE_RELAY_URL as string | undefined) ?? "",
     ),
+    // A build configured for OIDC targets a self-hosted relay, which has no managed tunnels.
+    managedTunnels: oidcIssuer === null,
     relayTracing: {
       tracesUrl: normalizeSecureUrl(
         (import.meta.env.VITE_RELAY_OTLP_TRACES_URL as string | undefined) ?? "",

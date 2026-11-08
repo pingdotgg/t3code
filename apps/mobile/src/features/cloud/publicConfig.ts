@@ -1,4 +1,11 @@
+import {
+  encodeSelfHostedRelay,
+  parseStoredSelfHostedRelay,
+  SELF_HOSTED_RELAY_STORAGE_KEY,
+  type SelfHostedRelay,
+} from "@t3tools/client-runtime/relay/self-hosted";
 import Constants from "expo-constants";
+import * as SecureStore from "expo-secure-store";
 import { relayClerkTokenOptions } from "@t3tools/shared/relayAuth";
 import { normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Schema from "effect/Schema";
@@ -25,6 +32,8 @@ export interface CloudPublicConfig {
   };
   readonly relay: {
     readonly url: string | null;
+    /** False for a relay that cannot provision tunnels, so links use the environment's own address. */
+    readonly managedTunnels: boolean;
   };
   readonly observability: {
     readonly tracesUrl: string | null;
@@ -60,25 +69,62 @@ function normalizeSecureUrl(value: unknown): string | null {
   }
 }
 
-export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig?.extra) {
+let selfHostedRelay: SelfHostedRelay | null | undefined;
+
+/** The relay the user chose in settings; it replaces the build's T3 Connect until cleared. */
+export function readSelfHostedRelay(): SelfHostedRelay | null {
+  if (selfHostedRelay !== undefined) return selfHostedRelay;
+  try {
+    selfHostedRelay = parseStoredSelfHostedRelay(
+      SecureStore.getItem(SELF_HOSTED_RELAY_STORAGE_KEY),
+    );
+  } catch {
+    selfHostedRelay = null;
+  }
+  return selfHostedRelay;
+}
+
+/** Sign-in is wired once at startup, so callers reload the app after a change. */
+export async function saveSelfHostedRelay(relay: SelfHostedRelay | null): Promise<void> {
+  if (relay === null) await SecureStore.deleteItemAsync(SELF_HOSTED_RELAY_STORAGE_KEY);
+  else await SecureStore.setItemAsync(SELF_HOSTED_RELAY_STORAGE_KEY, encodeSelfHostedRelay(relay));
+  selfHostedRelay = relay;
+}
+
+export function resolveCloudPublicConfig(
+  extra: ExpoExtra = Constants.expoConfig?.extra,
+  selfHosted: SelfHostedRelay | null = readSelfHostedRelay(),
+): CloudPublicConfig {
+  if (selfHosted !== null) {
+    return {
+      clerk: { publishableKey: null, jwtTemplate: null },
+      oidc: { issuer: selfHosted.oidcIssuer, clientId: selfHosted.oidcClientId },
+      relay: { url: selfHosted.relayUrl, managedTunnels: selfHosted.managedTunnels },
+      // The build's relay telemetry belongs to its own T3 Connect, not to this relay.
+      observability: { tracesUrl: null, tracesDataset: null, tracesToken: null },
+    };
+  }
+  const oidcIssuer = trimNonEmpty(extra?.oidc?.issuer);
   return {
     clerk: {
       publishableKey: trimNonEmpty(extra?.clerk?.publishableKey),
       jwtTemplate: trimNonEmpty(extra?.clerk?.jwtTemplate),
     },
     oidc: {
-      issuer: trimNonEmpty(extra?.oidc?.issuer),
+      issuer: oidcIssuer,
       clientId: trimNonEmpty(extra?.oidc?.clientId),
     },
     relay: {
       url: normalizeSecureRelayUrl(trimNonEmpty(extra?.relay?.url) ?? ""),
+      // A build configured for OIDC targets a self-hosted relay, which has no managed tunnels.
+      managedTunnels: oidcIssuer === null,
     },
     observability: {
       tracesUrl: normalizeSecureUrl(extra?.observability?.tracesUrl),
       tracesDataset: trimNonEmpty(extra?.observability?.tracesDataset),
       tracesToken: trimNonEmpty(extra?.observability?.tracesToken),
     },
-  } satisfies CloudPublicConfig;
+  };
 }
 
 /** An OpenID Connect provider takes the place of Clerk when the build configures one. */

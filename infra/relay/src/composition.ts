@@ -177,9 +177,9 @@ export const composeRelay = Effect.fn("relay.composition.compose")(function* <R>
       ...(clerkPublishableKey === undefined ? {} : { clerkPublishableKey }),
       ...(clerkJwtAudience === undefined ? {} : { clerkJwtAudience }),
       manualEndpoints,
-      ...(oidcIssuer === undefined || oidcVerify === undefined
+      ...(oidcIssuer === undefined || oidcAudience === undefined || oidcVerify === undefined
         ? {}
-        : { oidc: { issuer: oidcIssuer, verify: oidcVerify } }),
+        : { oidc: { issuer: oidcIssuer, clientId: oidcAudience, verify: oidcVerify } }),
       cloudMintPrivateKey: yield* cloudMintPrivateKey,
       cloudMintPublicKey: yield* cloudMintPublicKey,
       managedEndpointBaseDomain: host.managedEndpointBaseDomain,

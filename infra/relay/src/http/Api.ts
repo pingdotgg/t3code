@@ -454,6 +454,16 @@ export const layerMetadataApi = HttpApiBuilder.group(
           dpop_bound_access_tokens_required: true,
           dpop_signing_alg_values_supported: ["ES256"],
         }),
+      )
+      .handle("service", () =>
+        Effect.succeed({
+          oidc: settings.oidc
+            ? { issuer: settings.oidc.issuer, clientId: settings.oidc.clientId }
+            : null,
+          managedTunnels: Boolean(
+            settings.managedEndpointBaseDomain && settings.managedEndpointNamespace,
+          ),
+        }),
       );
   }),
 );

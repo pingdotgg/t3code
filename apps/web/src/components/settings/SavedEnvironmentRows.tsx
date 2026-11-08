@@ -47,7 +47,7 @@ import {
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
 } from "~/versionSkew";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { hasCloudPublicConfig, resolveCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
@@ -688,7 +688,9 @@ function ConfiguredCloudLinkRow({
             )
           }
         >
-          {signedOut || connectDenial !== undefined ? null : (
+          {signedOut ||
+          connectDenial !== undefined ||
+          !resolveCloudPublicConfig().managedTunnels ? null : (
             <T3ConnectTunnelUsage tunnelLimit={tunnelLimit} />
           )}
         </SettingsRow>

@@ -73,9 +73,17 @@ if a migration fails.
 
 ## Point the apps at this relay
 
-The apps read the relay and identity provider at build time. Set these in the repository's
-`.env` before building web, desktop or mobile (`scripts/lib/public-config.ts` maps them to each
-app's prefix):
+In each app, open **Settings → Connections → T3 Connect service**, choose **Self-hosted relay**,
+and enter `https://<RELAY_DOMAIN>`. The app reads the identity provider from the relay's
+`/.well-known/t3-relay` (`OIDC_ISSUER`, and `OIDC_AUDIENCE` as the client id), so nothing else
+needs typing. Check what the apps will see with:
+
+```sh
+curl https://<RELAY_DOMAIN>/.well-known/t3-relay
+# {"oidc":{"issuer":"https://sso.example.com/realms/t3","clientId":"t3-code"},"managedTunnels":false}
+```
+
+The `t3` server and CLI read the relay from the environment instead:
 
 ```sh
 T3CODE_RELAY_URL=https://relay.example.com
@@ -83,8 +91,9 @@ T3CODE_OIDC_ISSUER=https://sso.example.com/realms/t3
 T3CODE_OIDC_CLIENT_ID=t3-code
 ```
 
-A configured OpenID Connect provider replaces Clerk in that build. The `t3` server and CLI also
-read the same three variables at runtime, so an installed server can switch without a rebuild.
+A fork can also make the relay its build's default by setting the same three variables in the
+repository's `.env` before building web, desktop or mobile (`scripts/lib/public-config.ts` maps
+them to each app's prefix). A configured OpenID Connect provider replaces Clerk in that build.
 
 ## Reach an environment without a tunnel
 
