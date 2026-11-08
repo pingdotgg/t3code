@@ -46,3 +46,5 @@ const handlers = {
 } satisfies McpToolAccess.Handlers<typeof QuizToolkit.tools>;
 
 export const layer = McpToolAccess.toLayer(QuizToolkit, handlers);
+
+export { QUESTION_CARD_SHOWN, QUIZ_CARD_SHOWN };
