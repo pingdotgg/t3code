@@ -364,8 +364,8 @@ function AdaptiveWorkspaceLayoutContent(
     floatingTabs.row,
     floatingTabsEnabled,
   ]);
-  // A floating sidebar brings the rail with it.
-  const width = viewportWidth - (sidebarFloats ? 0 : navigationRailWidth);
+  // The rail keeps its room even while the sidebar floats; only the list pane overlays the page.
+  const width = viewportWidth - navigationRailWidth;
   // The sidebar stays mounted under a workspace page, so its list is ready on the way back.
   const shouldRenderPrimarySidebar = layout.usesSplitView;
   const fileInspector = useMemo(
@@ -779,7 +779,7 @@ function AdaptiveWorkspaceLayoutContent(
   // panes land. A sliding sidebar uncovers the strip it is about to fill, or covers the content
   // until it is gone.
   const contentLeftTarget = sidebarFloats
-    ? 0
+    ? navigationRailWidth
     : navigationRailWidth +
       (shouldRenderPrimarySidebar && !workspacePage && panes.primarySidebarVisible
         ? (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0)
@@ -859,7 +859,9 @@ function AdaptiveWorkspaceLayoutContent(
     workspacePage,
   ]);
   const railAnimatedStyle = useAnimatedStyle(() => ({ width: renderedRailWidth.value }));
-  const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({ left: renderedRailWidth.value }));
+  const floatingSidebarAnimatedStyle = useAnimatedStyle(() => ({
+    left: sidebarFloats ? renderedRailWidth.value : 0,
+  }));
   const floatingSidebarOpen = sidebarFloats && panes.primarySidebarVisible;
   // Its own value, so a sidebar that was beside a list doesn't dim the page as it leaves.
   const scrimOpacity = useSharedValue(0);
@@ -931,7 +933,7 @@ function AdaptiveWorkspaceLayoutContent(
     Math.max(
       0,
       viewportWidth -
-        (sidebarFloats ? 0 : renderedRailWidth.value) -
+        renderedRailWidth.value -
         (workspacePage || sidebarFloats ? 0 : drawnSidebarWidth.value) -
         renderedInspectorWidth.value,
     ),
@@ -1049,10 +1051,7 @@ function AdaptiveWorkspaceLayoutContent(
     >
       <AndroidHingeObserver onChange={handleHingeChange} />
       {shouldRenderNavigationRail ? (
-        <Animated.View
-          className={sidebarFloats ? "absolute inset-y-0 left-0" : "shrink self-stretch"}
-          style={railAnimatedStyle}
-        />
+        <Animated.View className="shrink self-stretch" style={railAnimatedStyle} />
       ) : null}
       {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
         <Animated.View
@@ -1069,11 +1068,9 @@ function AdaptiveWorkspaceLayoutContent(
           style={[
             workspacePage ? { position: "absolute", top: 0, bottom: 0, left: 0 } : null,
             sidebarFloats
-              ? [
-                  { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 },
-                  floatingSidebarAnimatedStyle,
-                ]
+              ? { position: "absolute", top: 0, bottom: 0, zIndex: 2, elevation: 8 }
               : null,
+            floatingSidebarAnimatedStyle,
             sidebarAnimatedStyle,
           ]}
         >
