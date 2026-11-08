@@ -5,7 +5,6 @@ import { Button } from "../ui/button";
 import {
   resolveTimelineMinimapHeightStyle,
   resolveTimelineMinimapIndexFromPointer,
-  resolveTimelineMinimapInteractiveWidth,
   resolveTimelineMinimapNavigationInteractive,
   resolveTimelineMinimapTopPercent,
   TIMELINE_MINIMAP_MIN_ITEMS,
@@ -132,7 +131,7 @@ export function TimelineMinimap({
           }}
           style={{
             height: resolveTimelineMinimapHeightStyle(items.length),
-            width: resolveTimelineMinimapInteractiveWidth(hitStripWidth, activeItem !== null),
+            width: hitStripWidth,
           }}
         >
           <TimelineMinimapNavigationButton
@@ -222,6 +221,7 @@ export function TimelineMinimap({
               );
             })}
             {activeItem ? (
+              // Display-only: it overlaps the message column, and the strip keeps tracking beneath it.
               <span
                 className="pointer-events-none absolute left-8 w-80 -translate-y-1/2"
                 style={{ top: `${activeTopPercent}%` }}
