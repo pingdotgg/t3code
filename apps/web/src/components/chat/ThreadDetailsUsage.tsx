@@ -84,12 +84,10 @@ export function ThreadDetailsContext({
   usage,
   onCompact,
   compactDisabled,
-  compactDisabledReason,
 }: {
   readonly usage: ContextWindowSnapshot | null;
   readonly onCompact?: (() => void) | undefined;
   readonly compactDisabled?: boolean | undefined;
-  readonly compactDisabledReason?: string | null | undefined;
 }) {
   const [collapsed, setCollapsed] = useLocalStorage(
     "thread-details:collapsed:Context breakdown",
@@ -180,11 +178,6 @@ export function ThreadDetailsContext({
                   </dd>
                 </div>
               </dl>
-              {compactDisabled && compactDisabledReason ? (
-                <p className="px-2.5 py-2 text-pretty text-caption text-muted-foreground">
-                  {compactDisabledReason}
-                </p>
-              ) : null}
             </div>
           </div>
         </CollapsiblePanel>
