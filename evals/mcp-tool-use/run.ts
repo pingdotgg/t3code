@@ -50,12 +50,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import {
-  cardAnswerAwaitsReply,
-  quizCardProblem,
-  readQuestionCard,
-  readQuizCard,
-} from "@t3tools/shared/quizCard";
+import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -81,7 +76,6 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import {
-  CARD_REPLY_FIRST,
   QUESTION_CARD_SHOWN,
   QUIZ_CARD_SHOWN,
 } from "../../apps/server/src/mcp/toolkits/quiz/handlers.ts";
@@ -1698,28 +1692,22 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   if (isT3Name(call.name)) {
     // T3 refuses a card it cannot show.
-    if (name === "quiz_card") {
-      const card = readQuizCard(input);
-      const problem =
-        card === undefined
-          ? typeof input.reply !== "string" || input.reply.trim() === ""
-            ? CARD_REPLY_FIRST
-            : "Invalid quiz card."
-          : quizCardProblem(card);
-      if (problem !== undefined) return failed(problem);
-    }
-    if (name === "question_card" && readQuestionCard(input) === undefined) {
-      return failed("Invalid question card.");
-    }
-    const conversation = [
-      { role: "user", text: testCase.prompt },
-      ...sample.said.map((text) => ({ role: "assistant", text })),
-    ];
     if (name === "quiz_card" || name === "question_card") {
       const reply = typeof input.reply === "string" ? input.reply.trim() : "";
-      if (reply === "" && cardAnswerAwaitsReply(conversation)) return failed(CARD_REPLY_FIRST);
+      if (reply === "")
+        return failed(`Invalid parameters for tool '${name}': Missing key at ["reply"]`);
+      const quiz = name === "quiz_card" ? readQuizCard(input) : undefined;
+      const problem =
+        name === "quiz_card"
+          ? quiz === undefined
+            ? "Invalid quiz card."
+            : quizCardProblem(quiz)
+          : readQuestionCard(input) === undefined
+            ? "Invalid question card."
+            : undefined;
+      if (problem !== undefined) return failed(problem);
       // The app shows a card's reply as the tutor's message text.
-      if (reply !== "") sample.said.push(reply);
+      sample.said.push(reply);
     }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {

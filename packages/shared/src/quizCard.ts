@@ -314,15 +314,3 @@ export function answeredCardIds(
   }
   return ids;
 }
-
-/** True while the learner's latest message answers a card and no reply text has followed it. */
-export function cardAnswerAwaitsReply(
-  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
-): boolean {
-  const last = messages.findLastIndex((message) => message.role === "user");
-  return (
-    last !== -1 &&
-    CARD_ANSWER_TAG.test(messages[last]!.text) &&
-    !messages.slice(last + 1).some((message) => message.text.trim() !== "")
-  );
-}

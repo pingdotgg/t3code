@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   answeredCardIds,
-  cardAnswerAwaitsReply,
   blankAnswerRight,
   blanksAnswerMessage,
   cardAnswerMessage,
@@ -40,12 +39,6 @@ describe("quiz cards", () => {
         { role: "assistant", text: cardAnswerMessage("echo", "item-3") },
       ]),
     ]).toEqual(["item-2"]);
-    const answered = { role: "user", text: answer };
-    expect(cardAnswerAwaitsReply([answered])).toBe(true);
-    expect(cardAnswerAwaitsReply([answered, { role: "assistant", text: " " }])).toBe(true);
-    expect(cardAnswerAwaitsReply([answered, { role: "assistant", text: "Right." }])).toBe(false);
-    expect(cardAnswerAwaitsReply([{ role: "user", text: "Teach me." }])).toBe(false);
-    expect(cardAnswerAwaitsReply([])).toBe(false);
   });
 
   it("reads bounded question cards", () => {

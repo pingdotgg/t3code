@@ -11,19 +11,13 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 // First, so the model writes the reply before the question.
-const questionReply = Schema.optional(
-  Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))).annotate({
-    description:
-      "After the learner answers a card: your reply, shown to them as your message text just before this card. Give your verdict on their answer, then teach what this card tests. The learner never sees your thinking, so put the reply here unless you already wrote it as response text.",
-  }),
-);
-const quizReply = TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
+const reply = TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
   description:
-    "Required: the teaching this card tests, shown as message text above the card. Give your verdict, then teach the idea; if you already taught it in visible text above, give a one- or two-line recap.",
+    "Your words to the learner, shown as your message text just above the card; they never see your thinking. After an answer: your verdict, then the teaching this card tests (a one- or two-line recap if you already wrote it as text). For an opening check: one sentence of framing.",
 });
 
 export const QuizCardInput = Schema.Struct({
-  reply: quizReply,
+  reply,
   answer: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
   explanation: Schema.String.pipe(Schema.check(Schema.isMaxLength(1500))),
   level: Schema.Literals(["remember", "understand", "apply", "analyse"]),
@@ -53,7 +47,7 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   .annotate(Tool.Idempotent, false);
 
 export const QuestionCardInput = Schema.Struct({
-  reply: questionReply,
+  reply,
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
   blanks: Schema.optional(
     Schema.Array(
