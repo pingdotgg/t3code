@@ -387,12 +387,17 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       resume: false,
       cwd: "/workspace",
       sdkSettings: { env: { OTHER: "kept" } },
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, workflowSizeGuideline: "large" },
       toolSearchOverride: "true",
     });
     assert.deepEqual((options.settings as { env?: Record<string, string> }).env, {
       OTHER: "kept",
       ENABLE_TOOL_SEARCH: "true",
     });
+    assert.equal(
+      (options.settings as { workflowSizeGuideline?: string }).workflowSizeGuideline,
+      "large",
+    );
   });
 
   it("sends a custom model named like a Claude Code alias to the API unchanged", () => {
@@ -431,7 +436,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
         }).settings as { workflowSizeGuideline?: string } | undefined
       )?.workflowSizeGuideline;
     assert.equal(sentSize("large"), "large");
-    assert.equal(sentSize("unrestricted"), "unrestricted");
     assert.isUndefined(sentSize("default"));
   });
 

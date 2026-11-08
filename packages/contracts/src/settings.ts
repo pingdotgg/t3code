@@ -854,7 +854,7 @@ export const ClaudeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Dynamic workflow size",
         description:
-          "How many agents Claude aims for in a workflow. A guideline, not a hard limit. Use default keeps Claude's /config choice.",
+          "How many agents Claude aims for in a workflow. A guideline, not a hard limit. Use default keeps Claude Code's own setting.",
         providerSettingsForm: {
           control: "select",
           options: CLAUDE_WORKFLOW_SIZE_GUIDELINES,
