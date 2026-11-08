@@ -582,7 +582,7 @@ export const make = Effect.gen(function* () {
         cwd,
         Effect.gen(function* () {
           const cached = yield* getCachedStatus(cwd);
-          if (!cached?.local || cached.remote?.value === null) return null;
+          if (!cached || cached.remote?.value === null) return null;
           // Turn completion must update divergence even when background polling is paused.
           const remoteRead = yield* readRemoteStatus(cwd, {
             refreshUpstream: false,

@@ -421,9 +421,14 @@ it.effect.each([true, false])(
   (supported) =>
     Effect.gen(function* () {
       const { activeSession, supervisor } = yield* makeHarness();
+      const inputs: unknown[] = [];
       const client = {
-        [supported ? WS_METHODS.vcsRefreshBranch : WS_METHODS.vcsRefreshStatus]: () =>
-          Effect.succeed({ refName: "external" }),
+        [supported ? WS_METHODS.vcsRefreshBranch : WS_METHODS.vcsRefreshStatus]: (
+          input: unknown,
+        ) => {
+          inputs.push(input);
+          return Effect.succeed({ refName: "external" });
+        },
       } as unknown as WsRpcProtocolClient;
       yield* SubscriptionRef.set(
         activeSession,
@@ -439,5 +444,39 @@ it.effect.each([true, false])(
           Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
         ),
       ).toEqual({ refName: "external" });
+      expect(inputs).toEqual([supported ? { cwd: "/repo" } : { cwd: "/repo", localOnly: true }]);
     }).pipe(Effect.scoped),
+);
+
+it.effect("binds branch capability selection and execution to one session", () =>
+  Effect.gen(function* () {
+    const { activeSession, supervisor } = yield* makeHarness();
+    const configRequested = yield* Deferred.make<void>();
+    const config = yield* Deferred.make<ServerConfig>();
+    const original = {
+      [WS_METHODS.vcsRefreshBranch]: () => Effect.succeed({ refName: "original" }),
+    } as unknown as WsRpcProtocolClient;
+    const replacement = {
+      [WS_METHODS.vcsRefreshStatus]: () => Effect.succeed({ refName: "replacement" }),
+    } as unknown as WsRpcProtocolClient;
+    yield* SubscriptionRef.set(
+      activeSession,
+      Option.some({
+        ...session(original),
+        initialConfig: Deferred.succeed(configRequested, undefined).pipe(
+          Effect.andThen(Deferred.await(config)),
+        ),
+      }),
+    );
+    const refresh = yield* refreshVcsBranch({ cwd: "/repo" }).pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(configRequested);
+    yield* SubscriptionRef.set(activeSession, Option.some(session(replacement)));
+    yield* Deferred.succeed(config, {
+      environment: { capabilities: { vcsBranchStatus: true } },
+    } as ServerConfig);
+    expect(yield* Fiber.join(refresh)).toEqual({ refName: "original" });
+  }).pipe(Effect.scoped),
 );

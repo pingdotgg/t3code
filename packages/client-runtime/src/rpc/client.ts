@@ -187,15 +187,14 @@ const authorizeRequest = Effect.fn("EnvironmentRpc.authorize")(function* (
   yield* guard.authorize(supervisor.target.environmentId, method, input);
 });
 
-export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
+const requestInSession = Effect.fn("EnvironmentRpc.request")(function* <
   TTag extends EnvironmentUnaryRpcTag,
->(tag: TTag, input: EnvironmentRpcInput<TTag>) {
+>(session: RpcSession, tag: TTag, input: EnvironmentRpcInput<TTag>) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   yield* Effect.annotateCurrentSpan({
     "environment.id": supervisor.target.environmentId,
     "rpc.method": tag,
   });
-  const session = yield* currentSession();
   yield* authorizeRequest(tag, input);
   const observer = yield* EnvironmentRpcRequestObserver;
   const method = session.client[tag] as (
@@ -207,6 +206,14 @@ export const requestGuarded = Effect.fn("EnvironmentRpc.request")(function* <
     method: tag,
   });
   return yield* method(input).pipe(Effect.ensuring(completeObservation));
+});
+
+// The session-bound request owns the existing EnvironmentRpc.request span.
+export const requestGuarded = Effect.fnUntraced(function* <TTag extends EnvironmentUnaryRpcTag>(
+  tag: TTag,
+  input: EnvironmentRpcInput<TTag>,
+) {
+  return yield* requestInSession(yield* currentSession(), tag, input);
 });
 
 export function runStreamGuarded<TTag extends EnvironmentStreamCommandRpcTag>(
@@ -477,7 +484,8 @@ export const refreshVcsBranch = Effect.fn("EnvironmentRpc.refreshVcsBranch")(fun
   input: EnvironmentRpcInput<typeof WS_METHODS.vcsRefreshBranch>,
 ) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const config = yield* getInitialServerConfig().pipe(
+  const session = yield* currentSession();
+  const config = yield* session.initialConfig.pipe(
     Effect.mapError(
       (error) =>
         new EnvironmentRpcUnavailableError({
@@ -487,9 +495,12 @@ export const refreshVcsBranch = Effect.fn("EnvironmentRpc.refreshVcsBranch")(fun
     ),
   );
   if (config.environment.capabilities.vcsBranchStatus === true) {
-    return yield* request(WS_METHODS.vcsRefreshBranch, input);
+    return yield* requestInSession(session, WS_METHODS.vcsRefreshBranch, input);
   }
-  const status = yield* request(WS_METHODS.vcsRefreshStatus, input);
+  const status = yield* requestInSession(session, WS_METHODS.vcsRefreshStatus, {
+    ...input,
+    localOnly: true,
+  });
   return { refName: status.refName };
 });
 

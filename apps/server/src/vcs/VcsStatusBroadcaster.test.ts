@@ -557,6 +557,7 @@ describe("VcsStatusBroadcaster", () => {
 
       state.backgroundWorkEnabled = false;
       state.currentRemoteStatus = { ...remoteStatusWithPr, aheadCount: 7 };
+      yield* broadcaster.refreshBranchStatus({ cwd: "/repo" });
       const refreshed = yield* broadcaster.refreshPullRequestStatus("/repo");
       assert.deepStrictEqual(refreshed, state.currentRemoteStatus);
       const merged = yield* broadcaster.getStatus({ cwd: "/repo" });
