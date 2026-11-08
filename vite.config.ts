@@ -1035,6 +1035,7 @@ export default defineConfig({
         "apps/web/src/components/settings/MicrophoneTest.tsx": 4,
         "apps/web/src/components/settings/SecretsSettings.tsx": 1,
         "apps/web/src/components/settings/SpeechModelComparison.tsx": 5,
+        "apps/web/src/components/settings/CloudVoiceConfiguration.tsx": 8,
         "apps/web/src/components/settings/VoiceSettingsPanel.tsx": 19,
         "apps/web/src/speech/useTextFieldSpeech.tsx": 1,
       }).map(([file, maxOccurrences]) => {

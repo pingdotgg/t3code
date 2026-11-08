@@ -168,7 +168,7 @@ function PullRequestBodySegmentView({
       href={segment.url}
       rel="noreferrer noopener"
       target="_blank"
-      className="flex items-center gap-2 rounded-control border border-border surface-card px-3 py-2 text-sm hover:surface-ghost-hover"
+      className="flex items-center gap-2 rounded-control border border-border surface-card px-3 py-2 text-body hover:surface-ghost-hover"
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">

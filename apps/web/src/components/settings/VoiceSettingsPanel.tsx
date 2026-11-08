@@ -1506,7 +1506,7 @@ export function VoiceSettingsPanel() {
           title="Dictionary"
           description="Names and terms transcription should spell your way, saved on this device. Add an alias when it keeps hearing a term wrong. The name of the project you dictate in is also sent as a hint."
           control={
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               {settings.speechCustomWords.length}{" "}
               {settings.speechCustomWords.length === 1 ? "entry" : "entries"}
             </span>

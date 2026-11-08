@@ -22,7 +22,6 @@ import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 
 import { useRef, useState } from "react";
-import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 const ARCHIVE_ACTIONS = [
   { action: "unarchive", label: "Unarchive", Icon: ArchiveX },
