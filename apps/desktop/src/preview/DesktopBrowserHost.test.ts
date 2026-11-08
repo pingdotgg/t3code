@@ -85,6 +85,8 @@ const makeDebuggee = (
     emit: (method: string, params: unknown) => emitter.emit("message", {}, method, params, ""),
     navigate: () => webContents.emit("did-navigate"),
     domReady: () => webContents.emit("dom-ready"),
+    failLoad: (code: number) =>
+      webContents.emit("did-fail-load", {}, code, "Failed", "http://localhost/", true),
     /** Ids of the commands the debugger received, in order. */
     sent,
     focusEmulation,
@@ -167,6 +169,28 @@ describe("DesktopBrowserHost", () => {
         { type: "shown", ...key, shown: true },
       ]);
     }),
+  );
+
+  it.effect(
+    "keeps a loading guest unannounced across a replaced navigation and a new backend",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* DesktopBrowserHost.make;
+        const loading = makeDebuggee({ loading: true });
+        const other = { ...key, tabId: "tab-2" };
+        host.attach(key, loading.tab);
+        loading.failLoad(-3);
+        const reader = yield* takeEvents(host, 2).pipe(Effect.forkScoped);
+
+        yield* Effect.yieldNow;
+        host.attach(other, makeDebuggee().tab);
+        loading.domReady();
+
+        expect(yield* Fiber.join(reader)).toEqual([
+          { type: "attached", ...other },
+          { type: "attached", ...key },
+        ]);
+      }),
   );
 
   it.effect("announces a first page that never comes up, but never a tab closed first", () =>
