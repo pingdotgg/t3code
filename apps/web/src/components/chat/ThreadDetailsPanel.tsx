@@ -204,6 +204,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
                     {show.openIn ? (
                       <OpenInPicker
+                        mode="project"
                         keybindings={props.keybindings}
                         environmentId={props.environmentId}
                         availableEditors={props.availableEditors}

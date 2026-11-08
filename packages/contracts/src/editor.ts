@@ -10,6 +10,9 @@ type EditorDefinition = {
   readonly commands: readonly [string, ...string[]] | null;
   readonly baseArgs?: readonly string[];
   readonly launchStyle: EditorLaunchStyle;
+  readonly canOpenFiles: boolean;
+  readonly canOpenDirectories: boolean;
+  readonly showInProjectPicker: boolean;
   readonly remoteScheme?: string;
   readonly jetbrainsProductCode?: string;
 };
@@ -22,15 +25,38 @@ export const EDITORS = [
     // File and workspace opens must target the IDE even when the Agents Window is active.
     baseArgs: ["--classic"],
     launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     remoteScheme: "cursor",
   },
-  { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
-  { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
+  {
+    id: "trae",
+    label: "Trae",
+    commands: ["trae"],
+    launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
+  },
+  {
+    id: "kiro",
+    label: "Kiro",
+    commands: ["kiro"],
+    baseArgs: ["ide"],
+    launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
+  },
   {
     id: "vscode",
     label: "VS Code",
     commands: ["code"],
     launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     remoteScheme: "vscode",
   },
   {
@@ -38,6 +64,9 @@ export const EDITORS = [
     label: "VS Code Insiders",
     commands: ["code-insiders"],
     launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     remoteScheme: "vscode-insiders",
   },
   {
@@ -45,6 +74,9 @@ export const EDITORS = [
     label: "VSCodium",
     commands: ["codium"],
     launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     remoteScheme: "vscodium",
   },
   {
@@ -52,6 +84,9 @@ export const EDITORS = [
     label: "Zed",
     commands: ["zed", "zeditor"],
     launchStyle: "direct-path",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     remoteScheme: "zed",
   },
   {
@@ -60,12 +95,27 @@ export const EDITORS = [
     // The IDE ships antigravity-ide; agy is the standalone CLI.
     commands: ["antigravity-ide", "agy-ide"],
     launchStyle: "goto",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
+  },
+  {
+    id: "ghostty",
+    label: "Ghostty",
+    commands: null,
+    launchStyle: "direct-path",
+    canOpenFiles: false,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
   },
   {
     id: "idea",
     label: "IntelliJ IDEA",
     commands: ["idea"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "IU",
   },
   {
@@ -73,6 +123,9 @@ export const EDITORS = [
     label: "Aqua",
     commands: ["aqua"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "QA",
   },
   {
@@ -80,6 +133,9 @@ export const EDITORS = [
     label: "CLion",
     commands: ["clion"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "CL",
   },
   {
@@ -87,6 +143,9 @@ export const EDITORS = [
     label: "DataGrip",
     commands: ["datagrip"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "DB",
   },
   {
@@ -94,6 +153,9 @@ export const EDITORS = [
     label: "DataSpell",
     commands: ["dataspell"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "DS",
   },
   {
@@ -101,6 +163,9 @@ export const EDITORS = [
     label: "GoLand",
     commands: ["goland"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "GO",
   },
   {
@@ -108,6 +173,9 @@ export const EDITORS = [
     label: "PhpStorm",
     commands: ["phpstorm"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "PS",
   },
   {
@@ -115,6 +183,9 @@ export const EDITORS = [
     label: "PyCharm",
     commands: ["pycharm"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "PY",
   },
   {
@@ -122,6 +193,9 @@ export const EDITORS = [
     label: "Rider",
     commands: ["rider"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "RD",
   },
   {
@@ -129,6 +203,9 @@ export const EDITORS = [
     label: "RubyMine",
     commands: ["rubymine"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "RM",
   },
   {
@@ -136,6 +213,9 @@ export const EDITORS = [
     label: "RustRover",
     commands: ["rustrover"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "RR",
   },
   {
@@ -143,9 +223,20 @@ export const EDITORS = [
     label: "WebStorm",
     commands: ["webstorm"],
     launchStyle: "line-column",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
     jetbrainsProductCode: "WS",
   },
-  { id: "file-manager", label: "File Manager", commands: null, launchStyle: "direct-path" },
+  {
+    id: "file-manager",
+    label: "File Manager",
+    commands: null,
+    launchStyle: "direct-path",
+    canOpenFiles: true,
+    canOpenDirectories: true,
+    showInProjectPicker: true,
+  },
 ] as const satisfies ReadonlyArray<EditorDefinition>;
 
 export const EditorId = Schema.Literals(EDITORS.map((e) => e.id));

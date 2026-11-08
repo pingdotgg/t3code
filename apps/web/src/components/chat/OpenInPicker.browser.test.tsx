@@ -47,8 +47,8 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    usePreferredEditor: (available: readonly EditorId[]) => {
-      const [preferred, setPreferred] = actual.usePreferredEditor(available);
+    usePreferredProjectOpener: (available: readonly EditorId[]) => {
+      const [preferred, setPreferred] = actual.usePreferredProjectOpener(available);
       const recordPreferred: typeof setPreferred = (editor) => {
         state.setPreferred(editor);
         setPreferred(editor);
@@ -104,6 +104,7 @@ async function setup() {
       for (const listener of state.listeners) listener();
       const node = (
         <OpenInPicker
+          mode="project"
           environmentId={selected}
           keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
           availableEditors={availableEditors}
@@ -118,12 +119,12 @@ async function setup() {
   }
 
   function byLabel(label: string) {
-    const element = document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+    const element = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
     expect(element, label).not.toBeNull();
     return element!;
   }
 
-  const primaryButton = () => byLabel("Open file in preferred editor");
+  const primaryButton = () => byLabel("Open project in app");
   const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
 
   async function click(element: HTMLElement) {
@@ -142,12 +143,16 @@ async function setup() {
     return event;
   }
 
-  function FavoriteEditorFallback() {
+  function FavoriteEditorFallback({
+    availableEditors = editors,
+  }: {
+    availableEditors?: readonly EditorId[];
+  }) {
     useOpenFavoriteEditorShortcut({
       enabled: true,
       environmentId: selected,
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-      availableEditors: editors,
+      availableEditors,
       openInCwd: "/work/project",
     });
     return null;
@@ -184,7 +189,7 @@ describe("host editor access", () => {
 
     await renderPicker();
     expect(primaryButton().disabled).toBe(true);
-    expect(byLabel("Choose editor").disabled).toBe(true);
+    expect(byLabel("Choose project app").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
 });
@@ -201,6 +206,29 @@ describe("remote editor links", () => {
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
     expect(state.run).not.toHaveBeenCalled();
+    using _timers = fakeTimers();
+    state.allowed.add(selected);
+    window.localStorage.setItem("t3code:last-project-opener", JSON.stringify("ghostty"));
+    for (const remote of [
+      { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } },
+      { mode: "remote-unavailable" },
+    ] as const) {
+      state.remote = remote;
+      state.run.mockClear();
+      state.openUrl.mockClear();
+      await act(async () =>
+        screen.rerender(<FavoriteEditorFallback availableEditors={["ghostty"]} />),
+      );
+      expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+      expect(state.run).toHaveBeenCalledExactlyOnceWith({
+        environmentId: selected,
+        input: { cwd: "/work/project", editor: "ghostty" },
+      });
+      expect(state.openUrl).not.toHaveBeenCalled();
+      await act(async () => vi.runAllTimers());
+      for (const region of document.querySelectorAll('body > [aria-live="polite"]'))
+        region.textContent = "";
+    }
   });
 
   it("explains why a phone or tablet browser has no editor to open", async () => {
@@ -212,7 +240,7 @@ describe("remote editor links", () => {
 
     expect(primaryButton().disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
-    await click(byLabel("Choose editor"));
+    await click(byLabel("Choose project app"));
     await vi.waitFor(() =>
       expect(menuItems().map((item) => item.textContent)).toEqual([
         "Open from a computer to edit on Test host",
@@ -220,6 +248,27 @@ describe("remote editor links", () => {
     );
     expect(menuItems()[0]!.getAttribute("aria-disabled")).toBe("true");
     expect(state.openUrl).not.toHaveBeenCalled();
+    using _timers = fakeTimers();
+    state.allowed.add(selected);
+    window.localStorage.setItem("t3code:last-project-opener", JSON.stringify("ghostty"));
+    for (const remote of [
+      { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } },
+      { mode: "remote-unavailable" },
+    ] as const) {
+      state.remote = remote;
+      state.run.mockClear();
+      await renderPicker(["ghostty"]);
+      expect(primaryButton().disabled).toBe(false);
+      await pressOpenFavorite();
+      expect(state.run).toHaveBeenCalledExactlyOnceWith({
+        environmentId: selected,
+        input: { cwd: "/work/project", editor: "ghostty" },
+      });
+      expect(state.openUrl).not.toHaveBeenCalled();
+      await act(async () => vi.runAllTimers());
+      for (const region of document.querySelectorAll('body > [aria-live="polite"]'))
+        region.textContent = "";
+    }
   });
 });
 

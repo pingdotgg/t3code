@@ -164,6 +164,25 @@ export const KiroIcon: Icon = (props) => (
   </svg>
 );
 
+export const GhosttyIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 64 64" fill="none">
+    <rect width="64" height="64" rx="14" fill="#17191D" />
+    <rect x="4" y="4" width="56" height="56" rx="12" fill="#80858D" />
+    <rect x="7" y="7" width="50" height="50" rx="10" fill="#071D62" />
+    <path
+      fill="#DDF5FF"
+      d="M18 22.5C18 16.7 22.7 12 28.5 12h7C41.3 12 46 16.7 46 22.5V43l-4.5-3-4.7 3-4.8-3-4.8 3-4.7-3-4.5 3z"
+    />
+    <path
+      d="m23 24 5 4-5 4M33 28h6"
+      stroke="#1856A8"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 export const VisualStudioCode: Icon = (props) => {
   const id = useId();
   const maskId = `${id}-vscode-a`;
