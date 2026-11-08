@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 import { render } from "../../../test/render";
 
-import { HtmlRenderDocument } from "./BrowserDocumentFrame";
+import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -140,4 +140,50 @@ it("keeps the first and last selected card rings inside the fitted renderer fram
     expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
     expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.viewportWidth);
   }
+});
+
+describe("BrowserDocumentFrame", () => {
+  it("keeps a workspace page on screen until its next revision has loaded", async () => {
+    using pages = (() => {
+      const urls = ["first", "second"].map((name) =>
+        URL.createObjectURL(new Blob([`<p>${name}</p>`], { type: "text/html" })),
+      );
+      return { urls, [Symbol.dispose]: () => urls.forEach((url) => URL.revokeObjectURL(url)) };
+    })();
+    const [first, second] = pages.urls as [string, string];
+    const frame = (revision: string, src: string) => (
+      <BrowserDocumentFrame
+        src={src}
+        title="Report"
+        pdf={false}
+        documentKey={`report:${revision}`}
+        documentId="report"
+      />
+    );
+    await using screen = await render(frame("1", first));
+    const frames = () => Array.from(screen.container.querySelectorAll("iframe"));
+    await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([first]));
+
+    // The moment the next revision's frame is inserted, its page cannot have loaded yet. The
+    // current page must still be there and visible, or the panel shows a blank white frame.
+    const atInsertion = new Promise<{ srcs: string[]; visible: string[] }>((resolve) => {
+      const observer = new MutationObserver(() => {
+        const current = frames();
+        if (!current.some((element) => element.src === second)) return;
+        observer.disconnect();
+        resolve({
+          srcs: current.map((element) => element.src),
+          visible: current
+            .filter((element) => getComputedStyle(element).visibility !== "hidden")
+            .map((element) => element.src),
+        });
+      });
+      observer.observe(screen.container, { childList: true, subtree: true });
+    });
+    await screen.rerender(frame("2", second));
+    expect(await atInsertion).toEqual({ srcs: [first, second], visible: [first] });
+
+    await vi.waitFor(() => expect(frames().map((element) => element.src)).toEqual([second]));
+    expect(getComputedStyle(frames()[0]!).visibility).toBe("visible");
+  });
 });

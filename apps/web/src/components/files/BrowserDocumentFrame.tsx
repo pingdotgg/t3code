@@ -157,20 +157,83 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <FileDocument key={key} src={props.src} title={props.title} />
+    <FileDocument documentKey={key} src={props.src} title={props.title} />
   );
 }
 
-// URL renewals must not discard form input or scroll; a new key mounts a fresh document.
-function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
+interface FileDocumentRevision {
+  readonly key: string;
+  readonly src: string;
+  readonly loaded: boolean;
+}
+
+/** Marks a revision loaded and drops the older ones it now covers. */
+function withRevisionLoaded(
+  revisions: ReadonlyArray<FileDocumentRevision>,
+  key: string,
+): ReadonlyArray<FileDocumentRevision> {
+  const index = revisions.findIndex((revision) => revision.key === key);
+  if (index === -1) return revisions;
+  return revisions
+    .slice(index)
+    .map((revision) => (revision.key === key ? { ...revision, loaded: true } : revision));
+}
+
+// A revision that has not fired load by now replaces the page anyway, so a stalled
+// resource cannot hold the previous revision on screen indefinitely.
+const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
+
+/**
+ * A new revision loads in a hidden frame over the current one and replaces it once it has
+ * loaded, so a workspace refresh never shows a blank (white) frame. URL renewals keep the
+ * revision's first URL, so they do not discard form input or scroll.
+ */
+function FileDocument(props: {
+  readonly documentKey: string;
+  readonly src: string;
+  readonly title: string;
+}) {
+  const [revisions, setRevisions] = useState<ReadonlyArray<FileDocumentRevision>>(() => [
+    { key: props.documentKey, src: props.src, loaded: false },
+  ]);
+  const latest = revisions.at(-1);
+  if (latest !== undefined && latest.key !== props.documentKey) {
+    // Keep only the page on screen beneath the incoming one: the newest loaded revision, or
+    // the current one when a revision arrives before anything has loaded.
+    const shown = revisions.findLast((revision) => revision.loaded) ?? revisions[0];
+    setRevisions([
+      ...(shown ? [shown] : []),
+      { key: props.documentKey, src: props.src, loaded: false },
+    ]);
+  }
+  const pendingKey = revisions.length > 1 ? revisions.at(-1)?.key : undefined;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event is slow to arrive
+  useEffect(() => {
+    if (pendingKey === undefined) return;
+    const timer = setTimeout(
+      () => setRevisions((current) => withRevisionLoaded(current, pendingKey)),
+      FILE_DOCUMENT_SWAP_TIMEOUT_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [pendingKey]);
+  // The first revision shows as it loads, as before; later ones wait until they have loaded.
+  const visibleKey = revisions.findLast((revision) => revision.loaded)?.key ?? revisions[0]?.key;
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0 bg-white"
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <div className="relative min-h-0 flex-1">
+      {revisions.map((revision) => (
+        <iframe
+          key={revision.key}
+          src={revision.src}
+          title={props.title}
+          className={cn(
+            "absolute inset-0 size-full border-0 bg-white",
+            revision.key !== visibleKey && "invisible",
+          )}
+          sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+          onLoad={() => setRevisions((current) => withRevisionLoaded(current, revision.key))}
+        />
+      ))}
+    </div>
   );
 }
 
