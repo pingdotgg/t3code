@@ -43,6 +43,7 @@ vi.mock(import("~/localApi"), async (original) => ({
   readLocalApi: (() => ({ dialogs: { confirm: state.confirm } })) as never,
 }));
 
+import { writeBrowserClientSettings } from "../../clientPersistenceStorage";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { useSettingsRestore } from "./SettingsPanels";
@@ -68,6 +69,8 @@ const environments = [primaryId, remoteId].map((environmentId) => ({
 
 function setup() {
   vi.clearAllMocks();
+  // Browser test files share localStorage, and an earlier file may leave client settings changed.
+  writeBrowserClientSettings(DEFAULT_CLIENT_SETTINGS);
   state.projects = [primaryId, remoteId].map((environmentId) => ({
     id: ProjectId.make(`project-${environmentId}`),
     environmentId,
