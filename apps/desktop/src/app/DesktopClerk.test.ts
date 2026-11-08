@@ -10,6 +10,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { afterAll, beforeEach, vi } from "vite-plus/test";
 
 const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
@@ -122,15 +123,20 @@ describe("DesktopClerk", () => {
   });
 
   it.effect.each([
-    { platform: "win32", isPackaged: false, isDevelopment: false, registers: true },
-    { platform: "win32", isPackaged: false, isDevelopment: true, registers: false },
-    { platform: "win32", isPackaged: true, isDevelopment: false, registers: false },
-    { platform: "darwin", isPackaged: false, isDevelopment: false, registers: false },
-    { platform: "linux", isPackaged: false, isDevelopment: false, registers: false },
+    { platform: "win32", isPackaged: false, isDevelopment: false, registers: true, result: true },
+    { platform: "win32", isPackaged: false, isDevelopment: false, registers: true, result: false },
+    { platform: "win32", isPackaged: false, isDevelopment: true, registers: false, result: true },
+    { platform: "win32", isPackaged: true, isDevelopment: false, registers: false, result: true },
+    { platform: "darwin", isPackaged: false, isDevelopment: false, registers: false, result: true },
+    { platform: "linux", isPackaged: false, isDevelopment: false, registers: false, result: true },
   ] as const)(
-    "registers an entry point only for unpackaged non-development Windows ($platform, packaged=$isPackaged, development=$isDevelopment)",
-    ({ platform, isPackaged, isDevelopment, registers }) => {
+    "registers an entry point only for unpackaged non-development Windows ($platform, packaged=$isPackaged, development=$isDevelopment, result=$result)",
+    ({ platform, isPackaged, isDevelopment, registers, result }) => {
       const events: string[] = [];
+      const warnings: unknown[] = [];
+      const logger = Logger.make(({ logLevel, message }) => {
+        if (logLevel === "Warn") warnings.push(message);
+      });
       storageMock.mockReturnValue(storageAdapter);
       createClerkBridgeMock.mockImplementation(() => {
         events.push("bridge");
@@ -139,7 +145,7 @@ describe("DesktopClerk", () => {
       const setAsDefaultProtocolClient = vi.fn(() =>
         Effect.sync(() => {
           events.push("register");
-          return true;
+          return result;
         }),
       );
       const electronApp = {
@@ -158,17 +164,30 @@ describe("DesktopClerk", () => {
             : [],
         );
         assert.deepEqual(events, registers ? ["bridge", "register"] : ["bridge"]);
+        assert.deepEqual(
+          warnings,
+          registers && !result
+            ? [
+                [
+                  "Windows rejected t3code OAuth callback registration. Sign-in callbacks may not return to this app. Check Windows protocol-handler permissions or use the installed desktop app.",
+                ],
+              ]
+            : [],
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
-          layerDesktopClerk(
-            isDevelopment,
-            [],
-            platform,
-            undefined,
-            undefined,
-            undefined,
-            isPackaged,
+          Layer.mergeAll(
+            Logger.layer([logger], { mergeWithExisting: false }),
+            layerDesktopClerk(
+              isDevelopment,
+              [],
+              platform,
+              undefined,
+              undefined,
+              undefined,
+              isPackaged,
+            ),
           ),
         ),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),

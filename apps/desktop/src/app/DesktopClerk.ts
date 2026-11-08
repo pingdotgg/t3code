@@ -172,11 +172,16 @@ export const make = Effect.gen(function* () {
         !environment.isDevelopment &&
         environment.platform === "win32"
       ) {
-        yield* electronApp.setAsDefaultProtocolClient(
+        const registered = yield* electronApp.setAsDefaultProtocolClient(
           ElectronProtocol.getDesktopScheme(environment.isDevelopment),
           process.execPath,
           [environment.path.join(environment.dirname, "main.cjs")],
         );
+        if (!registered) {
+          yield* Effect.logWarning(
+            "Windows rejected t3code OAuth callback registration. Sign-in callbacks may not return to this app. Check Windows protocol-handler permissions or use the installed desktop app.",
+          );
+        }
       }
 
       const startProviderAuthHandoff = (value: string | undefined) => {
