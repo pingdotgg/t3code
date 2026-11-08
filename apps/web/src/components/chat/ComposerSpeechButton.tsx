@@ -1,11 +1,12 @@
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
   COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME,
 } from "./ComposerPrimaryActions";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { VoiceInputPill, VoiceWaveform } from "./VoiceInputPill";
@@ -174,32 +175,114 @@ function ComposerSpeechCancelButton(props: {
   );
 }
 
+// Each bar reads the level a sample apart, so the three never move in lockstep, and the
+// middle bar reaches highest so loud speech reads as a wave rather than a flat block.
+const SPEECH_BAR_SAMPLE_OFFSETS = [1, 0, 2] as const;
+const SPEECH_BAR_GAINS = [0.7, 1, 0.85] as const;
+const SPEECH_BAR_RESTING_SCALE = 0.25;
+const SPEECH_BAR_STATIC_SCALE = 0.6;
+
+/** The mic glyph while recording: three bars whose heights follow the microphone level. */
+function ComposerSpeechBars(props: { level: number; inPill: boolean }) {
+  const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const barsRef = useRef<Array<HTMLSpanElement | null>>([]);
+  const historyRef = useRef([0, 0, 0]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes microphone levels to the bar transforms; mounted only while recording
+  useEffect(() => {
+    const history = historyRef.current;
+    history.copyWithin(0, 1);
+    history[2] = props.level;
+    barsRef.current.forEach((bar, index) => {
+      if (!bar) return;
+      const value = Math.min(1, history[2 - SPEECH_BAR_SAMPLE_OFFSETS[index]!] ?? 0);
+      // The curve spreads the loud end, where speech levels bunch up.
+      const scale = prefersReducedMotion
+        ? SPEECH_BAR_STATIC_SCALE
+        : SPEECH_BAR_RESTING_SCALE +
+          (1 - SPEECH_BAR_RESTING_SCALE) * value ** 1.5 * SPEECH_BAR_GAINS[index]!;
+      bar.style.transform = `scaleY(${scale})`;
+    });
+  }, [prefersReducedMotion, props.level]);
+
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "flex items-center justify-center gap-0.5 text-composer-icon",
+        props.inPill ? "size-3.5" : "size-4",
+      )}
+    >
+      {SPEECH_BAR_SAMPLE_OFFSETS.map((offset, index) => (
+        <span
+          key={offset}
+          ref={(bar) => {
+            barsRef.current[index] = bar;
+          }}
+          className="h-full w-0.5 origin-center rounded-full bg-current transition-transform duration-100 ease-out motion-reduce:transition-none"
+          style={{
+            transform: `scaleY(${prefersReducedMotion ? SPEECH_BAR_STATIC_SCALE : SPEECH_BAR_RESTING_SCALE})`,
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
 // In the send pill the mic is one of its 32px slots; elsewhere it is a quiet icon button.
 export function ComposerSpeechButton(props: {
   inPill?: boolean;
   state: VoiceInputState;
-  progress: { downloaded: number; total: number } | null;
   shortcutLabel?: string | null;
   disabled?: boolean;
   /** Set when voice input cannot start here yet: the mic shows dimmed and the tooltip says why. */
   unavailableReason?: string | null | undefined;
+  /**
+   * Keeps the mic in place while dictation runs: level bars while recording (click finishes),
+   * a spinner while busy (click skips post-processing). Without it the mic hides and the
+   * recording pill takes over.
+   */
+  dictation?: { level: number; onStop(): void; onSkipPostProcessing(): void } | undefined;
   onStart(): void;
-  onCancel(): void;
 }) {
   const inPill = props.inPill ?? false;
-  const presentation = resolveSpeechPresentation(props.state, props.progress);
-  const unavailable = props.unavailableReason ?? null;
-  const label = "Start voice input";
+  const { phase } = props.state;
+  const { dictation } = props;
+  if (phase === "error" || (phase !== "idle" && !dictation)) return null;
 
-  if (presentation.showsConfirm || props.state.phase === "error") return null;
+  const unavailable = phase === "idle" ? (props.unavailableReason ?? null) : null;
+  const isRecording = phase === "recording";
+  const isBusy = phase === "preparing" || phase === "transcribing";
+  const label = isRecording
+    ? "Finish voice input"
+    : phase === "preparing"
+      ? "Preparing voice input"
+      : phase === "transcribing"
+        ? "Transcribing"
+        : phase === "post-processing"
+          ? "Skip post-processing"
+          : "Start voice input";
+  const showsShortcut = (phase === "idle" || isRecording) && !unavailable;
 
-  const glyph = <MicIcon className={cn("text-composer-icon", inPill && "size-3.5")} />;
-  const unavailableProps = unavailable
+  const glyph = isRecording ? (
+    <ComposerSpeechBars level={dictation?.level ?? 0} inPill={inPill} />
+  ) : phase === "idle" ? (
+    <MicIcon className={cn("text-composer-icon", inPill && "size-3.5")} />
+  ) : (
+    // The spinner draws in currentColor, so the wrapper gives it the mic glyph's colour.
+    <span aria-hidden className="flex text-composer-icon">
+      <Spinner size={inPill ? "sm" : "md"} />
+    </span>
+  );
+  const accessibilityProps = unavailable
     ? ({ "aria-disabled": true, "aria-label": unavailable } as const)
-    : { "aria-label": label };
+    : isBusy
+      ? ({ "aria-disabled": true, "aria-label": label } as const)
+      : { "aria-label": label };
   const onClick = () => {
-    if (props.disabled || unavailable) return;
-    props.onStart();
+    if (isRecording) dictation?.onStop();
+    else if (phase === "post-processing") dictation?.onSkipPostProcessing();
+    else if (phase === "idle" && !props.disabled && !unavailable) props.onStart();
   };
 
   return (
@@ -209,8 +292,8 @@ export function ComposerSpeechButton(props: {
           inPill ? (
             <button
               type="button"
-              {...unavailableProps}
-              disabled={props.disabled}
+              {...accessibilityProps}
+              disabled={phase === "idle" && props.disabled}
               onPointerDown={(event) => event.preventDefault()}
               onClick={onClick}
               className={
@@ -224,8 +307,8 @@ export function ComposerSpeechButton(props: {
               type="button"
               size="icon-sm"
               variant="ghost"
-              {...unavailableProps}
-              disabled={props.disabled}
+              {...accessibilityProps}
+              disabled={phase === "idle" && props.disabled}
               onPointerDown={(event) => event.preventDefault()}
               onClick={onClick}
               className="relative shrink-0"
@@ -237,7 +320,8 @@ export function ComposerSpeechButton(props: {
       </TooltipTrigger>
       <TooltipPopup side="top">
         {unavailable ?? label}
-        {!unavailable && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        {phase !== "idle" && !isRecording ? " (Esc cancels)" : ""}
       </TooltipPopup>
     </Tooltip>
   );

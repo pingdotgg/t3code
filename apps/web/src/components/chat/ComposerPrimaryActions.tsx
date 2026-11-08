@@ -65,6 +65,9 @@ interface ComposerPrimaryActionsProps {
   onResume?: () => void;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  /** Set while dictation records: the stop slot finishes it instead of sending. */
+  onStopDictation?: (() => void) | undefined;
+  stopDictationShortcutLabel?: string | null;
   compactBeforeSendTokens?: number | null;
   keepFullHistory?: boolean;
   onToggleKeepFullHistory?: () => void;
@@ -141,6 +144,8 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   onResume,
   onPreviousPendingQuestion,
   onInterrupt,
+  onStopDictation,
+  stopDictationShortcutLabel = null,
   compactBeforeSendTokens = null,
   keepFullHistory = false,
   onToggleKeepFullHistory,
@@ -161,6 +166,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
 
   // The stop square sits in the same pill as send, so the pill never changes shape.
+  // While dictating it ends the recording; a running turn's stop returns after.
+  const stopsDictation = onStopDictation !== undefined && !pendingAction;
+  const stopLabel = stopsDictation ? "Stop voice input" : "Stop generation";
   const renderStopGenerationButton = (insidePendingAction: boolean) => (
     <ComposerSendPill key="interrupt" className={cn(insidePendingAction && "sm:h-7")}>
       {insidePendingAction ? null : renderSpeechAction?.(true)}
@@ -175,17 +183,22 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 insidePendingAction && "sm:w-6.5",
               )}
               {...pointerFocusProps}
-              disabled={!canOperateThread}
+              disabled={!stopsDictation && !canOperateThread}
               onClick={() => {
-                if (canOperateThread) onInterrupt();
+                if (stopsDictation) onStopDictation();
+                else if (canOperateThread) onInterrupt();
               }}
-              aria-label="Stop generation"
+              aria-label={stopLabel}
             />
           }
         >
           <span aria-hidden className="size-2.5 rounded-xs bg-error-foreground" />
         </TooltipTrigger>
-        <TooltipPopup>Interrupt</TooltipPopup>
+        <TooltipPopup>
+          {stopsDictation
+            ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
+            : "Interrupt"}
+        </TooltipPopup>
       </Tooltip>
     </ComposerSendPill>
   );
@@ -245,7 +258,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     );
   }
 
-  if (canInterrupt && !hasSendableContent && !isEditingQueuedMessage) {
+  if (stopsDictation || (canInterrupt && !hasSendableContent && !isEditingQueuedMessage)) {
     return renderStopGenerationButton(false);
   }
 
