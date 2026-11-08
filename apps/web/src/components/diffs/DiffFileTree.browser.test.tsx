@@ -13,23 +13,27 @@ function findTreeRow(path: string): HTMLElement | null {
 
 it("names the real path on a file that shares its path with a directory", async () => {
   await using _screen = await render(
-    <DiffFileTree
-      ariaLabel="Changed files"
-      onSelectFile={() => {}}
-      entries={[
-        { path: "docs", status: "added" },
-        { path: "docs/guide.md", status: "added" },
-      ]}
-    />,
+    <div style={{ width: 160, display: "flex", flexDirection: "column" }}>
+      <DiffFileTree
+        ariaLabel="Changed files"
+        onSelectFile={() => {}}
+        entries={[
+          { path: "documentation-that-is-cut-off", status: "added" },
+          { path: "documentation-that-is-cut-off/guide.md", status: "added" },
+        ]}
+      />
+    </div>,
     // DiffFileTree has no links or navigation, so it needs no router.
     { router: false },
   );
-  // The tree stores the file as "docs" plus an invisible suffix because the directory owns "docs".
-  await vi.waitFor(() => expect(findTreeRow("docs\u200b")).not.toBeNull());
+  // The tree stores the file as the directory path plus an invisible suffix because the directory owns that path.
+  await vi.waitFor(() => expect(findTreeRow("documentation-that-is-cut-off\u200b")).not.toBeNull());
 
-  findTreeRow("docs\u200b")!.dispatchEvent(
+  findTreeRow("documentation-that-is-cut-off\u200b")!.dispatchEvent(
     new PointerEvent("pointerover", { bubbles: true, composed: true }),
   );
 
-  expect(findTreeRow("docs\u200b")!.title).toBe("docs");
+  expect(findTreeRow("documentation-that-is-cut-off\u200b")!.title).toBe(
+    "documentation-that-is-cut-off",
+  );
 });

@@ -9,7 +9,7 @@ import FileBrowserPanel from "./FileBrowserPanel";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
-  { path: "src/index.ts", kind: "file" },
+  { path: "src/a-really-long-nested-file-name-that-cannot-fit.config.ts", kind: "file" },
   { path: "README.md", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
@@ -117,31 +117,39 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
 
-  it("names the full path on the hovered row and drops it when the pointer leaves", async () => {
+  it("names the full path only on a cut-off row and drops it when the pointer leaves", async () => {
     await using _screen = await render(
-      <FileBrowserPanel
-        environmentId={EnvironmentId.make("env-files")}
-        cwd="/repo"
-        projectName="repo"
-        selectedPath={null}
-        selectedPathRevealId={0}
-        onOpenFile={() => {}}
-        workspaceMutationId={null}
-      />,
+      <div style={{ width: 200, display: "flex", flexDirection: "column" }}>
+        <FileBrowserPanel
+          environmentId={EnvironmentId.make("env-files")}
+          cwd="/repo"
+          projectName="repo"
+          selectedPath={null}
+          selectedPathRevealId={0}
+          onOpenFile={() => {}}
+          workspaceMutationId={null}
+        />
+      </div>,
     );
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
-    const row = findTreeRow("src/")!;
-
-    row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
-    expect(row.title).toBe("src");
-
-    row.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, composed: true }));
-    expect(row.hasAttribute("title")).toBe(false);
-
     findTreeRow("src/")!.click();
-    await vi.waitFor(() => expect(findTreeRow("src/index.ts")).not.toBeNull());
-    const nestedRow = findTreeRow("src/index.ts")!;
-    nestedRow.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
-    expect(nestedRow.title).toBe("src/index.ts");
+    await vi.waitFor(() =>
+      expect(
+        findTreeRow("src/a-really-long-nested-file-name-that-cannot-fit.config.ts"),
+      ).not.toBeNull(),
+    );
+    const hover = (row: HTMLElement) =>
+      row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
+
+    const shortRow = findTreeRow("README.md")!;
+    hover(shortRow);
+    expect(shortRow.hasAttribute("title")).toBe(false);
+
+    const cutOffRow = findTreeRow("src/a-really-long-nested-file-name-that-cannot-fit.config.ts")!;
+    hover(cutOffRow);
+    expect(cutOffRow.title).toBe("src/a-really-long-nested-file-name-that-cannot-fit.config.ts");
+
+    cutOffRow.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, composed: true }));
+    expect(cutOffRow.hasAttribute("title")).toBe(false);
   });
 });
