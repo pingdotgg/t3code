@@ -255,6 +255,7 @@ describe("ProviderContinuationService", () => {
         const cleared = yield* Ref.make(false);
         const disposed = yield* Queue.unbounded<unknown>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTasksExecutedElsewhere: () => Effect.succeed([]),
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
           dispatch: (command) => {
             if ((command as { type: string }).type === "message.dispatch") {

@@ -2778,6 +2778,29 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Delegated task ${command.taskId} is not an app-owned task of thread ${command.parentThreadId}.`,
       });
     }
+    // The run that executes a task a native subagent listed belongs to its session's root.
+    const executionThreadId = subagentExecutionThreadId(task);
+    const executionProjection = Effect.gen(function* () {
+      return task.runId === null
+        ? projection
+        : yield* withTasksExecutedElsewhere(
+            executionThreadId === command.parentThreadId
+              ? projection
+              : yield* projectionStore
+                  .getThreadRecords(
+                    executionThreadId,
+                    ["subagents", "runs", "nodes", "attempts", "turnItems"],
+                    { turnItemTypes: [] },
+                  )
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestratorProjectionError({ threadId: executionThreadId, cause }),
+                    ),
+                  ),
+            [task.runId],
+          );
+    });
     const state =
       command.type === "delegated_task.completion-delivery.acknowledge"
         ? "acknowledged"
@@ -2791,23 +2814,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.completionDelivery?.state !== "pending"
       )
         return;
-      const parentRun = projection.runs.find((run) => run.id === task.runId);
+      const execution = yield* executionProjection;
+      const parentRun = execution.runs.find((run) => run.id === task.runId);
       if (parentRun !== undefined && isLiveRun(parentRun)) return;
       const records = yield* projectionStore
-        .getThreadRecords(command.parentThreadId, ["messages", "providerTurns"], {
+        .getThreadRecords(executionThreadId, ["messages", "providerTurns"], {
           messageRoles: ["user"],
         })
         .pipe(
           Effect.mapError(
             (cause) =>
               new OrchestratorProjectionError({
-                threadId: command.parentThreadId,
+                threadId: executionThreadId,
                 cause,
               }),
           ),
         );
       const plan = yield* planDelegatedCompletionDelivery({
-        parentProjection: { ...projection, ...records },
+        parentProjection: { ...execution, ...records },
         parentRun,
         task,
         updatedTask: task,
@@ -2825,9 +2849,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: plan.task,
       });
       for (const event of delegatedCompletionPlanEvents(
-        command.parentThreadId,
+        executionThreadId,
         plan,
-        projection.thread.providerInstanceId,
+        execution.thread.providerInstanceId,
         now,
       )) {
         yield* emitEvent(event);
@@ -2877,28 +2901,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedTask,
     });
 
-    // The run that executes a task a native subagent listed belongs to its session's root.
-    const executionThreadId = subagentExecutionThreadId(task);
-    const execution =
-      task.runId === null
-        ? projection
-        : yield* withTasksExecutedElsewhere(
-            executionThreadId === command.parentThreadId
-              ? projection
-              : yield* projectionStore
-                  .getThreadRecords(
-                    executionThreadId,
-                    ["subagents", "runs", "nodes", "attempts", "turnItems"],
-                    { turnItemTypes: [] },
-                  )
-                  .pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new OrchestratorProjectionError({ threadId: executionThreadId, cause }),
-                    ),
-                  ),
-            [task.runId],
-          );
+    const execution = yield* executionProjection;
     const parentRun =
       task.runId === null
         ? undefined

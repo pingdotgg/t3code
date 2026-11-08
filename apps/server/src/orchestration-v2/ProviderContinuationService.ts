@@ -145,26 +145,34 @@ export const layer = Layer.effectDiscard(
                     },
                   ).pipe(
                     Effect.andThen(
-                      Effect.forEach(
-                        delivery.taskIds,
-                        (taskId) =>
-                          ids.allocate
-                            .command({
-                              fixtureName: "delegated-completion",
-                              commandName: "dispose-disabled",
-                            })
-                            .pipe(
-                              Effect.flatMap((disposeCommandId) =>
-                                threads.dispatch({
-                                  type: "delegated_task.completion-delivery.dispose",
-                                  commandId: disposeCommandId,
-                                  parentThreadId: request.threadId,
-                                  taskId,
-                                }),
+                      Effect.gen(function* () {
+                        const elsewhere = yield* threads.getTasksExecutedElsewhere({
+                          threadId: request.threadId,
+                          runIds: [request.delegatedCompletion!.parentRunId],
+                        });
+                        yield* Effect.forEach(
+                          delivery.taskIds,
+                          (taskId) =>
+                            ids.allocate
+                              .command({
+                                fixtureName: "delegated-completion",
+                                commandName: "dispose-disabled",
+                              })
+                              .pipe(
+                                Effect.flatMap((disposeCommandId) =>
+                                  threads.dispatch({
+                                    type: "delegated_task.completion-delivery.dispose",
+                                    commandId: disposeCommandId,
+                                    parentThreadId:
+                                      elsewhere.find((task) => task.id === taskId)?.threadId ??
+                                      request.threadId,
+                                    taskId,
+                                  }),
+                                ),
                               ),
-                            ),
-                        { discard: true },
-                      ),
+                          { discard: true },
+                        );
+                      }),
                     ),
                     Effect.andThen(
                       request.clearIfCurrent !== undefined
