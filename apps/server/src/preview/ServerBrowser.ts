@@ -105,6 +105,8 @@ const AGENT_CURSOR_MOVE_MS = 160;
 const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 /** A dialog blocks page script, so a desktop size read gives up after this. */
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
+/** A desktop page that keeps its size draws nothing on a resize, so the wait gives up. */
+const DESKTOP_RESIZE_WAIT_MS = 1000;
 
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
@@ -328,6 +330,10 @@ interface ServerTab {
   desktopViewportRead: Promise<ServerTab["desktopViewport"]>;
   /** A read queued behind `desktopViewportRead`, shared by every caller that waits for it. */
   desktopViewportNext: Promise<ServerTab["desktopViewport"]> | null;
+  /** A page resize or load since the last read started; status measures again. */
+  desktopViewportStale: boolean;
+  /** Settles at the desktop page's next main-frame resize. */
+  desktopResize: PromiseWithResolvers<void>;
   loading: boolean;
   closing: boolean;
   recording: Recording | null;
@@ -666,6 +672,7 @@ const make = Effect.gen(function* () {
     const height = size?.height;
     if (typeof width === "number" && width > 0 && typeof height === "number" && height > 0)
       tab.desktopViewport = { width, height };
+    else tab.desktopViewportStale = true;
     return tab.desktopViewport;
   };
 
@@ -673,6 +680,7 @@ const make = Effect.gen(function* () {
   const measureDesktopViewport = (tab: ServerTab) =>
     (tab.desktopViewportNext ??= tab.desktopViewportRead.then(() => {
       tab.desktopViewportNext = null;
+      tab.desktopViewportStale = false;
       return (tab.desktopViewportRead = readDesktopViewport(tab));
     }));
 
@@ -887,6 +895,8 @@ const make = Effect.gen(function* () {
       desktopViewport: null,
       desktopViewportRead: Promise.resolve(null),
       desktopViewportNext: null,
+      desktopViewportStale: true,
+      desktopResize: Promise.withResolvers<void>(),
       loading: false,
       closing: false,
       recording: null,
@@ -904,9 +914,15 @@ const make = Effect.gen(function* () {
     if (desktop) {
       // The desktop resizes and zooms its webview itself; viewers map input with the new size.
       const remeasure = () => {
+        tab.desktopViewportStale = true;
         if (tab.viewers.size > 0) return broadcastViewport(tab).catch(constVoid);
       };
-      cdp.on("Page.frameResized", remeasure);
+      cdp.on("Page.frameResized", () => {
+        const drawn = tab.desktopResize;
+        tab.desktopResize = Promise.withResolvers();
+        drawn.resolve();
+        return remeasure();
+      });
       // A read a navigation broke has a fresh page to measure.
       cdp.on("Page.loadEventFired", remeasure);
       // Closing a dialog resizes nothing, and the host can close it without us.
@@ -1618,7 +1634,12 @@ const make = Effect.gen(function* () {
       };
     }
     const url = ServerBrowserPage.withoutDataPayload(tab.page.url());
-    const viewport = tab.desktop ? await layoutSize(tab) : tab.page.viewportSize();
+    // Page resizes and loads mark the size stale; only then does status read the page.
+    const viewport = tab.desktop
+      ? tab.desktopViewportStale || tab.dialog
+        ? await layoutSize(tab)
+        : await tab.desktopViewportRead
+      : tab.page.viewportSize();
     const status = {
       available: true,
       visible: tab.viewers.size > 0,
@@ -2175,7 +2196,7 @@ const make = Effect.gen(function* () {
             message: "A browser dialog is pending. Read preview_status.",
             reason: "dialogPending",
           });
-        return executeTabOperation(tab, request);
+        return executeTabOperation(tab, request, deadlineMs);
       });
     }
     return tab.control.agent(
@@ -2191,7 +2212,7 @@ const make = Effect.gen(function* () {
         tab.agentOperating = !READ_OPERATIONS.has(request.operation);
         updateFileChooserInterception(tab);
         try {
-          return await executeTabOperation(tab, request);
+          return await executeTabOperation(tab, request, deadlineMs);
         } finally {
           tab.agentOperating = false;
           updateFileChooserInterception(tab);
@@ -2202,7 +2223,11 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const executeTabOperation = async (tab: ServerTab, request: PreviewAutomationRequest) => {
+  const executeTabOperation = async (
+    tab: ServerTab,
+    request: PreviewAutomationRequest,
+    deadlineMs: number,
+  ) => {
     const input = request.input;
     switch (request.operation) {
       case "navigate": {
@@ -2219,14 +2244,38 @@ const make = Effect.gen(function* () {
       }
       case "resize": {
         const setting = resolvePreviewViewport(input as PreviewAutomationResizeInput);
+        const from = fixedViewportSize(tab.setting);
+        const to = fixedViewportSize(setting);
+        const drawn = tab.desktopResize.promise;
         await runPromise(
           manager.resize({ threadId: tab.threadId, tabId: tab.tabId, viewport: setting }),
         );
         await applySetting(tab, setting);
+        if (!tab.desktop) {
+          return {
+            tabId: tab.tabId,
+            setting,
+            viewport: tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT,
+          };
+        }
+        const changed = from?.width !== to?.width || from?.height !== to?.height;
+        const remainingMs = () => Math.max(0, deadlineMs - performance.now());
+        const within = <A>(promise: Promise<A>, ms: number) =>
+          runPromise(
+            Effect.promise(() => promise).pipe(
+              Effect.timeoutOption(ms),
+              Effect.map(Option.getOrNull),
+            ),
+          );
+        // The desktop draws the new size after the session update; its page resize says it has.
+        // Half the time left keeps room for the read, which runs even if nothing was drawn,
+        // because a page can keep another size than the one asked for.
+        if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
+        const measured = await within(layoutSize(tab), remainingMs());
         return {
           tabId: tab.tabId,
           setting,
-          viewport: tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT,
+          viewport: measured ?? tab.desktopViewport ?? UNATTACHED_FILL_VIEWPORT,
         };
       }
       case "setColorScheme": {
@@ -2345,6 +2394,8 @@ const make = Effect.gen(function* () {
         return;
       }
       if (event.type === "resized") {
+        // Desktop tabs only record the setting, so status need not wait behind an agent action.
+        if (tab.desktop) tab.setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
         await tab.control
           .system(async () => {
             if (

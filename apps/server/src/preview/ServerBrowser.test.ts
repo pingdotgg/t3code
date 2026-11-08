@@ -13,6 +13,7 @@ import {
   PreviewTabId,
   ProviderInstanceId,
   ThreadId,
+  type PreviewAutomationResizeResult,
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
@@ -1890,6 +1891,93 @@ it.effect(
         ]);
       }),
     ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a desktop tab reports the size the desktop draws after a resize", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      desktopRendersNext = true;
+      const opened = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        operation: "open",
+        input: { reuseExistingTab: false, show: false },
+      });
+      const tabId = PreviewTabId.make(opened.tabId!);
+      const { context } = desktopConnections.at(-1)!;
+      const cdp = context.sessions[0]!;
+      const events = yield* manager.subscribeEvents;
+      const status = broker
+        .invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} })
+        .pipe(Effect.map((result) => result.viewport));
+      // The desktop draws the new size once the session update reaches it.
+      const resize = (input: Record<string, unknown>, width: number, height: number) =>
+        Effect.gen(function* () {
+          const result = yield* broker
+            .invoke<PreviewAutomationResizeResult>({ scope, tabId, operation: "resize", input })
+            .pipe(Effect.forkScoped);
+          let event = yield* PubSub.take(events);
+          while (event.type !== "resized" || event.tabId !== tabId) {
+            event = yield* PubSub.take(events);
+          }
+          Object.assign(context.cssViewport, { width, height });
+          yield* Effect.promise(() => cdp.emitAsync("Page.frameResized"));
+          return (yield* Fiber.join(result)).viewport;
+        });
+
+      expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
+        width: 1280,
+        height: 760,
+      });
+      desktopSizeAnswer = () => Promise.reject(new Error("Cannot find context with specified id"));
+      expect(yield* status).toEqual({ width: 1280, height: 760 });
+      desktopSizeAnswer = null;
+      // A page can keep another size than the fixed one asked for; both report the page's.
+      expect(yield* resize({ mode: "freeform", width: 844, height: 390 }, 560, 760)).toEqual({
+        width: 560,
+        height: 760,
+      });
+      expect(yield* status).toEqual({ width: 560, height: 760 });
+      expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
+      // No page resize or load since that read, so status answers without reading again.
+      let reads = 0;
+      desktopSizeAnswer = async () => {
+        reads += 1;
+        return { result: { value: { width: 1, height: 1 } } };
+      };
+      expect(yield* status).toEqual({ width: 1234, height: 700 });
+      expect(reads).toBe(0);
+      // A status during a read waits for it rather than answer the size before it.
+      const pending = yield* Queue.unbounded<PromiseWithResolvers<Record<string, unknown>>>();
+      desktopSizeAnswer = () => {
+        const read = Promise.withResolvers<Record<string, unknown>>();
+        Queue.offerUnsafe(pending, read);
+        return read.promise;
+      };
+      const refill = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      const read = yield* Queue.take(pending);
+      // Status reads the URL just before it picks the size.
+      const statusStarted = Promise.withResolvers<void>();
+      const url = context.page.url();
+      using _url = vi.spyOn(context.page, "url").mockImplementationOnce(() => {
+        statusStarted.resolve();
+        return url;
+      });
+      const during = yield* Effect.forkScoped(status);
+      yield* Effect.promise(() => statusStarted.promise);
+      read.resolve({ result: { value: { width: 1100, height: 650 } } });
+      expect(yield* Fiber.join(during)).toEqual({ width: 1100, height: 650 });
+      expect((yield* Fiber.join(refill)).viewport).toEqual({ width: 1100, height: 650 });
+    }),
+  ).pipe(Effect.provide(layer)),
 );
 
 it.effect("a stalled desktop viewer still gets its size, control and reconnect", () =>
