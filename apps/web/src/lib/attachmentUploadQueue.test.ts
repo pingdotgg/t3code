@@ -310,6 +310,31 @@ describe("attachmentUploadQueue", () => {
     expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
   });
 
+  it("blocks a saved upload without read permission or local bytes", async () => {
+    const file = { ...makeFile("operate-only-saved"), file: null };
+    const previous = {
+      status: "ready" as const,
+      environmentId: firstEnvironment,
+      attachmentId: "pending-original",
+    };
+    useAttachmentUploadStore.setState({ uploadsByImageId: { [file.id]: previous } });
+    mocks.readEnvironmentScope.mockImplementation(
+      (_environmentId, scope) => scope !== "orchestration:read",
+    );
+    await refreshExpiredAttachmentUploads({ environmentId: firstEnvironment, images: [file] });
+    expect(readAttachmentUpload(file.id)).toMatchObject({ status: "failed", previous });
+    expect(getUploadedAttachments({ environmentId: firstEnvironment, images: [file] })).toBeNull();
+    expect(mocks.executeAtomQuery).not.toHaveBeenCalled();
+    expect(TestXmlHttpRequest.requests).toHaveLength(0);
+    releaseAttachmentUpload(file.id);
+    expect(mocks.runAtomCommand).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      mocks.removeUpload,
+      { environmentId: firstEnvironment, input: { attachmentId: "pending-original" } },
+      expect.anything(),
+    );
+  });
+
   it("does not resurrect an image removed while its upload is being checked", async () => {
     const image = makeImage("removed-during-verification");
     useAttachmentUploadStore.setState({

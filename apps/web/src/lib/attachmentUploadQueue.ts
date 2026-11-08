@@ -599,13 +599,21 @@ export async function refreshExpiredAttachmentUploads(input: {
       const upload = readAttachmentUpload(image.id);
       if (upload?.status !== "ready" || upload.environmentId !== input.environmentId) return;
       if (!canVerify) {
-        if (image.file)
+        if (image.file) {
           startAttachmentUpload({
             environmentId: input.environmentId,
             image,
             force: true,
             ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
           });
+        } else {
+          setUploadState(image.id, {
+            status: "failed",
+            environmentId: input.environmentId,
+            previous: upload,
+            reason: "Uploaded attachment could not be verified. Attach the file again.",
+          });
+        }
         return;
       }
       const verification = await verifyStashedAttachmentUpload({

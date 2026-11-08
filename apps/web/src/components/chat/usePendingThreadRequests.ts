@@ -310,6 +310,8 @@ export function usePendingThreadRequests(input: {
     const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
     if (userInputResponsesInFlight.current.has(responseKey)) return;
     userInputResponsesInFlight.current.add(responseKey);
+    const answerDraftKey = userInputDraftKey(environmentId, activeThreadId, requestId);
+    const answerDraftBeforePreparation = usePendingUserInputAnswers.getState()[answerDraftKey];
     setRespondingUserInputRequestIds((existing) =>
       existing.includes(requestId) ? existing : [...existing, requestId],
     );
@@ -357,6 +359,13 @@ export function usePendingThreadRequests(input: {
           return;
         }
         attachmentsByQuestionId.set(question.id, uploaded as UserInputAttachments[string]);
+      }
+      if (usePendingUserInputAnswers.getState()[answerDraftKey] !== answerDraftBeforePreparation) {
+        setThreadError(
+          activeThreadId,
+          "Answer changed while preparing attachments. Review it and send again.",
+        );
+        return;
       }
       const result = await respondToThreadUserInput({
         environmentId,

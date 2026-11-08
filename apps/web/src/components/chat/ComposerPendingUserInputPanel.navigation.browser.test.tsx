@@ -11,6 +11,21 @@ import { useLayoutEffect, useRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
+const submission = vi.hoisted(() => ({ refresh: vi.fn(), respond: vi.fn(), error: vi.fn() }));
+vi.mock(import("../../lib/attachmentUploadQueue"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  refreshExpiredAttachmentUploads: submission.refresh,
+  getUploadedAttachments: () => [],
+}));
+vi.mock(import("../../state/use-orchestration-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useOrchestrationCommand: (() => submission.respond) as never,
+}));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readEnvironmentScope: () => true,
+}));
+
 vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
   ...(await importOriginal()),
   default: (({ text }: { text: string }) => <p>{text}</p>) as never,
@@ -19,6 +34,9 @@ vi.mock(import("../ChatMarkdown"), async (importOriginal) => ({
 import { act, fakeTimers, render } from "../../../test/render";
 import { makeThreadProjectionFixture } from "../../test-fixtures";
 import { usePendingThreadRequests } from "./usePendingThreadRequests";
+import { useComposerDraftStore } from "../../composerDraftStore";
+import { questionAttachmentDraftId } from "../../questionAttachments";
+import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 
 const threadRef = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
 
@@ -87,16 +105,88 @@ function useProbeRequests({ environmentId, projection, loading = false }: ProbeP
     environmentId,
     activeThreadId: projection.thread.id,
     serverProjection: loading ? null : projection,
-    supportsQuestionAttachments: false,
+    supportsQuestionAttachments: true,
     composerDraftTarget: { environmentId, threadId: projection.thread.id },
     setComposerDraftPrompt: () => {},
     promptRef,
     composerRef,
-    setThreadError: () => {},
+    setThreadError: submission.error,
   });
 }
 
 let requests: ReturnType<typeof usePendingThreadRequests>;
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+it("preserves an answer edited after remount while attachment preparation is in flight", async () => {
+  const environmentId = EnvironmentId.make("editing-during-refresh");
+  const projection = questionProjection(ThreadId.make("editing-during-refresh"), ["first"]);
+  const requestId = RuntimeRequestId.make("first");
+  const target = questionAttachmentDraftId(
+    environmentId,
+    projection.thread.id,
+    requestId,
+    "question-0",
+  );
+  const file = new File(["image"], "image.png", { type: "image/png" });
+  useComposerDraftStore.getState().addImages(target, [
+    {
+      type: "image",
+      id: "editing-upload",
+      name: file.name,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      file,
+      previewUrl: "blob:editing-upload",
+    },
+  ]);
+  const started = deferred();
+  useAttachmentUploadStore.setState({
+    uploadsByImageId: {
+      "editing-upload": { status: "ready", environmentId, attachmentId: "pending-editing-upload" },
+    },
+  });
+  const release = deferred();
+  const rejected = deferred();
+  submission.respond.mockClear();
+  submission.error.mockClear();
+  submission.error.mockImplementationOnce(() => rejected.resolve());
+  submission.refresh.mockImplementationOnce(() => {
+    started.resolve();
+    return release.promise;
+  });
+  const probe = <PendingRequestsProbe environmentId={environmentId} projection={projection} />;
+  await using screen = await render(probe);
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Original"));
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-1", "Second"));
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-2", "Third"));
+  await act(() => requests.onAdvanceActivePendingUserInput());
+  expect(submission.refresh).toHaveBeenCalledOnce();
+  await started.promise;
+  await screen.rerender(null);
+  await screen.rerender(probe);
+  await act(() => requests.onChangeActivePendingUserInputCustomAnswer("question-0", "Edited"));
+  await act(async () => {
+    release.resolve();
+    await rejected.promise;
+  });
+  expect(submission.respond).not.toHaveBeenCalled();
+  expect(submission.error).toHaveBeenCalledWith(
+    projection.thread.id,
+    "Answer changed while preparing attachments. Review it and send again.",
+  );
+  expect(requests.activePendingDraftAnswers["question-0"]).toMatchObject({
+    customAnswer: "Edited",
+  });
+});
 
 function PendingRequestsProbe(props: ProbeProps) {
   const state = useProbeRequests(props);
