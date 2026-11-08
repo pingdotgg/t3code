@@ -30,6 +30,18 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as Workspace from "../workspace/CloudSandboxWorkspaces.ts";
+
+const mockWorkspaces = Layer.mock(Workspace.CloudSandboxWorkspaces)({
+  handoff: () => Effect.die("not used"),
+  remove: () => Effect.die("not used"),
+  setupThread: () => Effect.die("not used"),
+  prepareBranch: () => Effect.die("not used"),
+  sharePreview: () => Effect.die("not used"),
+  delegateSandboxTask: () => Effect.die("not used"),
+  sweep: Effect.die("not used"),
+  start: () => Effect.die("not used"),
+});
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
@@ -179,6 +191,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -265,6 +278,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -398,6 +412,7 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [] }),
         } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
@@ -526,6 +541,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({
           list: () =>
             Effect.succeed({
@@ -717,6 +733,7 @@ it("requestSecret saves a pasted value to a file without opening a card", async 
             }),
         }),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
         NodeCrypto.layer,
@@ -814,6 +831,7 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
           Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          mockWorkspaces,
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
           NodeCrypto.layer,

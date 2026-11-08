@@ -61,6 +61,18 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
+import * as Workspace from "../workspace/CloudSandboxWorkspaces.ts";
+
+const mockWorkspaces = Layer.mock(Workspace.CloudSandboxWorkspaces)({
+  handoff: () => Effect.die("not used"),
+  remove: () => Effect.die("not used"),
+  setupThread: () => Effect.die("not used"),
+  prepareBranch: () => Effect.die("not used"),
+  sharePreview: () => Effect.die("not used"),
+  delegateSandboxTask: () => Effect.die("not used"),
+  sweep: Effect.die("not used"),
+  start: () => Effect.die("not used"),
+});
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf, layerLinkingEnvironment, linkTo, servePeer } from "./PeerLinks.testkit.ts";
 import * as RemoteDelegation from "./RemoteDelegation.ts";
@@ -469,10 +481,15 @@ const boxToolkitLayer = (thread: BoxThread) => {
     Layer.provide(NodeCrypto.layer),
     Layer.provide(layerBoxThreads),
     Layer.provide(layerBoxLaunches),
-    Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
-    Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
-    Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
-    Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        mockWorkspaces,
+        Layer.mock(PeerForwarding.PeerForwarding)({}),
+        Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+        Layer.mock(PeerLinks.PeerLinks)({}),
+      ),
+    ),
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
     ),
@@ -593,6 +610,7 @@ const makeLaptop = (
       ),
       Layer.provide(Layer.succeedContext(linking)),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+      Layer.provide(mockWorkspaces),
       Layer.provide(NodeCrypto.layer),
       Layer.provideMerge(layerThreads),
       Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
@@ -1115,7 +1133,7 @@ it.effect("a task named only by environment inherits the parent's model, within 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("refuses worktree isolation for a task there before launching anything", () =>
+it.effect("refuses worktree and sandbox isolation for a task there before launching anything", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -1128,13 +1146,16 @@ it.effect("refuses worktree isolation for a task there before launching anything
       yield* linkTo(a.links, b, "auto");
       yield* seedParent(a);
 
-      const result = yield* a.call("delegate_task", {
-        task: "Run the suite on the box.",
-        target: { environmentId: box.environmentId },
-        isolation: "worktree",
-      });
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain("isolation");
+      for (const isolation of ["worktree", "sandbox"] as const) {
+        const result = yield* a.call("delegate_task", {
+          task: "Run the suite on the box.",
+          target: { environmentId: box.environmentId },
+          isolation,
+        });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain("isolation");
+        expect(JSON.stringify(result.content)).toContain("is not supported there");
+      }
       expect(yield* Ref.get(thread.launched)).toBeNull();
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
@@ -1930,6 +1951,38 @@ it.effect("a local task runs in this thread's project", () =>
       });
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result.content)).toContain("invalid_request");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("sandbox continuation launches idle and skips setup when disabled", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const b = yield* serveBox(thread);
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* seedParent(a);
+      const input = {
+        task: "Continue in the child",
+        target: { environmentId: box.environmentId, projectId: boxProject },
+        clientRequestId: "sandbox-continuation",
+      };
+      if (!parentScope.thread) throw new Error("Expected parent thread");
+      const scope = { ...parentScope, thread: parentScope.thread };
+      const delegated = yield* a.remote.delegateWorkspace(
+        scope,
+        input,
+        { type: "root", branch: "child" },
+        false,
+      );
+      expect(delegated.threadId).toBeDefined();
+      expect(yield* Ref.get(thread.message)).toBe(null);
+      expect(yield* Ref.get(thread.sent)).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

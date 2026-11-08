@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type ThreadId,
   type GitCommandError,
   MessageId,
   type ProjectId,
@@ -22,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as PlatformError from "effect/PlatformError";
 
+import * as CloudSandboxWorkspaces from "../workspace/CloudSandboxWorkspaces.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -37,6 +39,30 @@ export class WorktreeMcpService extends Context.Service<
       scope: McpInvocationScope,
       input: WorktreeMcpHandoffInput,
     ) => Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure>;
+    readonly prepareSandbox: (
+      scope: McpInvocationScope,
+      projectId: ProjectId,
+      branch: string,
+    ) => Effect.Effect<{ readonly branch: string }, WorktreeMcpFailure>;
+    readonly runSandboxSetup: (
+      scope: McpInvocationScope,
+      projectId: ProjectId,
+      threadId: ThreadId,
+    ) => Effect.Effect<{ readonly completed: true }, WorktreeMcpFailure>;
+    readonly deleteSandbox: (
+      scope: McpInvocationScope,
+      workspaceId: string,
+    ) => Effect.Effect<
+      { readonly workspaceId: string; readonly deleted: boolean },
+      WorktreeMcpFailure
+    >;
+    readonly sharePreview: (
+      scope: McpInvocationScope,
+      port: number,
+    ) => Effect.Effect<
+      { readonly port: number; readonly url: string; readonly isPublic: boolean },
+      WorktreeMcpFailure
+    >;
     readonly status: (
       scope: McpInvocationScope,
     ) => Effect.Effect<WorktreeMcpStatusResult, WorktreeMcpFailure>;
@@ -67,6 +93,7 @@ const asOperationFailed = (prefix: string) =>
   );
 
 const make = Effect.gen(function* () {
+  const sandboxWorkspaces = yield* CloudSandboxWorkspaces.CloudSandboxWorkspaces;
   const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
@@ -384,6 +411,7 @@ const make = Effect.gen(function* () {
         }
 
         const result: WorktreeMcpHandoffResult = {
+          kind: "filesystem",
           worktreePath,
           branch: worktree.worktree.refName,
           baseRef,
@@ -416,7 +444,11 @@ const make = Effect.gen(function* () {
             );
           }
           handoffThreadsInFlight.add(scope.thread.threadId);
-          return restore(performHandoff(scope, input)).pipe(
+          const operation: Effect.Effect<WorktreeMcpHandoffResult, WorktreeMcpFailure> =
+            input.isolation?.kind === "sandbox"
+              ? sandboxWorkspaces.handoff(scope, input)
+              : performHandoff(scope, input);
+          return restore(operation).pipe(
             Effect.ensuring(
               Effect.sync(() => handoffThreadsInFlight.delete(scope.thread.threadId)),
             ),
@@ -457,7 +489,33 @@ const make = Effect.gen(function* () {
     return yield* gitWorkflow.listRefs({ ...refs, cwd });
   });
 
-  return WorktreeMcpService.of({ handoff, status, listRefs });
+  return WorktreeMcpService.of({
+    handoff,
+    status,
+    listRefs,
+    prepareSandbox: Effect.fn("WorktreeMcpService.prepareSandbox")(
+      function* (scope, projectId, branch) {
+        yield* requireCapability(scope);
+        return yield* sandboxWorkspaces.prepareBranch(projectId, branch);
+      },
+    ),
+    runSandboxSetup: Effect.fn("WorktreeMcpService.runSandboxSetup")(
+      function* (scope, projectId, threadId) {
+        yield* requireCapability(scope);
+        return yield* sandboxWorkspaces.setupThread(projectId, threadId);
+      },
+    ),
+    deleteSandbox: Effect.fn("WorktreeMcpService.deleteSandbox")(function* (scope, workspaceId) {
+      yield* requireCapability(scope);
+      const threadScope = yield* requireThreadScope(scope);
+      return yield* sandboxWorkspaces.remove(threadScope, workspaceId);
+    }),
+    sharePreview: Effect.fn("WorktreeMcpService.sharePreview")(function* (scope, port) {
+      if (!scope.capabilities.has("preview"))
+        return yield* failure("capability_denied", "This credential cannot share previews.");
+      return yield* sandboxWorkspaces.sharePreview(port);
+    }),
+  });
 });
 
 export const layer: Layer.Layer<
@@ -471,4 +529,5 @@ export const layer: Layer.Layer<
   | GitWorkflowService.GitWorkflowService
   | ProjectSetupScriptRunner.ProjectSetupScriptRunner
   | VcsStatusBroadcaster.VcsStatusBroadcaster
+  | CloudSandboxWorkspaces.CloudSandboxWorkspaces
 > = Layer.effect(WorktreeMcpService, make);

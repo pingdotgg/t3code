@@ -3,12 +3,14 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  ManagedCloudSandboxResourceId,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
   type Project,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  WorktreeMcpFailure,
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -33,6 +35,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as CloudSandboxWorkspaces from "../workspace/CloudSandboxWorkspaces.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
@@ -292,9 +295,21 @@ const makeHarness = (options: HarnessOptions = {}) => {
     }
   });
 
+  const sandboxHandoff = vi.fn((_: unknown, __: unknown) =>
+    Effect.fail(
+      new WorktreeMcpFailure({
+        code: "invalid_request",
+        message: "Sandbox isolation requires a managed cloud environment.",
+      }),
+    ),
+  );
+
   const layer = WorktreeMcpService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Layer.mock(CloudSandboxWorkspaces.CloudSandboxWorkspaces)({
+          handoff: sandboxHandoff,
+        } satisfies Partial<CloudSandboxWorkspaces.CloudSandboxWorkspaces["Service"]>),
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords,
@@ -362,6 +377,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     deleteLocalBranch,
     localStatus,
     runForThread,
+    sandboxHandoff,
   };
 };
 
@@ -386,7 +402,9 @@ const runHandoff = (
 ) =>
   Effect.gen(function* () {
     const service = yield* WorktreeMcpService.WorktreeMcpService;
-    return yield* service.handoff(harness.scope, input);
+    const result = yield* service.handoff(harness.scope, input);
+    if (result.kind !== "filesystem") throw new Error("Expected a filesystem handoff");
+    return result;
   }).pipe(Effect.provide(harness.layer));
 
 const runStatus = (harness: ReturnType<typeof makeHarness>) =>
@@ -398,6 +416,24 @@ const runStatus = (harness: ReturnType<typeof makeHarness>) =>
 const decodeHandoffInput = Schema.decodeUnknownEffect(WorktreeMcpHandoffInput);
 
 describe("t3_worktree_handoff", () => {
+  it.effect("sends sandbox isolation to the sandbox service instead of creating a worktree", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const result = yield* Effect.exit(
+        runHandoff(harness, {
+          branch: "feature/isolated",
+          isolation: {
+            kind: "sandbox",
+            operationId: ManagedCloudSandboxResourceId.make("workspace-test"),
+          },
+        }),
+      );
+      expectTypedFailure(result, { _tag: "WorktreeMcpFailure", code: "invalid_request" });
+      expect(harness.sandboxHandoff).toHaveBeenCalledTimes(1);
+      expect(harness.createWorktree).not.toHaveBeenCalled();
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    });
+  });
   it.effect("reports a continuation failure without failing the handoff", () => {
     const harness = makeHarness({ continuation: "fails" });
     return Effect.gen(function* () {
@@ -405,8 +441,11 @@ describe("t3_worktree_handoff", () => {
         branch: "feature/continue-fails",
         continuationPrompt: "Keep going.",
       });
-      expect(result.continuation).toMatchObject({ status: "failed" });
-      expect(result.worktreePath).toBe("/worktrees/project/feature/continue-fails");
+      expect(result).toMatchObject({
+        kind: "filesystem",
+        continuation: { status: "failed" },
+        worktreePath: "/worktrees/project/feature/continue-fails",
+      });
       expect(harness.dispatch).toHaveBeenCalled();
     });
   });

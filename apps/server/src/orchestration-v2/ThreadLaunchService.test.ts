@@ -65,6 +65,18 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as Workspace from "../workspace/CloudSandboxWorkspaces.ts";
+
+const mockWorkspaces = Layer.mock(Workspace.CloudSandboxWorkspaces)({
+  handoff: () => Effect.die("not used"),
+  remove: () => Effect.die("not used"),
+  setupThread: () => Effect.die("not used"),
+  prepareBranch: () => Effect.die("not used"),
+  sharePreview: () => Effect.die("not used"),
+  delegateSandboxTask: () => Effect.die("not used"),
+  sweep: Effect.die("not used"),
+  start: () => Effect.die("not used"),
+});
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const projectId = ProjectId.make("project:launch-test");
@@ -341,6 +353,7 @@ it.effect.each(
           Layer.mock(SecretRequests.SecretRequests)({}),
           ManagedPolicy.layerTest(),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          mockWorkspaces,
         ),
       ),
     );

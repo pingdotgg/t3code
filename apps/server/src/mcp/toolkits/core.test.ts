@@ -24,6 +24,7 @@ import {
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -51,6 +52,9 @@ import * as SecretRequests from "../../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../../peer/RemoteDelegation.ts";
 import * as ScheduledTaskService from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as GitWorkflowService from "../../git/GitWorkflowService.ts";
+import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
+import * as VcsStatusBroadcaster from "../../vcs/VcsStatusBroadcaster.ts";
 import * as McpHttpServer from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../McpToolAccess.testkit.ts";
@@ -61,10 +65,23 @@ import * as AttachmentHandlers from "./attachment/handlers.ts";
 import * as PeerForwarding from "../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../peer/PeerLinks.ts";
+import * as Workspace from "../../workspace/CloudSandboxWorkspaces.ts";
+
+const mockWorkspaces = Layer.mock(Workspace.CloudSandboxWorkspaces)({
+  handoff: () => Effect.die("not used"),
+  remove: () => Effect.die("not used"),
+  setupThread: () => Effect.die("not used"),
+  prepareBranch: () => Effect.die("not used"),
+  sharePreview: () => Effect.die("not used"),
+  delegateSandboxTask: () => Effect.die("not used"),
+  sweep: Effect.die("not used"),
+  start: () => Effect.die("not used"),
+});
 
 const layerOrchestratorToolkit = McpHttpServer.layerOrchestratorToolkit.pipe(
   Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+  Layer.provide(mockWorkspaces),
 );
 
 const declaredFailure = (result: McpSchema.CallToolResult) => {
@@ -1101,4 +1118,68 @@ it.effect(
       ),
     );
   },
+);
+
+const sandboxToolNames = [
+  "t3_worktree_prepare_sandbox",
+  "t3_worktree_run_sandbox_setup",
+  "preview_share",
+];
+
+const listedSandboxToolNames = Effect.gen(function* () {
+  const server = yield* McpServer.McpServer;
+  return server.tools
+    .map(({ tool }) => tool.name)
+    .filter((name) => sandboxToolNames.includes(name))
+    .toSorted();
+});
+
+const sandboxToolServices = Layer.mergeAll(
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-sandbox-tools-" }),
+  Layer.mock(ThreadManagement.ThreadManagementService)({}),
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(ServerSettings.ServerSettingsService)({}),
+  Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+  Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(Workspace.CloudSandboxWorkspaces)({}),
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
+
+const layerSandboxToolkit = McpHttpServer.layerManagedSandboxToolkit.pipe(
+  Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+);
+
+const managedCloudContext = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(
+      `${config.baseDir}/managed-cloud.json`,
+      JSON.stringify({
+        resourceId: "source",
+        controllerEnvironmentId: "controller",
+        controllerBaseUrl: "http://127.0.0.1:47773",
+        grantToken: "fixture",
+      }),
+    );
+  }),
+);
+
+it.effect("a server without managed cloud context lists no sandbox tools", () =>
+  listedSandboxToolNames.pipe(
+    Effect.map((names) => expect(names).toEqual([])),
+    Effect.provide(layerSandboxToolkit.pipe(Layer.provide(sandboxToolServices))),
+  ),
+);
+
+it.effect("a managed cloud server lists all three sandbox tools", () =>
+  listedSandboxToolNames.pipe(
+    Effect.map((names) => expect(names).toEqual([...sandboxToolNames].toSorted())),
+    Effect.provide(
+      layerSandboxToolkit.pipe(
+        Layer.provide(managedCloudContext),
+        Layer.provide(sandboxToolServices),
+      ),
+    ),
+  ),
 );

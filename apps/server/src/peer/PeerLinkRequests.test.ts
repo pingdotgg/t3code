@@ -55,6 +55,18 @@ import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
+import * as Workspace from "../workspace/CloudSandboxWorkspaces.ts";
+
+const mockWorkspaces = Layer.mock(Workspace.CloudSandboxWorkspaces)({
+  handoff: () => Effect.die("not used"),
+  remove: () => Effect.die("not used"),
+  setupThread: () => Effect.die("not used"),
+  prepareBranch: () => Effect.die("not used"),
+  sharePreview: () => Effect.die("not used"),
+  delegateSandboxTask: () => Effect.die("not used"),
+  sweep: Effect.die("not used"),
+  start: () => Effect.die("not used"),
+});
 import * as PeerLinkRequests from "./PeerLinkRequests.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import {
@@ -156,6 +168,7 @@ const makeLaptop = Effect.gen(function* () {
     Layer.provideMerge(PeerLinkRequests.layer),
     Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
     Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+    Layer.provide(mockWorkspaces),
     Layer.provide(Layer.succeedContext(linking)),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(layerThreads),

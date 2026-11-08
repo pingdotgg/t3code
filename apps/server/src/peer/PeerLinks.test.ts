@@ -17,6 +17,8 @@ import { Tool, Toolkit } from "effect/ai";
 import {
   FetchHttpClient,
   HttpClient,
+  HttpClientRequest,
+  HttpMethod,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
@@ -172,7 +174,7 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
 
       const pairing = yield* b.auth.issuePairingCredential();
       const linked = yield* a.links.link({
-        url: b.url,
+        url: `${b.url}/pair#ignored`,
         pairingCode: pairing.credential,
         access: "auto",
       });
@@ -324,6 +326,61 @@ const serveRaw = <E, R>(
       }).pipe(Effect.provideContext(server)),
     ),
   );
+
+it.live("links and calls a child through its managed sandbox endpoint", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const prefix = "/api/cloud-sandboxes/managed/child/proxy";
+      const received = yield* Ref.make<ReadonlyArray<string>>([]);
+      const front = yield* serveRaw((request) =>
+        Effect.gen(function* () {
+          yield* Ref.update(received, (seen) => [...seen, request.url]);
+          if (!request.url.startsWith(`${prefix}/`))
+            return HttpServerResponse.empty({ status: 404 });
+          const headers = Object.fromEntries(
+            Object.entries(request.headers).filter(
+              ([key]) => !["host", "content-length", "connection", "accept-encoding"].includes(key),
+            ),
+          );
+          if (!HttpMethod.isHttpMethod(request.method))
+            return HttpServerResponse.empty({ status: 405 });
+          const upstream = HttpClientRequest.make(request.method)(
+            `${b.url}${request.url.slice(prefix.length)}`,
+          ).pipe(HttpClientRequest.setHeaders(headers));
+          const response = yield* HttpClient.execute(
+            request.method === "GET"
+              ? upstream
+              : upstream.pipe(
+                  HttpClientRequest.bodyText(yield* request.text, request.headers["content-type"]),
+                ),
+          );
+          return HttpServerResponse.text(yield* response.text, {
+            status: response.status,
+            headers: response.headers,
+          });
+        }).pipe(Effect.provide(FetchHttpClient.layer), Effect.orDie),
+      );
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      const endpoint = `${front}${prefix}`;
+      const linked = yield* a.links.link({
+        url: `${endpoint}/?ignored=1#ignored`,
+        pairingCode: pairing.credential,
+        access: "auto",
+        expectedEnvironmentId: box.environmentId,
+      });
+      expect(linked.urls).toEqual([endpoint]);
+      expect((yield* probe(a)).caller).toBe("T3 Code · Laptop");
+      const paths = yield* Ref.get(received);
+      expect(paths).toContain(`${prefix}/.well-known/t3/environment`);
+      expect(paths).toContain(`${prefix}/oauth/mcp/decision`);
+      expect(paths).toContain(`${prefix}/oauth/mcp/token`);
+      expect(paths).toContain(`${prefix}/mcp`);
+      expect(paths.every((path) => path.startsWith(`${prefix}/`))).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
 
 it.effect("never follows a peer's redirect with the pairing code", () =>
   Effect.scoped(
@@ -641,6 +698,28 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
       expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("repoints a stored link to a moved address and refuses plain http off this machine", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      yield* a.links.link({ url: b.url, pairingCode: pairing.credential, access: "auto" });
+
+      const moved = yield* serveApart(box);
+      yield* a.links.repoint(box.environmentId, moved.url);
+      expect((yield* a.links.resolve(box.environmentId)).url).toBe(moved.url);
+
+      const refused = yield* a.links
+        .repoint(box.environmentId, "http://192.168.1.20:3773")
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("plain http");
+      const stored = yield* a.links.get(box.environmentId);
+      expect(Option.map(stored, (link) => link.urls)).toEqual(Option.some([moved.url]));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

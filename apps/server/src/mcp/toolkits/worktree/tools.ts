@@ -8,6 +8,8 @@ import {
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
   ThreadId,
+  SandboxWorkspaceDeleteInput,
+  SandboxWorkspaceDeleteResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -27,7 +29,7 @@ const WorktreeToolFailure = Schema.Union([WorktreeMcpFailure, OrchestratorMcpFai
 
 const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   description:
-    "Move THIS thread into a new git worktree on a new branch. Runs the setup script by default. A separate agent in a worktree: `t3_thread_launch` with `workspaceStrategy`. Call last in your turn. The move ends the live session. `continuationPrompt` resumes work there next turn. Without it, the thread waits. The worktree stays after the thread is deleted. Fails if this thread has a worktree.",
+    "Move this thread to a filesystem worktree (default). Sandbox isolation creates a disk-forked environment with a separate continuation; it needs a managed cloud controller and Linked environments already enabled on this source. Choosing sandbox authorizes enabling Linked environments only on the new child it creates, never on an existing environment. Use a stable operationId to retry. Processes aren't preserved; delete with t3_worktree_delete_sandbox. Filesystem handoff ends this session: call it last and pass continuationPrompt.",
   parameters: WorktreeMcpHandoffInput,
   success: WorktreeMcpHandoffResult,
   failure: WorktreeToolFailure,
@@ -82,7 +84,21 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
+const DeleteSandboxWorkspaceTool = Tool.make("t3_worktree_delete_sandbox", {
+  description:
+    "Delete a sandbox workspace owned by this calling thread, stopping its child work and removing its sandbox and peer link. Does not remove ordinary filesystem worktrees or existing attached sandboxes.",
+  parameters: SandboxWorkspaceDeleteInput,
+  success: SandboxWorkspaceDeleteResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true);
+
 export const WorktreeToolkit = Toolkit.make(
+  DeleteSandboxWorkspaceTool,
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,

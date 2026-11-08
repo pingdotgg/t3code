@@ -39,6 +39,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
+import * as Workspace from "../workspace/CloudSandboxWorkspaces.ts";
 import * as SourceControlRepositoryService from "../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -164,7 +165,21 @@ const layerTools = Layer.mergeAll(
   Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
   Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-  Layer.provide(Layer.mock(RemoteDelegation.RemoteDelegation)({})),
+  Layer.provide(
+    Layer.merge(
+      Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+      Layer.mock(Workspace.CloudSandboxWorkspaces)({
+        handoff: () => Effect.die("not used"),
+        remove: () => Effect.die("not used"),
+        setupThread: () => Effect.die("not used"),
+        prepareBranch: () => Effect.die("not used"),
+        sharePreview: () => Effect.die("not used"),
+        delegateSandboxTask: () => Effect.die("not used"),
+        sweep: Effect.die("not used"),
+        start: () => Effect.die("not used"),
+      }),
+    ),
+  ),
   Layer.provide(
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/p" }),
   ),
