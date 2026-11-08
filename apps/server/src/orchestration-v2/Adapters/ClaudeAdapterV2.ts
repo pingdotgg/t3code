@@ -2088,15 +2088,20 @@ function cardReplyRepeats(block: { readonly name: string; readonly input: unknow
   if (!isLessonCardTool(block.name)) return false;
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
   const words = (value: string) => value.replace(/\s+/gu, " ").trim();
-  if (typeof reply !== "string") return false;
-  const normalizedReply = words(reply);
-  const normalizedText = words(text);
-  if (normalizedReply.includes(normalizedText)) return true;
-  const firstSentence = (value: string) =>
-    /^(.*?(?:[.!?](?=\s|$)|$))/u.exec(value)?.[1]?.trim().toLocaleLowerCase() ?? "";
-  const replySentence = firstSentence(normalizedReply);
-  const textSentence = firstSentence(normalizedText);
-  return replySentence.length > 0 && replySentence === textSentence;
+  return typeof reply === "string" && words(reply).includes(words(text));
+}
+
+// Short lead text that opens with the reply's own first sentence is the reply drafted twice (APP-108).
+function leadRepeatsCardReply(
+  block: { readonly name: string; readonly input: unknown },
+  text: string,
+) {
+  const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
+  if (typeof reply !== "string" || text.length > 300) return false;
+  const opening = (value: string) =>
+    /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
+  // A bare "Right." opens most replies; only a sentence this long marks a repeat.
+  return opening(text).length >= 40 && opening(text) === opening(reply);
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -7951,9 +7956,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!context.reasoning.blocks.has(itemId)) {
             context.reasoning.blocks.set(itemId, {
               startedAt: yield* DateTime.now,
-              ordinal:
-                context.itemOrdinals.get(item.nativeItemId) ??
-                (yield* resolveItemOrdinal(context, item.nativeItemId)),
+              ordinal: yield* resolveItemOrdinal(context, item.nativeItemId),
               text: "",
             });
           }
@@ -7984,7 +7987,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           if (isLessonCardTool(block.name)) {
             for (const item of held) {
-              if (cardReplyRepeats(block, item.text)) {
+              if (cardReplyRepeats(block, item.text) || leadRepeatsCardReply(block, item.text)) {
                 yield* emitHeldAssistantTextItemAsReasoning(context, item);
               } else {
                 yield* emitAssistantTextArtifacts({ context, ...item });
@@ -10052,6 +10055,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (isLessonTurn(context.input) || context.assistant.cardSeen) {
               if (
                 !context.assistant.emittedNativeItemIds.has(assistantText.nativeItemId) &&
+                !context.reasoning.blocks.has(`assistant-lesson:${assistantText.nativeItemId}`) &&
                 !context.assistant.heldText.some(
                   (item) => item.nativeItemId === assistantText.nativeItemId,
                 )

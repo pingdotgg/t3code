@@ -2259,15 +2259,15 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       testCase.setup.sideChat !== undefined ||
       testCase.setup.sideChatOpening !== undefined;
     const words = (value: string) => value.replace(/\s+/gu, " ").trim();
-    const firstSentence = (value: string) =>
-      /^(.*?(?:[.!?](?=\s|$)|$))/u.exec(value)?.[1]?.trim().toLocaleLowerCase() ?? "";
-    const repeats = (use: typeof ToolUse.Type, text: string) => {
-      if (!isRecord(use.input)) return false;
-      const reply = use.input.reply;
+    const opening = (value: string) =>
+      /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
+    // Mirrors the adapter's cardReplyRepeats, plus leadRepeatsCardReply for lesson lead text.
+    const repeats = (use: typeof ToolUse.Type, text: string, lead = false) => {
+      const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return false;
+      if (words(reply).includes(words(text))) return true;
       return (
-        words(reply).includes(words(text)) ||
-        (firstSentence(reply).length > 0 && firstSentence(reply) === firstSentence(text))
+        lead && text.length <= 300 && opening(text).length >= 40 && opening(text) === opening(reply)
       );
     };
     const texts: Array<string> = [];
@@ -2285,7 +2285,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
         if (isT3Mcp || held.join("").length > 300) {
-          texts.push(...(isCard ? held.filter((text) => !repeats(block, text)) : held));
+          texts.push(...(isCard ? held.filter((text) => !repeats(block, text, true)) : held));
         }
         if (isCard) sample.lessonCardSeen = true;
         continue;
