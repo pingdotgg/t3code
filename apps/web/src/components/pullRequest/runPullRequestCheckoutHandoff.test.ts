@@ -179,3 +179,31 @@ it("seeds the prompt when cancel lands while openThread is still pending", async
   expect(state.setPrompt).toHaveBeenCalledWith("draft-1", "Fix the failing check");
   expect(pointThread).not.toHaveBeenCalled();
 });
+
+it("reports a failed rebind when the opened draft was discarded during prepare", async () => {
+  reset();
+  const clearHandoff = vi.fn();
+  await runPullRequestCheckoutHandoff({
+    terminology,
+    mode: "worktree",
+    task: { prompt: "Fix the failing check" },
+    clearHandoff,
+    openThread: async () => opened,
+    prepare: async () =>
+      AsyncResult.success({
+        branch: "pr-1",
+        worktreePath: "/tmp/pr-1",
+        isOnPullRequestHead: true,
+      }),
+    pointThread: async () => false,
+  });
+
+  expect(clearHandoff).toHaveBeenCalled();
+  expect(state.update).toHaveBeenCalledWith(
+    state.toastId,
+    expect.objectContaining({
+      type: "error",
+      title: "Checked out, but the thread stayed where it was",
+    }),
+  );
+});

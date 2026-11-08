@@ -1170,6 +1170,16 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("reports whether setDraftThreadContext found a draft to update", () => {
+    const store = useComposerDraftStore.getState();
+    expect(store.setDraftThreadContext(draftId, { branch: "gone" })).toBe(false);
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    expect(store.setDraftThreadContext(draftId, { branch: "feature" })).toBe(true);
+    expect(store.setDraftThreadContext(draftId, { branch: "feature" })).toBe(true);
+    store.clearDraftThread(draftId);
+    expect(store.setDraftThreadContext(draftId, { branch: "after-clear" })).toBe(false);
+  });
+
   it("clears branch and worktree but keeps env mode when remapping a draft to another environment", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
