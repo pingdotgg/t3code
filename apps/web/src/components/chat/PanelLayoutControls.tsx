@@ -3,6 +3,7 @@ import { ListFilterIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
 import { memo } from "react";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -28,17 +29,17 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   disabledReason = null,
 }: PanelLayoutControlsProps) {
   const threadPanelToggle = (
-    <Toggle
+    <Button
       className="relative shrink-0 [-webkit-app-region:no-drag]"
-      pressed={threadPanelOpen}
-      onPressedChange={threadPanelPresentation === "popover" ? undefined : onToggleThreadPanel}
+      aria-expanded={threadPanelOpen}
+      onClick={threadPanelPresentation === "popover" ? undefined : onToggleThreadPanel}
       disabled={disabledReason !== null}
       aria-label="Toggle thread details panel"
       variant="ghost"
-      size="sm"
+      size="icon-sm"
     >
       <ListFilterIcon className="size-3.5" />
-    </Toggle>
+    </Button>
   );
   const threadPanelControl = (
     <Tooltip>
