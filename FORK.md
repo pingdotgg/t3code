@@ -16,8 +16,9 @@ The [Fork sync and build](.github/workflows/fork-build.yml) workflow runs every 
 2. On a Windows runner it installs dependencies, runs the tests and typechecks for every file the fork's commits touch, and builds the installer.
 3. It checks that each fork feature is inside the installer ([`fork/installer-markers.txt`](fork/installer-markers.txt)), then publishes a GitHub release with the installer and `latest.yml`.
 4. Only then does the rebased branch replace `custom`.
+5. On a Linux runner it builds the phone app from the same commit and attaches `T3-Code-Fork-<version>.apk` to that release. If this step fails, the desktop release stays and the failure issue says the APK is missing.
 
-The desktop app's update button reads this repository's releases, so one click installs a build that has already passed. If any step fails, nothing is published, installed copies stay where they are, and the workflow opens an issue labelled `fork-pipeline`.
+The desktop app's update button reads this repository's releases, so one click installs a build that has already passed. If a step before publishing fails, nothing is published, installed copies stay where they are, and the workflow opens an issue labelled `fork-pipeline`.
 
 Pushing a new commit to `custom` also builds and publishes a release.
 
@@ -27,7 +28,7 @@ Pushing a new commit to `custom` also builds and publishes a release.
 - `custom-next`: a rebased candidate that hasn't been published yet.
 - Release versions turn MT Code's `x.y.z` into `x.y.(z×100+n)`, where `n` counts rebuilds on that release. For example, MT Code 0.1.52 becomes 0.1.5200, the next rebuild 0.1.5201, and MT Code 0.1.53 becomes 0.1.5300. Each new version sorts above the last, so the updater always offers it.
 
-## Phone app (branch `ryan/mobile-parity`)
+## Phone app
 
 The fork's desktop features, ported to the Android app (`apps/mobile`). It is sideloaded as a separate app named "T3 Code Fork" (the `preview` variant, package `com.t3tools.t3code.preview`), so it sits beside the official app.
 
@@ -38,10 +39,13 @@ The fork's desktop features, ported to the Android app (`apps/mobile`). It is si
 - **Folded turns** show their step count, **titles shimmer** while they regenerate, and **Markdown frontmatter** shows as a table.
 - **Read aloud:** a speaker button on replies plays Microsoft Edge's natural voices. They are made by a small service on the paired PC (port 3776 over Tailscale), not by the phone, whose own voices are poor. Pick the voice in Settings > Voice. It works only over a direct (Tailscale) connection, not a relay.
 
+Each release's APK is signed with the fork's own key, so it installs over the previous one; its Android version code comes from the release version (0.1.5301 becomes 105301). Over-the-air updates are off in these builds, because upstream's would replace the fork's features.
+
 The phone app needs `crypto.getRandomValues`, which Hermes lacks; `apps/mobile/src/lib/cryptoPolyfill.ts` provides it.
 
 ## Repository secrets
 
+- `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`: the phone app's signing key (alias `t3codefork`). Keep the key: Android refuses an update signed with a different one.
 - `CLAUDE_CODE_OAUTH_TOKEN`: from `claude setup-token`, used only to resolve merge conflicts.
 - `FORK_PUSH_TOKEN`: a fine-grained token for this repository with Contents and Workflows read/write. The built-in token can't push branches whose commits change `.github/workflows`, and every MT Code release does.
 

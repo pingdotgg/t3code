@@ -48,6 +48,14 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       rebased: ${{ steps.rebase.outputs.rebased }}
     steps:
+      # The token fallback below lets a private dry-run copy of this repo run
+      # the pipeline; the real fork must have its push token.
+      - name: Require the push token
+        if: github.repository == 'ryankhart/t3code'
+        env:
+          FORK_PUSH_TOKEN: ${{ secrets.FORK_PUSH_TOKEN }}
+        run: '[ -n "$FORK_PUSH_TOKEN" ] || { echo "FORK_PUSH_TOKEN secret is missing or empty"; exit 1; }'
+
       - name: Checkout custom
         uses: actions/checkout@v4
         with:
@@ -55,7 +63,7 @@ jobs:
           fetch-depth: 0
           # A personal token is needed to push branches whose new commits touch
           # .github/workflows (every MT Code release does); GITHUB_TOKEN can't.
-          token: ${{ secrets.FORK_PUSH_TOKEN }}
+          token: ${{ secrets.FORK_PUSH_TOKEN || github.token }}
 
       - name: Keep only this workflow enabled
         env:
@@ -137,6 +145,8 @@ jobs:
     if: needs.sync.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 120
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
     defaults:
       run:
         shell: bash
@@ -149,7 +159,7 @@ jobs:
         with:
           ref: ${{ needs.sync.outputs.sha }}
           fetch-depth: 0
-          token: ${{ secrets.FORK_PUSH_TOKEN }}
+          token: ${{ secrets.FORK_PUSH_TOKEN || github.token }}
 
       - name: Fetch base tag
         run: git fetch --no-tags "$MTCODE_REMOTE" "+refs/tags/$BASE_TAG:refs/tags/$BASE_TAG"
@@ -191,6 +201,7 @@ jobs:
         run: node fork/check-installer.mjs release
 
       - name: Publish release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -200,6 +211,7 @@ jobs:
           notes="Built from MT Code ${BASE_TAG#munim-v} plus this fork's commits ($(git rev-list --count "$BASE_TAG..HEAD") commits). See FORK.md."
           gh release create "v$VERSION" "${files[@]}" --target "${{ needs.sync.outputs.sha }}" \
             --title "T3 Code $VERSION (MT Code ${BASE_TAG#munim-v} + fork)" --notes "$notes" --latest
+          echo "published=true" >> "$GITHUB_OUTPUT"
 
       - name: Promote candidate to custom
         if: needs.sync.outputs.rebased == 'true'
@@ -207,9 +219,104 @@ jobs:
           git push --force origin "${{ needs.sync.outputs.sha }}:refs/heads/custom"
           git push origin --delete custom-next || true
 
-  report:
+  # The phone app, built from the same commit and attached to the desktop
+  # release, so a desktop update always has a matching APK. A failure here
+  # leaves the desktop release in place and opens the failure issue.
+  android:
     needs: [sync, build]
-    if: failure()
+    # Also after a failed promotion: the release is already live.
+    if: ${{ !cancelled() && needs.build.outputs.published == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # Dependency install scripts and Gradle plugins run here; keep the token narrow.
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.sync.outputs.version }}
+    steps:
+      # The image leaves ~12 GB free, and on a small (private-repo) runner the
+      # build outgrows 7.7 GB RAM + 4 GB swap; running out of either kills the
+      # runner without a log. Free ~25 GB of unused tools (the Android SDK stays) and add swap.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /usr/local/share/powershell /usr/share/swift /usr/local/julia* /opt/az /opt/microsoft /opt/google
+          sudo rm -rf /usr/local/share/chromium /usr/local/lib/node_modules /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy
+          sudo docker system prune -af >/dev/null 2>&1 || true
+          sudo fallocate -l 10G /apk-swap && sudo chmod 600 /apk-swap && sudo mkswap /apk-swap >/dev/null && sudo swapon /apk-swap
+          free -h
+          df -h /
+
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+
+      # persist-credentials: false trips over this repo's dangling submodule
+      # gitlinks, so drop the saved token by hand before any dependency code runs.
+      - name: Remove the checkout token
+        run: git config --local --unset-all 'http.https://github.com/.extraheader'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install dependencies
+        run: npx -y "$(node -p 'require("./package.json").packageManager')" install --frozen-lockfile
+
+      - name: Build APK
+        working-directory: apps/mobile
+        env:
+          APP_VARIANT: preview
+          T3CODE_APP_NAME: T3 Code Fork
+          # Upstream's over-the-air updates would swap in a JS bundle without the fork's features.
+          T3CODE_MOBILE_UPDATES_ENABLED: "0"
+          EXPO_NO_TELEMETRY: "1"
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          # x.y.z -> x*10^7 + y*10^5 + z (z < 10^5), so every fork version installs over the last.
+          IFS=. read -r maj min pat <<< "$VERSION"
+          [ "$pat" -lt 100000 ] && [ "$min" -lt 100 ] || { echo "version $VERSION doesn't fit the versionCode scheme"; exit 1; }
+          export T3CODE_ANDROID_VERSION_CODE=$((maj * 10000000 + min * 100000 + pat))
+          echo "versionCode $T3CODE_ANDROID_VERSION_CODE"
+          npx expo prebuild --clean --platform android --no-install
+          cd android
+          # Memory and disk every minute, so a runner that dies still shows why.
+          ( while sleep 60; do echo "[mem] $(free -m | awk 'NR==2{print $3"/"$2" MB"}') swap $(free -m | awk 'NR==3{print $3" MB"}') disk $(df -h / | awk 'NR==2{print $4" free"}')"; done ) &
+          trap "kill $! 2>/dev/null" EXIT
+          ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon
+
+      - name: Sign with the fork's key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE_BASE64" ] || { echo "ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          trap 'rm -f "$RUNNER_TEMP/release.jks"' EXIT
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          apksigner=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          unsigned=$(ls apps/mobile/android/app/build/outputs/apk/release/*.apk | head -1)
+          "$apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-key-alias t3codefork \
+            --ks-pass env:ANDROID_KEYSTORE_PASSWORD --out "T3-Code-Fork-$VERSION.apk" "$unsigned"
+          "$apksigner" verify --print-certs "T3-Code-Fork-$VERSION.apk" | head -2
+
+      - name: Attach APK to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v$VERSION" "T3-Code-Fork-$VERSION.apk" --clobber -R "$GITHUB_REPOSITORY"
+
+  report:
+    needs: [sync, build, android]
+    # A job that hits its timeout ends as cancelled, which failure() misses.
+    if: failure() || contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -217,7 +324,14 @@ jobs:
       - name: Open or update a failure issue
         run: |
           run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          body="The fork pipeline stopped. Nothing was published, so installed copies stay on their current version.
+          if [ "${{ needs.build.outputs.published }}" = "true" ] && [ "${{ needs.android.result }}" != "success" ]; then
+            outcome="The desktop release was published, but the phone APK didn't build, so that release has no APK."
+          elif [ "${{ needs.build.outputs.published }}" = "true" ]; then
+            outcome="The release (desktop and phone) was published, but a later step failed; see the run."
+          else
+            outcome="Nothing was published, so installed copies stay on their current version."
+          fi
+          body="The fork pipeline stopped. $outcome
 
           Run: $run_url
           Base: ${{ needs.sync.outputs.base_tag || 'unknown' }}"
