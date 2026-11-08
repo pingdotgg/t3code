@@ -15,16 +15,18 @@ import {
 } from "@t3tools/contracts";
 
 import { persistClientSettingsPatch, useMergedSettings } from "../../hooks/useSettings";
-import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
+  changedScopedSettings,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
+  resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
   selectScopedSettingsEnvironments,
@@ -108,22 +110,17 @@ export function useUpdateScopedSettings() {
     run(planScopedSettingsPatch(scope, environments, patch), options?.onFailed);
 }
 
-/** Ignores the settings URL scope: writes every connected environment, reads the primary one. */
+/** Ignores the settings URL scope: writes every connected environment and reads a change on any of them. */
 export function useAllEnvironmentsSettings() {
   const { environments } = useEnvironments();
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const scope = resolveSettingsScope({}, [], environments);
-  const { environment } = selectScopedSettingsEnvironments(
-    scope,
-    environments,
-    primaryEnvironmentId,
-  );
-  const settings = useMergedSettings(
-    environment?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+  const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
+  const changedSettings = useMergedSettings(
+    changedScopedSettings(resolveScopedSettingsTargets(scope, connectedEnvironments)),
   );
   const run = useRunScopedPlan();
   return {
-    settings,
+    changedSettings,
     updateSettings: (patch: ScopedSettingsPatch) =>
       run(planScopedSettingsPatch(scope, environments, patch)),
   };

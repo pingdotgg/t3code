@@ -1,5 +1,6 @@
 import {
   ClientSettingsSchema,
+  DEFAULT_SERVER_SETTINGS,
   type ClientSettingsPatch,
   type EnvironmentId,
   globalIdleCompaction,
@@ -136,6 +137,20 @@ export function scopedSettingsAreMixed(
       keys.some((key) => !Equal.equals(first.settings[key], candidate.settings[key])),
     )
   );
+}
+
+/** Per key, the first target value that differs from the default, so a change on any target shows. */
+export function changedScopedSettings(
+  targets: readonly Pick<ScopedSettingsTarget, "settings">[],
+): ServerSettings {
+  return Object.fromEntries(
+    Object.entries(DEFAULT_SERVER_SETTINGS).map(([key, value]) => {
+      const changed = targets.find(
+        (target) => !Equal.equals(target.settings[key as keyof ServerSettings], value),
+      );
+      return [key, changed ? changed.settings[key as keyof ServerSettings] : value];
+    }),
+  ) as ServerSettings;
 }
 
 /**

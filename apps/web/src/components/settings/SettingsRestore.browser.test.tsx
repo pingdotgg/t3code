@@ -1,5 +1,10 @@
 import { RegistryContext } from "@effect/atom-react";
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { AsyncResult } from "effect/reactivity";
@@ -11,6 +16,7 @@ import type { Project } from "../../types";
 
 const state = vi.hoisted(() => ({
   projects: [] as Project[],
+  environments: [] as unknown[],
   updateSettings:
     vi.fn<
       (request: {
@@ -23,7 +29,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
-  useEnvironments: (() => ({ environments })) as never,
+  useEnvironments: (() => ({ environments: state.environments })) as never,
   usePrimaryEnvironmentId: () => primaryId,
 }));
 vi.mock(import("~/state/entities"), async (original) => ({
@@ -56,21 +62,26 @@ const customized = {
   sidebarAutoSettleAfterDays: 30,
   enableProviderUpdateChecks: !DEFAULT_SERVER_SETTINGS.enableProviderUpdateChecks,
 };
-const environments = [primaryId, remoteId].map((environmentId) => ({
-  environmentId,
-  label: environmentId,
-  connection: { phase: "connected" },
-  serverConfig: {
-    keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-    settings: customized,
-    environment: { platform: { machine: "server" }, capabilities: { projectOrganization: true } },
-  },
-}));
 
-function setup() {
+function setup(primarySettings: ServerSettings) {
   vi.clearAllMocks();
   // Browser test files share localStorage, and an earlier file may leave client settings changed.
   writeBrowserClientSettings(DEFAULT_CLIENT_SETTINGS);
+  state.environments = (
+    [
+      [primaryId, primarySettings],
+      [remoteId, customized],
+    ] as const
+  ).map(([environmentId, settings]) => ({
+    environmentId,
+    label: environmentId,
+    connection: { phase: "connected" },
+    serverConfig: {
+      keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
+      settings,
+      environment: { platform: { machine: "server" }, capabilities: { projectOrganization: true } },
+    },
+  }));
   state.projects = [primaryId, remoteId].map((environmentId) => ({
     id: ProjectId.make(`project-${environmentId}`),
     environmentId,
@@ -100,8 +111,15 @@ function setup() {
 }
 
 describe("useSettingsRestore", () => {
-  it("restores every environment's defaults under a project scope", async () => {
-    const projectKey = setup();
+  it.each([
+    { name: "a project scope", primarySettings: customized, search: "project" },
+    {
+      name: "a machine scope, changed only on a remote environment",
+      primarySettings: DEFAULT_SERVER_SETTINGS,
+      search: "machine",
+    },
+  ] as const)("restores every environment's defaults under $name", async (row) => {
+    const projectKey = setup(row.primarySettings);
     let restored!: () => void;
     const done = new Promise<void>((resolve) => {
       restored = resolve;
@@ -119,7 +137,10 @@ describe("useSettingsRestore", () => {
     }
     await using screen = await render(
       <RegistryContext.Provider value={appAtomRegistry}>
-        <SettingsScopeProvider search={{ project: projectKey }} onChange={() => {}}>
+        <SettingsScopeProvider
+          search={row.search === "project" ? { project: projectKey } : { machine: remoteId }}
+          onChange={() => {}}
+        >
           <RestoreHarness />
         </SettingsScopeProvider>
       </RegistryContext.Provider>,

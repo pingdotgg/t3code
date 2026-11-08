@@ -432,7 +432,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     clearThemeHalves,
     themeHalves,
   } = useTheme();
-  const { settings, updateSettings } = useAllEnvironmentsSettings();
+  const { changedSettings: settings, updateSettings } = useAllEnvironmentsSettings();
 
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
