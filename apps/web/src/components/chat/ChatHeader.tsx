@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { PlusIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
+import { GitForkIcon, PlusIcon, SquarePenIcon, SquareTerminal } from "lucide-react";
 import {
   memo,
   useEffect,
@@ -35,7 +35,13 @@ import { canShareWithGuestAtom } from "./guestShareAvailability";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { PANE_TAB_CLASS, PANE_TAB_TITLE_CLASS, PaneNotch, PaneTabButton } from "../PaneNotch";
+import {
+  PANE_GHOST_TAB_TITLE_CLASS,
+  PANE_TAB_CLASS,
+  PANE_TAB_TITLE_CLASS,
+  PaneNotch,
+  PaneTabButton,
+} from "../PaneNotch";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { surfaceShortcutActionForKey } from "../RightPanelTabs";
@@ -52,10 +58,13 @@ import {
   LayoutTabCloseButton,
   buildLayoutTabMenuItems,
   closeLayoutTabOnMiddleClick,
+  ghostTabTooltip,
   isLayoutTabMenuId,
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
+  useLayoutTabGhostOf,
 } from "../../layout/PaneTabs";
+import { useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
 
 interface ChatHeaderProps {
@@ -147,6 +156,8 @@ export const ChatHeader = memo(function ChatHeader({
     if (layoutTabId !== null) beginLayoutTabDrag(event, layoutTabId);
   };
   const siblingTabs = useLayoutPaneSiblingTabs();
+  const ghostOf = useLayoutTabGhostOf(layoutTabId);
+  const ghostParent = useQuietThreadShell(ghostOf);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const layoutMenuItems = () =>
     layoutTabId === null
@@ -275,6 +286,11 @@ export const ChatHeader = memo(function ChatHeader({
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     cancelPendingTitleMenu();
     closeMenu();
+    // A ghost tab is kept first; the next double-click renames.
+    if (ghostOf && layoutTabId !== null) {
+      useLayoutStore.getState().keepTab(layoutTabId);
+      return;
+    }
     startRename();
   };
   const handleHeaderContextMenu = (event: ReactMouseEvent) => {
@@ -328,7 +344,9 @@ export const ChatHeader = memo(function ChatHeader({
       setRenaming(null);
     }
   };
-  const tabIcon = isServerThread ? (
+  const tabIcon = ghostOf ? (
+    <GitForkIcon aria-hidden className="size-3.5 shrink-0" />
+  ) : isServerThread ? (
     activeProject ? (
       <ProjectFavicon project={activeProject} className="size-3.5" />
     ) : null
@@ -337,9 +355,20 @@ export const ChatHeader = memo(function ChatHeader({
   );
   // The project name left the header with the breadcrumb; the tab's tooltip
   // keeps it, in the breadcrumb's old order.
-  const tabTooltip = activeProjectName
-    ? `${activeProjectName} / ${activeThreadTitle}`
-    : activeThreadTitle;
+  const tabTooltip = ghostOf
+    ? ghostTabTooltip(activeThreadTitle, ghostParent?.title)
+    : activeProjectName
+      ? `${activeProjectName} / ${activeThreadTitle}`
+      : activeThreadTitle;
+  // The parent's own tab already leads this one in the strip.
+  const parentTabShown =
+    parentThreadLink !== null &&
+    siblingTabs.before.some(
+      (tab) =>
+        tab.content.kind === "chat" &&
+        tab.content.target.kind === "server" &&
+        tab.content.target.threadRef.threadId === parentThreadLink.threadId,
+    );
   return (
     <div
       className={cn(
@@ -354,7 +383,7 @@ export const ChatHeader = memo(function ChatHeader({
           {siblingTabs.before.map((tab) => (
             <LayoutPaneTab key={tab.id} tab={tab} />
           ))}
-          {parentThreadLink ? (
+          {parentThreadLink && !parentTabShown ? (
             <ParentThreadTab link={parentThreadLink} onOpenThread={onOpenThread} />
           ) : null}
           {renamingTitle !== null ? (
@@ -416,13 +445,19 @@ export const ChatHeader = memo(function ChatHeader({
                 >
                   <span className={LAYOUT_TAB_ICON_CLASS}>{tabIcon}</span>
                   <h2
-                    className={cn("min-w-0", PANE_TAB_TITLE_CLASS)}
+                    className={cn(
+                      "min-w-0",
+                      PANE_TAB_TITLE_CLASS,
+                      ghostOf && PANE_GHOST_TAB_TITLE_CLASS,
+                    )}
                     dir={textDirection(activeThreadTitle)}
                   >
                     {activeThreadTitle}
                   </h2>
                 </TooltipTrigger>
-                <TooltipPopup side="bottom">{tabTooltip}</TooltipPopup>
+                <TooltipPopup side="bottom" className="whitespace-pre-line">
+                  {tabTooltip}
+                </TooltipPopup>
               </Tooltip>
               {layoutTabId !== null ? (
                 <LayoutTabCloseButton tabId={layoutTabId} title={activeThreadTitle} />
