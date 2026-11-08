@@ -94,6 +94,10 @@ const layerScannerTest = (input: ScannerTestInput) =>
               ],
               config: {},
             },
+            [ProviderInstanceId.make("omp")]: {
+              driver: ProviderDriverKind.make("omp"),
+              enabled: false,
+            },
             ...input.providerInstances,
           },
         }),
@@ -2262,6 +2266,69 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 );
 
 describe("parseAgentSessionTranscript", () => {
+  it("reads OMP model changes and the active branch without modifying the native transcript", () => {
+    const contents = [
+      {
+        type: "session",
+        version: 3,
+        id: "omp-native",
+        cwd: "/project",
+        timestamp: "2026-11-08T12:00:00Z",
+      },
+      {
+        type: "model_change",
+        id: "m",
+        parentId: null,
+        model: "openai/gpt-4.1-mini",
+        runtime: { version: "18.16.0" },
+      },
+      {
+        type: "message",
+        id: "u",
+        parentId: "m",
+        message: { role: "user", content: [{ type: "text", text: "Review this" }] },
+      },
+      {
+        type: "message",
+        id: "old",
+        parentId: "u",
+        message: { role: "assistant", content: [{ type: "text", text: "Abandoned" }] },
+      },
+      {
+        type: "message",
+        id: "a",
+        parentId: "u",
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "private" },
+            { type: "text", text: "Reviewed" },
+          ],
+        },
+      },
+      { type: "session_info", id: "n", parentId: "a", name: "OMP review" },
+    ]
+      .map((entry) => JSON.stringify(entry))
+      .join("\n");
+    const input = {
+      contents,
+      source: "omp" as const,
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      fallbackSessionId: "unused",
+      lastActiveAtMs: Date.parse("2026-11-08T12:00:00Z"),
+    };
+    const first = AgentSessionScanner.parseAgentSessionTranscript(input);
+    expect(first).toMatchObject({
+      source: "omp",
+      providerSessionId: "omp-native",
+      title: "OMP review",
+      model: "openai/gpt-4.1-mini",
+    });
+    expect(first?.messages.map((message) => message.text)).toEqual(["Review this", "Reviewed"]);
+    expect(AgentSessionScanner.parseAgentSessionTranscript(input)).toEqual(first);
+    expect(input.contents).toBe(contents);
+  });
+
   it.each([false, true])(
     "handles the exact record limit and an interior blank overflow=%s",
     (overflow) => {

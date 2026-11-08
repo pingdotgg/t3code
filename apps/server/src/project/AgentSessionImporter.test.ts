@@ -90,7 +90,9 @@ const PI_MODEL_SELECTION = { instanceId: ProviderInstanceId.make("pi"), model: "
 
 // Pi threads are owned by their session file path, not the session UUID.
 const nativeId = ({ source }: ReturnType<typeof candidate>) =>
-  source.provider === "pi" ? source.filePath : source.providerSessionId;
+  source.provider === "pi" || source.provider === "omp"
+    ? source.filePath
+    : source.providerSessionId;
 
 function importId(source: ReturnType<typeof candidate>) {
   return ThreadId.make(
@@ -266,11 +268,14 @@ it.effect(
       );
       const deleted = candidate(CODEX_MODEL_SELECTION, "deleted");
       const ownedPi = candidate(PI_MODEL_SELECTION, "owned-pi", "pi");
+      const ompSelection = { instanceId: ProviderInstanceId.make("omp"), model: "default" };
+      const ownedOmp = candidate(ompSelection, "owned-omp", "omp");
       const owners = [
         yield* seedOwner(active),
         yield* seedOwner(archived, "archived"),
         yield* seedOwner(deleted, "deleted"),
         yield* seedOwner(ownedPi),
+        yield* seedOwner(ownedOmp),
       ];
       const before = yield* Effect.forEach(owners, (id) =>
         projections.getThreadRecords(id, ["providerThreads"]),
@@ -283,18 +288,21 @@ it.effect(
       const unowned = candidate(CODEX_MODEL_SELECTION, "unowned");
       unowned.thread.omittedMessageCount = 1;
       const unownedPi = candidate(PI_MODEL_SELECTION, "unowned-pi", "pi");
+      const unownedOmp = candidate(ompSelection, "unowned-omp", "omp");
       const importer = yield* makeImporter([
         active,
         archived,
         deleted,
         ownedPi,
+        ownedOmp,
         otherInstance,
         unowned,
         unownedPi,
+        unownedOmp,
       ]);
 
-      expect(yield* importer.run).toEqual({ importedCount: 3, skippedCount: 0 });
-      for (const source of [active, archived, deleted, ownedPi]) {
+      expect(yield* importer.run).toEqual({ importedCount: 4, skippedCount: 0 });
+      for (const source of [active, archived, deleted, ownedPi, ownedOmp]) {
         const threadId = importId(source);
         expect(yield* Effect.option(projections.getThread(threadId))).toEqual(Option.none());
         expect(yield* events.read({ threadId }).pipe(Stream.runCollect)).toEqual([]);
@@ -311,8 +319,15 @@ it.effect(
             "event" in stored ? [stored.event.threadId] : [],
           ),
         ),
-      ).toEqual(new Set([importId(otherInstance), importId(unowned), importId(unownedPi)]));
-      for (const source of [otherInstance, unowned, unownedPi]) {
+      ).toEqual(
+        new Set([
+          importId(otherInstance),
+          importId(unowned),
+          importId(unownedPi),
+          importId(unownedOmp),
+        ]),
+      );
+      for (const source of [otherInstance, unowned, unownedPi, unownedOmp]) {
         const threadId = importId(source);
         const records = yield* projections.getThreadRecords(threadId, [
           "messages",
@@ -345,6 +360,15 @@ it.effect(
           runtimePayload: { importedTranscripts: [source.source] },
         });
       }
+      const publishedBeforeRepeat = [...importer.published];
+      const ompBeforeRepeat = yield* events
+        .read({ threadId: importId(unownedOmp) })
+        .pipe(Stream.runCollect);
+      expect(yield* importer.run).toEqual({ importedCount: 4, skippedCount: 0 });
+      expect(importer.published).toEqual(publishedBeforeRepeat);
+      expect(
+        yield* events.read({ threadId: importId(unownedOmp) }).pipe(Stream.runCollect),
+      ).toEqual(ompBeforeRepeat);
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

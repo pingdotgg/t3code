@@ -36,6 +36,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveOmpSessionsDir } from "@t3tools/provider-omp/server/usage";
 import { resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -111,6 +112,7 @@ const TranscriptRecord = Schema.Struct({
   id: Schema.optional(Schema.String),
   parentId: Schema.optional(Schema.NullOr(Schema.String)),
   name: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
   timestamp: Schema.optional(Schema.String),
   cwd: Schema.optional(Schema.String),
   sessionId: Schema.optional(Schema.String),
@@ -430,14 +432,13 @@ function parseAgentSessionRecords(
   let providerSessionId =
     input.source === "codex"
       ? ""
-      : input.source === "pi"
+      : isTreeSession(input.source)
         ? records.find((record) => record.type === "session")?.id?.trim() || input.fallbackSessionId
         : (claudeFields.sessionId ?? input.fallbackSessionId);
   // Pi titles a session by its latest session_info on any branch; an empty name clears it.
-  const title =
-    input.source === "pi"
-      ? records.findLast((record) => record.type === "session_info")?.name?.trim() || null
-      : (claudeFields.title ?? null);
+  const title = isTreeSession(input.source)
+    ? records.findLast((record) => record.type === "session_info")?.name?.trim() || null
+    : (claudeFields.title ?? null);
   let model = claudeFields.model ?? null;
   let derivedTitle: string | undefined;
   let hasCodexSessionId = false;
@@ -530,9 +531,11 @@ function parseAgentSessionRecords(
   };
 
   let recordIndex = -1;
-  for (const record of input.source === "pi" ? activePiBranch(records) : records) {
+  for (const record of isTreeSession(input.source) ? activePiBranch(records) : records) {
     recordIndex += 1;
-    if (input.source === "pi") {
+    if (isTreeSession(input.source)) {
+      if (input.source === "omp" && record.type === "model_change" && record.model?.trim())
+        model = record.model.trim();
       if (!isPiConversationRecord(record)) continue;
       const text = extractText(record.message.content);
       if (text.length === 0) continue;
@@ -649,7 +652,7 @@ function shouldRetainDecodedRecord(
   record: DecodedTranscriptRecord,
 ): boolean {
   // Any Pi entry can be a link on the active branch.
-  if (source === "pi") return true;
+  if (isTreeSession(source)) return true;
   if (source === "claudeAgent") {
     if (isHiddenClaudeRecord(record) || (record.type !== "user" && record.type !== "assistant")) {
       return false;
@@ -1065,7 +1068,7 @@ export const make = Effect.gen(function* () {
               if (recordCount > MAX_IMPORT_RECORDS) return false;
               const value = reader.finish();
               const decoded = decodeTranscriptValue(value);
-              if (Option.isNone(decoded) && source === "pi") {
+              if (Option.isNone(decoded) && isTreeSession(source)) {
                 // Pi accepts messages this schema rejects, such as null content; keep their tree links.
                 records.push(...Option.toArray(decodePiEntryLinks(value)));
               } else if (Option.isSome(decoded)) {
@@ -1075,7 +1078,7 @@ export const make = Effect.gen(function* () {
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
                   if (
-                    source === "pi" &&
+                    isTreeSession(source) &&
                     decoded.value.type === "message" &&
                     !isPiConversationRecord(decoded.value)
                   ) {
@@ -1407,7 +1410,7 @@ export const make = Effect.gen(function* () {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
 
-    for (const source of ["claudeAgent", "codex", "pi"] as const) {
+    for (const source of ["claudeAgent", "codex", "pi", "omp"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
@@ -1445,12 +1448,16 @@ export const make = Effect.gen(function* () {
         };
 
         let homePath: string;
-        if (source === "pi") {
+        if (isTreeSession(source)) {
           const environment = yield* mergeProviderInstanceEnvironment(
             instance.environment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-          homePath = resolvePiSessionsDir(environment, homeDir, path);
+          homePath = (source === "omp" ? resolveOmpSessionsDir : resolvePiSessionsDir)(
+            environment,
+            homeDir,
+            path,
+          );
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
@@ -1879,3 +1886,7 @@ export const make = Effect.gen(function* () {
 export const layer = Layer.effect(AgentSessionScanner, make).pipe(
   Layer.provide(ProcessRunner.layer),
 );
+
+function isTreeSession(source: AgentSessionSource): boolean {
+  return source === "pi" || source === "omp";
+}

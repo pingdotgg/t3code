@@ -554,6 +554,7 @@
     "@t3tools/provider-grok": "workspace:*",
     "@t3tools/provider-kiro": "workspace:*",
     "@t3tools/provider-muse": "workspace:*",
+    "@t3tools/provider-omp": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
     "@t3tools/secret-provider-definitions": "workspace:*",

@@ -272,7 +272,9 @@ const make = Effect.gen(function* () {
           const driver = ProviderDriverKind.make(thread.source);
           // Pi resumes by session file path; its session UUID only names the thread.
           const nativeThreadId =
-            thread.source === "pi" ? source.filePath : thread.providerSessionId;
+            thread.source === "pi" || thread.source === "omp"
+              ? source.filePath
+              : thread.providerSessionId;
           const persistRuntime = runtimes.upsert(
             {
               threadId,
