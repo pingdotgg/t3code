@@ -1,6 +1,7 @@
 import {
   AuthStandardClientScopes,
   EnvironmentId,
+  ManagedCloudSandboxResourceId,
   type AuthEnvironmentScope,
   ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ import {
 import * as Onboarding from "./onboarding.ts";
 import {
   prepareBearerConnectionUpdate,
+  prepareCloudSandboxRegistration,
   preparePairingRegistration,
   prepareSshRegistration,
 } from "./onboarding.ts";
@@ -614,6 +616,58 @@ describe("connection onboarding", () => {
         },
         credential: { token: "bearer-token" },
       });
+    }),
+  );
+
+  it.effect("creates a managed registration without retaining an account key", () =>
+    Effect.gen(function* () {
+      const environmentId = EnvironmentId.make("cloud-environment");
+      const controllerId = EnvironmentId.make("controller-environment");
+      const controllerTarget = new PrimaryConnectionTarget({
+        environmentId: controllerId,
+        label: "controller",
+        httpBaseUrl: "https://controller.test",
+        wsBaseUrl: "wss://controller.test",
+      });
+      const input = {
+        controllerEnvironmentId: controllerId,
+        resourceId: ManagedCloudSandboxResourceId.make("request-one"),
+      } as const;
+      const result = yield* prepareCloudSandboxRegistration(
+        input,
+        {
+          environmentId: controllerId,
+          label: "controller",
+          target: controllerTarget,
+          httpBaseUrl: "https://controller.test",
+          socketUrl: "wss://controller.test/ws",
+          httpAuthorization: null,
+        },
+        {
+          resourceId: input.resourceId,
+          controllerEnvironmentId: controllerId,
+          environmentId,
+          label: "dev",
+          driverKind: "boat",
+          sandboxId: "bx_23456789",
+          routePrefix: "/api/cloud-sandboxes/managed/request-one/proxy",
+          bearerToken: "bearer",
+        },
+      );
+      expect(result.target).toMatchObject({
+        _tag: "CloudSandboxConnectionTarget",
+        driverKind: "boat",
+        sandboxId: "bx_23456789",
+      });
+      expect(result.profile).toMatchObject({
+        resourceId: input.resourceId,
+        controller: controllerTarget,
+      });
+      expect(result.credential).toEqual({
+        _tag: "CloudSandboxConnectionCredential",
+        token: "bearer",
+      });
+      expect(result.profile).not.toHaveProperty("apiKey");
     }),
   );
 

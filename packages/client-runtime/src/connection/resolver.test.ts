@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  MANAGED_CLOUD_SANDBOX_PATH,
+  ManagedCloudSandboxResourceId,
   ORCHESTRATION_PROTOCOL_VERSION,
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
@@ -14,6 +16,7 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
+  CloudSandboxConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
@@ -21,6 +24,8 @@ import {
 } from "./catalog.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
 import {
+  CloudSandboxConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   SshConnectionTarget,
@@ -62,6 +67,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   readonly primaryBearerToken?: string;
   readonly prepareSsh?: ClientCapabilities.SshEnvironmentGateway["Service"]["prepare"];
   readonly descriptorProtocolVersion?: number | null | undefined;
+  /** Answers the managed sandbox endpoint with this status instead of the descriptor. */
+  readonly managedSandboxStatus?: number;
 }) => {
   const profiles = new Map(
     (options?.profiles ?? []).map((profile) => [profile.connectionId, profile]),
@@ -128,21 +135,29 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
-    RpcHttp.layerRemoteHttpClient((() =>
-      Promise.resolve(
-        Response.json({
-          environmentId: ENVIRONMENT_ID,
-          label: "Compatible environment",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0-test",
-          ...(options?.descriptorProtocolVersion === undefined
-            ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
-            : options.descriptorProtocolVersion === null
-              ? {}
-              : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
-          capabilities: { repositoryIdentity: true },
-        }),
-      )) satisfies typeof fetch),
+    RpcHttp.layerRemoteHttpClient((async (input: RequestInfo | URL) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (
+        options?.managedSandboxStatus !== undefined &&
+        url.pathname === MANAGED_CLOUD_SANDBOX_PATH
+      )
+        return Response.json(
+          { message: "sandbox unavailable" },
+          { status: options.managedSandboxStatus },
+        );
+      return Response.json({
+        environmentId: ENVIRONMENT_ID,
+        label: "Compatible environment",
+        platform: { os: "linux", arch: "x64" },
+        serverVersion: "0.0.0-test",
+        ...(options?.descriptorProtocolVersion === undefined
+          ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
+          : options.descriptorProtocolVersion === null
+            ? {}
+            : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
+        capabilities: { repositoryIdentity: true },
+      });
+    }) satisfies typeof fetch),
     Layer.succeed(
       ConnectionProfileStore.ConnectionProfileStore,
       options?.profileStore ?? profileStore,
@@ -183,6 +198,44 @@ describe("ConnectionResolver", () => {
 
       expect(error).toMatchObject({ reason: "unsupported" });
       expect(error.message).toContain("Update T3 Code on Compatible environment");
+    }),
+  );
+
+  it.effect("blocks a deleted cloud sandbox instead of retrying the connect", () =>
+    Effect.gen(function* () {
+      const layerBroker = yield* makeDependencies({ managedSandboxStatus: 410 });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const controller = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Controller",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+      const sandboxEnvironmentId = EnvironmentId.make("sandbox-environment");
+      const target = new CloudSandboxConnectionTarget({
+        environmentId: sandboxEnvironmentId,
+        label: "Sandbox",
+        connectionId: "cloud-sandbox-1",
+        driverKind: "boat",
+        sandboxId: "sandbox-1",
+      });
+      const profile = new CloudSandboxConnectionProfile({
+        connectionId: "cloud-sandbox-1",
+        environmentId: sandboxEnvironmentId,
+        label: "Sandbox",
+        driverKind: "boat",
+        sandboxId: "sandbox-1",
+        resourceId: ManagedCloudSandboxResourceId.make("resource-1"),
+        controller,
+      });
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+
+      expect(error).toBeInstanceOf(ConnectionBlockedError);
+      expect(error).toMatchObject({
+        reason: "configuration",
+        detail: "This cloud sandbox was deleted. Remove it from your environments.",
+      });
     }),
   );
 

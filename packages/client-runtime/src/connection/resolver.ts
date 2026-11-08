@@ -20,6 +20,8 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import {
   BearerConnectionCredential,
   BearerConnectionProfile,
+  CloudSandboxConnectionProfile,
+  CloudSandboxConnectionCredential,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
 } from "./catalog.ts";
@@ -36,6 +38,8 @@ import {
 } from "./pullRequestRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
+  CloudSandboxConnectionTarget,
+  CloudSandboxControllerTarget,
   ConnectionTarget,
   PreparedConnection,
   PrimaryConnectionTarget,
@@ -44,6 +48,7 @@ import type {
 } from "./model.ts";
 import { ConnectionBlockedError, type ConnectionAttemptError } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import { makeManagedCloudSandboxClient, managedCloudSandboxUrls } from "./managedCloudSandbox.ts";
 import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
@@ -73,6 +78,7 @@ export class ConnectionResolver extends Context.Service<
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
+const isCloudSandboxProfile = Schema.is(CloudSandboxConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
 function primarySocketUrl(
@@ -263,12 +269,84 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
   });
 });
 
+const makeCloudSandboxBroker = Effect.fn("clientRuntime.connection.broker.makeCloudSandbox")(
+  function* (
+    prepareController: (
+      target: CloudSandboxControllerTarget,
+    ) => Effect.Effect<PreparedConnection, ConnectionAttemptError>,
+  ) {
+    const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+    const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+    const operate = yield* makeManagedCloudSandboxClient;
+    return Effect.fn("clientRuntime.connection.broker.cloudSandbox")(function* (
+      entry: ConnectionCatalogEntry & { readonly target: CloudSandboxConnectionTarget },
+    ) {
+      const target = entry.target;
+      const profile = yield* Effect.fromOption(entry.profile, () =>
+        profileMissingError(target.connectionId),
+      );
+      if (!isCloudSandboxProfile(profile)) return yield* profileMissingError(target.connectionId);
+      if (profile.environmentId !== target.environmentId)
+        return yield* environmentMismatchError({
+          expected: target.environmentId,
+          actual: profile.environmentId,
+        });
+      const controller = yield* prepareController(profile.controller);
+      const result = yield* operate(controller, {
+        _tag: "connect",
+        resourceId: profile.resourceId,
+      });
+      if (result._tag !== "connection")
+        return yield* new ConnectionBlockedError({
+          reason: "configuration",
+          detail: "The controller returned an unexpected sandbox connection response.",
+        });
+      if (result.connection.environmentId !== target.environmentId)
+        return yield* environmentMismatchError({
+          expected: target.environmentId,
+          actual: result.connection.environmentId,
+        });
+      const urls = yield* managedCloudSandboxUrls(controller, result.connection);
+      yield* credentials.put(
+        target.connectionId,
+        new CloudSandboxConnectionCredential({ token: result.connection.bearerToken }),
+      );
+      const authorized = yield* remote.authorizeBearer({
+        expectedEnvironmentId: target.environmentId,
+        ...urls,
+        bearerToken: result.connection.bearerToken,
+        connectionMethod: "cloud-sandbox",
+      });
+      return { ...authorized, target } satisfies PreparedConnection;
+    });
+  },
+);
+
 /** @public */
 export const make = Effect.gen(function* () {
   const primary = yield* makePrimaryBroker();
   const bearer = yield* makeBearerBroker();
   const relay = yield* makeRelayBroker();
   const ssh = yield* makeSshBroker();
+  const profiles = yield* ConnectionProfileStore.ConnectionProfileStore;
+  const prepareController = Effect.fn("clientRuntime.connection.prepareCloudController")(function* (
+    target: CloudSandboxControllerTarget,
+  ) {
+    const profile =
+      "connectionId" in target ? yield* profiles.get(target.connectionId) : Option.none();
+    const entry = { target, profile, enabled: true };
+    switch (target._tag) {
+      case "PrimaryConnectionTarget":
+        return yield* primary(target);
+      case "BearerConnectionTarget":
+        return yield* bearer({ ...entry, target });
+      case "RelayConnectionTarget":
+        return yield* relay(target);
+      case "SshConnectionTarget":
+        return yield* ssh({ ...entry, target });
+    }
+  });
+  const cloudSandbox = yield* makeCloudSandboxBroker(prepareController);
   const httpClient = yield* HttpClient.HttpClient;
 
   const authorize = Effect.fn("clientRuntime.connection.broker.authorize")(function* (
@@ -291,6 +369,8 @@ export const make = Effect.gen(function* () {
           return relay(target);
         case "SshConnectionTarget":
           return ssh({ ...entry, target });
+        case "CloudSandboxConnectionTarget":
+          return cloudSandbox({ ...entry, target });
       }
     })();
     const { descriptor: authorizedDescriptor, ...prepared } = authorized;

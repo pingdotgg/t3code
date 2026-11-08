@@ -1,9 +1,16 @@
-import { DesktopSshEnvironmentTargetSchema, EnvironmentId } from "@t3tools/contracts";
+import {
+  CloudSandboxDriverKind,
+  DesktopSshEnvironmentTargetSchema,
+  EnvironmentId,
+  ManagedCloudSandboxResourceId,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
   BearerConnectionTarget,
+  CloudSandboxConnectionTarget,
+  CloudSandboxControllerTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -40,7 +47,22 @@ export class SshConnectionProfile extends Schema.TaggedClass<SshConnectionProfil
   },
 ) {}
 
-export const ConnectionProfile = Schema.Union([BearerConnectionProfile, SshConnectionProfile]);
+export class CloudSandboxConnectionProfile extends Schema.TaggedClass<CloudSandboxConnectionProfile>()(
+  "CloudSandboxConnectionProfile",
+  {
+    ...ConnectionProfileBase,
+    driverKind: CloudSandboxDriverKind,
+    sandboxId: Schema.String,
+    resourceId: ManagedCloudSandboxResourceId,
+    controller: CloudSandboxControllerTarget,
+  },
+) {}
+
+export const ConnectionProfile = Schema.Union([
+  BearerConnectionProfile,
+  SshConnectionProfile,
+  CloudSandboxConnectionProfile,
+]);
 export type ConnectionProfile = typeof ConnectionProfile.Type;
 
 export interface ConnectionRoute {
@@ -64,7 +86,15 @@ export class BearerConnectionCredential extends Schema.TaggedClass<BearerConnect
   },
 ) {}
 
-export const ConnectionCredential = Schema.Union([BearerConnectionCredential]);
+export class CloudSandboxConnectionCredential extends Schema.TaggedClass<CloudSandboxConnectionCredential>()(
+  "CloudSandboxConnectionCredential",
+  { token: Schema.String },
+) {}
+
+export const ConnectionCredential = Schema.Union([
+  BearerConnectionCredential,
+  CloudSandboxConnectionCredential,
+]);
 export type ConnectionCredential = typeof ConnectionCredential.Type;
 
 export class PrimaryConnectionRegistration extends Schema.TaggedClass<PrimaryConnectionRegistration>()(
@@ -100,10 +130,20 @@ export class SshConnectionRegistration extends Schema.TaggedClass<SshConnectionR
   },
 ) {}
 
+export class CloudSandboxConnectionRegistration extends Schema.TaggedClass<CloudSandboxConnectionRegistration>()(
+  "CloudSandboxConnectionRegistration",
+  {
+    target: CloudSandboxConnectionTarget,
+    profile: CloudSandboxConnectionProfile,
+    credential: CloudSandboxConnectionCredential,
+  },
+) {}
+
 export const ConnectionRegistration = Schema.Union([
   RelayConnectionRegistration,
   BearerConnectionRegistration,
   SshConnectionRegistration,
+  CloudSandboxConnectionRegistration,
 ]);
 export type ConnectionRegistration = typeof ConnectionRegistration.Type;
 
@@ -132,6 +172,7 @@ export function connectionRegistrationCatalogEntry(
       };
     case "BearerConnectionRegistration":
     case "SshConnectionRegistration":
+    case "CloudSandboxConnectionRegistration":
       return {
         target: registration.target,
         profile: Option.some(registration.profile),

@@ -65,6 +65,7 @@ function connectionIdOf(target: ConnectionTarget): string | null {
       return null;
     case "BearerConnectionTarget":
     case "SshConnectionTarget":
+    case "CloudSandboxConnectionTarget":
       return target.connectionId;
   }
 }
@@ -136,6 +137,7 @@ export function registerConnectionInCatalog(
       return next;
     case "BearerConnectionRegistration":
     case "SshConnectionRegistration":
+    case "CloudSandboxConnectionRegistration":
       return {
         ...next,
         profiles: replaceCatalogValue(

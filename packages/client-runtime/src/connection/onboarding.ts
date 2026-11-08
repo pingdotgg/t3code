@@ -1,4 +1,9 @@
-import type { DesktopSshEnvironmentTarget, EnvironmentId } from "@t3tools/contracts";
+import type {
+  DesktopSshEnvironmentTarget,
+  EnvironmentId,
+  ManagedCloudSandboxConnection,
+  ManagedCloudSandboxResourceId,
+} from "@t3tools/contracts";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,6 +21,9 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  CloudSandboxConnectionProfile,
+  CloudSandboxConnectionCredential,
+  CloudSandboxConnectionRegistration,
   type ConnectionCatalogEntry,
   type ConnectionCredential,
   SshConnectionProfile,
@@ -25,12 +33,16 @@ import * as ConnectionCredentialStore from "./credentialStore.ts";
 import { mapRemoteEnvironmentError } from "./errors.ts";
 import {
   BearerConnectionTarget,
+  CloudSandboxConnectionTarget,
   ConnectionBlockedError,
   SshConnectionTarget,
+  type PreparedConnection,
   type ConnectionAttemptError,
 } from "./model.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import * as EnvironmentSupervisor from "./supervisor.ts";
+import { makeManagedCloudSandboxClient } from "./managedCloudSandbox.ts";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 import { connectionRoutes, routeEntry, sshTargetKey } from "./routes.ts";
 
@@ -45,6 +57,12 @@ export interface SshConnectionInput {
   readonly target: DesktopSshEnvironmentTarget;
   readonly label?: string;
   readonly expectedEnvironmentId?: EnvironmentId;
+}
+
+export interface CloudSandboxConnectionInput {
+  readonly controllerEnvironmentId: EnvironmentId;
+  readonly resourceId: ManagedCloudSandboxResourceId;
+  readonly label?: string;
 }
 
 export interface BearerConnectionUpdateInput {
@@ -64,6 +82,12 @@ export class ConnectionOnboarding extends Context.Service<
     >;
     readonly registerSsh: (
       input: SshConnectionInput,
+    ) => Effect.Effect<
+      EnvironmentId,
+      ConnectionAttemptError | Persistence.ConnectionPersistenceError
+    >;
+    readonly registerCloudSandbox: (
+      input: CloudSandboxConnectionInput,
     ) => Effect.Effect<
       EnvironmentId,
       ConnectionAttemptError | Persistence.ConnectionPersistenceError
@@ -297,6 +321,46 @@ const registerSshConnection = Effect.fn(
   return registration.target.environmentId;
 });
 
+export const prepareCloudSandboxRegistration = Effect.fn(
+  "clientRuntime.connection.onboarding.prepareCloudSandboxRegistration",
+)(function* (
+  input: CloudSandboxConnectionInput,
+  controller: PreparedConnection,
+  connection: ManagedCloudSandboxConnection,
+) {
+  if (controller.target._tag === "CloudSandboxConnectionTarget")
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "Choose a directly connected T3 server to manage this sandbox.",
+    });
+  if (connection.controllerEnvironmentId !== controller.environmentId)
+    return yield* new ConnectionBlockedError({
+      reason: "configuration",
+      detail: "The sandbox response belongs to a different controller.",
+    });
+  const connectionId = `cloud-sandbox:${connection.controllerEnvironmentId}:${connection.resourceId}`;
+  const label = input.label?.trim() || connection.label;
+  return new CloudSandboxConnectionRegistration({
+    target: new CloudSandboxConnectionTarget({
+      environmentId: connection.environmentId,
+      label,
+      connectionId,
+      driverKind: connection.driverKind,
+      sandboxId: connection.sandboxId,
+    }),
+    profile: new CloudSandboxConnectionProfile({
+      connectionId,
+      environmentId: connection.environmentId,
+      label,
+      driverKind: connection.driverKind,
+      sandboxId: connection.sandboxId,
+      resourceId: connection.resourceId,
+      controller: controller.target,
+    }),
+    credential: new CloudSandboxConnectionCredential({ token: connection.bearerToken }),
+  });
+});
+
 /** @public */
 export const make = Effect.gen(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
@@ -304,6 +368,7 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const ssh = yield* ClientCapabilities.SshEnvironmentGateway;
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
+  const operateCloudSandbox = yield* makeManagedCloudSandboxClient;
 
   // Provisioning retains the delegated onboarding operation spans.
   return ConnectionOnboarding.of({
@@ -321,6 +386,49 @@ export const make = Effect.gen(function* () {
       },
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ClientCapabilities.SshEnvironmentGateway, ssh),
+    ),
+    registerCloudSandbox: Effect.fn("clientRuntime.connection.registerCloudSandbox")(
+      function* (input) {
+        const controller = yield* registry
+          .run(
+            input.controllerEnvironmentId,
+            EnvironmentSupervisor.EnvironmentSupervisor.pipe(
+              Effect.flatMap((supervisor) => SubscriptionRef.get(supervisor.prepared)),
+              Effect.flatMap((prepared) =>
+                Effect.fromOption(
+                  prepared,
+                  () =>
+                    new ConnectionBlockedError({
+                      reason: "configuration",
+                      detail: "Connect the sandbox controller before opening a sandbox.",
+                    }),
+                ),
+              ),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ConnectionBlockedError({ reason: "configuration", detail: cause.message }),
+            ),
+          );
+        const response = yield* operateCloudSandbox(controller, {
+          _tag: "connect",
+          resourceId: input.resourceId,
+        });
+        if (response._tag !== "connection")
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail: "The controller returned an unexpected sandbox response.",
+          });
+        const registration = yield* prepareCloudSandboxRegistration(
+          input,
+          controller,
+          response.connection,
+        );
+        yield* registry.register(registration);
+        return registration.target.environmentId;
+      },
     ),
     updateBearer: Effect.fnUntraced(
       function* (input) {

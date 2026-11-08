@@ -29,9 +29,20 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
 
 describe("project favicon URL cache", () => {
+  it("keeps managed routes and signed asset URL parameters", () => {
+    const base = "https://controller.test/api/cloud-sandboxes/managed/child/proxy";
+    expect(resolveAssetUrl(base, "/api/assets/token/image.png?signature=a%2Fb#preview")).toBe(
+      `${base}/api/assets/token/image.png?signature=a%2Fb#preview`,
+    );
+    expect(resolveAssetUrl(base, "https://other.test/image.png?signature=a%2Fb")).toBe(
+      "https://other.test/image.png?signature=a%2Fb",
+    );
+    expect(resolveAssetUrl("invalid base", "/api/assets/token/image.png")).toBeNull();
+  });
   it("does not reuse another environment, workspace, or selected icon's cached URL", () => {
     const registry = AtomRegistry.make();
     const result = Atom.make<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>(

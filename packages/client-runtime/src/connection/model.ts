@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { CloudSandboxDriverKind, EnvironmentId } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
 import * as Schema from "effect/Schema";
 
@@ -39,11 +39,30 @@ export class SshConnectionTarget extends Schema.TaggedClass<SshConnectionTarget>
   },
 ) {}
 
+export class CloudSandboxConnectionTarget extends Schema.TaggedClass<CloudSandboxConnectionTarget>()(
+  "CloudSandboxConnectionTarget",
+  {
+    ...ConnectionTargetBase,
+    connectionId: Schema.String,
+    driverKind: CloudSandboxDriverKind,
+    sandboxId: Schema.String,
+  },
+) {}
+
+export const CloudSandboxControllerTarget = Schema.Union([
+  PrimaryConnectionTarget,
+  BearerConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+]);
+export type CloudSandboxControllerTarget = typeof CloudSandboxControllerTarget.Type;
+
 export const ConnectionTarget = Schema.Union([
   PrimaryConnectionTarget,
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  CloudSandboxConnectionTarget,
 ]);
 export type ConnectionTarget = typeof ConnectionTarget.Type;
 
@@ -51,6 +70,7 @@ export const PersistedConnectionTarget = Schema.Union([
   BearerConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
+  CloudSandboxConnectionTarget,
 ]);
 export type PersistedConnectionTarget = typeof PersistedConnectionTarget.Type;
 

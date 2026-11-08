@@ -10,6 +10,7 @@ import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
 import * as ConnectionOnboarding from "./onboarding.ts";
+import * as CloudSandboxDirectory from "./cloudSandboxDirectory.ts";
 import { connectionRoutes, hasRelayRoute } from "./routes.ts";
 import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
@@ -79,6 +80,7 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
   const layerOnboarding = ConnectionOnboarding.layer.pipe(Layer.provide(layerRegistry));
   const layerConnectionServices = Layer.mergeAll(
     layerRegistry,
+    CloudSandboxDirectory.layer.pipe(Layer.provide(layerRegistry)),
     RelayEnvironmentDiscovery.layer,
     layerOnboarding,
     ConnectionResolver.layer,

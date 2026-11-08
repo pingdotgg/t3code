@@ -136,6 +136,8 @@ export function connectionCatalogDisplayUrl(entry: ConnectionCatalogEntry): stri
   switch (entry.target._tag) {
     case "PrimaryConnectionTarget":
       return entry.target.httpBaseUrl;
+    case "CloudSandboxConnectionTarget":
+      return entry.target.sandboxId;
     case "RelayConnectionTarget":
       return null;
     case "BearerConnectionTarget":

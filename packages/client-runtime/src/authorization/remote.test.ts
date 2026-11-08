@@ -92,7 +92,7 @@ describe("remote environment authorization", () => {
       );
 
       const token = yield* exchangeRemoteDpopAccessToken({
-        httpBaseUrl: "https://remote.example.com/",
+        httpBaseUrl: "https://remote.example.com/controller/cloud-a/",
         credential: "one-time-credential",
         dpopProof: "token-proof",
         clientMetadata: {
@@ -102,19 +102,19 @@ describe("remote environment authorization", () => {
         },
       }).pipe(provideRemoteHttp(fetch.fetchFn));
       yield* issueRemoteDpopWebSocketTicket({
-        httpBaseUrl: "https://remote.example.com/",
+        httpBaseUrl: "https://remote.example.com/controller/cloud-a/",
         accessToken: token.access_token,
         dpopProof: "resource-proof",
       }).pipe(provideRemoteHttp(fetch.fetchFn));
 
       expectFetchCall(fetch.calls, 1, {
-        url: "https://remote.example.com/oauth/token",
+        url: "https://remote.example.com/controller/cloud-a/oauth/token",
         method: "POST",
         headers: { dpop: "token-proof", "content-type": "application/x-www-form-urlencoded" },
         body: "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=one-time-credential&subject_token_type=urn%3At3%3Aparams%3Aoauth%3Atoken-type%3Aenvironment-bootstrap&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&client_label=T3+Code+Mobile&client_device_type=mobile&client_os=iOS",
       });
       expectFetchCall(fetch.calls, 2, {
-        url: "https://remote.example.com/api/auth/websocket-ticket",
+        url: "https://remote.example.com/controller/cloud-a/api/auth/websocket-ticket",
         method: "POST",
         headers: {
           authorization: "DPoP dpop-access-token",

@@ -227,6 +227,10 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/cloudSandbox": {
+      "types": "./src/state/cloudSandbox.ts",
+      "default": "./src/state/cloudSandbox.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"

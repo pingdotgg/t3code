@@ -1,5 +1,6 @@
 import {
   EnvironmentHttpApi,
+  ManagedCloudSandboxHttpApi,
   EnvironmentHttpCommonError,
   type EnvironmentAuthInvalidError,
   type EnvironmentInternalError,
@@ -18,6 +19,7 @@ import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const ClientEnvironmentHttpApi = EnvironmentHttpApi.add(ManagedCloudSandboxHttpApi);
 
 export class RemoteEnvironmentAuthFetchError extends Schema.TaggedError<RemoteEnvironmentAuthFetchError>()(
   "RemoteEnvironmentAuthFetchError",
@@ -83,7 +85,7 @@ export const layerRemoteHttpClient = (
 
 const remoteApiBaseUrl = (httpBaseUrl: string): string => {
   const url = new URL(httpBaseUrl);
-  url.pathname = "/";
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
   url.search = "";
   url.hash = "";
   return url.toString();
@@ -95,13 +97,13 @@ export const makeEnvironmentHttpApiClient = (httpBaseUrl: string) =>
   });
 
 export const makeEnvironmentHttpApiGroupClient = <
-  Group extends keyof typeof EnvironmentHttpApi.groups,
+  Group extends keyof typeof ClientEnvironmentHttpApi.groups,
 >(
   httpBaseUrl: string,
   group: Group,
 ) =>
   Effect.flatMap(HttpClient.HttpClient, (httpClient) =>
-    HttpApiClient.group(EnvironmentHttpApi, {
+    HttpApiClient.group(ClientEnvironmentHttpApi, {
       httpClient,
       group,
       baseUrl: remoteApiBaseUrl(httpBaseUrl),
@@ -109,7 +111,7 @@ export const makeEnvironmentHttpApiGroupClient = <
   );
 
 export const makeEnvironmentHttpApiUrlBuilder = (httpBaseUrl: string) =>
-  HttpApiClient.urlBuilder(EnvironmentHttpApi, {
+  HttpApiClient.urlBuilder(ClientEnvironmentHttpApi, {
     baseUrl: remoteApiBaseUrl(httpBaseUrl),
   });
 
