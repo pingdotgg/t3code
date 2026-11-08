@@ -784,7 +784,7 @@ function DeviceSourceRow(props: { row: SourceRow }) {
               <Popover>
                 <PopoverTrigger render={<InlineButton />}>Details</PopoverTrigger>
                 <PopoverPopup side="bottom" align="start" width="lg" padding="compact">
-                  <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+                  <p className="whitespace-pre-wrap break-words font-mono text-meta text-muted-foreground">
                     {environment.status.detail}
                   </p>
                 </PopoverPopup>

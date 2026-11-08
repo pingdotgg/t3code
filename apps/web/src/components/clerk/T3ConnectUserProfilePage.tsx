@@ -235,7 +235,7 @@ export function T3ConnectUserProfilePage() {
                 children: "Copy trace ID",
                 onClick: () => void navigator.clipboard?.writeText(traceId),
               },
-              actionVariant: "outline",
+              actionVariant: "secondary",
             }
           : {}),
         data: { hideCopyButton: true },
