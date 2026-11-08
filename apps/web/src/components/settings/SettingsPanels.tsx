@@ -439,6 +439,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
+  const mixedNewProjectDirectory = useScopedSettingsMixed(["newProjectDirectory"]);
 
   const changedSettingLabels = [
     ...(theme !== "system" ? ["Theme"] : []),
@@ -552,7 +553,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? ["Add project base directory"]
       : []),
-    ...(settings.newProjectDirectory ? ["New project location"] : []),
+    ...(mixedNewProjectDirectory ||
+    settings.newProjectDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectDirectory
+      ? ["New project location"]
+      : []),
     ...(settings.ghqCloneLayout !== DEFAULT_UNIFIED_SETTINGS.ghqCloneLayout
       ? ["Clone into host folders"]
       : []),
