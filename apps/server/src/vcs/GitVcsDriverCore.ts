@@ -1262,21 +1262,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     requestedBranch: string,
   ) {
-    const result = yield* executeGit(
-      "GitVcsDriver.branchExists",
+    // Exceeding the limit fails the command, so the set is never built from a partial list.
+    const { stdout } = yield* executeGit(
+      "GitVcsDriver.resolveAvailableBranchName",
       cwd,
       ["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"],
       { maxOutputBytes: 16 * 1024 * 1024 },
     );
-    if (result.stdoutTruncated) {
-      return yield* new GitCommandError({
-        operation: "GitVcsDriver.renameBranch",
-        command: "git for-each-ref",
-        cwd,
-        detail: "Branch enumeration exceeded the output limit.",
-      });
-    }
-    const branches = new Set(result.stdout.split("\n").filter(Boolean));
+    const branches = new Set(stdout.split("\n").filter(Boolean));
+    // A branch nested under a name (`t3-fix/child`) blocks it as surely as one with the name.
     const blockedNames = new Set(branches);
     for (const branch of branches) {
       const segments = branch.split("/");
@@ -4241,11 +4235,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       const identity = `${yield* readGitCommonDir(input.cwd)}\0${targetBranch}`;
       const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(identity));
-      // Bound both UTF-16 length and UTF-8 bytes, leaving room for files on Windows.
+      // UTF-8 bytes bound UTF-16 length too, leaving room for files on Windows.
       let prefix = "";
       for (const character of targetBranch.replace(/\//g, "-")) {
-        if (prefix.length + character.length > 23 || Buffer.byteLength(prefix + character) > 23)
-          break;
+        if (Buffer.byteLength(prefix + character) > 23) break;
         prefix += character;
       }
       const directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;

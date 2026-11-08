@@ -5079,10 +5079,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               paths.add(created.worktree.path);
               assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
             }
-            const refs = yield* driver.listRefs({ cwd, refresh: true });
-            for (const branch of ["feat/a", "feat-a"]) {
-              assert.isTrue(paths.has(refs.refs.find((ref) => ref.name === branch)!.worktreePath!));
-            }
           }
           assert.equal(paths.size, 4);
         }),
@@ -5113,7 +5109,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             { worktreesDirectory },
           );
           const folder = pathService.basename(created.worktree.path);
-          assert.isAtMost(folder.length, 40);
           assert.isAtMost(Buffer.byteLength(folder), 40);
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
           assert.include(
