@@ -260,6 +260,19 @@ it.effect("offers a thread its own tools and an outside client none of them", ()
       expect(refused).toMatchObject({
         error: { message: expect.stringContaining("request_secret") },
       });
+
+      // A thread call of a hidden-outside tool reaches its handler. This thread lacks the
+      // preview capability, so the handler's own refusal proves the call got past discovery.
+      const previewCall = { name: "preview_status", arguments: {} };
+      expect(yield* asThread("tools/call", previewCall)).toMatchObject({
+        result: {
+          isError: true,
+          content: [{ text: expect.stringContaining("does not grant the preview capability") }],
+        },
+      });
+      expect(yield* asOutside("tools/call", previewCall)).toMatchObject({
+        error: { message: "Tool 'preview_status' not found" },
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
