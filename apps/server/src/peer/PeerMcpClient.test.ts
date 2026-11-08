@@ -293,27 +293,30 @@ it.effect("bounds the session handshake, not a tool call that waits longer", () 
       Effect.gen(function* () {
         const index = requests++;
         yield* Queue.offer(arrived, index);
-        // The first initialize never answers; the next session's tool call answers late.
-        if (index === 0) return yield* Effect.never;
-        if (index === 3) yield* Deferred.await(answer);
+        // The first initialize, then the next initialized notification, never answer;
+        // the third session's tool call answers late.
+        if (index === 0 || index === 2) return yield* Effect.never;
+        if (index === 5) yield* Deferred.await(answer);
         return HttpClientResponse.fromWeb(
           request,
-          new Response(index === 3 ? probeResult : "", {
-            status: index === 2 ? 202 : 200,
-            headers: index === 1 ? { "mcp-session-id": "session" } : {},
+          new Response(index === 5 ? probeResult : "", {
+            status: index === 4 ? 202 : 200,
+            headers: { "mcp-session-id": "session" },
           }),
         );
       }),
     );
     const probe = yield* probeThrough(http);
 
-    const stalled = yield* probe.pipe(Effect.flip, Effect.forkScoped);
-    yield* Queue.take(arrived);
-    yield* TestClock.adjust(Duration.seconds(10));
-    expect(yield* Fiber.join(stalled)).toMatchObject({
-      code: "orchestration_error",
-      message: "The linked environment stopped answering.",
-    });
+    for (const requestsBeforeStall of [1, 2]) {
+      const stalled = yield* probe.pipe(Effect.flip, Effect.forkScoped);
+      yield* Queue.takeN(arrived, requestsBeforeStall);
+      yield* TestClock.adjust(Duration.seconds(10));
+      expect(yield* Fiber.join(stalled)).toMatchObject({
+        code: "orchestration_error",
+        message: "The linked environment stopped answering.",
+      });
+    }
 
     const waiting = yield* Effect.forkScoped(probe);
     yield* Queue.takeN(arrived, 3);
