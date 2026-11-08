@@ -3552,11 +3552,15 @@ describe("OrchestratorMcpService thread list", () => {
       });
       assert.equal(listed.projectId, null);
       assert.deepStrictEqual(
-        listed.threads.map((thread) => [thread.threadId, thread.projectId, thread.pinned]),
+        listed.threads.map((thread) => [thread.threadId, thread.projectId]),
         [
-          ["thread:a-snoozed", "project:a", false],
-          ["thread:b-snoozed", "project:b", true],
+          ["thread:a-snoozed", "project:a"],
+          ["thread:b-snoozed", "project:b"],
         ],
+      );
+      assert.deepStrictEqual(
+        listed.threads.map((thread) => thread.pinned),
+        [false, true],
       );
     }).pipe(Effect.provide(service)),
   );
