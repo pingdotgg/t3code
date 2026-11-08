@@ -1673,18 +1673,42 @@ export function liveAnswerPreview(entries: ReadonlyArray<TimelineEntry>): string
   return null;
 }
 
-function timelineRowEntries(
-  input: Pick<
-    MessagesTimelineRowsInput,
-    | "timelineEntries"
-    | "toolCallVisibility"
-    | "revealedMessageId"
-    | "isWorking"
-    | "latestRun"
-    | "runningRunId"
-    | "pendingApprovalRequestIds"
-  >,
-) {
+type RowEntriesInput = Pick<
+  MessagesTimelineRowsInput,
+  | "timelineEntries"
+  | "toolCallVisibility"
+  | "revealedMessageId"
+  | "isWorking"
+  | "latestRun"
+  | "runningRunId"
+  | "pendingApprovalRequestIds"
+>;
+
+// Row derivation and the working window filter the same entries on one update.
+const rowEntriesCache = new WeakMap<
+  ReadonlyArray<TimelineEntry>,
+  { readonly input: RowEntriesInput; readonly entries: ReadonlyArray<TimelineEntry> }
+>();
+
+function timelineRowEntries(input: RowEntriesInput) {
+  const cached = rowEntriesCache.get(input.timelineEntries);
+  if (
+    cached !== undefined &&
+    (cached.input.toolCallVisibility ?? "showAll") === (input.toolCallVisibility ?? "showAll") &&
+    (cached.input.revealedMessageId ?? null) === (input.revealedMessageId ?? null) &&
+    cached.input.isWorking === input.isWorking &&
+    shallow(cached.input.latestRun ?? null, input.latestRun ?? null) &&
+    (cached.input.runningRunId ?? null) === (input.runningRunId ?? null) &&
+    shallow(cached.input.pendingApprovalRequestIds, input.pendingApprovalRequestIds)
+  ) {
+    return cached.entries;
+  }
+  const entries = filterRowEntries(input);
+  rowEntriesCache.set(input.timelineEntries, { input, entries });
+  return entries;
+}
+
+function filterRowEntries(input: RowEntriesInput) {
   const visibility = input.toolCallVisibility ?? "showAll";
   const entries = input.timelineEntries;
   let shown = entries;
@@ -2877,11 +2901,13 @@ export function applyWorkingWindow(
   const compactionRowIds = new Set(
     rows.filter((row) => row.kind === "context-compaction").map((row) => row.id),
   );
-  const compactedRunIds = new Set(
-    entries.flatMap((entry) =>
-      timelineEntryIsCompaction(entry) ? [timelineEntryRunId(entry)] : [],
-    ),
-  );
+  let compactedRunIds: ReadonlySet<RunId | null> | undefined;
+  const runWasCompacted = (runId: RunId | null) =>
+    (compactedRunIds ??= new Set(
+      entries.flatMap((entry) =>
+        timelineEntryIsCompaction(entry) ? [timelineEntryRunId(entry)] : [],
+      ),
+    )).has(runId);
   const unsettledRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
   const runIds = deriveActiveVisualResponseRunIds({
     timelineEntries: entries,
@@ -2889,7 +2915,8 @@ export function applyWorkingWindow(
     isWorking: true,
   });
   const boundaryIndex = lastResponseBoundaryIndex(entries);
-  const replyIds = steerReplyEntryIds(entries);
+  // Steer replies reset at each response boundary, so only the last response's entries matter.
+  const replyIds = steerReplyEntryIds(entries.slice(Math.max(boundaryIndex, 0)));
   let key = entries[boundaryIndex]?.id ?? "working";
   const items: WorkingWindowItem[] = [];
   // A standalone `/compact` row already shows its run's compaction.
@@ -2927,9 +2954,9 @@ export function applyWorkingWindow(
           (compactCommandRunIds.has(runId) ||
             compactionRowIds.has(entry.id) ||
             workingRow.compacting !== undefined)) ||
-        (compactedRunIds.has(runId) &&
-          entry.entry.questionAnswer !== undefined &&
-          claudeResumeCompactionAge(entry.entry.questionAnswer) !== null) ||
+        (entry.entry.questionAnswer !== undefined &&
+          claudeResumeCompactionAge(entry.entry.questionAnswer) !== null &&
+          runWasCompacted(runId)) ||
         !workEntryIsVisibleInGroup(entry.entry, true)
       ) {
         continue;
@@ -3024,6 +3051,19 @@ export function withRunGroupsOpen(
   return closed.length === 0 ? expanded : new Set([...expanded, ...closed]);
 }
 
+function entryTurnItem(entry: TimelineEntry) {
+  return (
+    timelineEntryTurnItem(entry) ??
+    (entry.kind === "work" ? entry.entry.structuredPayload : undefined)
+  );
+}
+
+function entryRunId(entry: TimelineEntry, item: ReturnType<typeof entryTurnItem>) {
+  return entry.kind === "message"
+    ? entry.message.runId
+    : (item?.runId ?? timelineEntryRunId(entry));
+}
+
 /** Fold persisted notification deliveries; ordinary prompts and actionable runs stay visible. */
 export function applyBackgroundActivityGroups(
   rows: MessagesTimelineRow[],
@@ -3037,22 +3077,27 @@ export function applyBackgroundActivityGroups(
   previousRows: ReadonlyArray<MessagesTimelineRow> = [],
 ): MessagesTimelineRow[] {
   const notifications = new Map<RunId, Map<string, OrchestrationV2Notification>>();
+  for (const entry of input.timelineEntries) {
+    const item = entryTurnItem(entry);
+    if (item?.type !== "notification") continue;
+    const runId = entryRunId(entry, item);
+    if (runId == null) continue;
+    const ids = notifications.get(runId) ?? new Map<string, OrchestrationV2Notification>();
+    ids.set(item.id, item);
+    notifications.set(runId, ids);
+  }
+  // Most threads have no deliveries to fold; only they need the per-entry runs and exclusions.
+  if (notifications.size === 0) return rows;
   const excluded = new Set<RunId>();
   const entryRuns = new Map<string, RunId>();
   const activeRunId = deriveUnsettledRunId(input.latestRun ?? null, input.runningRunId ?? null);
+  let activeRunHasEntries = false;
   for (const entry of input.timelineEntries) {
-    const item =
-      timelineEntryTurnItem(entry) ??
-      (entry.kind === "work" ? entry.entry.structuredPayload : undefined);
-    const runId =
-      entry.kind === "message" ? entry.message.runId : (item?.runId ?? timelineEntryRunId(entry));
+    const item = entryTurnItem(entry);
+    const runId = entryRunId(entry, item);
     if (runId == null) continue;
     entryRuns.set(entry.id, runId);
-    if (item?.type === "notification") {
-      const ids = notifications.get(runId) ?? new Map<string, OrchestrationV2Notification>();
-      ids.set(item.id, item);
-      notifications.set(runId, ids);
-    }
+    if (runId === activeRunId) activeRunHasEntries = true;
     if (
       (entry.kind === "message" && entry.message.role === "user") ||
       entry.kind === "proposed-plan" ||
@@ -3078,8 +3123,7 @@ export function applyBackgroundActivityGroups(
   }
   for (const runId of excluded) notifications.delete(runId);
   if (notifications.size === 0) return rows;
-  const pendingRunId =
-    activeRunId !== null && ![...entryRuns.values()].includes(activeRunId) ? activeRunId : null;
+  const pendingRunId = activeRunId !== null && !activeRunHasEntries ? activeRunId : null;
   const previousGroupIds = new Map<RunId, string>();
   for (const row of previousRows) {
     if (row.kind !== "background-activity") continue;
