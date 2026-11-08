@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -47,7 +48,10 @@ export function rateLimitResumeSuffix(retryAt: number | undefined): string {
   if (retryAt === undefined || !Number.isFinite(retryAt)) {
     return " Requests resume when the limit resets.";
   }
-  return ` Requests resume at ${DateTime.formatIso(DateTime.makeUnsafe(retryAt))}.`;
+  return Option.match(DateTime.make(retryAt), {
+    onNone: () => " Requests resume when the limit resets.",
+    onSome: (instant) => ` Requests resume at ${DateTime.formatIso(instant)}.`,
+  });
 }
 
 export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(

@@ -38,6 +38,14 @@ it("names the resume time in paused and rate-limit copy", () => {
     " Requests resume when the limit resets.",
   );
   assert.equal(
+    SourceControlRateLimit.rateLimitResumeSuffix(Number.POSITIVE_INFINITY),
+    " Requests resume when the limit resets.",
+  );
+  assert.equal(
+    SourceControlRateLimit.rateLimitResumeSuffix(8.64e15 + 1),
+    " Requests resume when the limit resets.",
+  );
+  assert.equal(
     SourceControlRateLimit.rateLimitResumeSuffix(Date.parse("2026-11-07T18:00:00.000Z")),
     " Requests resume at 2026-11-07T18:00:00.000Z.",
   );

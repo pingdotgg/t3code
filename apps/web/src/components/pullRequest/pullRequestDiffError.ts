@@ -11,12 +11,37 @@ function sourceControlRateLimitResumeAt(error: string): string | undefined {
   return error.match(RESUME_AT)?.[1];
 }
 
+/** Epoch ms for `useNowAfter`, so the empty state can drop a past resume time. */
+export function sourceControlRateLimitResumeDeadlineMs(error: string): number | null {
+  const iso = sourceControlRateLimitResumeAt(error);
+  if (iso === undefined) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 function formatSourceControlRateLimitResume(
   resumeAtIso: string,
   timestampFormat: TimestampFormat,
-): string {
-  const when = formatUpcomingTimestamp(resumeAtIso, timestampFormat);
-  return when.length > 0 ? `Resumes ${when}` : "Resumes when the limit resets";
+  nowMs: number,
+): string | null {
+  const resumeMs = Date.parse(resumeAtIso);
+  if (!Number.isFinite(resumeMs) || resumeMs <= nowMs) return null;
+  const when = formatUpcomingTimestamp(resumeAtIso, timestampFormat, nowMs);
+  return when.length > 0 ? `Resumes ${when}` : null;
+}
+
+function rateLimitRetryAfter(
+  resumeAtIso: string | undefined,
+  timestampFormat: TimestampFormat,
+  nowMs: number,
+): string | null {
+  if (resumeAtIso === undefined) return "after the limit resets";
+  const resumeMs = Date.parse(resumeAtIso);
+  if (!Number.isFinite(resumeMs)) return "after the limit resets";
+  if (resumeMs <= nowMs) return null;
+  const when = formatUpcomingTimestamp(resumeAtIso, timestampFormat, nowMs);
+  if (when.length === 0) return "after the limit resets";
+  return when.startsWith("tomorrow") || when.includes(" at ") ? when : `at ${when}`;
 }
 
 /** Diff failures currently include transport wrappers, so recognize the reason inside them. */
@@ -25,19 +50,20 @@ export function describePullRequestDiffError(
   providerName: string,
   term: string,
   timestampFormat: TimestampFormat = "12-hour",
+  nowMs: number = Date.now(),
 ) {
   if (RATE_LIMIT.test(error)) {
-    const resumeAt = sourceControlRateLimitResumeAt(error);
-    const when = resumeAt === undefined ? "" : formatUpcomingTimestamp(resumeAt, timestampFormat);
-    const after =
-      when.length === 0
-        ? "after the limit resets"
-        : when.startsWith("tomorrow") || when.includes(" at ")
-          ? when
-          : `at ${when}`;
+    const after = rateLimitRetryAfter(
+      sourceControlRateLimitResumeAt(error),
+      timestampFormat,
+      nowMs,
+    );
     return {
       title: `${providerName} rate limit reached`,
-      description: `${providerName} is temporarily limiting requests, so this diff couldn't be loaded. Try again ${after}, or view the changes on ${providerName}.`,
+      description:
+        after === null
+          ? `${providerName} is temporarily limiting requests, so this diff couldn't be loaded. Try again, or view the changes on ${providerName}.`
+          : `${providerName} is temporarily limiting requests, so this diff couldn't be loaded. Try again ${after}, or view the changes on ${providerName}.`,
     };
   }
 
@@ -51,6 +77,7 @@ export function describePullRequestDiffError(
 export function describeSourceControlRateLimitError(
   error: string,
   timestampFormat: TimestampFormat = "12-hour",
+  nowMs: number = Date.now(),
 ): string {
   if (!RATE_LIMIT.test(error)) return error;
   const resumeAt = sourceControlRateLimitResumeAt(error);
@@ -62,5 +89,6 @@ export function describeSourceControlRateLimitError(
     .replace(/^\.\s*/u, "")
     .replace(/\s*\.\s*$/u, "")
     .trim();
-  return `${withoutResume}. ${formatSourceControlRateLimitResume(resumeAt, timestampFormat)}.`;
+  const resume = formatSourceControlRateLimitResume(resumeAt, timestampFormat, nowMs);
+  return resume === null ? withoutResume : `${withoutResume}. ${resume}.`;
 }
