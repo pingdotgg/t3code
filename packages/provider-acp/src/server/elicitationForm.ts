@@ -200,8 +200,11 @@ export function parseElicitationForm(
   const companionIds = new Set<string>();
   // Resolve the pairing before building questions so a companion is never shown on its own.
   for (const [id, value] of properties) {
-    if (!id.endsWith(OTHER_FIELD_SUFFIX) || required.has(id)) continue;
+    if (!id.endsWith(OTHER_FIELD_SUFFIX)) continue;
     const baseId = id.slice(0, -OTHER_FIELD_SUFFIX.length);
+    // A required choice cannot be folded: custom text would have to replace a value the
+    // schema requires. Keep both fields separate so the agent can validate the response.
+    if (required.has(id) || required.has(baseId)) continue;
     const baseProperty = unknownRecord(propertiesById[baseId]);
     const otherProperty = unknownRecord(value);
     if (baseProperty === undefined || otherProperty === undefined) continue;

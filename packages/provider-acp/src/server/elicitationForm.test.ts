@@ -97,4 +97,61 @@ describe("parseElicitationForm", () => {
     // Neither is required by the agent, so an unanswered question is simply omitted.
     assert.deepStrictEqual(form.content({}), {});
   });
+
+  it("keeps required fields separate instead of folding them", () => {
+    const requiredChoice = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          target: {
+            type: "string",
+            title: "Target",
+            oneOf: [
+              { const: "a", title: "A" },
+              { const: "b", title: "B" },
+            ],
+          },
+          target__other: { type: "string", title: "Other (type your own)" },
+        },
+        required: ["target"],
+      },
+      "Choose",
+    );
+    assert(requiredChoice !== undefined);
+    assert.deepStrictEqual(
+      requiredChoice.questions.map((question) => question.id),
+      ["target", "target__other"],
+    );
+    assert.strictEqual(requiredChoice.questions[0]?.allowCustomAnswer, false);
+    assert.deepStrictEqual(requiredChoice.content({ target: "a" }), { target: "a" });
+    // Custom text alone must not stand in for the required choice.
+    assert.strictEqual(requiredChoice.content({ target__other: "custom" }), undefined);
+    assert.deepStrictEqual(requiredChoice.content({ target: "a", target__other: "note" }), {
+      target: "a",
+      target__other: "note",
+    });
+
+    const requiredCompanion = parseElicitationForm(
+      {
+        type: "object",
+        properties: {
+          answer: { type: "string", enum: ["yes"] },
+          answer__other: { type: "string" },
+        },
+        required: ["answer__other"],
+      },
+      "Choose",
+    );
+    assert(requiredCompanion !== undefined);
+    assert.deepStrictEqual(
+      requiredCompanion.questions.map((question) => question.id),
+      ["answer", "answer__other"],
+    );
+    assert.strictEqual(requiredCompanion.questions[0]?.allowCustomAnswer, false);
+    assert.strictEqual(requiredCompanion.content({ answer: "yes" }), undefined);
+    assert.deepStrictEqual(requiredCompanion.content({ answer: "yes", answer__other: "details" }), {
+      answer: "yes",
+      answer__other: "details",
+    });
+  });
 });
