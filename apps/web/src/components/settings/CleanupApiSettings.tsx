@@ -1,10 +1,15 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { getSpeechCleanupModels } from "@t3tools/client-runtime/voice-input";
-import { SpeechPostProcessingProvider, SpeechCleanupReasoning } from "@t3tools/contracts";
+import {
+  SpeechPostProcessingProvider,
+  SpeechCleanupReasoning,
+  type SpeechCleanupApiProvider,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useState } from "react";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { inEnvironmentSpeechRuntime } from "../../speech/runEnvironmentSpeech";
 import { usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
@@ -37,15 +42,21 @@ const LABELS: Record<SpeechPostProcessingProvider, string> = {
   openrouter: "OpenRouter",
   opencode: "OpenCode (raw generation)",
 };
-const CREDENTIALS = {
-  openai: "openaiPostProcessing",
-  compatible: "compatiblePostProcessing",
-  anthropic: "anthropicPostProcessing",
-  openrouter: "openrouterPostProcessing",
-} as const;
-type ApiProvider = keyof typeof CREDENTIALS;
+function useCleanupModels(
+  prepared: PreparedConnection | null,
+  provider: SpeechCleanupApiProvider,
+  endpoint: string,
+  configured: boolean,
+) {
+  const atom = Atom.make(
+    prepared && endpoint && (configured || provider === "compatible")
+      ? inEnvironmentSpeechRuntime(getSpeechCleanupModels(prepared, provider))
+      : Effect.succeed(null),
+  );
+  return [useAtomValue(atom), useAtomRefresh(atom)] as const;
+}
 
-function CleanupApiForm({ provider }: { provider: ApiProvider }) {
+function CleanupApiForm({ provider }: { provider: SpeechCleanupApiProvider }) {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const canManage = useScopedSettingsWriteAllowed();
@@ -53,39 +64,34 @@ function CleanupApiForm({ provider }: { provider: ApiProvider }) {
   const prepared = Option.getOrNull(usePreparedConnection(environment?.environmentId ?? null));
   const [key, setKey] = useState("");
   const [keyStatus, setKeyStatus] = useState<"idle" | "saving" | "failed">("idle");
-  const slot = CREDENTIALS[provider];
+  const slot = `${provider}PostProcessing` as const;
   const configured = Boolean(settings.voiceApiCredentials[slot]);
   const config = provider === "openai" ? null : settings.speechPostProcessingApiEndpoints[provider];
   const model = config?.model ?? settings.speechPostProcessingOpenAIModel;
   const label = LABELS[provider];
   const { contains } = useComboboxFilter();
-  const canLoadModels =
-    (provider === "openai" || Boolean(config?.endpoint)) &&
-    (configured || provider === "compatible");
-  const makeRead = (connection: typeof prepared) => ({
-    connection,
-    endpoint: config?.endpoint,
-    configured,
-    atom: Atom.make(
-      connection && canLoadModels
-        ? inEnvironmentSpeechRuntime(getSpeechCleanupModels(connection))
-        : Effect.succeed(null),
-    ),
-  });
-  const [read, setRead] = useState(() => makeRead(prepared));
-  if (
-    read.connection !== prepared ||
-    read.endpoint !== config?.endpoint ||
-    read.configured !== configured
-  )
-    setRead(makeRead(prepared));
-  const catalog = useAtomValue(read.atom);
-  const refresh = useAtomRefresh(read.atom);
+  const endpoint = config?.endpoint ?? "https://api.openai.com/v1";
+  const canLoadModels = Boolean(endpoint) && (configured || provider === "compatible");
+  const [catalog, refresh] = useCleanupModels(prepared, provider, endpoint, configured);
   const models = AsyncResult.isSuccess(catalog) ? (catalog.value?.models ?? []) : [];
   const saveModel = (value: string) => {
     if (!value || value === model) return;
     if (provider === "openai") update({ speechPostProcessingOpenAIModel: value });
     else update({ speechPostProcessingApiEndpoints: { [provider]: { model: value } } });
+  };
+  const saveKey = (value: string) => {
+    setKeyStatus("saving");
+    update(
+      { voiceApiCredentials: { [slot]: value } },
+      {
+        onFailed: () => setKeyStatus("failed"),
+        onSaved: () => {
+          setKey("");
+          setKeyStatus("idle");
+          refresh();
+        },
+      },
+    );
   };
   const reasoning =
     provider === "openai"
@@ -105,11 +111,12 @@ function CleanupApiForm({ provider }: { provider: ApiProvider }) {
     <SettingsRow
       serverScoped
       settingKeys={[
-        "speechPostProcessingOpenAIModel",
-        "speechPostProcessingApiEndpoints",
+        provider === "openai"
+          ? "speechPostProcessingOpenAIModel"
+          : "speechPostProcessingApiEndpoints",
         "voiceApiCredentials",
-        "speechPostProcessingOpenAIReasoning",
-        "speechPostProcessingAnthropicReasoning",
+        ...(provider === "openai" ? (["speechPostProcessingOpenAIReasoning"] as const) : []),
+        ...(provider === "anthropic" ? (["speechPostProcessingAnthropicReasoning"] as const) : []),
       ]}
       title={`${label} cleanup`}
       description={
@@ -146,7 +153,11 @@ function CleanupApiForm({ provider }: { provider: ApiProvider }) {
             defaultValue={model}
             placeholder="Enter a model ID or choose below"
             maxLength={200}
-            onBlur={(event) => saveModel(event.target.value.trim())}
+            onBlur={(event) => {
+              const value = event.target.value.trim();
+              if (value) saveModel(value);
+              else event.target.value = model;
+            }}
           />
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
@@ -263,20 +274,7 @@ function CleanupApiForm({ provider }: { provider: ApiProvider }) {
           <Button
             size="sm"
             disabled={!canManage || !key.trim() || keyStatus === "saving"}
-            onClick={() => {
-              setKeyStatus("saving");
-              update(
-                { voiceApiCredentials: { [slot]: key.trim() } },
-                {
-                  onFailed: () => setKeyStatus("failed"),
-                  onSaved: () => {
-                    setKey("");
-                    setKeyStatus("idle");
-                    refresh();
-                  },
-                },
-              );
-            }}
+            onClick={() => saveKey(key.trim())}
           >
             Save API key
           </Button>
@@ -285,20 +283,7 @@ function CleanupApiForm({ provider }: { provider: ApiProvider }) {
               size="sm"
               variant="outline"
               disabled={!canManage || keyStatus === "saving"}
-              onClick={() => {
-                setKeyStatus("saving");
-                update(
-                  { voiceApiCredentials: { [slot]: "" } },
-                  {
-                    onFailed: () => setKeyStatus("failed"),
-                    onSaved: () => {
-                      setKey("");
-                      setKeyStatus("idle");
-                      refresh();
-                    },
-                  },
-                );
-              }}
+              onClick={() => saveKey("")}
             >
               Remove API key
             </Button>
@@ -313,6 +298,7 @@ export function CleanupApiSettings() {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const canManage = useScopedSettingsWriteAllowed();
+  const { environment, scope } = useSettingsScope();
   const legacyOpenRouter = settings.speechPostProcessingProvider === "openrouter";
   const provider = legacyOpenRouter ? "compatible" : settings.speechPostProcessingProvider;
   const preset = legacyOpenRouter ? "openrouter" : settings.speechPostProcessingCompatiblePreset;
@@ -396,7 +382,7 @@ export function CleanupApiSettings() {
       )}
       {provider !== "agent" && provider !== "opencode" && (
         <CleanupApiForm
-          key={`${provider}:${preset}`}
+          key={`${scope.kind}:${environment?.environmentId}:${provider}:${preset}`}
           provider={provider === "compatible" && preset === "openrouter" ? "openrouter" : provider}
         />
       )}

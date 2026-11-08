@@ -1006,6 +1006,15 @@ describe("resolveSpeechPostProcessingModelSelection", () => {
       },
     });
     expect(resolveSpeechPostProcessingModelSelection(base).instanceId).toBe(instanceId);
+    const snapshot = {
+      instanceId,
+      driver: "opencode",
+      enabled: true,
+      models: [{ slug: "openai/gpt-6-luna" }],
+    };
+    expect(resolveSpeechPostProcessingModelSelection(base, [snapshot] as never).model).toBe(
+      "openai/gpt-6-luna",
+    );
     const dedicated = createModelSelection(instanceId, "openai/gpt-6-luna", [
       { id: "variant", value: "low" },
     ]);

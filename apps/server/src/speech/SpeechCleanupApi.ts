@@ -2,6 +2,7 @@ import {
   isSecretReference,
   SpeechCleanupReasoning,
   type SpeechCleanupModels,
+  type SpeechCleanupApiProvider,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Context from "effect/Context";
@@ -31,7 +32,9 @@ export class SpeechCleanupApi extends Context.Service<
   SpeechCleanupApi,
   {
     readonly postProcess: (prompt: string) => Effect.Effect<string, SpeechCleanupApiError>;
-    readonly models: Effect.Effect<SpeechCleanupModels, SpeechCleanupApiError>;
+    readonly models: (
+      provider: SpeechCleanupApiProvider,
+    ) => Effect.Effect<SpeechCleanupModels, SpeechCleanupApiError>;
   }
 >()("t3/speech/SpeechCleanupApi") {}
 
@@ -163,27 +166,36 @@ const make = Effect.gen(function* () {
       ),
   );
 
-  const credential = Effect.fn("SpeechCleanupApi.credential")(function* (
-    operation: "post-processing" | "models",
+  const configuration = Effect.fn("SpeechCleanupApi.configuration")(function* (
+    operation: SpeechCleanupApiError["operation"],
+    requestedProvider?: SpeechCleanupApiProvider,
   ) {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(
         (cause) => new SpeechCleanupApiError({ operation, reason: "configuration", cause }),
       ),
     );
-    const selected = settings.speechPostProcessingProvider;
+    const selected = requestedProvider ?? settings.speechPostProcessingProvider;
+    if (selected === "agent" || selected === "opencode")
+      return yield* new SpeechCleanupApiError({ operation, reason: "configuration" });
     const provider =
-      selected === "compatible" && settings.speechPostProcessingCompatiblePreset === "openrouter"
+      requestedProvider === undefined &&
+      selected === "compatible" &&
+      settings.speechPostProcessingCompatiblePreset === "openrouter"
         ? "openrouter"
         : selected;
-    const slot =
-      provider === "compatible"
-        ? "compatiblePostProcessing"
-        : provider === "anthropic"
-          ? "anthropicPostProcessing"
-          : provider === "openrouter"
-            ? "openrouterPostProcessing"
-            : "openaiPostProcessing";
+    const endpoint = (
+      provider === "openai"
+        ? "https://api.openai.com/v1"
+        : settings.speechPostProcessingApiEndpoints[provider].endpoint
+    ).replace(/\/+$/, "");
+    const model =
+      provider === "openai"
+        ? settings.speechPostProcessingOpenAIModel
+        : settings.speechPostProcessingApiEndpoints[provider].model;
+    if (!endpoint || (operation === "post-processing" && !model))
+      return yield* new SpeechCleanupApiError({ operation, reason: "configuration" });
+    const slot = `${provider}PostProcessing` as const;
     const source = settings.voiceApiCredentials[slot];
     if (isSecretReference(source)) yield* resolver.invalidate([source]);
     const key = yield* requireSettingsSecret(resolver, source).pipe(
@@ -191,31 +203,21 @@ const make = Effect.gen(function* () {
         (cause) => new SpeechCleanupApiError({ operation, reason: "credential", cause }),
       ),
     );
-    return { settings, key, provider };
+    if (!key && provider !== "compatible")
+      return yield* new SpeechCleanupApiError({ operation, reason: "credential" });
+    return { settings, key, provider, endpoint, model };
   });
 
   return SpeechCleanupApi.of({
     postProcess: Effect.fn("SpeechCleanupApi.postProcess")(function* (prompt) {
-      const { settings, key, provider } = yield* credential("post-processing");
-      if (!key && provider !== "compatible")
-        return yield* new SpeechCleanupApiError({
-          operation: "post-processing",
-          reason: "credential",
-        });
+      const { settings, key, provider, endpoint, model } = yield* configuration("post-processing");
       if (provider === "compatible" || provider === "anthropic" || provider === "openrouter") {
-        const config = settings.speechPostProcessingApiEndpoints[provider];
-        if (!config.endpoint || !config.model)
-          return yield* new SpeechCleanupApiError({
-            operation: "post-processing",
-            reason: "configuration",
-          });
         const anthropic = provider === "anthropic";
-        const endpoint = config.endpoint.replace(/\/+$/, "");
         let request = HttpClientRequest.post(
           `${endpoint}${anthropic ? "/messages" : "/chat/completions"}`,
         ).pipe(
           HttpClientRequest.bodyJsonUnsafe({
-            model: config.model,
+            model,
             messages: [{ role: "user", content: prompt }],
             ...(anthropic
               ? {
@@ -239,10 +241,10 @@ const make = Effect.gen(function* () {
       }
       return yield* requestText(
         "post-processing",
-        HttpClientRequest.post("https://api.openai.com/v1/responses").pipe(
+        HttpClientRequest.post(`${endpoint}/responses`).pipe(
           HttpClientRequest.bearerToken(Redacted.make(key)),
           HttpClientRequest.bodyJsonUnsafe({
-            model: settings.speechPostProcessingOpenAIModel,
+            model,
             input: prompt,
             store: false,
             ...(settings.speechPostProcessingOpenAIReasoning === null
@@ -255,69 +257,60 @@ const make = Effect.gen(function* () {
         "responses",
       );
     }),
-    models: Effect.gen(function* () {
-      const operation = "models";
-      const { settings, key, provider } = yield* credential(operation);
-      if (provider === "agent" || provider === "opencode")
-        return yield* new SpeechCleanupApiError({ operation, reason: "configuration" });
-      if (!key && provider !== "compatible")
-        return yield* new SpeechCleanupApiError({ operation, reason: "credential" });
-      const endpoint =
-        provider === "openai"
-          ? "https://api.openai.com/v1"
-          : settings.speechPostProcessingApiEndpoints[provider].endpoint.replace(/\/+$/, "");
-      if (!endpoint)
-        return yield* new SpeechCleanupApiError({ operation, reason: "configuration" });
-      const models = new Map<string, SpeechCleanupModels["models"][number]>();
-      let cursor: string | undefined;
-      for (let page = 0; page < 10; page++) {
-        let request = HttpClientRequest.get(`${endpoint}/models`);
-        if (provider === "anthropic") {
-          request = request.pipe(
-            HttpClientRequest.setHeader("x-api-key", key),
-            HttpClientRequest.setHeader("anthropic-version", "2023-06-01"),
-            HttpClientRequest.setUrlParam("limit", "1000"),
+    models: Effect.fn("SpeechCleanupApi.models")(
+      function* (provider) {
+        const operation = "models";
+        const { key, endpoint } = yield* configuration(operation, provider);
+        const models = new Map<string, SpeechCleanupModels["models"][number]>();
+        let cursor: string | undefined;
+        for (let page = 0; page < 10; page++) {
+          let request = HttpClientRequest.get(`${endpoint}/models`);
+          if (provider === "anthropic") {
+            request = request.pipe(
+              HttpClientRequest.setHeader("x-api-key", key),
+              HttpClientRequest.setHeader("anthropic-version", "2023-06-01"),
+              HttpClientRequest.setUrlParam("limit", "1000"),
+            );
+            if (cursor) request = HttpClientRequest.setUrlParam(request, "after_id", cursor);
+          } else if (key) request = HttpClientRequest.bearerToken(request, Redacted.make(key));
+          const response = yield* http.execute(request).pipe(
+            Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+            Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+            Effect.mapError(() => new SpeechCleanupApiError({ operation, reason: "unavailable" })),
           );
-          if (cursor) request = HttpClientRequest.setUrlParam(request, "after_id", cursor);
-        } else if (key) request = HttpClientRequest.bearerToken(request, Redacted.make(key));
-        const response = yield* http.execute(request).pipe(
-          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
-          Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-          Effect.mapError(() => new SpeechCleanupApiError({ operation, reason: "unavailable" })),
-        );
-        if (response.status < 200 || response.status >= 300)
-          return yield* new SpeechCleanupApiError({
-            operation,
-            reason: "http",
-            status: response.status,
-          });
-        const result = yield* HttpClientResponse.schemaBodyJson(ModelPage)(response).pipe(
-          Effect.mapError(() => new SpeechCleanupApiError({ operation, reason: "response" })),
-        );
-        for (const model of result.data) {
-          if (!model.id.trim() || model.id.length > 200) continue;
-          const effort = model.capabilities?.effort;
-          models.set(model.id, {
-            id: model.id,
-            name: model.display_name ?? model.name ?? model.id,
-            ...(effort
-              ? {
-                  reasoningLevels: SpeechCleanupReasoning.literals.filter((level) => {
-                    const capability = effort[level];
-                    return typeof capability === "object" && capability.supported;
-                  }),
-                }
-              : {}),
-          });
+          if (response.status < 200 || response.status >= 300)
+            return yield* new SpeechCleanupApiError({
+              operation,
+              reason: "http",
+              status: response.status,
+            });
+          const result = yield* HttpClientResponse.schemaBodyJson(ModelPage)(response).pipe(
+            Effect.mapError(() => new SpeechCleanupApiError({ operation, reason: "response" })),
+          );
+          for (const model of result.data) {
+            const id = model.id.trim();
+            if (!id || id.length > 200) continue;
+            const effort = model.capabilities?.effort;
+            models.set(id, {
+              id,
+              name: model.display_name?.trim() || model.name?.trim() || id,
+              ...(effort
+                ? {
+                    reasoningLevels: SpeechCleanupReasoning.literals.filter((level) => {
+                      const capability = effort[level];
+                      return typeof capability === "object" && capability.supported;
+                    }),
+                  }
+                : {}),
+            });
+          }
+          if (!result.has_more)
+            return { models: [...models.values()].sort((a, b) => a.id.localeCompare(b.id)) };
+          if (provider !== "anthropic" || !result.last_id || result.last_id === cursor) break;
+          cursor = result.last_id;
         }
-        if (!result.has_more)
-          return { models: [...models.values()].sort((a, b) => a.id.localeCompare(b.id)) };
-        if (provider !== "anthropic" || !result.last_id || result.last_id === cursor) break;
-        cursor = result.last_id;
-      }
-      return yield* new SpeechCleanupApiError({ operation, reason: "response" });
-    }).pipe(
-      Effect.withSpan("SpeechCleanupApi.models"),
+        return yield* new SpeechCleanupApiError({ operation, reason: "response" });
+      },
       Effect.timeoutOrElse({
         duration: "25 seconds",
         orElse: () =>

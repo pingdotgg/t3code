@@ -56,7 +56,7 @@ it.effect.each(["openai", "anthropic", "compatible", "openrouter"] as const)(
       const api = yield* SpeechCleanupApi.SpeechCleanupApi.pipe(
         Effect.provide(
           layer({
-            speechPostProcessingProvider: provider === "openrouter" ? "compatible" : provider,
+            speechPostProcessingProvider: "agent",
             speechPostProcessingCompatiblePreset:
               provider === "openrouter" ? "openrouter" : "custom",
             speechPostProcessingApiEndpoints: {
@@ -71,7 +71,9 @@ it.effect.each(["openai", "anthropic", "compatible", "openrouter"] as const)(
           }),
         ),
       );
-      const result = yield* api.models.pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+      const result = yield* api
+        .models(provider)
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
       expect(result.models.map((model) => model.id)).toEqual(
         provider === "anthropic" ? ["claude-first", "model-a", "model-b"] : ["model-a", "model-b"],
       );
@@ -79,7 +81,9 @@ it.effect.each(["openai", "anthropic", "compatible", "openrouter"] as const)(
       expect(upstream).toHaveBeenCalledTimes(provider === "anthropic" ? 2 : 1);
       upstream.mockResolvedValueOnce(Response.json({ data: "invalid" }));
       expect(
-        yield* Effect.flip(api.models.pipe(Effect.provideService(FetchHttpClient.Fetch, upstream))),
+        yield* Effect.flip(
+          api.models(provider).pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+        ),
       ).toMatchObject({ operation: "models", reason: "response" });
     }),
 );
@@ -120,37 +124,64 @@ it.effect(
     }),
 );
 
-it.effect("cleans text in one OpenAI request without sending an STT credential", () =>
-  Effect.gen(function* () {
-    const upstream = vi.fn<typeof fetch>(async (url, init) => {
-      expect(String(url)).toBe("https://api.openai.com/v1/responses");
-      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer openai-key");
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        model: "gpt-4.1-mini",
-        input: "Clean this transcript",
-        store: false,
-        reasoning: { effort: "low" },
+it.effect.each([null, "low"] as const)(
+  "cleans text in one OpenAI request with %s effort and no STT credential",
+  (effort) =>
+    Effect.gen(function* () {
+      const upstream = vi.fn<typeof fetch>(async (url, init) => {
+        expect(String(url)).toBe("https://api.openai.com/v1/responses");
+        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer openai-key");
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          model: "gpt-4.1-mini",
+          input: "Clean this transcript",
+          store: false,
+        });
+        expect(JSON.parse(String(init?.body)).reasoning).toEqual(
+          effort === null ? undefined : { effort },
+        );
+        return Response.json({
+          status: "completed",
+          output: [{ type: "message", content: [{ type: "output_text", text: "Cleaned." }] }],
+        });
       });
-      return Response.json({
-        status: "completed",
-        output: [{ type: "message", content: [{ type: "output_text", text: "Cleaned." }] }],
-      });
-    });
-    const api = yield* SpeechCleanupApi.SpeechCleanupApi.pipe(
-      Effect.provide(
-        layer({
-          voiceApiCredentials: { openaiPostProcessing: "openai-key" },
-          speechPostProcessingOpenAIReasoning: "low",
-        }),
-      ),
-    );
-    expect(
-      yield* api
-        .postProcess("Clean this transcript")
-        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
-    ).toBe("Cleaned.");
-    expect(upstream).toHaveBeenCalledTimes(1);
-  }),
+      const api = yield* SpeechCleanupApi.SpeechCleanupApi.pipe(
+        Effect.provide(
+          layer({
+            speechPostProcessingProvider: "openai",
+            voiceApiCredentials: { openaiPostProcessing: "openai-key" },
+            speechPostProcessingOpenAIReasoning: effort,
+          }),
+        ),
+      );
+      expect(
+        yield* api
+          .postProcess("Clean this transcript")
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream)),
+      ).toBe("Cleaned.");
+      expect(upstream).toHaveBeenCalledTimes(1);
+    }),
+);
+
+it.effect.each(["agent", "opencode"] as const)(
+  "never sends %s cleanup to OpenAI through the API service",
+  (provider) =>
+    Effect.gen(function* () {
+      const upstream = vi.fn<typeof fetch>();
+      const api = yield* SpeechCleanupApi.SpeechCleanupApi.pipe(
+        Effect.provide(
+          layer({
+            speechPostProcessingProvider: provider,
+            voiceApiCredentials: { openaiPostProcessing: "private-openai-key" },
+          }),
+        ),
+      );
+      expect(
+        yield* api
+          .postProcess("Clean")
+          .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.flip),
+      ).toMatchObject({ reason: "configuration" });
+      expect(upstream).not.toHaveBeenCalled();
+    }),
 );
 
 it.effect.each(["compatible", "openrouter", "anthropic"] as const)(
@@ -283,5 +314,12 @@ it.effect(
         ),
       ).toMatchObject({ operation: "post-processing", reason: "credential" });
       expect(upstream).toHaveBeenCalledTimes(1);
-    }).pipe(Effect.provide(layer({ voiceApiCredentials: { openaiPostProcessing: "key" } }))),
+    }).pipe(
+      Effect.provide(
+        layer({
+          speechPostProcessingProvider: "openai",
+          voiceApiCredentials: { openaiPostProcessing: "key" },
+        }),
+      ),
+    ),
 );

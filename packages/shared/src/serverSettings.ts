@@ -171,11 +171,16 @@ export function resolveSpeechPostProcessingModelSelection(
     const instanceId = Object.keys(settings.providerInstances)
       .map((id) => ProviderInstanceId.make(id))
       .find(isOpenCode);
-    if (instanceId)
+    if (instanceId) {
+      const fallbackModel = defaultTextGenerationModel(ProviderDriverKind.make("opencode"));
+      const models = providers?.find((provider) => provider.instanceId === instanceId)?.models;
       return createModelSelection(
         instanceId,
-        defaultTextGenerationModel(ProviderDriverKind.make("opencode")),
+        models?.find((model) => model.slug === fallbackModel)?.slug ??
+          models?.[0]?.slug ??
+          fallbackModel,
       );
+    }
     return selected;
   }
   const selection = settings.speechPostProcessingModelSelection;

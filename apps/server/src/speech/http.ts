@@ -74,9 +74,9 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         "cleanupModels",
         Effect.fn("environment.voice.cleanupModels")(function* (args) {
           yield* guard(args.endpoint.name);
-          return yield* cleanup.models.pipe(
-            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
-          );
+          return yield* cleanup
+            .models(args.params.provider)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
         }),
       )
       .handle(

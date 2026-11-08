@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as SpeechCleanupApi from "./SpeechCleanupApi.ts";
 import * as PostProcessing from "./postProcessing.ts";
 
@@ -21,6 +22,9 @@ it.effect.each(["agent", "openai", "compatible", "anthropic", "openrouter", "ope
         Effect.provide(
           PostProcessing.layer.pipe(
             Layer.provide(NodeServices.layer),
+            Layer.provide(
+              Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+            ),
             Layer.provide(ServerSettings.layerTest({ speechPostProcessingProvider: provider })),
             Layer.provide(Layer.mock(SpeechCleanupApi.SpeechCleanupApi)({ postProcess: api })),
             Layer.provide(

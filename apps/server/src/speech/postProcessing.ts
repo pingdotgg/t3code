@@ -10,6 +10,7 @@ import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serve
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
 import { applySpeechAliases } from "./customWords.ts";
 import { SpeechOperationError } from "./SpeechService.ts";
@@ -29,6 +30,7 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const api = yield* SpeechCleanupApi.SpeechCleanupApi;
+  const providers = yield* ProviderRegistry.ProviderRegistry;
   return SpeechPostProcessing.of({
     process: Effect.fn("SpeechPostProcessing.process")(
       function* (input) {
@@ -55,7 +57,10 @@ const make = Effect.gen(function* () {
               const generated = yield* textGeneration.generateTranscriptionPostProcessing({
                 cwd,
                 prompt,
-                modelSelection: resolveSpeechPostProcessingModelSelection(settings),
+                modelSelection: resolveSpeechPostProcessingModelSelection(
+                  settings,
+                  direct ? yield* providers.getProviders : undefined,
+                ),
                 ...(direct ? { direct: true } : {}),
               });
               return generated.transcription;

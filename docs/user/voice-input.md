@@ -127,9 +127,7 @@ For a direct API call, choose **OpenAI API (BYOK)**, **Anthropic API**,
 or **OpenAI-compatible endpoint** under **Cleanup provider**. For OpenRouter,
 choose its preset inside **OpenAI-compatible endpoint**.
 Save that endpoint's API key and choose a model from its catalog, or enter a model
-ID manually. **Refresh models** reloads the catalog using the saved key.
-The key status confirms whether a key is saved on this environment; a newly typed
-key only takes effect after saving. Anthropic and OpenRouter start with
+ID manually. Anthropic and OpenRouter start with
 their API base URLs filled in; a custom endpoint uses Chat Completions and needs
 its base URL, including `/v1` when required. Leave the key empty for a custom
 server that needs no authentication. Each provider keeps its own model, endpoint,

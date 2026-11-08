@@ -313,6 +313,27 @@ describe("scoped settings writes", () => {
           }),
         ),
       ).toEqual({ saved: [laptop.label], failed: unsupported });
+      expect(
+        await outcome(
+          planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+            voiceApiCredentials: { openaiPostProcessing: "" },
+          }),
+          upgradedLaptop({
+            voiceApiCredentials: {
+              ...DEFAULT_SERVER_SETTINGS.voiceApiCredentials,
+              openaiPostProcessing: masked,
+            },
+          }),
+        ),
+      ).toEqual({
+        saved: [server.label],
+        failed: [
+          {
+            label: laptop.label,
+            message: "This environment does not support this setting. Update T3 Code on it.",
+          },
+        ],
+      });
     });
 
     // regression: #18334 an environment silently dropped a setting with no warning

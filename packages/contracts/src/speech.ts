@@ -19,6 +19,13 @@ export const SpeechPostProcessingProvider = Schema.Literals([
   "opencode",
 ]);
 export type SpeechPostProcessingProvider = typeof SpeechPostProcessingProvider.Type;
+export const SpeechCleanupApiProvider = Schema.Literals([
+  "openai",
+  "compatible",
+  "anthropic",
+  "openrouter",
+]);
+export type SpeechCleanupApiProvider = typeof SpeechCleanupApiProvider.Type;
 export const SpeechCleanupReasoning = Schema.Literals([
   "none",
   "minimal",

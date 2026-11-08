@@ -11,6 +11,7 @@ import type {
   SpeechModelUnloadTimeout,
   SpeechTranscriptionOptions,
   SpeechPostProcessingOptions,
+  SpeechCleanupApiProvider,
 } from "@t3tools/contracts";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
@@ -89,13 +90,16 @@ export const getCloudSpeechModels = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.cloudModels({ headers }),
   });
 
-export const getSpeechCleanupModels = (prepared: PreparedConnection) =>
+export const getSpeechCleanupModels = (
+  prepared: PreparedConnection,
+  provider: SpeechCleanupApiProvider,
+) =>
   request({
     group: "voice",
     prepared,
     method: "GET",
-    path: (urls) => urls.cleanupModels(),
-    run: ({ client, headers }) => client.cleanupModels({ headers }),
+    path: (urls) => urls.cleanupModels({ params: { provider } }),
+    run: ({ client, headers }) => client.cleanupModels({ headers, params: { provider } }),
   });
 
 export const requireCloudSpeechKey = (
