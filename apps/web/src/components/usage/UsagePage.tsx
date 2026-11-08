@@ -376,7 +376,9 @@ export function UsagePage() {
   const isPastMonth = isMonthPeriod && period !== "month";
   const monthSegmentLabel = isPastMonth
     ? formatUsageMonth(period, period.slice(0, 4) !== currentYear)
-    : THIS_MONTH_OPTION.label;
+    : isMonthPeriod
+      ? THIS_MONTH_OPTION.label
+      : "Select month";
   const monthToggleTitle = isPastMonth
     ? formatUsageMonth(period)
     : shortcutTitle(THIS_MONTH_OPTION);
