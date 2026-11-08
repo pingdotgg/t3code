@@ -457,7 +457,6 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
     val x = viewX - editor.totalPaddingLeft + editor.scrollX
     val y = viewY - editor.totalPaddingTop + editor.scrollY
     val line = layout.getLineForOffset(token.start)
-    if (y < layout.getLineTop(line) || y > layout.getLineBottom(line)) return false
     val left = layout.getPrimaryHorizontal(token.start)
     val right =
       if (layout.getLineForOffset(token.end) == line) {
@@ -465,7 +464,8 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
       } else {
         layout.getLineRight(line)
       }
-    return x >= minOf(left, right) && x <= maxOf(left, right)
+    return y >= layout.getLineTop(line) && y <= layout.getLineBottom(line) &&
+      x >= minOf(left, right) && x <= maxOf(left, right)
   }
 
   private fun applyTokenSpans() {
