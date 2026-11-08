@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  HTML_RENDER_COMPOSE_MAX_LENGTH,
   injectHtmlRenderBootstrap,
+  readHtmlRenderComposeRequest,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
 } from "./htmlRender.ts";
@@ -60,6 +62,34 @@ describe("injectHtmlRenderBootstrap", () => {
       injected.indexOf("<html><head>"),
     );
     expect(injected).toContain('<meta name="viewport" content="width=device-width');
+  });
+});
+
+describe("readHtmlRenderComposeRequest", () => {
+  const compose = (text: unknown) => ({ jsonrpc: "2.0", method: "t3/compose", params: { text } });
+
+  it("accepts trimmed, non-empty text within the limit", () => {
+    expect(readHtmlRenderComposeRequest(compose("  Apply R1, park I2  "))).toEqual({
+      text: "Apply R1, park I2",
+    });
+    expect(readHtmlRenderComposeRequest(compose("   "))).toBeUndefined();
+    expect(readHtmlRenderComposeRequest(compose(42))).toBeUndefined();
+    expect(
+      readHtmlRenderComposeRequest(compose("x".repeat(HTML_RENDER_COMPOSE_MAX_LENGTH + 1))),
+    ).toBeUndefined();
+    expect(
+      readHtmlRenderComposeRequest({
+        jsonrpc: "2.0",
+        method: "ui/open-link",
+        params: { text: "a" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("gives framed pages a t3Compose helper", () => {
+    const injected = injectHtmlRenderBootstrap("<html><head></head><body></body></html>");
+    expect(injected).toContain("window.t3Compose=function(t)");
+    expect(injected).toContain('method:"t3/compose"');
   });
 });
 
