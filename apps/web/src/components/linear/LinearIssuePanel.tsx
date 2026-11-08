@@ -52,7 +52,9 @@ export function LinearIssuePanel({
   const startWork = () => {
     if (!issue) return;
     const prompt = `Work on Linear issue ${issue.identifier}: ${issue.title}\n${issue.url}\n\n${issue.description ?? ""}\n\nRead the issue and its discussion before starting. Keep the issue updated as work progresses.`;
-    void navigate({ href: `/new?prompt=${encodeURIComponent(prompt.slice(0, 8000))}` });
+    void navigate({
+      href: `/new?prompt=${encodeURIComponent(prompt.slice(0, 8000).replace(/[\uD800-\uDBFF]$/, ""))}`,
+    });
   };
   return (
     <div className="flex flex-col gap-5 p-5">
@@ -285,11 +287,13 @@ function IssueEditor({
   );
   const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const context = useEnvironmentQuery(
     team ? linearEnvironment.teamContext({ environmentId, input: { id: team } }) : null,
   );
   const data = context.data;
   const save = async () => {
+    if (uploading || saving || !canWrite) return;
     setSaving(true);
     const fields = {
       ...(title !== baseline?.title ? { title: title.trim() } : {}),
@@ -374,6 +378,7 @@ function IssueEditor({
       <LinearUpload
         environmentId={environmentId}
         disabled={!canWrite || saving}
+        onPendingChange={setUploading}
         onUploaded={(file) => setDescription((text) => `${text}\n\n${linearFileMarkdown(file)}`)}
       />
       <div className="grid grid-cols-2 gap-3">
@@ -489,7 +494,7 @@ function IssueEditor({
         <Button
           type="submit"
           size="sm"
-          disabled={!canWrite || saving || !title.trim() || !team || context.isPending}
+          disabled={!canWrite || saving || uploading || !title.trim() || !team || context.isPending}
         >
           {saving ? "Saving…" : issue ? "Save changes" : "Create issue"}
         </Button>

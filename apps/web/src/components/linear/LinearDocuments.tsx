@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { linearEnvironment } from "../../state/linear";
 import { useEnvironmentQuery } from "../../state/query";
 import { Button } from "../ui/button";
@@ -42,9 +42,14 @@ export function LinearDocuments({
       ? linearEnvironment.document({ environmentId, input: { id: search.document } })
       : null,
   );
-  const [editor, setEditor] = useState<{ id?: string; title: string; content: string } | null>(
-    null,
-  );
+  const nextSession = useRef(0);
+  const [editor, setEditor] = useState<{
+    session: number;
+    uploading: boolean;
+    id?: string;
+    title: string;
+    content: string;
+  } | null>(null);
   const [preview, setPreview] = useState(false);
   return (
     <>
@@ -58,7 +63,12 @@ export function LinearDocuments({
               size="sm"
               disabled={!canWrite || (!search.team && !projectId)}
               onClick={() => {
-                setEditor({ title: "", content: "" });
+                setEditor({
+                  session: ++nextSession.current,
+                  uploading: false,
+                  title: "",
+                  content: "",
+                });
                 setPreview(false);
               }}
             >
@@ -83,6 +93,7 @@ export function LinearDocuments({
               className="flex flex-col gap-3 rounded-lg border p-4"
               onSubmit={(event) => {
                 event.preventDefault();
+                if (editor.uploading || !canWrite) return;
                 void mutate(
                   editor.id
                     ? {
@@ -121,16 +132,22 @@ export function LinearDocuments({
                   {preview ? "Write Markdown" : "Preview"}
                 </Button>
                 <LinearUpload
+                  key={editor.session}
                   environmentId={environmentId}
                   disabled={!canWrite}
+                  onPendingChange={(uploading) =>
+                    setEditor((current) =>
+                      current?.session === editor.session ? { ...current, uploading } : current,
+                    )
+                  }
                   onUploaded={(file) =>
                     setEditor((current) =>
-                      current
+                      current?.session === editor.session
                         ? {
                             ...current,
                             content: `${current.content}\n\n${linearFileMarkdown(file)}`,
                           }
-                        : null,
+                        : current,
                     )
                   }
                 />
@@ -149,7 +166,11 @@ export function LinearDocuments({
                 <Button variant="ghost" size="sm" onClick={() => setEditor(null)}>
                   Cancel
                 </Button>
-                <Button type="submit" size="sm" disabled={!canWrite || !editor.title.trim()}>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!canWrite || editor.uploading || !editor.title.trim()}
+                >
                   Save document
                 </Button>
               </div>
@@ -165,6 +186,8 @@ export function LinearDocuments({
                   onClick={() => {
                     if (selected.data) {
                       setEditor({
+                        session: ++nextSession.current,
+                        uploading: false,
                         id: selected.data.id,
                         title: selected.data.title,
                         content: selected.data.content ?? "",

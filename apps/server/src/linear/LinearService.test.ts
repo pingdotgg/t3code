@@ -2,8 +2,11 @@ import { assert, it } from "@effect/vitest";
 import * as NodeBuffer from "node:buffer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
@@ -33,6 +36,43 @@ function testLayer(
     ),
   );
 }
+
+it.effect("times out a stalled response body and releases the credential lock", () => {
+  const reading = Deferred.makeUnsafe<void>();
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const saving = yield* service
+      .configure({ kind: "save", apiKey: "replacement-secret" })
+      .pipe(Effect.flip, Effect.forkChild);
+    yield* Deferred.await(reading);
+    yield* TestClock.adjust("30 seconds");
+    assert.isDefined(saving.pollUnsafe(), "body consumption must share the request deadline");
+    assert.equal((yield* Fiber.join(saving)).reason, "network");
+    assert.equal(yield* fs.exists(`${config.secretsDir}/linear.json`), false);
+    assert.deepEqual(yield* service.configure({ kind: "save", apiKey: "working-secret" }), {
+      connected: true,
+      source: "saved",
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() =>
+        ++calls === 1
+          ? new Response(
+              new ReadableStream({
+                pull() {
+                  Deferred.doneUnsafe(reading, Effect.void);
+                },
+              }),
+            )
+          : Response.json({ data: { result: viewer } }),
+      ),
+    ),
+  );
+});
 
 it.effect(
   "validates a replacement key before persisting it, disconnects without falling back, and restores the environment key",

@@ -1,4 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { SidebarInset } from "../ui/sidebar";
@@ -6,6 +7,7 @@ import { LinearSelect, LinearMessage } from "./LinearControls";
 import { LinearWorkspace } from "./LinearWorkspace";
 
 export function LinearPage() {
+  const navigate = useNavigate();
   const primary = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
   const [selected, setSelected] = useState<EnvironmentId | null>(null);
@@ -29,11 +31,16 @@ export function LinearPage() {
             label="Environment"
             value={environment?.environmentId ?? ""}
             options={environments.map((env) => ({ id: env.environmentId, name: env.label }))}
-            onChange={(id) =>
+            onChange={(id) => {
               setSelected(
                 environments.find((env) => env.environmentId === id)?.environmentId ?? null,
-              )
-            }
+              );
+              void navigate({
+                to: "/linear",
+                search: (previous) => ({ view: previous.view ?? "mine" }),
+                replace: true,
+              });
+            }}
           />
         </div>
       )}

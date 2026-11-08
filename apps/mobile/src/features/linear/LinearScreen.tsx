@@ -543,7 +543,7 @@ function Issue({
                 kind: "commentCreate",
                 input: { issueId: issue.id, body: comment },
               }).then((ok) => {
-                if (ok) setComment("");
+                if (ok) setComment((current) => (current === comment ? "" : current));
               })
             }
           />

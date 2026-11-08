@@ -28,9 +28,11 @@ export function AndroidWorkspaceSidebar() {
   const { fabSize } = useAndroidControlSizing();
   const { revealPrimarySidebar, startNewTask } = useAdaptiveWorkspaceLayout();
   const selectedPullRequest = useNavigationState(selectedPullRequestKey);
-  // Settings and Usage cover the sidebar.
+  // Settings, Usage and Linear cover the sidebar.
   const coveredByPage =
-    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) || workspace.state.selectedTab === "usage";
+    (useAndroidWorkspaceRoot()?.settingsOpen ?? false) ||
+    workspace.state.selectedTab === "usage" ||
+    workspace.state.selectedTab === "linear";
   const bottomClearance = floatingTabsEnabled
     ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
     : 16;

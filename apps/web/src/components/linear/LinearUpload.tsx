@@ -22,10 +22,12 @@ export function LinearUpload({
   environmentId,
   disabled,
   onUploaded,
+  onPendingChange,
 }: {
   environmentId: EnvironmentId;
   disabled?: boolean;
   onUploaded: (file: { url: string; name: string; contentType: string }) => void | Promise<void>;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const upload = useAtomCommand(linearEnvironment.upload, { reportFailure: false });
   const allowed = useAtomValue(linearEnvironment.upload.permissionAtom(environmentId));
@@ -38,6 +40,7 @@ export function LinearUpload({
       return;
     }
     setPending(true);
+    onPendingChange?.(true);
     try {
       const result = await upload({
         environmentId,
@@ -56,6 +59,7 @@ export function LinearUpload({
       setError("The file could not be uploaded. Try again.");
     }
     setPending(false);
+    onPendingChange?.(false);
   };
   return (
     <div className="flex flex-col gap-1">

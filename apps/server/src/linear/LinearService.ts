@@ -83,58 +83,62 @@ const make = Effect.gen(function* () {
     const credential = yield* readCredential();
     return { source: credential.source, connected: credential.key !== null };
   });
-  const request = Effect.fn("LinearService.request")(function* <A>(
-    query: string,
-    variables: object,
-    schema: Schema.Codec<A>,
-    override?: Redacted.Redacted<string>,
-  ) {
-    const key = override ?? (yield* readCredential()).key;
-    if (key === null) return yield* new L.LinearError({ reason: "disconnected" });
-    const body = yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post("https://api.linear.app/graphql"),
-      { query, variables },
-    ).pipe(Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })));
-    const response = yield* http
-      .execute(
-        body.pipe(
-          HttpClientRequest.setHeader("Authorization", Redacted.value(key)),
-          HttpClientRequest.setHeader("public-file-urls-expire-in", "3600"),
-        ),
-      )
-      .pipe(
-        Effect.timeout("30 seconds"),
-        Effect.mapError(() => new L.LinearError({ reason: "network" })),
+  const request = Effect.fn("LinearService.request")(
+    function* <A>(
+      query: string,
+      variables: object,
+      schema: Schema.Codec<A>,
+      override?: Redacted.Redacted<string>,
+    ) {
+      const key = override ?? (yield* readCredential()).key;
+      if (key === null) return yield* new L.LinearError({ reason: "disconnected" });
+      const body = yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post("https://api.linear.app/graphql"),
+        { query, variables },
+      ).pipe(Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })));
+      const response = yield* http
+        .execute(
+          body.pipe(
+            HttpClientRequest.setHeader("Authorization", Redacted.value(key)),
+            HttpClientRequest.setHeader("public-file-urls-expire-in", "3600"),
+          ),
+        )
+        .pipe(Effect.mapError(() => new L.LinearError({ reason: "network" })));
+      if (response.status === 401 || response.status === 403)
+        return yield* new L.LinearError({ reason: "unauthorized" });
+      if (response.status === 429) return yield* new L.LinearError({ reason: "rate-limit" });
+      const raw = yield* response.json.pipe(
+        Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
       );
-    if (response.status === 401 || response.status === 403)
-      return yield* new L.LinearError({ reason: "unauthorized" });
-    if (response.status === 429) return yield* new L.LinearError({ reason: "rate-limit" });
-    const raw = yield* response.json.pipe(
-      Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
-    );
-    const envelope = yield* decodeEnvelope(raw).pipe(
-      Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
-    );
-    if (envelope.errors?.length) {
-      const codes = envelope.errors.map((error) => error.extensions?.code);
-      return yield* new L.LinearError({
-        reason: codes.includes("RATELIMITED")
-          ? "rate-limit"
-          : codes.includes("AUTHENTICATION_ERROR") || codes.includes("FORBIDDEN")
-            ? "unauthorized"
-            : "api",
-      });
-    }
-    if (response.status < 200 || response.status >= 300)
-      return yield* new L.LinearError({ reason: "api" });
-    const decoded = yield* decodeResult(envelope.data).pipe(
-      Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
-    );
-    // The response codec is selected by the operation, so it cannot be compiled at module scope.
-    return yield* Schema.decodeUnknownEffect(schema)(decoded.result).pipe(
-      Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
-    );
-  }, Effect.scoped);
+      const envelope = yield* decodeEnvelope(raw).pipe(
+        Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
+      );
+      if (envelope.errors?.length) {
+        const codes = envelope.errors.map((error) => error.extensions?.code);
+        return yield* new L.LinearError({
+          reason: codes.includes("RATELIMITED")
+            ? "rate-limit"
+            : codes.includes("AUTHENTICATION_ERROR") || codes.includes("FORBIDDEN")
+              ? "unauthorized"
+              : "api",
+        });
+      }
+      if (response.status < 200 || response.status >= 300)
+        return yield* new L.LinearError({ reason: "api" });
+      const decoded = yield* decodeResult(envelope.data).pipe(
+        Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
+      );
+      // The response codec is selected by the operation, so it cannot be compiled at module scope.
+      return yield* Schema.decodeUnknownEffect(schema)(decoded.result).pipe(
+        Effect.mapError(() => new L.LinearError({ reason: "invalid-response" })),
+      );
+    },
+    Effect.timeoutOrElse({
+      duration: "30 seconds",
+      orElse: () => Effect.fail(new L.LinearError({ reason: "network" })),
+    }),
+    Effect.scoped,
+  );
   const configure = Effect.fn("LinearService.configure")(function* (
     input: typeof L.LinearConfigureInput.Type,
   ) {
