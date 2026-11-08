@@ -380,8 +380,13 @@ function CronExpressionField({
         id="scheduled-task-cron-help"
         className={error === null ? "text-xs text-muted-foreground" : "text-xs text-destructive"}
       >
-        {error ??
-          "Minute, hour, day of month, month, weekday, in the environment's time zone. */30 9-16 * * 1-5 runs every 30 minutes from 9:00 to 16:30 on weekdays."}
+        {error ?? (
+          <>
+            Minute, hour, day of month, month, weekday, in the environment's time zone.{" "}
+            <span className="whitespace-nowrap font-mono">{DEFAULT_CRON_EXPRESSION}</span> runs
+            every 30 minutes from 9:00 to 16:30 on weekdays.
+          </>
+        )}
       </p>
     </div>
   );
