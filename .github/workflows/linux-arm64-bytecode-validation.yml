@@ -6,6 +6,7 @@ on:
       [
         .github/workflows/linux-arm64-bytecode-validation.yml,
         scripts/prepare-server-compile-cache.cjs,
+        .github/workflows/release-desktop.yml,
       ]
 permissions:
   contents: read
@@ -62,6 +63,11 @@ jobs:
         with:
           name: desktop-linux-arm64
           path: artifact
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/actions/setup-apt-mirrors
+      - uses: ./.github/actions/setup-apt-mirrors
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libsecret-1-0
       - name: Verify prepared bytecode with packaged ARM64 Electron
         shell: bash
         run: |
