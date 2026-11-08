@@ -5,6 +5,7 @@ import {
   type ProjectId,
   type PullRequestInvolvement,
   type PullRequestListFilters,
+  type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListState,
 } from "@t3tools/contracts";
@@ -181,6 +182,38 @@ export function usePullRequestScope(search: PullRequestsSearch) {
   };
 }
 
+export const PAGE_SIZE = 99;
+
+function pullRequestMenuFilters(search: PullRequestListPreferences) {
+  return {
+    ...(search.draft ? { draft: search.draft } : {}),
+    ...(search.review ? { review: search.review } : {}),
+    ...(search.checks ? { checks: search.checks } : {}),
+    ...(search.author ? { author: search.author } : {}),
+    ...(search.labels ? { labels: search.labels.map((label) => [label]) } : {}),
+  };
+}
+
+/** The first page of a scope, without the typed search; the list reads the same key when unsearched. */
+export function pullRequestBaselineTargets(
+  search: PullRequestListPreferences,
+  scope: Pick<ReturnType<typeof usePullRequestScope>, "environmentQueries" | "scopedProjectId">,
+) {
+  const menuFilters = pullRequestMenuFilters(search);
+  return scope.environmentQueries.map(({ environmentId, projectIds }) => ({
+    environmentId,
+    input: {
+      state: search.state,
+      involvement: search.involvement,
+      limit: PAGE_SIZE,
+      ...(scope.scopedProjectId ? { projectId: scope.scopedProjectId } : {}),
+      ...(projectIds ? { projectIds } : {}),
+      ...(search.host ? { host: search.host } : {}),
+      ...(Object.keys(menuFilters).length > 0 ? { filters: menuFilters } : {}),
+    } satisfies PullRequestListInput,
+  }));
+}
+
 export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuery: string) {
   const [sentQuery, setSentQuery] = useState(typedQuery);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- debounce timer that sends the typed query after SEARCH_DEBOUNCE_MS
@@ -191,13 +224,7 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
   const typedParsed = parsePullRequestQuery(typedQuery);
   const sentParsed = parsePullRequestQuery(sentQuery);
 
-  const menuFilters = {
-    ...(search.draft ? { draft: search.draft } : {}),
-    ...(search.review ? { review: search.review } : {}),
-    ...(search.checks ? { checks: search.checks } : {}),
-    ...(search.author ? { author: search.author } : {}),
-    ...(search.labels ? { labels: search.labels.map((label) => [label]) } : {}),
-  };
+  const menuFilters = pullRequestMenuFilters(search);
   const menuFiltered = Object.keys(menuFilters).length > 0;
   const filters = { ...menuFilters, ...sentParsed.filters };
   const hasFilters = Object.keys(filters).length > 0;

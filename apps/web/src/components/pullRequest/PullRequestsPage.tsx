@@ -68,6 +68,8 @@ import { PullRequestListGroups } from "./PullRequestListGroups";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
 import {
+  PAGE_SIZE,
+  pullRequestBaselineTargets,
   usePullRequestDisplayGroups,
   usePullRequestQueryFilters,
   usePullRequestScope,
@@ -133,7 +135,6 @@ function getShortcutContext() {
  * its "is there more" probe, and GitHub serves a hundred per request — so asking for ninety-nine
  * costs one round trip where a hundred costs two.
  */
-const PAGE_SIZE = 99;
 const MAX_PAGE_SIZE = 500;
 const EMPTY_VIEWERS: PullRequestListResult["viewers"] = {};
 const EMPTY_PARTITIONS: PullRequestPartitionsSnapshot = { authored: [], reviewing: [] };
@@ -337,18 +338,10 @@ export function PullRequestsPage() {
    * say which question it belongs to: mid-switch the text has already changed and the data has
    * not, and a search's answer would file itself under the workspace.
    */
-  const baselineTargets = environmentQueries.map(({ environmentId, projectIds }) => ({
-    environmentId,
-    input: {
-      state: search.state,
-      involvement: search.involvement,
-      limit: PAGE_SIZE,
-      ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
-      ...(projectIds ? { projectIds } : {}),
-      ...(search.host ? { host: search.host } : {}),
-      ...(menuFiltered ? { filters: menuFilters } : {}),
-    } satisfies PullRequestListInput,
-  }));
+  const baselineTargets = pullRequestBaselineTargets(search, {
+    environmentQueries,
+    scopedProjectId,
+  });
   const baselineQuery = usePullRequestList(baselineTargets);
   const baselineEmpty =
     baselineQuery.data?.entries.length === 0 &&

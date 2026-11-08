@@ -2388,6 +2388,70 @@ it.effect.each([
   ),
 );
 
+it.effect.each([false, true])(
+  "reads a list ahead once online, only when the device saved none for it (saved: %s)",
+  (alreadySaved) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
+        let reads = 0;
+        const saved = new Map<string, string>();
+        const input = { state: "open", limit: 99 } as const;
+        if (alreadySaved) {
+          saved.set(
+            queryPersistenceKey("environment-data:pull-requests:list", input),
+            JSON.stringify(listResult([])),
+          );
+        }
+        const client = actionReplyClient({
+          [WS_METHODS.pullRequestsList]: () =>
+            Effect.sync(() => {
+              reads++;
+              return listResult([{ ...actionReference, state: "open", isDraft: false }]);
+            }),
+        });
+        const { atoms, registry, supervisor } = yield* makeTestRuntime(
+          client,
+          undefined,
+          false,
+          {},
+          {
+            load: (_environmentId, key) =>
+              Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+            save: (_environmentId, key, payload) => Effect.sync(() => void saved.set(key, payload)),
+          },
+        );
+        yield* SubscriptionRef.update(supervisor.state, (state) => ({
+          ...state,
+          phase: "offline" as const,
+        }));
+        const target = { environmentId: TARGET.environmentId, input };
+        const warm = atoms.warmList(target);
+        const unmount = registry.mount(warm);
+        yield* Effect.addFinalizer(() => Effect.sync(unmount));
+        yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
+        expect(reads).toBe(0);
+        // The list's idle wait ends while still offline, so only the warm-up can read again.
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(11 * 60_000));
+
+        yield* SubscriptionRef.update(supervisor.state, (state) => ({
+          ...state,
+          phase: "connected" as const,
+        }));
+        yield* Effect.yieldNow;
+        yield* AtomRegistry.getResult(registry, warm, { suspendOnWaiting: true });
+        expect(reads > 0).toBe(!alreadySaved);
+        // The page's own read of the same key then paints at once from what the warm-up saved.
+        const list = atoms.list(target);
+        registry.mount(list);
+        expect(Option.getOrThrow(AsyncResult.value(registry.get(list))).entries.length).toBe(
+          alreadySaved ? 0 : 1,
+        );
+      }),
+    ),
+);
+
 it.effect("puts readers back when the host refuses an action, and saves nothing it guessed", () =>
   Effect.scoped(
     Effect.gen(function* () {

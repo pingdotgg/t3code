@@ -45,6 +45,7 @@ import {
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentQueryAtomFamily,
+  environmentSessionGenerationAtom,
   queryPersistenceKey,
   type QueryAnswerHandler,
 } from "./runtime.ts";
@@ -1135,6 +1136,55 @@ export function createPullRequestEnvironmentAtoms<R, E>(
   const listLabel = "environment-data:pull-requests:list";
   const listPersistence = persistQuery(PullRequestListResult);
 
+  const list = actionPatchedQuery(
+    createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: listLabel,
+      persistence: listPersistence,
+      tag: WS_METHODS.pullRequestsList,
+      staleTimeMs: 30_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
+      ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
+    }),
+    {
+      label: listLabel,
+      persistence: listPersistence,
+      onAnswer: onAnswer.list,
+      // Rows carry no account scope, so a reply read through another account leaves them alone.
+      concerns: (input, reference) =>
+        reference.expectedAccountId === undefined &&
+        (input.projectId === undefined || input.projectId === reference.projectId) &&
+        (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
+        (input.host === undefined ||
+          reference.host === undefined ||
+          input.host.toLowerCase() === reference.host.toLowerCase()),
+      refreshedByServer: (input) => input.cursors === undefined,
+      patch: patchListWithReply,
+      edit: (input, value, edit) => {
+        const entries = editListEntries(input, value.entries, edit);
+        return entries === value.entries ? value : { ...value, entries };
+      },
+    },
+  );
+  // A first visit paints from a saved answer; with none saved, one read now fills it.
+  const listWarmups = Atom.family((key: string) => {
+    const [environmentId, input] = JSON.parse(key) as [EnvironmentId, PullRequestListInput];
+    const target = { environmentId, input };
+    return runtime.atom((get) => {
+      // A read that failed offline tries again on the next session.
+      get(environmentSessionGenerationAtom(runtime, environmentId));
+      return Effect.gen(function* () {
+        const saved = yield* listPersistence.load(
+          environmentId,
+          queryPersistenceKey(listLabel, input),
+        );
+        if (Option.isSome(saved)) return;
+        yield* AtomRegistry.mount(get.registry, list(target));
+        yield* AtomRegistry.getResult(get.registry, list(target), { suspendOnWaiting: true });
+      }).pipe(Effect.scoped, Effect.ignore);
+    });
+  });
+
   return {
     refreshes,
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -1153,36 +1203,11 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       idleTtlMs: 0,
     }),
-    list: actionPatchedQuery(
-      createEnvironmentRpcQueryAtomFamily(runtime, {
-        label: listLabel,
-        persistence: listPersistence,
-        tag: WS_METHODS.pullRequestsList,
-        staleTimeMs: 30_000,
-        refreshTrigger: ({ environmentId, input }) =>
-          input.cursors === undefined ? refreshes({ environmentId, input: {} }) : undefined,
-        ...(onAnswer.list === undefined ? {} : { onAnswer: onAnswer.list }),
-      }),
-      {
-        label: listLabel,
-        persistence: listPersistence,
-        onAnswer: onAnswer.list,
-        // Rows carry no account scope, so a reply read through another account leaves them alone.
-        concerns: (input, reference) =>
-          reference.expectedAccountId === undefined &&
-          (input.projectId === undefined || input.projectId === reference.projectId) &&
-          (input.projectIds === undefined || input.projectIds.includes(reference.projectId)) &&
-          (input.host === undefined ||
-            reference.host === undefined ||
-            input.host.toLowerCase() === reference.host.toLowerCase()),
-        refreshedByServer: (input) => input.cursors === undefined,
-        patch: patchListWithReply,
-        edit: (input, value, edit) => {
-          const entries = editListEntries(input, value.entries, edit);
-          return entries === value.entries ? value : { ...value, entries };
-        },
-      },
-    ),
+    list,
+    warmList: (target: {
+      readonly environmentId: EnvironmentId;
+      readonly input: PullRequestListInput;
+    }) => listWarmups(JSON.stringify([target.environmentId, target.input])),
     /**
      * Its own query because the listing is quicker without them — measured over twelve
      * repositories, ~4.0s against ~7.1s — so the rows arrive first and their stats a moment

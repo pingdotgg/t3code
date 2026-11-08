@@ -29,16 +29,14 @@ import {
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
 import { usePullRequestList } from "./usePullRequestList";
-import { usePullRequestListControls } from "./usePullRequestListControls";
+import { usePullRequestListTargets } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
   pullRequestListFacets,
-  pullRequestListInput,
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
-  withoutScratchProjectScope,
   pullRequestProjectChoices,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
@@ -120,11 +118,7 @@ export function PullRequestsScreen(
   const query = tab.searchMode === "resting" ? "" : debouncedQuery;
   const typedQuery = tab.searchMode === "resting" ? "" : tab.query;
   const typedDraft = parsePullRequestQuery(typedQuery).filters.draft;
-  const listControls = usePullRequestListControls();
-  const selectedEnvironmentId = listControls.environmentId;
-  const environmentId = environments.some((item) => item.environmentId === selectedEnvironmentId)
-    ? selectedEnvironmentId
-    : null;
+  const { listControls, environmentId, controls, targets } = usePullRequestListTargets(query);
   const selectDetail = useSelectWorkspaceDetail();
   const selectPullRequest = (item: EnvironmentPullRequestListEntry) => {
     Keyboard.dismiss();
@@ -139,28 +133,6 @@ export function PullRequestsScreen(
     selectDetail({ name: "PullRequest", params });
   };
   const allProjects = useProjects();
-  const savedControls = listControls.controlsFor(environmentId);
-  const controls = useMemo(
-    () => withoutScratchProjectScope(savedControls, allProjects),
-    [allProjects, savedControls],
-  );
-  const targets = useMemo(
-    () =>
-      environments
-        .filter(
-          (environment) =>
-            configs.get(environment.environmentId) !== undefined &&
-            (environmentId === null || environment.environmentId === environmentId) &&
-            (!controls.projectEnvironmentId ||
-              environment.environmentId === controls.projectEnvironmentId),
-        )
-        .sort((left, right) => left.environmentId.localeCompare(right.environmentId))
-        .map((environment) => ({
-          environmentId: environment.environmentId,
-          input: pullRequestListInput(controls, query),
-        })),
-    [environments, environmentId, configs, controls, query],
-  );
   const result = usePullRequestList(targets);
   const connectedTargets = targets.filter((target) =>
     environments.some(
