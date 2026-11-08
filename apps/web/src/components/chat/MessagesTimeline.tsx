@@ -199,9 +199,12 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END = {
   },
 } as const satisfies MaintainScrollAtEndOptions;
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+// Layout is left out: a smooth scroll aims at the end as of its first frame, so it
+// trails a viewport that keeps resizing (the terminal drawer opening). The
+// viewport observer in the timeline pins the end synchronously instead.
 const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
-  ...TIMELINE_MAINTAIN_SCROLL_AT_END,
   animated: true,
+  on: { ...TIMELINE_MAINTAIN_SCROLL_AT_END.on, layout: false },
 } as const satisfies MaintainScrollAtEndOptions;
 
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
@@ -999,12 +1002,37 @@ const ConversationTimeline = memo(function ConversationTimeline({
       if (viewportElement) measureTimelineGutter(viewportElement);
     });
   };
+  const maintainScrollAtEnd =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null ||
+    disclosureToggleSettling
+      ? false
+      : isWorking && !prefersReducedMotion && settlingListIdentity === null
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+  // The smooth config leaves layout to this pin, which runs before paint with the
+  // current viewport height.
+  const pinEndOnViewportResize = useStableCallback((node: HTMLElement, wasAtEnd: boolean) => {
+    if (wasAtEnd && maintainScrollAtEnd === TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH) {
+      node.scrollTop = node.scrollHeight - node.clientHeight;
+    }
+  });
   const attachTimelineViewportElement = (viewportElement: HTMLDivElement | null) => {
     setTimelineViewportElement(viewportElement);
     if (!viewportElement) return;
-    const stopObserving = observeResize(viewportElement, () =>
-      measureTimelineGutter(viewportElement),
-    );
+    const scrollNode = () => listRef.current?.getScrollableNode() as HTMLElement | null | undefined;
+    let height = scrollNode()?.clientHeight ?? 0;
+    const stopObserving = observeResize(viewportElement, () => {
+      measureTimelineGutter(viewportElement);
+      const node = scrollNode();
+      if (!node) return;
+      const wasAtEnd = node.scrollHeight - height - node.scrollTop <= 1;
+      height = node.clientHeight;
+      pinEndOnViewportResize(node, wasAtEnd);
+    });
     return () => {
       stopObserving();
       setTimelineViewportElement(null);
@@ -1336,18 +1364,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
-              maintainScrollAtEnd={
-                citationPositioning ||
-                (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-                anchoredEndSpace ||
-                !liveFollowEnabled ||
-                fullscreenAppRowId !== null ||
-                disclosureToggleSettling
-                  ? false
-                  : isWorking && !prefersReducedMotion && settlingListIdentity === null
-                    ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-                    : TIMELINE_MAINTAIN_SCROLL_AT_END
-              }
+              maintainScrollAtEnd={maintainScrollAtEnd}
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
