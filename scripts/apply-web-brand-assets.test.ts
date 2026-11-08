@@ -32,6 +32,22 @@ it.layer(NodeServices.layer)("apply-web-brand-assets", (it) => {
     }),
   );
 
+  it.effect("drops the copied MT Code boot wordmark for non-Munim brands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const targetDirectory = yield* fs.makeTempDirectoryScoped({
+        prefix: "apply-web-brand-assets-",
+      });
+      const wordmark = path.join(targetDirectory, "boot-wordmark.png");
+      yield* fs.writeFileString(wordmark, "png");
+
+      yield* applyWebBrandAssets("production", targetDirectory);
+
+      assert.isFalse(yield* fs.exists(wordmark));
+    }),
+  );
+
   it.effect("resolves an empty target directory to the repo root", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -38,6 +38,12 @@ export const applyWebBrandAssets = Effect.fn("applyWebBrandAssets")(function* (
   );
 
   if (brand !== "munim") {
+    // apps/web/public carries MT Code's boot wordmark, and the boot shell shows
+    // any wordmark it finds, so other brands must drop the copied file.
+    const wordmarkPath = path.resolve(repoRoot, targetDirectory, "boot-wordmark.png");
+    if (yield* fs.exists(wordmarkPath)) {
+      yield* fs.remove(wordmarkPath);
+    }
     return;
   }
 
