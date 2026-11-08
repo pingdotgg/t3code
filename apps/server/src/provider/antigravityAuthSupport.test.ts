@@ -590,6 +590,24 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
     }),
   );
 
+  it.effect("verifies browser suppression when the helper's Node prints a process warning", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      // Node 22 warns like this when NODE_USE_ENV_PROXY routes through HTTP_PROXY.
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(temporaryDirectory, "profile"),
+        baseEnv: {
+          ...process.env,
+          NODE_OPTIONS:
+            "--import=data:text/javascript,process.emitWarning('EnvHttpProxyAgent%20is%20experimental','ExperimentalWarning')",
+        },
+      });
+      expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
+    }),
+  );
+
   it.effect.skipIf(!symlinksSupported)(
     "links only the user's existing global skill directories without touching real content",
     () =>
