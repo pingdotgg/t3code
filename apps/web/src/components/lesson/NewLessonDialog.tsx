@@ -65,20 +65,17 @@ function lessonModelSelection(
   remembered: ModelSelection | null,
   fallback: ModelSelection | null,
 ): ModelSelection | null {
-  const offers = (entry: ProviderInstanceEntry, model: string) =>
-    entry.enabled &&
-    entry.isAvailable &&
-    entry.status !== "error" &&
-    entry.models.some((candidate) => candidate.slug === model);
-  if (
-    remembered &&
+  const runnable =
+    remembered !== null &&
     entries.some(
-      (entry) => entry.instanceId === remembered.instanceId && offers(entry, remembered.model),
-    )
-  ) {
-    return remembered;
-  }
-  return fallback;
+      (entry) =>
+        entry.instanceId === remembered.instanceId &&
+        entry.enabled &&
+        entry.isAvailable &&
+        entry.status !== "error" &&
+        entry.models.some((candidate) => candidate.slug === remembered.model),
+    );
+  return runnable ? remembered : fallback;
 }
 
 const depthOptions = [
