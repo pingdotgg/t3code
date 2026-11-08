@@ -424,22 +424,6 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.equal(requestedModel, "opus");
   });
 
-  it("a chosen workflow size overrides the one from launch arguments", () => {
-    const sentSize = (workflowSizeGuideline: ClaudeSettings["workflowSizeGuideline"]) =>
-      (
-        ClaudeAdapterV2.makeClaudeQueryOptions({
-          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
-          nativeThreadId: "native-workflow-size",
-          resume: false,
-          cwd: "/workspace",
-          sdkSettings: { workflowSizeGuideline: "small" },
-          settings: { ...DEFAULT_CLAUDE_SETTINGS, workflowSizeGuideline },
-        }).settings as { workflowSizeGuideline?: string } | undefined
-      )?.workflowSizeGuideline;
-    assert.equal(sentSize("large"), "large");
-    assert.equal(sentSize("default"), "small");
-  });
-
   it("projects AskUserQuestion input with question text as the answer key", () => {
     const preview = "\n  **Proposed change**\n\n```ts\n\tconst enabled = true;\n```\n  ";
     assert.deepEqual(
@@ -1111,12 +1095,16 @@ describe("ClaudeAdapterV2 Auto-accept edits", () => {
 });
 
 describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
-  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (launchArgs: string, cwd: string) {
+  const startTurnWithLaunchArgs = Effect.fnUntraced(function* (
+    launchArgs: string,
+    cwd: string,
+    settings?: Partial<ClaudeSettings>,
+  ) {
     const fileSystem = yield* FileSystem.FileSystem;
     const opened: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOptions> = [];
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
-      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs },
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, ...settings, launchArgs },
       environment: {},
       attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-append-" }),
       fileSystem,
@@ -1221,7 +1209,7 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
 
   // regression: #15073 the SDK replaced the --settings launch argument with T3's settings
   it.effect.each([
-    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}'`,
+    `--settings '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"workflowSizeGuideline":"small"}'`,
     "--settings user-settings.json",
   ])("merges %s beneath T3's settings", (launchArgs) =>
     Effect.scoped(
@@ -1230,15 +1218,20 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
         const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-settings-" });
         yield* fileSystem.writeFileString(
           NodePath.join(cwd, "user-settings.json"),
-          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false}',
+          '{"skillOverrides":{"lint":"off"},"showThinkingSummaries":false,"workflowSizeGuideline":"small"}',
         );
         const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
         assert.isTrue(Exit.isSuccess(exit));
         assert.deepInclude(opened[0]!.settings, {
           skillOverrides: { lint: "off" },
           showThinkingSummaries: true,
+          workflowSizeGuideline: "small",
         });
         assert.isUndefined(opened[0]!.extraArgs?.["settings"]);
+        const chosen = yield* startTurnWithLaunchArgs(launchArgs, cwd, {
+          workflowSizeGuideline: "large",
+        });
+        assert.deepInclude(chosen.opened[0]!.settings, { workflowSizeGuideline: "large" });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
