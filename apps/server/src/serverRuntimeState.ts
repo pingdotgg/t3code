@@ -1,4 +1,6 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -7,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import packageJson from "../package.json" with { type: "json" };
 import type * as ServerConfig from "./config.ts";
+import * as ProcessRunner from "./processRunner.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
 export const PersistedServerRuntimeState = Schema.Struct({
@@ -138,6 +141,37 @@ export const isProcessAlive = (pid: number): boolean => {
     return error instanceof Error && "code" in error && error.code === "EPERM";
   }
 };
+
+// Whether the process at the recorded PID started before the record was written; None when unknown.
+export const recordedProcessStartMatches = Effect.fn(
+  "serverRuntimeState.recordedProcessStartMatches",
+)(function* (state: PersistedServerRuntimeState) {
+  const recordedAt = Date.parse(state.startedAt);
+  if (!Number.isFinite(recordedAt)) return Option.none<boolean>();
+  const windows = (yield* HostProcess.Platform) === "win32";
+  const runner = yield* ProcessRunner.ProcessRunner;
+  const result = yield* runner
+    .run({
+      command: windows ? "powershell.exe" : "ps",
+      args: windows
+        ? [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `(Get-Process -Id ${state.pid} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`,
+          ]
+        : ["-p", String(state.pid), "-o", "lstart="],
+      env: { LC_ALL: "C", TZ: "UTC" },
+      timeout: Duration.seconds(2),
+      maxOutputBytes: 16_384,
+    })
+    .pipe(Effect.option);
+  if (Option.isNone(result) || result.value.code !== 0) return Option.none<boolean>();
+  const output = result.value.stdout.trim();
+  const startedAt = Date.parse(windows ? output : `${output} UTC`);
+  // ps reports whole seconds.
+  return Number.isFinite(startedAt) ? Option.some(startedAt <= recordedAt + 1_000) : Option.none();
+});
 
 export const readPersistedServerRuntimeState = Effect.fn(
   "serverRuntimeState.readPersistedServerRuntimeState",

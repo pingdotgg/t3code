@@ -25,7 +25,12 @@ import {
 } from "../cliAuthFormat.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import {
+  isProcessAlive,
+  readPersistedServerRuntimeState,
+  recordedProcessStartMatches,
+} from "../serverRuntimeState.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import {
   authLocationFlags,
@@ -240,6 +245,15 @@ class OtherEnvironmentAtOriginError extends Schema.TaggedError<OtherEnvironmentA
   }
 }
 
+class RecordedServerProcessError extends Schema.TaggedError<RecordedServerProcessError>()(
+  "RecordedServerProcessError",
+  { pid: Schema.Number },
+) {
+  override get message(): string {
+    return `Process ${this.pid} may not be the server recorded in server-runtime.json.`;
+  }
+}
+
 const LIVE_SERVER_TIMEOUT = Duration.seconds(10);
 // Bounds how long the helper session outlives a CLI killed before it can revoke it.
 const LIVE_SERVER_SESSION_TTL = Duration.minutes(1);
@@ -252,13 +266,20 @@ const revokeSession = Effect.fn("auth.revokeSession")(function* (
   const config = yield* ServerConfig.ServerConfig;
   const runtimeState = yield* readPersistedServerRuntimeState(config.serverRuntimeStatePath);
   if (Option.isSome(runtimeState) && isProcessAlive(runtimeState.value.pid)) {
-    const origin = runtimeState.value.origin;
+    const { origin, pid } = runtimeState.value;
     const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
     const environmentId = yield* identity.getEnvironmentId;
     const attempted = yield* Effect.result(
       Effect.gen(function* () {
+        // A reused PID can make a stale record look live; contact only the recorded process,
+        // and give a credential only to this home's server.
+        const matches = yield* recordedProcessStartMatches(runtimeState.value).pipe(
+          Effect.provide(ProcessRunner.layer),
+        );
+        if (!Option.getOrElse(matches, () => false)) {
+          return yield* new RecordedServerProcessError({ pid });
+        }
         const client = yield* HttpApiClient.make(EnvironmentHttpApi, { baseUrl: origin });
-        // A reused PID can make a stale record look live; only this home's server gets a credential.
         yield* client.metadata.descriptor().pipe(
           Effect.filterOrFail(
             (descriptor) => descriptor.environmentId === environmentId,
