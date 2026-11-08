@@ -903,8 +903,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           exit,
         })),
       ),
-      // Any attempt that follows a lost session, a failure, or a restart is a reconnect.
-      waitForEstablishmentInterrupt(attempt > 1 || lastFailure !== null || ignoreOffline).pipe(
+      // Only the first attempt of the first connection is not a reconnect.
+      waitForEstablishmentInterrupt(
+        generation > 1 || attempt > 1 || lastFailure !== null || ignoreOffline,
+      ).pipe(
         Effect.map((resetRetry): EstablishmentEvent => ({
           _tag: "Interrupted",
           resetRetry,

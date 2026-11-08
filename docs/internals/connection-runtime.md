@@ -33,9 +33,9 @@ network report. The web and desktop foreground probe skips the fresh request,
 because a busy host can answer it before a queued probe. Foregrounding also
 wakes a pending retry immediately. A long suspension restarts an in-flight
 attempt, and so does a web or desktop tab returning to view during a reconnect;
-a short mobile suspension and a first attempt leave it alone. A restarted attempt
-starts its own T3 Connect credential renewal instead of joining the one the
-replaced attempt was waiting on, which may be stalled too.
+a short mobile suspension and a first attempt leave it alone. An interrupted
+attempt stops sharing its pending T3 Connect credential renewal, so the next
+attempt starts its own instead of joining one that may be stalled too.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
