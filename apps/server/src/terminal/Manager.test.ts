@@ -12,6 +12,7 @@ import {
   TerminalProviderInstanceNotFoundError,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -1990,29 +1991,309 @@ it.layer(
     },
   ])("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
     Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const serverSettings = yield* ServerSettings.ServerSettingsService;
-      const environment = yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-        serverSettings,
-        path,
-        rawProviderInstanceId: "configured_home",
-        env: undefined,
-      });
-
-      expect(environment[variable]).toBe(path.resolve(expectedHome));
-    }).pipe(
-      Effect.provide(
-        ServerSettings.layerTest({
-          providerInstances: {
-            [ProviderInstanceId.make("configured_home")]: {
-              driver: ProviderDriverKind.make(driver),
-              environment: [{ name: variable, value: "~/.environment-account", sensitive: false }],
-              config,
+      const tempRoot =
+        "shadowHomePath" in config
+          ? yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-terminal-home-pref-" })
+          : undefined;
+      const effectiveConfig = tempRoot
+        ? { homePath: path.join(tempRoot, "shared"), shadowHomePath: path.join(tempRoot, "shadow") }
+        : config;
+      const environment = yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          serverSettings,
+          fileSystem,
+          path,
+          rawProviderInstanceId: "configured_home",
+          env: undefined,
+        });
+      }).pipe(
+        Effect.provide(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("configured_home")]: {
+                driver: ProviderDriverKind.make(driver),
+                environment: [
+                  { name: variable, value: "~/.environment-account", sensitive: false },
+                ],
+                config: effectiveConfig,
+              },
             },
-          },
-        }),
+          }),
+        ),
+      );
+
+      expect(environment[variable]).toBe(
+        tempRoot ? effectiveConfig.shadowHomePath : path.resolve(expectedHome),
+      );
+    }),
+  );
+
+  it.effect(
+    "materializes fresh Codex shadow terminals before selecting the shared SQLite home",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-terminal-codex-fresh-",
+        });
+        const sharedHome = path.join(root, "shared");
+        const shadowHome = path.join(root, "shadow");
+        const environment = yield* Effect.gen(function* () {
+          const serverSettings = yield* ServerSettings.ServerSettingsService;
+          return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            fileSystem,
+            path,
+            rawProviderInstanceId: "codex_shadow",
+            env: undefined,
+          });
+        }).pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [ProviderInstanceId.make("codex_shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: sharedHome, shadowHomePath: shadowHome },
+                },
+              },
+            }),
+          ),
+        );
+
+        expect(environment.CODEX_HOME).toBe(shadowHome);
+        expect(environment.CODEX_SQLITE_HOME).toBe(sharedHome);
+        expect(yield* fileSystem.exists(shadowHome)).toBe(true);
+        expect(yield* fileSystem.exists(sharedHome)).toBe(true);
+        expect(yield* fileSystem.readLink(path.join(shadowHome, "sessions"))).toBe(
+          path.join(sharedHome, "sessions"),
+        );
+      }).pipe(Effect.provideService(HostProcess.Environment, {})),
+  );
+
+  it.effect.each([
+    {
+      name: "host",
+      instanceEnvironment: undefined,
+      clientEnvironment: undefined,
+      hostEnvironment: { codex_sqlite_home: "/sqlite/host" },
+      expected: "/sqlite/host",
+    },
+    {
+      name: "client",
+      instanceEnvironment: undefined,
+      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+      expected: "/sqlite/client",
+    },
+    {
+      name: "instance",
+      instanceEnvironment: [
+        { name: "CODEX_SQLITE_HOME", value: "/sqlite/instance", sensitive: false },
+      ],
+      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+      expected: "/sqlite/instance",
+    },
+    {
+      name: "lowercase instance on Windows",
+      instanceEnvironment: [
+        { name: "codex_sqlite_home", value: "/sqlite/lowercase-instance", sensitive: false },
+      ],
+      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+      expected: "/sqlite/lowercase-instance",
+    },
+  ])(
+    "uses the $name CODEX_SQLITE_HOME override for Codex shadow terminals",
+    ({ instanceEnvironment, clientEnvironment, hostEnvironment, expected }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-terminal-codex-override-",
+        });
+        const environment = yield* Effect.gen(function* () {
+          const serverSettings = yield* ServerSettings.ServerSettingsService;
+          return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            fileSystem,
+            path,
+            rawProviderInstanceId: "codex_shadow",
+            env: clientEnvironment,
+          });
+        }).pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [ProviderInstanceId.make("codex_shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  ...(instanceEnvironment ? { environment: instanceEnvironment } : {}),
+                  config: {
+                    homePath: path.join(root, "shared"),
+                    shadowHomePath: path.join(root, "shadow"),
+                  },
+                },
+              },
+            }),
+          ),
+        );
+
+        expect(environment.CODEX_SQLITE_HOME).toBe(expected);
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, hostEnvironment),
+        Effect.provideService(HostProcess.Platform, "win32"),
       ),
+  );
+
+  it.effect("honors a Windows lowercase CODEX_SQLITE_HOME client override", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-terminal-codex-case-",
+      });
+      const customHome = path.join(root, "custom-sqlite");
+      const environment = yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          serverSettings,
+          fileSystem,
+          path,
+          rawProviderInstanceId: "codex_shadow",
+          env: { codex_sqlite_home: customHome },
+        });
+      }).pipe(
+        Effect.provide(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("codex_shadow")]: {
+                driver: ProviderDriverKind.make("codex"),
+                config: {
+                  homePath: path.join(root, "shared"),
+                  shadowHomePath: path.join(root, "shadow"),
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      expect(environment.CODEX_SQLITE_HOME).toBe(customHome);
+      expect(
+        Object.keys(environment).filter((key) => key.toLowerCase() === "codex_sqlite_home"),
+      ).toEqual(["CODEX_SQLITE_HOME"]);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { CODEX_SQLITE_HOME: "/sqlite/host" }),
     ),
+  );
+
+  it.effect("refuses a provider terminal with mixed shared and private SQLite state", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-terminal-codex-mixed-",
+      });
+      const sharedHome = path.join(root, "shared");
+      const shadowHome = path.join(root, "shadow");
+      yield* fileSystem.makeDirectory(sharedHome, { recursive: true });
+      yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
+      const sharedDatabase = path.join(sharedHome, "state_5.sqlite");
+      const privateDatabase = path.join(shadowHome, "logs_2.sqlite");
+      yield* fileSystem.writeFileString(sharedDatabase, "shared-state");
+      yield* fileSystem.writeFileString(privateDatabase, "private-logs");
+
+      const error = yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettings.ServerSettingsService;
+        return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+          serverSettings,
+          fileSystem,
+          path,
+          rawProviderInstanceId: "codex_shadow",
+          env: undefined,
+        }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          ServerSettings.layerTest({
+            providerInstances: {
+              [ProviderInstanceId.make("codex_shadow")]: {
+                driver: ProviderDriverKind.make("codex"),
+                config: { homePath: sharedHome, shadowHomePath: shadowHome },
+              },
+            },
+          }),
+        ),
+      );
+
+      expect(error).toMatchObject({
+        _tag: "TerminalProviderEnvironmentError",
+        cause: {
+          _tag: "CodexShadowHomeSqliteConflictError",
+          entryName: "logs_2.sqlite",
+        },
+      });
+      expect(error.message).toContain("Codex SQLite recovery is required");
+      expect(yield* fileSystem.readFileString(sharedDatabase)).toBe("shared-state");
+      expect(yield* fileSystem.readFileString(privateDatabase)).toBe("private-logs");
+    }).pipe(Effect.provideService(HostProcess.Environment, {})),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "refuses a provider-bound terminal for a legacy Codex SQLite symlink",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-terminal-codex-legacy-",
+        });
+        const sharedHome = path.join(root, "shared");
+        const shadowHome = path.join(root, "shadow");
+        const database = path.join(sharedHome, "state_5.sqlite");
+        yield* fileSystem.makeDirectory(sharedHome, { recursive: true });
+        yield* fileSystem.makeDirectory(shadowHome, { recursive: true });
+        yield* fileSystem.writeFileString(database, "shared-state");
+        yield* fileSystem.symlink(database, path.join(shadowHome, "state_5.sqlite"));
+
+        const error = yield* Effect.gen(function* () {
+          const serverSettings = yield* ServerSettings.ServerSettingsService;
+          return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            fileSystem,
+            path,
+            rawProviderInstanceId: "codex_shadow",
+            env: undefined,
+          }).pipe(Effect.flip);
+        }).pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [ProviderInstanceId.make("codex_shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: { homePath: sharedHome, shadowHomePath: shadowHome },
+                },
+              },
+            }),
+          ),
+        );
+
+        expect(error).toMatchObject({
+          _tag: "TerminalProviderEnvironmentError",
+          cause: {
+            _tag: "CodexShadowHomeSqliteConflictError",
+            entryName: "state_5.sqlite",
+          },
+        });
+        expect(error.message).toContain("Codex SQLite recovery is required");
+        expect(error.message).toContain(sharedHome);
+        expect(error.message).toContain(shadowHome);
+        expect(error.message).toContain("reconnecting alone cannot clear this refusal");
+      }).pipe(Effect.provideService(HostProcess.Environment, {})),
   );
 
   it.effect("restarts a running terminal when the resolved provider environment changes", () =>

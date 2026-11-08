@@ -71,6 +71,103 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
   });
 
   describe("materializeCodexShadowHome", () => {
+    it.effect.each(["shadow-within-shared", "shared-within-shadow"] as const)(
+      "refuses overlapping home directories before making links (%s)",
+      (overlap) =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir("t3code-codex-overlap-");
+          const sharedHome =
+            overlap === "shadow-within-shared"
+              ? path.join(root, "shared")
+              : path.join(root, "shadow", "shared");
+          const shadowHome =
+            overlap === "shadow-within-shared"
+              ? path.join(root, "shared", "shadow")
+              : path.join(root, "shadow");
+          const config = decodeCodexSettings({
+            homePath: sharedHome,
+            shadowHomePath: shadowHome,
+          });
+          const layout = yield* resolveCodexHomeLayout(config);
+
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
+          expect(yield* fileSystem.exists(path.join(shadowHome, "sessions"))).toBe(false);
+          expect(yield* fileSystem.exists(path.join(sharedHome, "sessions"))).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "refuses homes that point to the same directory through a symlink alias",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir("t3code-codex-home-alias-");
+          const sharedHome = path.join(root, "shared");
+          const shadowHome = path.join(root, "alias-to-shared");
+          yield* fileSystem.makeDirectory(sharedHome);
+          yield* fileSystem.symlink(sharedHome, shadowHome);
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
+          expect(yield* fileSystem.readDirectory(sharedHome)).toEqual([]);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "rejects a missing shadow child beneath an alias of the shared home",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir("t3code-codex-missing-alias-");
+          const sharedHome = path.join(root, "shared");
+          const aliasedParent = path.join(root, "shared-alias");
+          yield* fileSystem.makeDirectory(sharedHome);
+          yield* fileSystem.symlink(sharedHome, aliasedParent);
+          const shadowHome = path.join(aliasedParent, "fresh-shadow");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(CodexShadowHomePathConflictError);
+          expect(yield* fileSystem.exists(path.join(sharedHome, "fresh-shadow"))).toBe(false);
+        }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)(
+      "materializes the same fresh shadow safely under concurrent setup",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* makeTempDir("t3code-codex-materialize-race-");
+          const sharedHome = path.join(root, "shared");
+          const shadowHome = path.join(root, "shadow");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const outcomes = yield* Effect.all(
+            Array.from({ length: 8 }, () => materializeCodexShadowHome(layout).pipe(Effect.exit)),
+            { concurrency: "unbounded" },
+          );
+          expect(outcomes.map((outcome) => outcome._tag)).toEqual(Array(8).fill("Success"));
+          expect(yield* fileSystem.readLink(path.join(shadowHome, "sessions"))).toBe(
+            path.join(sharedHome, "sessions"),
+          );
+        }),
+    );
+
     it.effect.skipIf(!symlinksSupported)(
       "keeps Finder metadata local across repeated shadow home setup",
       () =>
@@ -331,7 +428,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           effectiveHomePath: sharedHome,
         });
         expect(error.message).toBe(
-          `Codex shadow home path '${sharedHome}' must be different from the shared home path '${sharedHome}'.`,
+          `Codex shadow home path '${sharedHome}' and shared home path '${sharedHome}' must be separate, non-overlapping directories (including filesystem aliases).`,
         );
       }),
     );
@@ -650,14 +747,18 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect.skipIf(!windowsHost)(
-      "refuses an orphan shadow SQLite sidecar rather than silently abandoning it",
+    it.effect(
+      "refuses mixed shared and private SQLite state instead of silently choosing the shadow",
       () =>
         Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const sharedHome = yield* makeTempDir("t3code-codex-shared-");
           const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
-          yield* writeTextFile(path.join(shadowHome, "goals_1.SQLITE-WAL"), "orphan-wal");
+          const sharedDatabase = path.join(sharedHome, "state_5.sqlite");
+          const privateDatabase = path.join(shadowHome, "logs_2.sqlite");
+          yield* writeTextFile(sharedDatabase, "shared-state");
+          yield* writeTextFile(privateDatabase, "private-logs");
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
           );
@@ -665,8 +766,78 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
-          expect(error).toMatchObject({ entryName: "goals_1.SQLITE-WAL" });
+          expect(error).toMatchObject({ entryName: "logs_2.sqlite" });
+          expect(yield* fileSystem.readFileString(sharedDatabase)).toBe("shared-state");
+          expect(yield* fileSystem.readFileString(privateDatabase)).toBe("private-logs");
         }),
+    );
+
+    it.effect("rejects mixed SQLite state before materialization modifies either home", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+        const sharedDatabase = path.join(sharedHome, "state_5.sqlite");
+        const privateDatabase = path.join(shadowHome, "logs_2.sqlite");
+        yield* writeTextFile(sharedDatabase, "shared-state");
+        yield* writeTextFile(privateDatabase, "private-logs");
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+        );
+
+        const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+        expect(yield* fileSystem.readFileString(sharedDatabase)).toBe("shared-state");
+        expect(yield* fileSystem.readFileString(privateDatabase)).toBe("private-logs");
+        expect(yield* fileSystem.exists(path.join(sharedHome, "sessions"))).toBe(false);
+        expect(yield* fileSystem.exists(path.join(shadowHome, "sessions"))).toBe(false);
+      }),
+    );
+
+    it.effect(
+      "lets an explicit SQLite override resolve otherwise mixed regular state without mutation",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+          const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+          const customHome = yield* makeTempDir("t3code-codex-custom-sqlite-");
+          const sharedDatabase = path.join(sharedHome, "state_5.sqlite");
+          const privateDatabase = path.join(shadowHome, "logs_2.sqlite");
+          yield* writeTextFile(sharedDatabase, "shared-state");
+          yield* writeTextFile(privateDatabase, "private-logs");
+          const layout = yield* resolveCodexHomeLayout(
+            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+          );
+
+          const environment = yield* codexHomeEnvironment(layout, {
+            CODEX_SQLITE_HOME: customHome,
+          });
+
+          expect(environment.CODEX_SQLITE_HOME).toBe(customHome);
+          expect(yield* fileSystem.readFileString(sharedDatabase)).toBe("shared-state");
+          expect(yield* fileSystem.readFileString(privateDatabase)).toBe("private-logs");
+        }),
+    );
+
+    it.effect("refuses an orphan shadow SQLite sidecar rather than silently abandoning it", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowHome = yield* makeTempDir("t3code-codex-shadow-");
+        yield* writeTextFile(path.join(shadowHome, "goals_1.SQLITE-WAL"), "orphan-wal");
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+        );
+
+        const error = yield* codexHomeEnvironment(layout, {}).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(CodexShadowHomeSqliteConflictError);
+        expect(error).toMatchObject({ entryName: "goals_1.SQLITE-WAL" });
+      }),
     );
   });
 });

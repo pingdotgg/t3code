@@ -36,6 +36,24 @@ describe("TerminalProviderEnvironmentError", () => {
     );
     expect(decoded.message).not.toContain("secret backend unavailable");
   });
+
+  it("round-trips an explicit safe detail as the public message", () => {
+    const detail = "Codex SQLite recovery is required before this terminal can start.";
+    const error = new TerminalProviderEnvironmentError({
+      providerInstanceId: ProviderInstanceId.make("codex_work"),
+      detail,
+      cause: { _tag: "CodexShadowHomeSqliteConflictError" },
+    });
+
+    const decoded = decodeTerminalError(encodeTerminalError(error));
+
+    expect(decoded).toMatchObject({
+      _tag: "TerminalProviderEnvironmentError",
+      providerInstanceId: "codex_work",
+      detail,
+    });
+    expect(decoded.message).toBe(detail);
+  });
 });
 
 describe("TerminalOpenInput", () => {

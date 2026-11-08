@@ -64,7 +64,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 
 import * as ServerConfig from "../config.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
+import {
+  codexHomeEnvironment,
+  materializeCodexShadowHome,
+  resolveCodexHomeLayout,
+} from "../provider/Drivers/CodexHomeLayout.ts";
 import { makeClaudeEnvironment } from "../provider/Drivers/ClaudeHome.ts";
 import { deriveProviderInstanceConfigMap } from "../provider/ProviderInstanceRegistryHydration.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1436,6 +1440,7 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
   "terminal.resolveProviderInstanceTerminalEnvironment",
 )(function* (input: {
   readonly serverSettings: ServerSettings.ServerSettingsService["Service"];
+  readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly rawProviderInstanceId: string;
   readonly env: Record<string, string> | undefined;
@@ -1458,6 +1463,47 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
       );
       if (layout.effectiveHomePath)
         resolved = { ...resolved, CODEX_HOME: layout.effectiveHomePath };
+      if (layout.mode === "authOverlay") {
+        const hostEnv = yield* HostProcess.Environment;
+        const clientEnv = input.env ?? {};
+        const isWindows = (yield* HostProcess.Platform) === "win32";
+        const sqliteOverride = (environment: NodeJS.ProcessEnv) =>
+          Object.entries(environment).find(([name]) =>
+            isWindows ? name.toUpperCase() === "CODEX_SQLITE_HOME" : name === "CODEX_SQLITE_HOME",
+          )?.[1];
+        // Preserve client-over-host precedence even when Windows supplies a different casing.
+        const selectedOverride = sqliteOverride(clientEnv) ?? sqliteOverride(hostEnv);
+        const inherited = yield* mergeProviderInstanceEnvironment(instance.environment, {
+          ...hostEnv,
+          ...clientEnv,
+          ...(selectedOverride !== undefined ? { CODEX_SQLITE_HOME: selectedOverride } : {}),
+        });
+        const sqliteEnvironment = yield* Effect.gen(function* () {
+          yield* materializeCodexShadowHome(layout, inherited);
+          return yield* codexHomeEnvironment(layout, inherited);
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TerminalProviderEnvironmentError({
+                providerInstanceId,
+                ...(cause._tag === "CodexShadowHomeSqliteConflictError"
+                  ? { detail: cause.message }
+                  : {}),
+                cause,
+              }),
+          ),
+          Effect.provideService(FileSystem.FileSystem, input.fileSystem),
+          Effect.provideService(Path.Path, input.path),
+        );
+        resolved = {
+          ...Object.fromEntries(
+            Object.entries(resolved).filter(
+              ([key]) => !isWindows || key.toUpperCase() !== "CODEX_SQLITE_HOME",
+            ),
+          ),
+          CODEX_SQLITE_HOME: sqliteEnvironment.CODEX_SQLITE_HOME,
+        };
+      }
     }
   } else if (instance.driver === "claudeAgent") {
     const config = decodeClaudeSettings(instance.config ?? {});
@@ -1480,12 +1526,14 @@ export const make = Effect.fn("TerminalManager.make")(function* () {
   const portDiscovery = yield* PortScanner.PortDiscovery;
   const nativeTelemetry = yield* NativeTelemetryClient.NativeTelemetryClient;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const resolveProviderInstanceEnvironment = Effect.fn(
     "terminal.resolveProviderInstanceEnvironment",
   )((rawProviderInstanceId: string, env: Record<string, string> | undefined) =>
     resolveProviderInstanceTerminalEnvironment({
       serverSettings,
+      fileSystem,
       path,
       rawProviderInstanceId,
       env,

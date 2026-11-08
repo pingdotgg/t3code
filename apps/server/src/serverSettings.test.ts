@@ -1924,6 +1924,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
 
       const environment = yield* resolveProviderInstanceTerminalEnvironment({
         serverSettings,
+        fileSystem,
         path,
         rawProviderInstanceId: instanceId,
         env: undefined,
