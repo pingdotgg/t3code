@@ -149,6 +149,36 @@ describe.each([
   });
 });
 
+describe.each([
+  { name: "remarkCodexDirectives", render: (markdown: string) => textContent(parse(markdown)) },
+  {
+    name: "renderCodexDirectivesForCopy",
+    render: (markdown: string) =>
+      textContent(parseOrdinaryMarkdown(renderCodexDirectivesForCopy(markdown))),
+  },
+  {
+    name: "renderCodexMarkdownForNativeDisplay",
+    render: (markdown: string) =>
+      textContent(parseOrdinaryMarkdown(renderCodexMarkdownForNativeDisplay(markdown))),
+  },
+])("$name citation separators", ({ render }) => {
+  it.each([
+    ["red citeturn0search0blue", "red blue"],
+    ["red citeturn0search0**blue**", "red blue"],
+    ["**red citeturn0search0**blue", "red blue"],
+    ["red\tciteturn0search0blue", "red\tblue"],
+    ["red citeturn0search0 blue", "red blue"],
+    ["**red citeturn0search0** blue", "red blue"],
+    ['red citeturn0search0:codex-followup[blue]{prompt="Continue"}', "red blue"],
+    [':codex-followup[red citeturn0search0]{prompt="Continue"}blue', "red blue"],
+    ["red citeturn0search0", "red"],
+    ["red citeturn0search0\n\nblue", "redblue"],
+    ["## red citeturn0search0\n\nblue", "redblue"],
+  ])("preserves word boundaries in %s", (input, expected) => {
+    expect(render(input)).toBe(expected);
+  });
+});
+
 describe("native Markdown adapters", () => {
   it("renders follow-up suggestions as their label Markdown", () => {
     expect(

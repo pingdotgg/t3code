@@ -250,9 +250,37 @@ function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   delete node.url;
 }
 
-function transformCodexDirectives(node: MarkdownAstNode, source: string, insideLink = false): void {
+function webCitationReplacement(marker: string, followingCharacter: string | undefined): string {
+  const separator = marker[0];
+  return (separator === " " || separator === "\t") && followingCharacter?.trim() ? separator : "";
+}
+
+function followingInlineOffset(
+  node: MarkdownAstNode,
+  childIndex: number,
+  followingOffset: number | undefined,
+): number | undefined {
+  const nextStart = node.children?.[childIndex + 1]?.position?.start.offset;
+  if (nextStart !== undefined) return nextStart;
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? undefined
+    : followingOffset;
+}
+
+function transformCodexDirectives(
+  node: MarkdownAstNode,
+  source: string,
+  insideLink = false,
+  followingOffset?: number,
+): void {
   if (node.type === "text" && node.value?.includes(WEB_CITATION_OPEN)) {
-    node.value = node.value.replace(WEB_CITATION_MARKER, "");
+    node.value = node.value.replace(WEB_CITATION_MARKER, (marker, offset: number, text: string) =>
+      webCitationReplacement(
+        marker,
+        text[offset + marker.length] ??
+          (followingOffset === undefined ? undefined : source[followingOffset]),
+      ),
+    );
     return;
   }
   // GFM autolinks take a marker that directly follows a bare URL into the href.
@@ -272,8 +300,13 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 
   const childrenInsideLink = insideLink || node.type === "link" || node.type === "linkReference";
-  for (const child of node.children ?? []) {
-    transformCodexDirectives(child, source, childrenInsideLink);
+  for (const [childIndex, child] of (node.children ?? []).entries()) {
+    transformCodexDirectives(
+      child,
+      source,
+      childrenInsideLink,
+      followingInlineOffset(node, childIndex, followingOffset),
+    );
   }
 }
 
@@ -310,6 +343,7 @@ function collectDirectiveMatches(
   node: MarkdownAstNode,
   source: string,
   matches: DirectiveMatch[],
+  followingOffset?: number,
 ): void {
   const start = node.position?.start.offset;
   const end = node.position?.end.offset;
@@ -317,7 +351,16 @@ function collectDirectiveMatches(
     if (node.type === "text") {
       for (const marker of source.slice(start, end).matchAll(WEB_CITATION_MARKER)) {
         const markerStart = start + marker.index;
-        matches.push({ start: markerStart, end: markerStart + marker[0].length, markdown: "" });
+        const markerEnd = markerStart + marker[0].length;
+        const separatorOffset = markerEnd < end ? markerEnd : followingOffset;
+        const separator = webCitationReplacement(
+          marker[0],
+          separatorOffset === undefined ? undefined : source[separatorOffset],
+        );
+        matches.push({ start: markerStart, end: markerEnd, markdown: "" });
+        if (separator && separatorOffset !== undefined) {
+          matches.push({ start: separatorOffset, end: separatorOffset, markdown: separator });
+        }
       }
       return;
     }
@@ -338,7 +381,14 @@ function collectDirectiveMatches(
       );
     }
   }
-  for (const child of node.children ?? []) collectDirectiveMatches(child, source, matches);
+  for (const [childIndex, child] of (node.children ?? []).entries()) {
+    collectDirectiveMatches(
+      child,
+      source,
+      matches,
+      followingInlineOffset(node, childIndex, followingOffset),
+    );
+  }
 }
 
 function renderDirectiveMatches(
@@ -348,7 +398,9 @@ function renderDirectiveMatches(
   const matches: DirectiveMatch[] = [];
   collectDirectiveMatches(parseCodexMarkdown(markdown), markdown, matches);
   let rendered = markdown;
-  for (const match of matches.sort((left, right) => right.start - left.start)) {
+  for (const match of matches.sort(
+    (left, right) => right.start - left.start || right.end - left.end,
+  )) {
     const replacement = replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
