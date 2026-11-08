@@ -3604,6 +3604,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadFamily: "orchestration.getThreadFamily",
   getThreadTitles: "orchestration.getThreadTitles",
+  getThreadLinkMetadata: "orchestration.getThreadLinkMetadata",
   getWorktreeThreadIds: "orchestration.getWorktreeThreadIds",
   getOlderSettledThreads: "orchestration.getOlderSettledThreads",
   getThreadProjection: "orchestration.getThreadProjection",
@@ -3740,6 +3741,12 @@ export const OrchestrationV2GetThreadTitlesInput = Schema.Struct({
 
 /** Titles of the requested threads that exist, archived ones included. Deleted and unknown ids are absent. */
 export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String);
+
+export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
+  title: Schema.String,
+  projectId: Schema.NullOr(ProjectId),
+});
+export type OrchestrationV2ThreadLinkMetadata = typeof OrchestrationV2ThreadLinkMetadata.Type;
 
 export const OrchestrationV2GetWorktreeThreadIdsInput = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
@@ -4266,6 +4273,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadTitles: {
     input: OrchestrationV2GetThreadTitlesInput,
     output: OrchestrationV2ThreadTitles,
+  },
+  getThreadLinkMetadata: {
+    input: OrchestrationV2GetThreadTitlesInput,
+    output: Schema.Record(ThreadId, OrchestrationV2ThreadLinkMetadata),
   },
   getWorktreeThreadIds: {
     input: OrchestrationV2GetWorktreeThreadIdsInput,
