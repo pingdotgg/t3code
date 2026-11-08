@@ -37,11 +37,9 @@ import {
   type OrchestratorMcpListScheduledTasksInput,
   type ProjectId,
   type OrchestratorMcpThreadDetail,
-  type OrchestratorMcpThreadPullRequest,
   type OrchestratorMcpThreadInterruptInput,
   type OrchestratorMcpThreadInterruptResult,
   type OrchestratorMcpThreadListInput,
-  type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadListResult,
   type OrchestratorMcpThreadReadInput,
   type OrchestratorMcpThreadReadResult,
@@ -69,10 +67,6 @@ import {
 import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
-import {
-  normalizeThreadPullRequestKey,
-  visibleThreadPullRequests,
-} from "../sourceControl/threadPullRequests.ts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -103,6 +97,12 @@ import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import {
+  listItemFromShell,
+  threadSettlement,
+  threadSnooze,
+  threadPullRequests,
+} from "../orchestration-v2/threadSummary.ts";
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -758,71 +758,6 @@ function threadTitle(input: {
     end -= 1;
   }
   return `${detail.slice(0, end)}...`;
-}
-
-function threadSettlement(
-  thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
-): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
-  const settled = thread.settledOverride === "settled";
-  return {
-    settled,
-    settledAt: settled && thread.settledAt !== null ? DateTime.formatIso(thread.settledAt) : null,
-  };
-}
-
-function threadSnooze(
-  thread: Parameters<typeof isSnoozed>[0],
-  nowMs: number,
-): Pick<OrchestratorMcpThreadListItem, "snoozed" | "snoozedUntil"> {
-  const snoozed = isSnoozed(thread, nowMs);
-  return {
-    snoozed,
-    snoozedUntil:
-      snoozed && thread.snoozedUntil != null ? DateTime.formatIso(thread.snoozedUntil) : null,
-  };
-}
-
-function threadPullRequests(
-  links: OrchestrationV2ThreadShell["pullRequests"],
-): OrchestratorMcpThreadPullRequest[] {
-  return visibleThreadPullRequests(links ?? []).map((link) => ({
-    host: normalizeThreadPullRequestKey(link).host,
-    repository: link.repository,
-    number: link.number,
-    url: link.url,
-    source: link.source,
-    state: link.snapshot?.state ?? null,
-  }));
-}
-
-function listItemFromShell(
-  scope: McpInvocationScope,
-  shell: OrchestrationV2ThreadShell,
-  nowMs: number,
-): OrchestratorMcpThreadListItem {
-  return {
-    threadId: shell.id,
-    projectId: shell.projectId,
-    title: shell.title,
-    link: threadLinkFor(scope, shell.id),
-    createdBy: shell.createdBy,
-    creationSource: shell.creationSource,
-    status: shell.activityRunStatus ?? shell.status,
-    latestRunId: shell.latestRunId,
-    providerInstanceId: shell.modelSelection.instanceId,
-    model: shell.modelSelection.model,
-    runtimeMode: shell.runtimeMode,
-    interactionMode: shell.interactionMode,
-    linkedPullRequest: shell.linkedPullRequest ?? null,
-    pullRequests: threadPullRequests(shell.pullRequests),
-    ...threadSettlement(shell),
-    ...threadSnooze(shell, nowMs),
-    parentThreadId: shell.lineage.parentThreadId,
-    relationshipToParent: shell.lineage.relationshipToParent,
-    itemCount: shell.visibleItemCount,
-    createdAt: DateTime.formatIso(shell.createdAt),
-    updatedAt: DateTime.formatIso(shell.updatedAt),
-  };
 }
 
 function threadDetail(
@@ -3025,7 +2960,9 @@ const make = Effect.gen(function* () {
       return {
         projectId,
         currentThreadId: parent?.thread.id ?? null,
-        threads: page.map((shell) => listItemFromShell(scope, shell, nowMs)),
+        threads: page.map((shell) =>
+          listItemFromShell(shell, threadLinkFor(scope, shell.id), nowMs),
+        ),
         nextCursor,
         total: filtered.length,
       } satisfies OrchestratorMcpThreadListResult;

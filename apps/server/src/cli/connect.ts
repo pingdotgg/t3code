@@ -8,7 +8,7 @@ import {
   type RelayClientInstallProgressEvent,
   type RelayClientInstallProgressStage,
 } from "@t3tools/contracts";
-import { RelayOkResponse } from "@t3tools/contracts/relay";
+import { RelayListEnvironmentsResponse, RelayOkResponse } from "@t3tools/contracts/relay";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import * as Cause from "effect/Cause";
@@ -148,6 +148,9 @@ interface CloudCliStatus {
   readonly revoked: boolean;
   readonly cloudUserId: string | null;
   readonly relayUrl: string | null;
+  readonly publicAddress: string | null;
+  readonly mcpUrl: string | null;
+  readonly addressLookupError: string | null;
   readonly publishAgentActivity: boolean;
   readonly relayClient: RelayClient.RelayClientStatus;
   readonly linkMode: CliState.CliDesiredLinkMode;
@@ -208,6 +211,11 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
     `  Authorization: ${status.authenticated ? "stored credential" : "missing"}`,
     `  Environment link: ${provisioned}`,
     `  Relay: ${status.relayUrl ?? "not provisioned"}`,
+    `  Public address: ${status.publicAddress ?? "unavailable"}`,
+    `  MCP URL: ${status.mcpUrl ?? "unavailable"}`,
+    ...(status.addressLookupError === null
+      ? []
+      : [`  Address lookup: ${status.addressLookupError}`]),
     `  Publish agent activity: ${status.publishAgentActivity ? "enabled" : "disabled"}`,
     ...formatRelayClientStatus(status.relayClient),
     ...(!status.desired || status.linkMode !== "managed"
@@ -667,6 +675,31 @@ const connectLinkCommand = Command.make("link", {
   ),
 );
 
+const readPublicConnectAddress = Effect.fn("cloud.cli.readPublicAddress")(function* (
+  relayUrl: string,
+) {
+  const tokens = yield* CliTokenManager.CloudCliTokenManager;
+  const token = yield* tokens.getExisting;
+  if (Option.isNone(token)) return null;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const environmentId = yield* environment.getEnvironmentId;
+  const httpClient = yield* HttpClient.HttpClient;
+  const result = yield* HttpClientRequest.get(`${relayUrl}/v1/environments`).pipe(
+    HttpClientRequest.bearerToken(token.value.accessToken),
+    httpClient.execute,
+    Effect.flatMap(filterRelayResponse),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayListEnvironmentsResponse)),
+    Effect.timeout(CLOUD_CLI_LIVE_SERVER_TIMEOUT),
+    withRelayClientTracing,
+  );
+  const endpoint = result.environments.find(
+    (item) => item.environmentId === environmentId,
+  )?.endpoint;
+  if (endpoint?.providerKind !== "cloudflare_tunnel") return null;
+  const url = new URL(endpoint.httpBaseUrl);
+  return url.protocol === "https:" ? url.host : null;
+});
+
 const connectStatusCommand = Command.make("status", {
   ...projectLocationFlags,
   json: jsonFlag,
@@ -706,6 +739,14 @@ const connectStatusCommand = Command.make("status", {
         // A publish-only link has no tunnel for other devices to reach.
         const reachability =
           desired && linkMode === "managed" ? yield* checkLiveReachability() : null;
+        const address =
+          Option.isSome(cloudUserId) &&
+          Option.isNone(revoked) &&
+          linkMode === "managed" &&
+          Option.isSome(relayUrl)
+            ? yield* readPublicConnectAddress(bytesToString(relayUrl.value)).pipe(Effect.result)
+            : null;
+        const publicAddress = address?._tag === "Success" ? address.success : null;
         const status: CloudCliStatus = {
           desired,
           authenticated,
@@ -716,6 +757,12 @@ const connectStatusCommand = Command.make("status", {
           publishAgentActivity: isAgentActivityPublishingEnabledValue(
             Option.isSome(publishAgentActivity) ? bytesToString(publishAgentActivity.value) : null,
           ),
+          publicAddress,
+          mcpUrl: publicAddress === null ? null : `https://${publicAddress}/mcp`,
+          addressLookupError:
+            address?._tag === "Failure"
+              ? "Could not read the public address from T3 Connect. Retry when connected and authorized."
+              : null,
           relayClient: executable,
           linkMode,
           reachability,

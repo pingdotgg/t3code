@@ -95,8 +95,32 @@ Agents without OAuth support cannot connect.
 
 ## Scripts on the host
 
-On the machine that runs the environment, `t3 thread` uses the same tools
-without a sign-in:
+On the machine that runs the environment, the CLI can discover projects and
+threads without opening the app or signing in through MCP. The environment’s
+server must be running; the app window can be closed. Use `--base-dir <path>`
+when the server uses a non-default T3 home.
+
+```sh
+t3 project list
+t3 project list --json
+t3 thread list
+t3 thread list --project <project-id-or-path> --status running --json
+t3 connect status --json
+```
+
+`project list` includes project ids, titles, workspace paths, configured default
+provider/model selections, and thread counts by status. A null model selection
+means the project inherits its default. Counts and `thread list` cover active
+sidebar threads; archived threads, subagents, and side chats are excluded.
+Statuses with no threads are omitted from the counts. `thread list` spans all
+projects unless `--project` is supplied, and orders threads newest first.
+
+For a linked managed T3 Connect environment, `connect status` includes its public
+address and MCP URL. Looking up the address requires a stored Connect credential
+and access to the relay. If the lookup fails, status reports that failure;
+unlinked, revoked, and publish-only links have no public MCP URL.
+
+You can also start, message, and inspect a thread:
 
 ```sh
 id=$(t3 thread start . "Find why the tests are slow")

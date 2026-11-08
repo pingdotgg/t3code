@@ -1,6 +1,5 @@
 import {
   OrchestratorMcpFailure,
-  OrchestratorMcpThreadListResult,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
@@ -8,17 +7,14 @@ import {
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
-  type OrchestratorMcpThreadListItem,
   type OrchestratorMcpThreadStatus,
+  OrchestrationV2RunStatus,
   type OrchestratorMcpThreadTimelineItem,
 } from "@t3tools/contracts";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
@@ -29,8 +25,8 @@ import { Argument, Command, Flag, GlobalFlag } from "effect/cli";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
-import { expandHomePath } from "../os-jank.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
+import { resolveDiscoveryProject, withDiscoverySnapshot } from "./discovery.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -282,31 +278,7 @@ const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
   const byId = projects.find((project) => project.id === identifier);
   if (byId !== undefined) return byId;
 
-  const path = yield* Path.Path;
-  const fileSystem = yield* FileSystem.FileSystem;
-  // Stored roots keep the path the project was added with, which may pass
-  // through a symlink (macOS /tmp), so both sides compare as real paths.
-  const realPath = (value: string) =>
-    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
-  const target = yield* realPath(
-    path.resolve(yield* HostProcess.WorkingDirectory, yield* expandHomePath(identifier)),
-  );
-  const roots = yield* Effect.forEach(projects, (project) =>
-    Effect.map(realPath(project.workspaceRoot), (root) => ({ project, root })),
-  );
-  const containing = roots
-    .filter(({ root }) => {
-      const relative = path.relative(root, target);
-      return (
-        relative === "" ||
-        (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
-      );
-    })
-    .toSorted((left, right) => right.root.length - left.root.length)[0];
-  if (containing === undefined) {
-    return yield* new ThreadProjectNotFoundError({ identifier });
-  }
-  return containing.project;
+  return yield* resolveDiscoveryProject(projects, identifier);
 });
 
 /** Every item on a timeline view, oldest first. */
@@ -565,33 +537,33 @@ const decodeThreadId = (value: string) =>
 const threadListCommand = Command.make("list", {
   ...projectLocationFlags,
   project: Flag.String("project").pipe(
-    Flag.withDescription("Project id or a path inside the project. Defaults to this directory."),
-    Flag.withDefault("."),
+    Flag.withDescription("Filter by project id or a path inside the project."),
+    Flag.optional,
+  ),
+  status: Flag.Literals("status", ["idle", ...OrchestrationV2RunStatus.literals]).pipe(
+    Flag.withDescription("Filter by thread status, such as running, waiting, or completed."),
+    Flag.optional,
   ),
   json: jsonFlag,
 }).pipe(
-  Command.withDescription("List a project's threads, newest first."),
+  Command.withDescription("List threads across all projects, newest first."),
   Command.withHandler((flags) =>
-    withThreadTools(
+    withDiscoverySnapshot(
       flags,
-      Effect.fn("cli.thread.list")(function* (tools) {
-        const project = yield* resolveProject(tools, flags.project);
-        const threads: Array<OrchestratorMcpThreadListItem> = [];
-        let cursor: number | null = 0;
-        while (cursor !== null) {
-          const page: OrchestratorMcpThreadListResult = yield* tools.call(
-            "t3_thread_list",
-            { projectId: project.id, includeSubagents: false, limit: 100, cursor },
-            OrchestratorMcpThreadListResult,
-          );
-          threads.push(...page.threads);
-          cursor = page.nextCursor;
-        }
-        if (flags.json) {
-          return yield* printJson(threads);
-        }
+      Effect.fn("cli.thread.list")(function* (snapshot) {
+        const project = Option.isSome(flags.project)
+          ? yield* resolveDiscoveryProject(snapshot.projects, flags.project.value)
+          : undefined;
+        const threads = snapshot.threads.filter(
+          (thread) =>
+            (project === undefined || thread.projectId === project.id) &&
+            (Option.isNone(flags.status) || thread.status === flags.status.value),
+        );
+        if (flags.json) return yield* printJson(threads);
         for (const thread of threads) {
-          yield* Console.log(`${thread.threadId}  ${thread.status.padEnd(11)}  ${thread.title}`);
+          yield* Console.log(
+            `${thread.threadId}  ${thread.projectId}  ${thread.status.padEnd(11)}  ${thread.title}`,
+          );
         }
       }),
     ).pipe(reportThreadErrors),
