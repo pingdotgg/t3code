@@ -1,7 +1,15 @@
+import { EnvironmentId, ThreadId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { compileResolvedKeybindingsConfig, isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
-import { useSnoozeWakeClock, useThreadJumpHintsVisible } from "./Sidebar.logic";
+import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import {
+  useShouldShowThreadJumpHints,
+  useSnoozeWakeClock,
+  useThreadJumpHintsVisible,
+} from "./Sidebar.logic";
 
 const MOUNTED_AT_MS = Date.parse("2026-10-24T08:00:00.000Z");
 
@@ -55,5 +63,48 @@ describe("useThreadJumpHintsVisible", () => {
     await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
     await act(() => vi.advanceTimersByTime(1_000));
     await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+  });
+});
+
+const ROUTE_THREAD_REF = {
+  environmentId: EnvironmentId.make("local"),
+  threadId: ThreadId.make("thread-1"),
+};
+
+function ShouldShowJumpHints(props: { readonly keybindings: ResolvedKeybindingsConfig }) {
+  const shown = useShouldShowThreadJumpHints(props.keybindings, ROUTE_THREAD_REF);
+  return <output>{shown ? "shown" : "hidden"}</output>;
+}
+
+describe("useShouldShowThreadJumpHints", () => {
+  it("follows the held modifier, terminal focus and the route thread's terminal", async () => {
+    using stack = new DisposableStack();
+    const terminal = document.createElement("div");
+    terminal.dataset.terminalOwner = "drawer";
+    const terminalInput = document.createElement("textarea");
+    terminal.append(terminalInput);
+    document.body.append(terminal);
+    stack.defer(() => terminal.remove());
+    stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(ROUTE_THREAD_REF, false));
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1", when: "terminalOpen" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<ShouldShowJumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    const output = screen.getByRole("status");
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => useTerminalUiStateStore.getState().setTerminalOpen(ROUTE_THREAD_REF, true));
+    await expect.element(output).toHaveTextContent("shown");
+    await act(() => terminalInput.focus());
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => terminalInput.blur());
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+    await expect.element(output).toHaveTextContent("hidden");
   });
 });
