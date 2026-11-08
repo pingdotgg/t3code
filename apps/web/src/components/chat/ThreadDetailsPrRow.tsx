@@ -440,7 +440,15 @@ export function ThreadDetailsPrRow({
         <div className="pb-1.5">
           {openRow(detail.title, "row", true)}
           <div className="mt-1.5 flex h-5 min-w-0 items-center gap-0.5 ps-9 pe-2.5 text-xs text-muted-foreground">
-            <span className="me-1 shrink-0 tabular-nums">#{number}</span>
+            <ThreadDetailsControl
+              type="button"
+              part="meta"
+              className="-ms-1.5"
+              onClick={onOpen}
+              onAuxClick={onOpen}
+            >
+              <span className="tabular-nums">#{number}</span>
+            </ThreadDetailsControl>
             {showChecks && checksRollup !== null ? (
               <PullRequestChecksPopover
                 checksState={checksRollup}
