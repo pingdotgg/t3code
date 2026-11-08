@@ -22,7 +22,7 @@ While any turn waits, a pill in the sidebar (and a card on the mobile Home scree
 
 ## What counts
 
-Only turns that are starting or running count. A turn that is blocked waiting for another thread (`t3_thread_wait`) does not count, so a parent waiting on a queued child cannot deadlock. When the wait returns, the turn counts again, even if that briefly puts the count above the limit. New turns then wait until it drops below.
+Only turns that are starting or running count. A turn that waits for your answer or approval is still running and holds its slot. A turn that is blocked waiting for another thread (`t3_thread_wait`) does not count, so a parent waiting on a queued child cannot deadlock. When the wait returns, the turn counts again, even if that briefly puts the count above the limit. New turns then wait until it drops below.
 
 Steering a running turn, interrupting, and stopping are never held back. Neither are one-shot jobs such as thread titles and commit messages.
 

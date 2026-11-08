@@ -14,4 +14,5 @@ Nothing else restarts queued runs in other threads: `handleRunUpdate` only resta
 - Deferred-start runs (thread launch, pipeline steps) are `preparing` while their workspace is made, and count as running. They are admitted at `prepared-run.release`, when the provider turn is about to start, and requeue there if the host is full. Gating at creation would skip workspace preparation.
 - `queued-run.start` is the only bypass, and only clients reach it. The MCP queue tool has no start action.
 - Startup recovery must not mark admission-queued runs `queueHeld`; a held queue is only released by a user.
+- A run left waiting by the previous process has no run event to trigger the pump, so `recoverDelegatedTasks` requests one after recovery. Pumping earlier races the reconcile, which cancels unstarted runs.
 - Pressure is sampled only while pacing is on, because [#27253](https://github.com/pingdotgg/t3code/pull/27253)'s stream samples only while someone listens.

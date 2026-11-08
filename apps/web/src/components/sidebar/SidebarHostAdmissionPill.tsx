@@ -53,22 +53,24 @@ function HostAdmissionPill(props: {
         }
       >
         <ClockIcon />
-        <span className="min-w-0 truncate">{`${title} · ${running}`}</span>
+        <span className="min-w-0">{`${title} · ${running}`}</span>
       </PopoverTrigger>
       <PopoverPopup side="top" align="start" padding="compact">
-        <PopoverTitle>{title}</PopoverTitle>
-        <p className="mt-1 max-w-64 text-2xs text-muted-foreground">
-          The host holds new turns while it is busy. Start one now from its thread.
-        </p>
-        <ul className="mt-2 flex flex-col gap-1">
-          {admission.waitingThreadIds.map((threadId) => (
-            <WaitingThreadRow
-              key={threadId}
-              environmentId={props.environmentId}
-              threadId={threadId}
-            />
-          ))}
-        </ul>
+        <div className="w-72 max-w-full">
+          <PopoverTitle>{title}</PopoverTitle>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            The host holds new turns while it is busy. Start one now from its thread.
+          </p>
+          <ul className="mt-2 flex max-h-60 flex-col gap-1 overflow-y-auto">
+            {admission.waitingThreadIds.map((threadId) => (
+              <WaitingThreadRow
+                key={threadId}
+                environmentId={props.environmentId}
+                threadId={threadId}
+              />
+            ))}
+          </ul>
+        </div>
       </PopoverPopup>
     </Popover>
   );
@@ -82,8 +84,9 @@ function WaitingThreadRow(props: {
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
   const thread = useThreadShell(threadRef);
   return (
-    <li className="min-w-0 truncate text-xs">
+    <li className="flex min-w-0 text-xs">
       <InlineButton
+        className="min-w-0 max-w-full"
         onClick={() =>
           void navigate({
             to: "/$environmentId/$threadId",
@@ -91,7 +94,7 @@ function WaitingThreadRow(props: {
           })
         }
       >
-        {thread?.title ?? "Untitled thread"}
+        <span className="truncate">{thread?.title ?? "Untitled thread"}</span>
       </InlineButton>
     </li>
   );
