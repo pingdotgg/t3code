@@ -366,8 +366,8 @@ export interface ProjectionRecordFilter {
    */
   readonly omitSettledSubagents?: true | { readonly except: ReadonlyArray<NodeId> };
   /**
-   * Reads what a new message needs from a thread that was compacted: the runs from the one before
-   * the latest completed compaction, plus live runs, fresh-context runs and `keepRunIds`. Run-
+   * Reads what a new message needs from a thread that was compacted: the runs from the last
+   * prompt before the latest completed compaction, plus live runs, fresh-context runs and `keepRunIds`. Run-
    * scoped records follow their runs, provider threads are the thread's own, and context transfers
    * are the open ones that target it. A thread without a completed compaction reads in full.
    */
@@ -3135,15 +3135,34 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `;
     });
 
+    // Mirrors JavaScript's `trim().toLowerCase()` of a message's text.
+    const trimmedLowerText = (payload: Statement.Fragment) => sql`lower(trim(
+      json_extract(${payload}, '$.text'),
+      char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
+        8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
+    ))`;
+
     /** Null when nothing was compacted, so the whole history is current. */
     const runsSinceLastCompaction = Effect.fn("ProjectionStore.runsSinceLastCompaction")(function* (
       threadId: ThreadId,
       keepRunIds: ReadonlyArray<RunId>,
     ) {
+      // Starts at the last prompt before the compaction: a model switch is measured from the
+      // last run whose prompt the timeline shows, and `/compact` runs are not shown.
       const [compaction] = yield* sql<{ readonly from_ordinal: number }>`
           SELECT COALESCE(
-            (SELECT MAX(previous.ordinal) FROM orchestration_v2_projection_runs AS previous
-             WHERE previous.thread_id = ${threadId} AND previous.ordinal < latest.ordinal),
+            (SELECT previous.ordinal FROM orchestration_v2_projection_runs AS previous
+             WHERE previous.thread_id = ${threadId} AND previous.ordinal < latest.ordinal
+               AND previous.status NOT IN ('queued', 'rolled_back')
+               AND NOT EXISTS (
+                 SELECT 1 FROM orchestration_v2_projection_messages AS prompt
+                 WHERE prompt.message_id = json_extract(previous.payload_json, '$.userMessageId')
+                   AND prompt.role = 'user'
+                   AND coalesce(json_array_length(prompt.payload_json, '$.attachments'), 0) = 0
+                   AND ${trimmedLowerText(sql.literal("prompt.payload_json"))} = ${IDLE_COMPACTION_TEXT}
+               )
+             ORDER BY previous.ordinal DESC
+             LIMIT 1),
             latest.ordinal
           ) AS from_ordinal
           FROM (
@@ -6298,12 +6317,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           ),
         );
 
-    // Mirrors JavaScript's `trim().toLowerCase()` of a message's text.
-    const trimmedLowerText = (payload: Statement.Fragment) => sql`lower(trim(
-      json_extract(${payload}, '$.text'),
-      char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
-        8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
-    ))`;
     // Mirrors isNativeMaintenanceCommand over the thread's user messages.
     const hasOnlyMaintenanceUserMessages: ProjectionStoreV2Shape["hasOnlyMaintenanceUserMessages"] =
       (threadId) =>

@@ -718,8 +718,8 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
         messageRoles: ["user"],
         sinceLastCompaction: { keepRunIds },
       });
-    // Run 1 is the helper's rolled-back run. Run 2 is live, run 3 starts a fresh session and
-    // run 6 is the compaction; the window starts at run 5, the one before it.
+    // Run 1 is the helper's rolled-back run. Run 2 is live and run 3 starts a fresh session.
+    // Runs 6 and 9 are `/compact` runs that hold a compaction; run 8 is one that does not.
     for (const [ordinal, status] of [
       [2, "running"],
       [3, "completed"],
@@ -727,6 +727,8 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
       [5, "completed"],
       [6, "completed"],
       [7, "completed"],
+      [8, "completed"],
+      [9, "completed"],
     ] as const) {
       yield* store.apply({
         id: EventId.make(`event:compacted:run-${ordinal}`),
@@ -770,7 +772,7 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
           createdBy: "user",
           creationSource: "web",
           role: "user",
-          text: `Prompt ${ordinal}`,
+          text: [6, 8, 9].includes(ordinal) ? "/compact" : `Prompt ${ordinal}`,
           attachments: [],
           streaming: false,
           createdAt: now,
@@ -781,36 +783,38 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
     const rolledBackId = RunId.make("run:compacted:rolled-back");
     const ids = <T extends { readonly id: string }>(rows: ReadonlyArray<T>) =>
       rows.map((row) => row.id);
-    // Nothing is compacted yet, so the whole history is current.
-    assert.lengthOf((yield* read([])).runs, 7);
-
-    yield* store.apply({
-      id: EventId.make("event:compacted:compaction"),
-      type: "turn-item.updated",
-      threadId,
-      runId: runId(6),
-      nodeId,
-      driver,
-      occurredAt: now,
-      payload: {
-        id: TurnItemId.make("item:compacted:compaction"),
+    const compact = (ordinal: number) =>
+      store.apply({
+        id: EventId.make(`event:compacted:compaction-${ordinal}`),
+        type: "turn-item.updated",
         threadId,
-        runId: runId(6),
+        runId: runId(ordinal),
         nodeId,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        ordinal: 2,
-        status: "completed",
-        title: null,
-        startedAt: now,
-        completedAt: now,
-        updatedAt: now,
-        type: "compaction",
         driver,
-      },
-    });
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:compacted:compaction-${ordinal}`),
+          threadId,
+          runId: runId(ordinal),
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "compaction",
+          driver,
+        },
+      });
+    // Nothing is compacted yet, so the whole history is current.
+    assert.lengthOf((yield* read([])).runs, 9);
+
+    yield* compact(6);
     // Legacy rows can hold unreadable JSON; the fresh-context index must not reject them.
     const sql = yield* SqlClient.SqlClient;
     yield* sql`
@@ -818,26 +822,19 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
         (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
       VALUES ('run:compacted:legacy', ${threadId}, 0, 'codex', 'completed', '', '{')
     `;
+    const runIdsOf = (ordinals: ReadonlyArray<number>) => ordinals.map(runId);
+    // The window starts at run 5, the prompt before the compaction.
     const recent = yield* read([rolledBackId]);
-    assert.deepEqual(ids(recent.runs), [
-      rolledBackId,
-      runId(2),
-      runId(3),
-      runId(5),
-      runId(6),
-      runId(7),
-    ]);
+    assert.deepEqual(ids(recent.runs), [rolledBackId, ...runIdsOf([2, 3, 5, 6, 7, 8, 9])]);
     assert.deepEqual(
       ids(recent.messages),
-      [2, 3, 5, 6, 7].map((ordinal) => `message:compacted:${ordinal}`),
+      [2, 3, 5, 6, 7, 8, 9].map((ordinal) => `message:compacted:${ordinal}`),
     );
-    assert.deepEqual(ids((yield* read([])).runs), [
-      runId(2),
-      runId(3),
-      runId(5),
-      runId(6),
-      runId(7),
-    ]);
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 5, 6, 7, 8, 9]));
+
+    // Run 8 is a `/compact` run, so the model-switch baseline is the prompt before it, run 7.
+    yield* compact(9);
+    assert.deepEqual(ids((yield* read([])).runs), runIdsOf([2, 3, 7, 8, 9]));
   }).pipe(Effect.provide(layerTest)),
 );
 

@@ -5627,6 +5627,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.restartContinuationOfRunId,
         command.usageLimitContinuationOfRunId,
         command.delegatedCompletion?.parentRunId,
+        ...(command.dispatchMode.type === "steer_active" ||
+        command.dispatchMode.type === "restart_active"
+          ? [command.dispatchMode.targetRunId]
+          : []),
       ].flatMap((runId) => (runId === undefined ? [] : [runId])),
     });
     const activeProviderInstanceId = projection.providerThreads.find(
