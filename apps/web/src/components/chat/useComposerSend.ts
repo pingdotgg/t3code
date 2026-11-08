@@ -1533,10 +1533,9 @@ export function useComposerSend(input: ComposerSendInput) {
                   void navigate({ to: "/draft/$draftId", params: { draftId } });
                 },
               },
-              // The toast is then the only copy of the failed text, so it stays until dismissed.
-              ...(copyFailedMessage
-                ? { timeout: 0, data: { secondaryActionProps: copyFailedMessage } }
-                : {}),
+              // An unrestored message has no other trace, so the toast stays until dismissed.
+              ...(!restoresDraft ? { timeout: 0 } : {}),
+              ...(copyFailedMessage ? { data: { secondaryActionProps: copyFailedMessage } } : {}),
             }),
           );
           failureToastShown = true;
