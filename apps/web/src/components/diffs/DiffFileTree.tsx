@@ -7,6 +7,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import { clearFullPathOnPointerOut, showFullPathOnPointerOver } from "~/pierre-tree-row-title";
 
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "../files/fileTreeExpansion";
 import { Button } from "../ui/button";
@@ -243,6 +244,8 @@ export function DiffFileTree({
           if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
         className="min-h-0 flex-1 overflow-hidden"
+        onPointerOver={showFullPathOnPointerOver}
+        onPointerOut={clearFullPathOnPointerOut}
         style={pierreTreeStyle(resolvedTheme)}
       />
       {footer}

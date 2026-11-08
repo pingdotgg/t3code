@@ -26,6 +26,7 @@ import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMen
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import { clearFullPathOnPointerOut, showFullPathOnPointerOver } from "~/pierre-tree-row-title";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -561,6 +562,8 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={`${projectName} files`}
           className="min-h-0 flex-1 overflow-hidden"
+          onPointerOver={showFullPathOnPointerOver}
+          onPointerOut={clearFullPathOnPointerOut}
           style={pierreTreeStyle(resolvedTheme)}
         />
       )}

@@ -115,4 +115,26 @@ describe("FileBrowserPanel", () => {
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
+
+  it("names the full path on the hovered row and drops it when the pointer leaves", async () => {
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />,
+    );
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    const row = findTreeRow("src/")!;
+
+    row.dispatchEvent(new PointerEvent("pointerover", { bubbles: true, composed: true }));
+    expect(row.title).toBe("src");
+
+    row.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, composed: true }));
+    expect(row.hasAttribute("title")).toBe(false);
+  });
 });
