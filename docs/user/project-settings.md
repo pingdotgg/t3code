@@ -194,6 +194,10 @@ itself, or **Skip** to leave them for a setup script. It resolves in the same or
 workspace default: a `"worktreeSubmodules"` value in the `t3.json` of the branch being checked out
 applies when the project and environment are both on **Inherit**.
 
+Submodules are cloned without sign-in prompts, so a private submodule needs credentials Git
+already has on the server, such as a saved credential helper login or an SSH agent key. Without
+them, the worktree starts with that submodule empty.
+
 ## Worktree location
 
 New worktrees go in the `worktrees` folder of the T3 home directory. To put them somewhere else,
