@@ -1095,26 +1095,39 @@ describe("PullRequestSyncReactor", () => {
     ),
   );
 
-  it.effect.each([true, false])(
-    "syncs linked draft status %s as soon as a reader reports a change",
-    (isDraft) =>
+  it.effect.each([
+    { field: "isDraft", value: true, before: false },
+    { field: "isDraft", value: false, before: true },
+    { field: "isInMergeQueue", value: true, before: false },
+    { field: "isInMergeQueue", value: false, before: true },
+    // Snapshots saved before the field existed have no value to compare against.
+    { field: "isInMergeQueue", value: false, before: undefined },
+  ] as const)(
+    "syncs linked $field from $before to $value as soon as a reader reports a change",
+    ({ field, value, before }) =>
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(NOW));
-        const draft = yield* Ref.make(!isDraft);
+        const current = yield* Ref.make<boolean | undefined>(before);
         const invalidated = yield* Ref.make<ReadonlyArray<number>>([]);
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([
-            makeThread("agent", { pullRequests: [makeLink(7, { isDraft: !isDraft })] }),
+            makeThread("agent", {
+              pullRequests: [makeLink(7, before === undefined ? {} : { [field]: before })],
+            }),
           ]),
           summary: (input) =>
-            Ref.get(draft).pipe(Effect.map((isDraft) => makeSummary(input, { isDraft }))),
+            Ref.get(current).pipe(
+              Effect.map((reading) =>
+                makeSummary(input, reading === undefined ? {} : { [field]: reading }),
+              ),
+            ),
           invalidate: ({ reference }) =>
             Ref.update(invalidated, (numbers) => [...numbers, reference?.number ?? -1]),
         });
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
-          yield* Ref.set(draft, isDraft);
+          yield* Ref.set(current, value);
           yield* Queue.offer(fixture.stateChanges, {
             host: "github.com",
             repository: "owner/repository",
@@ -1125,8 +1138,8 @@ describe("PullRequestSyncReactor", () => {
 
           assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
           assert.deepStrictEqual(
-            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.isDraft),
-            [isDraft],
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot[field]),
+            [value],
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

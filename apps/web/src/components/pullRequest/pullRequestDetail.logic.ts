@@ -88,6 +88,7 @@ export function resolvePullRequestPrimaryControl(input: {
   readonly mergeability: PullRequestMergeability;
   readonly checksState: ContractPullRequestChecksState | null;
   readonly autoMergeEnabled: boolean | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly hasMergeMethod: boolean;
   readonly canMerge: boolean;
   readonly canMarkReady: boolean;
@@ -97,6 +98,7 @@ export function resolvePullRequestPrimaryControl(input: {
   if (input.state === "closed") return "closed";
   if (input.mergeability === "conflicting") return "resolve";
   if (input.isDraft) return input.canMarkReady ? "ready" : null;
+  if (input.isInMergeQueue) return null;
   if (input.autoMergeEnabled) return "auto-merge-armed";
   if (!input.hasMergeMethod) return null;
   if (
@@ -354,7 +356,9 @@ export function groupPullRequestChecks(checks: ReadonlyArray<PullRequestCheck>) 
 type ThreadPanelPullRequestAction = "resolve" | "ready" | "fix" | "merge";
 
 export function resolveThreadPanelPullRequestAction(
-  detail: (PullRequestActionableDetail & Pick<PullRequestDetail, "checks">) | null,
+  detail:
+    | (PullRequestActionableDetail & Pick<PullRequestDetail, "checks" | "isInMergeQueue">)
+    | null,
 ): ThreadPanelPullRequestAction | null {
   if (detail === null || detail.state !== "open") return null;
   if (isPullRequestConflicting(detail)) return "resolve";
@@ -363,7 +367,7 @@ export function resolveThreadPanelPullRequestAction(
   }
   const checks = classifyPullRequestChecks(detail.checks);
   if (checks === "failing") return "fix";
-  if (checks === "pending") return null;
+  if (checks === "pending" || detail.isInMergeQueue === true) return null;
   return canPerformPullRequestAction(detail, "merge") &&
     allowedPullRequestMergeMethods(detail).length > 0
     ? "merge"

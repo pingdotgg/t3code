@@ -364,6 +364,7 @@ describe("pull request detail decoding", () => {
             body: "Body",
             state: "OPEN",
             isDraft: false,
+            isInMergeQueue: false,
             mergeable: "MERGEABLE",
             mergeStateStatus: "BLOCKED",
             reviewDecision: null,
@@ -529,12 +530,13 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
-  it("reads an auto-merge request and strategy, and its null as off", () => {
+  it("reads an auto-merge request and strategy, its null as off, and merge queue membership", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+    expect(detailOf([], { isInMergeQueue: true }).isInMergeQueue).toBe(true);
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {

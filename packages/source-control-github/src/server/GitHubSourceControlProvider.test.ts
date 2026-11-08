@@ -79,6 +79,7 @@ const node = (number: number, headRefName: string, owner = "acme") => ({
   headRefOid: "f".repeat(40),
   state: "OPEN",
   isDraft: false,
+  isInMergeQueue: false,
   mergedAt: null,
   closedAt: null,
   isCrossRepository: owner !== "acme",

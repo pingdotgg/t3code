@@ -42,6 +42,8 @@ export const PullRequestNode = Schema.Struct({
   state: GraphQL.enumLiterals(Shared.PullRequestState.literals),
   /** Identifies if the pull request is a draft. */
   isDraft: Schema.Boolean,
+  /** Indicates whether the pull request is in a merge queue */
+  isInMergeQueue: Schema.Boolean,
   /** The date and time that the pull request was merged. */
   mergedAt: Schema.NullOr(Shared.DateTime),
   /** Identifies the date and time when the object was closed. */
@@ -85,7 +87,7 @@ export const PullRequestsByHead = GraphQL.query("PullRequestsByHead", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequests(headRefName:$", "head", " states:$", "states", " first:$", "first", " orderBy:{field:CREATED_AT direction:DESC}){nodes{...PullRequestNode}}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
     ]
   },
   variables: {
@@ -124,7 +126,7 @@ export const PullRequestByNumber = GraphQL.query("PullRequestByNumber", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){pullRequest(number:$", "number", "){...PullRequestNode}}"] }
     ],
     fragments: [
-      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
+      { name: "PullRequestNode", body: ["on PullRequest{number title url baseRefName headRefName headRefOid state isDraft isInMergeQueue mergedAt closedAt updatedAt isCrossRepository headRepository{name nameWithOwner}headRepositoryOwner{__typename login}}"] }
     ]
   },
   variables: {

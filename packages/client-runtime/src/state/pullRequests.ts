@@ -421,6 +421,7 @@ export function pullRequestDetailToVcsStatus(
     headRef: detail.headBranch,
     state: detail.state,
     ...(detail.isDraft === true ? { isDraft: true } : {}),
+    ...(detail.isInMergeQueue === true ? { isInMergeQueue: true } : {}),
     updatedAt: detail.updatedAt,
   };
 }
@@ -644,6 +645,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
       if (
         detail.state !== "open" ||
         detail.isDraft ||
+        detail.isInMergeQueue === true ||
         !detail.capabilities.actions.includes("merge") ||
         !detail.viewerPermissions.actions.includes("merge")
       ) {

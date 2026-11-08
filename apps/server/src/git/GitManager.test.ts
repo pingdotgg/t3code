@@ -1026,60 +1026,62 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("branch PR lookup notifies linked threads when draft status changes", () =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      yield* runGit(repoDir, ["checkout", "-b", "feature/draft-status"]);
-      const remoteDir = yield* createBareRemote();
-      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
-      yield* runGit(repoDir, ["push", "-u", "origin", "feature/draft-status"]);
-      const drafts = [false, true, true, false, false, true];
-      const pullRequest: FakeChangeRequest = {
-        number: 1,
-        title: "Draft status",
-        url: "https://github.com/pingdotgg/codething-mvp/pull/1",
-        baseRefName: "main",
-        headRefName: "feature/draft-status",
-        state: "open",
-      };
-      const { manager } = yield* makeManager({
-        providerScenario: {
-          prListSequence: [
-            ...drafts.map((isDraft) => [{ ...pullRequest, isDraft }]),
-            [
-              {
-                ...pullRequest,
-                number: 2,
-                url: "https://github.com/pingdotgg/codething-mvp/pull/2",
-                state: "merged",
-              },
+  it.effect.each(["isDraft", "isInMergeQueue"] as const)(
+    "branch PR lookup notifies linked threads when %s changes",
+    (field) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/draft-status"]);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/draft-status"]);
+        const readings = [false, true, true, false, false, true];
+        const pullRequest: FakeChangeRequest = {
+          number: 1,
+          title: "Draft status",
+          url: "https://github.com/pingdotgg/codething-mvp/pull/1",
+          baseRefName: "main",
+          headRefName: "feature/draft-status",
+          state: "open",
+        };
+        const { manager } = yield* makeManager({
+          providerScenario: {
+            prListSequence: [
+              ...readings.map((reading) => [{ ...pullRequest, [field]: reading }]),
+              [
+                {
+                  ...pullRequest,
+                  number: 2,
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/2",
+                  state: "merged",
+                },
+              ],
             ],
-          ],
-        },
-      });
-      const changes = yield* manager.subscribePullRequestStateChanges;
-      for (const isDraft of drafts) {
-        const pr = yield* manager.branchPullRequest(
+          },
+        });
+        const changes = yield* manager.subscribePullRequestStateChanges;
+        for (const reading of readings) {
+          const pr = yield* manager.branchPullRequest(
+            { cwd: repoDir, branch: "feature/draft-status" },
+            { refresh: true },
+          );
+          expect(pr?.[field] === true).toBe(reading);
+        }
+        // A different PR ends collection without waiting on a background stream consumer.
+        yield* manager.branchPullRequest(
           { cwd: repoDir, branch: "feature/draft-status" },
           { refresh: true },
         );
-        expect(pr?.isDraft === true).toBe(isDraft);
-      }
-      // A different PR ends collection without waiting on a background stream consumer.
-      yield* manager.branchPullRequest(
-        { cwd: repoDir, branch: "feature/draft-status" },
-        { refresh: true },
-      );
-      const events = yield* Stream.runCollect(
-        changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
-      );
-      expect(events).toEqual([
-        { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
-        { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
-        { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
-      ]);
-    }),
+        const events = yield* Stream.runCollect(
+          changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
+        );
+        expect(events).toEqual([
+          { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
+          { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
+          { host: "github.com", repository: "pingdotgg/codething-mvp", number: 1 },
+        ]);
+      }),
   );
 
   it.effect("a settled branch PR is rechecked only when the branch moves or every 15 minutes", () =>

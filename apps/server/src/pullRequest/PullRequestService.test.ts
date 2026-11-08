@@ -3164,48 +3164,56 @@ it.effect(
     }),
 );
 
-it.effect("notifies linked threads when detail changes draft status in either direction", () =>
-  Effect.gen(function* () {
-    let isDraft = true;
-    let updatedAt = "2026-07-02T00:00:00Z";
-    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          getChangeRequest: () =>
-            Effect.sync(() => ({ ...hostedChangeRequest("body"), isDraft, updatedAt })),
-        }),
-      ],
-    });
-    const changes = yield* service.subscribeStateChanges;
-    const read = () => service.detail({ ...reference, allowStale: false });
-    yield* read();
-    yield* read();
-    isDraft = false;
-    yield* service.invalidate({ reference });
-    yield* read();
-    yield* read();
-    isDraft = true;
-    yield* service.invalidate({ reference });
-    yield* read();
+it.effect.each(["isDraft", "isInMergeQueue"] as const)(
+  "notifies linked threads when detail changes %s in either direction",
+  (field) =>
+    Effect.gen(function* () {
+      let reading = true;
+      let updatedAt = "2026-07-02T00:00:00Z";
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () =>
+              Effect.sync(() => ({
+                ...hostedChangeRequest("body"),
+                [field]: reading,
+                updatedAt,
+              })),
+          }),
+        ],
+      });
+      const changes = yield* service.subscribeStateChanges;
+      const read = () => service.detail({ ...reference, allowStale: false });
+      yield* read();
+      yield* read();
+      reading = false;
+      yield* service.invalidate({ reference });
+      yield* read();
+      yield* read();
+      reading = true;
+      yield* service.invalidate({ reference });
+      yield* read();
 
-    isDraft = false;
-    updatedAt = "2026-07-01T00:00:00Z";
-    yield* service.invalidate({ reference });
-    yield* read();
+      reading = false;
+      updatedAt = "2026-07-01T00:00:00Z";
+      yield* service.invalidate({ reference });
+      yield* read();
 
-    // A different PR ends collection after all the synchronous notifications above.
-    yield* service.reportState({ reference: { ...reference, number: 2 }, state: "open" });
-    const events = yield* Stream.runCollect(
-      changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
-    );
-    assert.deepStrictEqual(events, [
-      { host: "github.com", repository: "acme/web", number: 1 },
-      { host: "github.com", repository: "acme/web", number: 1 },
-      { host: "github.com", repository: "acme/web", number: 1 },
-    ]);
-  }),
+      // A different PR ends collection after all the synchronous notifications above.
+      yield* service.reportState({ reference: { ...reference, number: 2 }, state: "open" });
+      const events = yield* Stream.runCollect(
+        changes.pipe(Stream.takeUntil((event) => event.number === 2, { excludeLast: true })),
+      );
+      assert.deepStrictEqual(events, [
+        { host: "github.com", repository: "acme/web", number: 1 },
+        { host: "github.com", repository: "acme/web", number: 1 },
+        { host: "github.com", repository: "acme/web", number: 1 },
+      ]);
+    }),
 );
 
 it.effect("deduplicates routed PR reports without dropping draft changes", () =>

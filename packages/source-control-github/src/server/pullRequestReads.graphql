@@ -73,6 +73,7 @@ query PullRequestCore(
       body
       state
       isDraft
+      isInMergeQueue
       mergeable
       mergeStateStatus
       reviewDecision

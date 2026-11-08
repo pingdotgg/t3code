@@ -123,6 +123,7 @@ function LinkRowImpl({
           number: link.number,
           state: snapshot.state,
           isDraft: snapshot.isDraft,
+          isInMergeQueue: snapshot.isInMergeQueue,
           ...(link.stack === null ? {} : { stack: link.stack }),
         }
       : null;
@@ -149,6 +150,7 @@ function LinkRowImpl({
         <PullRequestRowGlyph
           state={snapshot.state}
           isDraft={snapshot.isDraft}
+          isInMergeQueue={snapshot.isInMergeQueue}
           mergeability={snapshot.mergeability}
           baseBranch={snapshot.baseBranch}
         />

@@ -361,6 +361,7 @@ export interface GitHubPullRequestDetail extends GitHubPullRequestListItem {
   readonly mergedAt: string | null;
   readonly closedAt: string | null;
   readonly checks: ReadonlyArray<PullRequestCheck>;
+  readonly isInMergeQueue?: boolean;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
 }
@@ -759,6 +760,7 @@ interface DetailFields extends ListItemFields {
   readonly body?: string | undefined;
   readonly changedFiles?: number | undefined;
   readonly closedAt?: string | null | undefined;
+  readonly isInMergeQueue?: boolean | undefined;
   readonly autoMergeRequest?:
     | { readonly mergeMethod?: string | null | undefined }
     | null
@@ -779,6 +781,7 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
     mergedAt: trimmed(raw.mergedAt),
     closedAt: trimmed(raw.closedAt),
     checks: toChecks(raw.statusCheckRollup),
+    ...(raw.isInMergeQueue === undefined ? {} : { isInMergeQueue: raw.isInMergeQueue }),
     ...(raw.autoMergeRequest === undefined
       ? {}
       : { autoMergeEnabled: raw.autoMergeRequest !== null }),
@@ -926,6 +929,7 @@ export interface GitHubPullRequestSummary {
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
+  readonly isInMergeQueue: boolean;
   readonly closedAt: string | null;
   readonly mergedAt: string | null;
   readonly updatedAt: string;
@@ -949,6 +953,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
     baseBranch: pr.baseRefName,
     state: toState(pr),
     isDraft: pr.isDraft,
+    isInMergeQueue: pr.isInMergeQueue,
     closedAt: trimmed(pr.closedAt),
     mergedAt: trimmed(pr.mergedAt),
     updatedAt: pr.updatedAt,

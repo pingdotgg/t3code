@@ -483,6 +483,7 @@ export const PullRequestSummary = Schema.Struct({
   url: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   headBranch: TrimmedNonEmptyString,
   baseBranch: TrimmedNonEmptyString,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -630,6 +631,8 @@ export const PullRequestDetail = Schema.Struct({
   viewer: Schema.optional(TrimmedNonEmptyString),
   baseComparison: Schema.optional(PullRequestBaseComparison),
   behindBy: Schema.optional(NonNegativeInt),
+  /** Absent when the host has no merge queue or did not report it. */
+  isInMergeQueue: Schema.optional(Schema.Boolean),
   /** Absent means the host does not report auto-merge state, not that it is off. */
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),

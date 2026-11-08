@@ -59,10 +59,19 @@ describe("mobile pull request actions", () => {
     expect(mergeUnavailableReason(detail(), false, GITHUB)).toContain("read-only");
   });
 
-  it("blocks a conflicting PR's immediate merge and explains why", () => {
-    const pr = detail({ mergeability: "conflicting" });
+  it.each([
+    { fields: { mergeability: "conflicting" as const }, reason: "conflicts" },
+    { fields: { isInMergeQueue: true }, reason: "merge queue" },
+  ])("blocks an immediate merge and explains why: $reason", ({ fields, reason }) => {
+    const pr = detail(fields);
     expect(canPerformPullRequestAction(pr, "merge")).toBe(false);
-    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain("conflicts");
+    expect(mergeUnavailableReason(pr, true, GITHUB)).toContain(reason);
+  });
+
+  it("offers no auto-merge for a pull request the merge queue already holds", () => {
+    expect(canPerformPullRequestAction(detail({ isInMergeQueue: true }), "enable-auto-merge")).toBe(
+      false,
+    );
   });
 
   it("names the change request with its host's term", () => {
