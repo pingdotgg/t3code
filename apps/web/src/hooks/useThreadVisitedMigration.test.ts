@@ -5,6 +5,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { liveShellEnvironmentIdsAtom } from "../state/shell";
 import { environmentThreadShells } from "../state/threads";
 import { makeThreadFixture } from "../test-fixtures";
 import { startThreadVisitedMigration } from "./useThreadVisitedMigration";
@@ -26,10 +27,20 @@ vi.mock("../state/threads", async () => {
     threadEnvironment: { visit: {} },
   };
 });
+vi.mock("../state/shell", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    liveShellEnvironmentIdsAtom: Atom.make<ReadonlySet<EnvironmentId>>(new Set<EnvironmentId>()),
+  };
+});
 
 const localVisit = "2026-10-27T10:00:00.000Z";
 
-function setup(threads: ReadonlyArray<EnvironmentThreadShell>, local = localVisit) {
+function setup(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  local = localVisit,
+  live: ReadonlySet<EnvironmentId> = new Set(threads.map((thread) => thread.environmentId)),
+) {
   state.localVisits = Object.fromEntries(
     threads.map((thread) => [
       scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
@@ -46,12 +57,22 @@ function setup(threads: ReadonlyArray<EnvironmentThreadShell>, local = localVisi
   });
   const shells = environmentThreadShells.threadShellsAtom;
   if (!Atom.isWritable(shells)) throw new Error("Expected writable test shell state");
+  const liveIds = liveShellEnvironmentIdsAtom;
+  if (!Atom.isWritable(liveIds)) throw new Error("Expected writable test live state");
   registry.set(shells, threads);
+  registry.set(liveIds, live);
   const stop = startThreadVisitedMigration(registry);
+  const drain = () => {
+    for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
+  };
   return {
     setThreads(next: ReadonlyArray<EnvironmentThreadShell>) {
       registry.set(shells, next);
-      for (let task = tasks.shift(); task !== undefined; task = tasks.shift()) task();
+      drain();
+    },
+    setLive(next: ReadonlySet<EnvironmentId>) {
+      registry.set(liveIds, next);
+      drain();
     },
     [Symbol.dispose]() {
       stop();
@@ -83,6 +104,19 @@ describe("startThreadVisitedMigration", () => {
       },
     ]);
     migration.setThreads([{ ...thread }, { ...remote }]);
+    expect(runAtomCommand).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends once the environment is live, and again after it resyncs", () => {
+    const thread = makeThreadFixture({ lastVisitedAt: null });
+    using migration = setup([thread], localVisit, new Set());
+    expect(runAtomCommand).not.toHaveBeenCalled();
+
+    migration.setLive(new Set([thread.environmentId]));
+    expect(runAtomCommand).toHaveBeenCalledTimes(1);
+
+    migration.setLive(new Set());
+    migration.setLive(new Set([thread.environmentId]));
     expect(runAtomCommand).toHaveBeenCalledTimes(2);
   });
 
