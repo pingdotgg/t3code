@@ -68,7 +68,10 @@ export function ThemeWireframe({ mode }: { mode: AppearanceChoice }) {
   // Light frames rim with black alpha and the rest with white.
   const rim = mode === "light" ? "#00000014" : "#ffffff14";
   return (
-    <div aria-hidden className="relative aspect-[188/120] w-full overflow-hidden rounded-lg">
+    <div
+      aria-hidden
+      className="relative aspect-[188/120] w-full overflow-hidden rounded-card-thumbnail"
+    >
       {mode === "system" ? (
         <>
           <WireframeWindow chrome="dark" pane="dark" />
@@ -87,7 +90,7 @@ export function ThemeWireframe({ mode }: { mode: AppearanceChoice }) {
         <WireframeWindow chrome="light" pane="light" />
       )}
       <div
-        className="pointer-events-none absolute inset-0 rounded-lg"
+        className="pointer-events-none absolute inset-0 rounded-card-thumbnail"
         style={{ boxShadow: `inset 0 0 0 1px ${rim}` }}
       />
     </div>
