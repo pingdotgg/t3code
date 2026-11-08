@@ -1,3 +1,4 @@
+import { AssetWorkspaceAssetNotFoundError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Dialog from "./ui/Dialog";
 import { useContext, useEffect, useEffectEvent, useState } from "react";
@@ -33,6 +34,7 @@ class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>(
 }
 
 const isPreviewResolutionError = Schema.is(PreviewResolutionError);
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
 
 interface ResolvedPreviewUri {
   readonly uri: string;
@@ -53,18 +55,27 @@ async function resolvePreviewUri(
     });
   }
   // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
-  const url = await refreshAssetUrl(item.environmentId, item.resource, signal)
-    .then((value) => {
-      if (!value) throw new Error("Reconnect to this environment and try again.");
-      return value;
-    })
-    .catch((error: unknown) => {
+  const url = await refreshAssetUrl(item.environmentId, item.resource, signal).catch(
+    (error: unknown) => {
+      // refreshAssetUrl rejects only with the server's typed reason.
+      const path = isAssetNotFoundError(error)
+        ? (error.checkedPath ?? ("path" in error.resource ? error.resource.path : undefined))
+        : undefined;
       throw new PreviewResolutionError({
         cause: error,
         fallbackMessage:
-          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+          path !== undefined
+            ? `File not found: ${path}`
+            : error instanceof Error
+              ? error.message
+              : "Try again.",
       });
-    });
+    },
+  );
+  if (!url) {
+    const error = new Error("Reconnect to this environment and try again.");
+    throw new PreviewResolutionError({ cause: error, fallbackMessage: error.message });
+  }
   return { uri: url + (item.srcFragment ?? "") };
 }
 

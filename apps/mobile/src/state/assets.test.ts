@@ -1,4 +1,5 @@
 import {
+  AssetWorkspaceAssetNotFoundError,
   AuthFilesystemReadScope,
   EnvironmentAuthorizationError,
   EnvironmentId,
@@ -15,6 +16,11 @@ const state = vi.hoisted(() => ({
   assetAtom: {},
   mint: vi.fn(),
   assetQuery: vi.fn(),
+  executeQuery: vi.fn(),
+  connection: { _tag: "Some", value: { httpBaseUrl: "https://host.test" } } as {
+    _tag: "Some" | "None";
+    value?: { httpBaseUrl: string };
+  },
 }));
 
 vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
@@ -27,7 +33,7 @@ vi.mock("@effect/atom-react", () => ({
       : AsyncResult.initial(false),
 }));
 vi.mock("./session", () => ({
-  environmentSession: { sessionStateAtom: () => ({}) },
+  environmentSession: { sessionStateAtom: () => ({}), preparedConnectionValueAtom: () => ({}) },
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
 }));
 vi.mock("./presentation", () => ({
@@ -48,9 +54,14 @@ vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
 }));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  executeAtomQuery: state.executeQuery,
+}));
+vi.mock("./atom-registry", () => ({ appAtomRegistry: { get: () => state.connection } }));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
-import { useRefreshAssetUrl, useAssetUrlState } from "./assets";
+import { refreshAssetUrl, useRefreshAssetUrl, useAssetUrlState } from "./assets";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
@@ -59,6 +70,7 @@ const resource = { _tag: "media-file", threadId, path: "/repo/image.png" } as co
 beforeEach(() => {
   state.session = null;
   state.phase = "connected";
+  state.connection = { _tag: "Some", value: { httpBaseUrl: "https://host.test" } };
   state.assetQuery.mockReset().mockReturnValue(state.assetAtom);
   state.mint
     .mockReset()
@@ -106,4 +118,16 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useRefreshAssetUrl(environmentId, resource)()).resolves.toBeNull();
+});
+
+it("keeps the server's reason when a refresh fails", async () => {
+  const missing = new AssetWorkspaceAssetNotFoundError({
+    resource,
+    checkedPath: "/repo/image.png",
+  });
+  state.executeQuery.mockResolvedValue(AsyncResult.failure(Cause.fail(missing)));
+  await expect(refreshAssetUrl(environmentId, resource)).rejects.toBe(missing);
+
+  state.connection = { _tag: "None" };
+  await expect(refreshAssetUrl(environmentId, resource)).resolves.toBeNull();
 });

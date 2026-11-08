@@ -8,8 +8,13 @@ import {
   EMPTY_ASSET_URL_ATOM,
   makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
-import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  AssetAccessError,
+  EnvironmentAuthorizationError,
+  type AssetResource,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -109,7 +114,14 @@ export function useRefreshAssetUrl(
   };
 }
 
-/** {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. */
+const isAssetServerError = Schema.is(
+  Schema.Union([AssetAccessError, EnvironmentAuthorizationError]),
+);
+
+/**
+ * {@link useRefreshAssetUrl} for async tasks that resolve several resources at once. Rejects with
+ * the server's reason when it refuses the asset; null means the environment could not answer.
+ */
 export async function refreshAssetUrl(
   environmentId: EnvironmentId,
   resource: AssetResource,
@@ -127,6 +139,10 @@ export async function refreshAssetUrl(
   // A route can change while the query runs; resolve against the connection now current.
   const connection = appAtomRegistry.get(connectionAtom);
   if (connection._tag === "None") return null;
+  if (result._tag === "Failure") {
+    const error = squashAtomCommandFailure(result);
+    if (isAssetServerError(error)) throw error;
+  }
   const state = assetUrlStateFromResult(result, connection.value.httpBaseUrl);
   return state._tag === "Success" ? state.url : null;
 }

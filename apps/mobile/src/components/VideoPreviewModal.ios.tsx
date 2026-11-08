@@ -61,7 +61,7 @@ function NativeVideoPreview(props: {
   });
   const reauthorize = useEffectEvent(() => {
     if (source.type === "media" && "resource" in source) {
-      void refreshAssetUrl(source.environmentId, source.resource);
+      void refreshAssetUrl(source.environmentId, source.resource).catch(() => {});
     }
   });
 

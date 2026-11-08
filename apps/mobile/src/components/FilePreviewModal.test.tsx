@@ -1,10 +1,16 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, SOURCE_CONTROL_MEDIA_ASSET } from "@t3tools/contracts";
+import {
+  AssetWorkspaceAssetNotFoundError,
+  EnvironmentId,
+  SOURCE_CONTROL_MEDIA_ASSET,
+  ThreadId,
+} from "@t3tools/contracts";
 
 const harness = vi.hoisted(() => ({
-  refreshAssetUrl: vi.fn<(environmentId: string, resource: { url: string }) => Promise<string>>(),
+  refreshAssetUrl:
+    vi.fn<(environmentId: string, resource: { url: string }) => Promise<string | null>>(),
   alert: vi.fn(),
   previews: [] as unknown[],
   mounts: 0,
@@ -137,4 +143,28 @@ it("closes the preview when the selected image cannot be resolved", async () => 
 
   expect(preview.onRequestClose).toHaveBeenCalledOnce();
   expect(harness.alert).toHaveBeenCalledOnce();
+});
+
+it("says which file was missing and asks to reconnect only without a connection", async () => {
+  const resource = {
+    _tag: "media-file",
+    threadId: ThreadId.make("thread"),
+    path: "v2/a.png",
+  } as const;
+  const selected: FilePreviewItem = { kind: "image", environmentId, resource };
+  for (const [failure, message] of [
+    [
+      new AssetWorkspaceAssetNotFoundError({ resource, checkedPath: "/repo/v2/a.png" }),
+      "File not found: /repo/v2/a.png",
+    ],
+    [new AssetWorkspaceAssetNotFoundError({ resource }), "File not found: v2/a.png"],
+    [null, "Reconnect to this environment and try again."],
+  ] as const) {
+    harness.refreshAssetUrl.mockImplementation(async () => {
+      if (failure) throw failure;
+      return null;
+    });
+    await using _preview = await openGallery(selected, [selected]);
+    expect(harness.alert).toHaveBeenCalledWith("Could not open preview", message);
+  }
 });
