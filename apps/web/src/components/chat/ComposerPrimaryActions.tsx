@@ -98,16 +98,16 @@ const messageActionPillClassName =
 
 // The mic + send pill: light gray in light mode, black in dark mode.
 const COMPOSER_PILL_CLASS_NAME =
-  "relative isolate inline-flex h-8 shrink-0 items-center rounded-lg surface-pill";
+  "relative isolate inline-flex h-8 shrink-0 items-center rounded-composer-pill surface-pill";
 
 // One 32px button slot inside the pill (send, stop, and later the mic), concentric
 // with the pill inside its 1px rim.
 // An icon button inside the pill, shared by send and the pane thumbnail's mock composer.
 export const COMPOSER_PILL_BUTTON_CLASS_NAME =
-  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-md text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
+  "relative isolate flex h-full items-center justify-center gap-1 overflow-hidden rounded-composer-pill-button text-foreground transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
 
 const COMPOSER_PILL_SLOT_CLASS_NAME =
-  "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-item outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
+  "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-composer-pill-button outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
 
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
