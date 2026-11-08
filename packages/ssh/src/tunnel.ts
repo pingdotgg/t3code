@@ -882,7 +882,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         "sh",
         "-c",
         shellSingleQuote(
-          `case "\${SHELL##*/}" in csh|tcsh) exec sh -l -s -- ${stateKey} ;; *) exec "\${SHELL:-/bin/sh}" -l -c ${shellSingleQuote(`exec sh -s -- ${stateKey}`)} ;; esac`,
+          `case "\${SHELL##*/}" in csh|tcsh) exec sh -l -s -- ${stateKey} ;; *) exec "\${SHELL:-/bin/sh}" -l -c "exec sh -s -- ${stateKey}" ;; esac`,
         ),
       ],
       stdin: buildRemoteLaunchScript(runner),

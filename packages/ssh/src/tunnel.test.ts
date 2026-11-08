@@ -178,11 +178,21 @@ describe("ssh tunnel scripts", () => {
         if (yield* fs.exists("/bin/tcsh")) {
           cases.push({ shell: "/bin/tcsh", outerShell: "/bin/tcsh", expected: "missing" });
         }
+        const environment = yield* HostProcess.Environment;
+        for (const folder of (environment.PATH ?? "").split(":")) {
+          const nu = `${folder}/nu`;
+          if (folder && (yield* fs.exists(nu))) {
+            cases.push({ shell: nu, outerShell: nu, expected: "missing" });
+            break;
+          }
+        }
         for (const { shell, outerShell, expected } of cases) {
           const child = yield* spawner.spawn(
             ChildProcess.make(outerShell, ["-c", remoteCommand], {
               env: {
+                PATH: environment.PATH ?? "/usr/bin:/bin",
                 HOME: directory,
+                XDG_CONFIG_HOME: directory,
                 SHELL: shell,
                 BASH_ENV: startupFile,
                 ZDOTDIR: directory,
@@ -217,7 +227,9 @@ describe("ssh tunnel scripts", () => {
             { concurrency: "unbounded" },
           );
           assert.equal(Number(exitCode), 0, stderr);
-          assert.match(stdout, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
+          // First-run shell messages can precede the bootstrap response.
+          const response = stdout.trim().split(/\r?\n/u).at(-1) ?? "";
+          assert.match(response, new RegExp(`^${expected}:[a-f0-9]{16}$`), shell || "unset SHELL");
         }
       }).pipe(Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
   );
