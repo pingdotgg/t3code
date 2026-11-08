@@ -59,6 +59,8 @@ it.each([
     }
   }
   for (const [markdown, expected] of [
+    ["\uFEFFhttps://x.com/dimasike_", link("https://x.com/dimasike_")],
+    ["\uFEFFSee www.example.com/name~_ next", `See ${link("www.example.com/name~_")} next`],
     ["*https://x.com/dimasike_*", `*${link("https://x.com/dimasike_")}*`],
     ["**https://x.com/dimasike_**", `**${link("https://x.com/dimasike_")}**`],
     ["_https://x.com/dimasike_", `*${link("https://x.com/dimasike")}*`],

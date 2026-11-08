@@ -372,7 +372,7 @@ type MarkdownAstNode = {
 
 function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   return (tree, file) => {
-    const source = String(file);
+    const source = String(file).replace(/^\uFEFF/, "");
     const visit = (node: Root | RootContent) => {
       if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
       for (let index = 0; index < node.children.length; index++) {
