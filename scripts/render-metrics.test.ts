@@ -5,16 +5,19 @@ import * as NodePath from "node:path";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { vitePlusCommand } from "./check-changed-command.ts";
 import { nondeterministic, renderComparison, runOnce } from "./render-metrics.ts";
 
 const mountReport = { commits: 2, renders: 10, components: { Row: 10 } };
+const spawned: Array<[command: string, args: string[]]> = [];
 
 vi.mock("node:child_process", () => ({
   spawnSync: (
-    _command: string,
-    _args: string[],
+    command: string,
+    args: string[],
     options: { env: { T3CODE_RENDER_REPORT_DIR: string } },
   ) => {
+    spawned.push([command, args]);
     NodeFS.writeFileSync(
       NodePath.join(options.env.T3CODE_RENDER_REPORT_DIR, "mount.json"),
       JSON.stringify(mountReport),
@@ -34,6 +37,9 @@ describe("runOnce", () => {
     try {
       expect(runOnce()).toEqual({ mount: mountReport });
       expect(NodeFS.readdirSync(home)).toEqual([]);
+      spawned.length = 0;
+      runOnce("win32");
+      expect(spawned).toEqual([vitePlusCommand(["test", "run", "--project", "renders"], "win32")]);
     } finally {
       vi.unstubAllEnvs();
       NodeFS.rmSync(home, { recursive: true, force: true });

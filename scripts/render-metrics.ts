@@ -4,6 +4,8 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { vitePlusCommand } from "./check-changed-command.ts";
+
 const HELP = `Usage:
   node scripts/render-metrics.ts run [--out <file>] [--runs <n>]
   node scripts/render-metrics.ts compare <before.json> <after.json> [--top <n>]
@@ -37,10 +39,17 @@ export type RenderMetrics = Readonly<Record<string, ScenarioReport>>;
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 
-export function runOnce(): RenderMetrics {
+export function runOnce(
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node tooling has no Effect runtime; tests pass the platform explicitly.
+  platform: NodeJS.Platform = process.platform,
+): RenderMetrics {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renders-"));
   try {
-    const result = NodeChildProcess.spawnSync("vp", ["test", "run", "--project", "renders"], {
+    const [command, commandArgs] = vitePlusCommand(
+      ["test", "run", "--project", "renders"],
+      platform,
+    );
+    const result = NodeChildProcess.spawnSync(command, commandArgs, {
       cwd: NodePath.join(root, "apps/web"),
       env: { ...process.env, T3CODE_RENDER_REPORT_DIR: directory },
       stdio: ["ignore", "inherit", "inherit"],
@@ -119,7 +128,7 @@ if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
   if (command === "run") {
     const runs = Number(option(args, "--runs") ?? 3);
-    const results = Array.from({ length: runs }, runOnce);
+    const results = Array.from({ length: runs }, () => runOnce());
     const unstable = nondeterministic(results);
     if (unstable.length) {
       for (const scenario of unstable) {
