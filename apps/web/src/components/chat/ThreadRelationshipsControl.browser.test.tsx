@@ -269,7 +269,7 @@ it("shows a side chat's full title in its tooltip", async () => {
   );
 });
 
-it("shows a remote subagent's full title in its tooltip even when its environment is unavailable", async () => {
+it("folds a finished remote subagent into previous agents with its full title in its tooltip", async () => {
   setup();
   const longTitle = "Investigate a remote subagent issue across linked environments";
   const remoteEnvId = EnvironmentId.make("remote-env");
@@ -318,12 +318,11 @@ it("shows a remote subagent's full title in its tooltip even when its environmen
     { router: "/environment/fork" },
   );
 
-  // A finished remote task sits with the other finished agents, not in its own list.
   await expect
-    .element(screen.getByRole("button", { name: new RegExp(longTitle) }))
+    .element(page.getByRole("button", { name: new RegExp(longTitle) }))
     .not.toBeInTheDocument();
-  await screen.getByRole("button", { name: /Previous agents/ }).click();
-  const row = screen.getByRole("button", { name: new RegExp(longTitle) });
+  await screen.getByRole("button", { name: "Previous agents" }).click();
+  const row = page.getByRole("menuitem", { name: new RegExp(longTitle) });
   // A long environment label must not squeeze the title out of the row.
   expect(
     page.getByText(longTitle, { exact: true }).element().getBoundingClientRect().width,
