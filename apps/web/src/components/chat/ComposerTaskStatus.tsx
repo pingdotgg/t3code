@@ -52,7 +52,7 @@ export function ComposerTaskStatus({ steps }: { steps: ReadonlyArray<Orchestrati
         }
       />
       <CollapsiblePanel>
-        <ol className="grid gap-2 px-2.5 pb-2 text-meta">
+        <ol className="grid gap-2 ps-2.5 pe-3.25 pb-2 text-meta">
           {steps.map((step) => (
             <li
               key={step.id}
