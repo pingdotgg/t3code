@@ -103,9 +103,10 @@ screenshot, KDE asks you to allow remote control; choose which screens to share
 and approve. Until the T3 server restarts, later sessions reuse that grant
 without asking again. Only one thread controls the desktop at a time.
 
-Control ends when the agent finishes, after ten idle minutes, or when you
+Control ends when the agent stops it, after ten idle minutes, or when you
 choose **End** on the screen-sharing indicator in the system tray. Turning the
-setting off ends control, and KDE asks again next time. Screenshots need Spectacle, and
+setting off ends control, or closes a prompt you have not answered yet, and KDE
+asks again next time. Screenshots need Spectacle, and
 remote control needs `xdg-desktop-portal-kde`; both ship with Plasma.
 
 ## Remote connections

@@ -31,11 +31,18 @@ export interface DesktopRect {
   readonly height: number;
 }
 
-export interface DesktopCapture {
-  /** Every monitor, in physical pixels. */
-  readonly png: Uint8Array;
-  /** The area the capture covers, so screens the user did not share can be cut out. */
+/** The enabled screens, from `kscreen-doctor -j`. */
+export interface DesktopLayout {
+  /** The area a whole-desktop capture covers. */
   readonly bounds: DesktopRect;
+  /** Image pixels per logical pixel in that capture. */
+  readonly scale: number;
+  readonly screens: ReadonlyArray<DesktopRect>;
+}
+
+export interface DesktopCapture extends DesktopLayout {
+  /** Every screen, so the ones the user did not share can be cut out. */
+  readonly png: Uint8Array;
 }
 
 const KscreenOutputs = Schema.fromJsonString(
@@ -54,32 +61,37 @@ const KscreenOutputs = Schema.fromJsonString(
 
 const decodeKscreenOutputs = Schema.decodeUnknownOption(KscreenOutputs);
 
-/** Logical bounds of all enabled outputs from `kscreen-doctor -j`, whose sizes are mode pixels. */
-export const desktopBoundsFromKscreen = (json: string): DesktopRect | null => {
+/** Logical screen layout from `kscreen-doctor -j`, whose sizes are mode pixels. */
+export const desktopLayoutFromKscreen = (json: string): DesktopLayout | null => {
   const outputs = decodeKscreenOutputs(json);
   if (outputs._tag === "None") return null;
-  const rects = outputs.value.outputs
-    .filter((output) => output.enabled && output.scale > 0)
-    .map((output) => {
-      // libkscreen rotations: 2 is left and 8 is right, which swap the sides.
-      const turned = output.rotation === 2 || output.rotation === 8;
-      const width = turned ? output.size.height : output.size.width;
-      const height = turned ? output.size.width : output.size.height;
-      return {
-        left: output.pos.x,
-        top: output.pos.y,
-        right: output.pos.x + Math.round(width / output.scale),
-        bottom: output.pos.y + Math.round(height / output.scale),
-      };
-    });
-  if (rects.length === 0) return null;
-  const left = Math.min(...rects.map((rect) => rect.left));
-  const top = Math.min(...rects.map((rect) => rect.top));
+  const enabled = outputs.value.outputs.filter((output) => output.enabled && output.scale > 0);
+  const screens = enabled.map((output) => {
+    // libkscreen rotations: 2 is left and 8 is right, which swap the sides.
+    const turned = output.rotation === 2 || output.rotation === 8;
+    const width = turned ? output.size.height : output.size.width;
+    const height = turned ? output.size.width : output.size.height;
+    return {
+      x: output.pos.x,
+      y: output.pos.y,
+      width: Math.round(width / output.scale),
+      height: Math.round(height / output.scale),
+    };
+  });
+  if (screens.length === 0) return null;
+  const left = Math.min(...screens.map((screen) => screen.x));
+  const top = Math.min(...screens.map((screen) => screen.y));
   return {
-    x: left,
-    y: top,
-    width: Math.max(...rects.map((rect) => rect.right)) - left,
-    height: Math.max(...rects.map((rect) => rect.bottom)) - top,
+    bounds: {
+      x: left,
+      y: top,
+      width: Math.max(...screens.map((screen) => screen.x + screen.width)) - left,
+      height: Math.max(...screens.map((screen) => screen.y + screen.height)) - top,
+    },
+    // KWin renders a whole-workspace capture at its largest output scale, never below 1, so one
+    // scale covers every screen and lower-density ones come out upscaled.
+    scale: Math.max(1, ...enabled.map((output) => output.scale)),
+    screens,
   };
 };
 const CONSENT_TIMEOUT = "2 minutes";
@@ -169,8 +181,10 @@ const make = Effect.gen(function* () {
     );
   });
 
-  // Spectacle reads the screen through KWin, which lets it in by its desktop file.
-  // Background mode writes only `--output`: no clipboard, notification, or save folder.
+  // Spectacle reads the screen through KWin, which lets it in by its desktop file. Background
+  // mode writes only `--output`. `--fullscreen` is KWin's CaptureWorkspace at native resolution:
+  // every screen's logical bounding box at one scale. A capture that does not fit the layout read
+  // after it is refused.
   const capture = Effect.scoped(
     Effect.gen(function* () {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-computer-" });
@@ -194,14 +208,14 @@ const make = Effect.gen(function* () {
         timeout: "15 seconds",
         maxOutputBytes: 4 * 1024 * 1024,
       });
-      const bounds = screens.code === 0 ? desktopBoundsFromKscreen(screens.stdout) : null;
-      if (bounds === null) {
+      const layout = screens.code === 0 ? desktopLayoutFromKscreen(screens.stdout) : null;
+      if (layout === null) {
         return yield* new ComputerUseOperationError({
           operation: "screenshot",
           cause: { exitCode: screens.code, stderr: screens.stderr.slice(0, 500) },
         });
       }
-      return { png: yield* fileSystem.readFile(output), bounds };
+      return { png: yield* fileSystem.readFile(output), ...layout };
     }),
   ).pipe(
     Effect.mapError((cause) =>

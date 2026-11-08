@@ -1,9 +1,17 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ComputerUseConsentError, ThreadId } from "@t3tools/contracts";
+import {
+  ComputerUseConsentError,
+  ComputerUseOperationError,
+  ThreadId,
+  type ServerSettings as Settings,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -20,14 +28,23 @@ const right = { nodeId: 2, x: 200, y: 0, width: 200, height: 100 };
 const png = (width: number, height: number, value = 0) =>
   encodePng({ width, height, data: new Uint8Array(width * height * 3).fill(value) });
 const wholeDesktop = { x: 0, y: 0, width: 400, height: 100 };
+const layout = (scale: number, screens = [left, right]) => ({
+  bounds: wholeDesktop,
+  scale,
+  screens,
+});
 
 const harness = (options: {
   readonly enabled?: boolean;
-  readonly firstOpen?: "cancelled";
+  readonly firstOpen?: "cancelled" | "pending";
   readonly failKeyPress?: number;
+  readonly failKeyRelease?: number;
+  readonly failCaptures?: number;
 }) =>
   Effect.gen(function* () {
     const events: Array<string> = [];
+    const dialogShown = yield* Deferred.make<void>();
+    let failCaptures = options.failCaptures ?? 0;
     const opens: Array<string | null> = [];
     const closes = yield* Queue.unbounded<number>();
     const ends: Array<Deferred.Deferred<void>> = [];
@@ -35,6 +52,7 @@ const harness = (options: {
     const makeSession = (index: number): RemoteDesktopSession => {
       const ended = Deferred.makeUnsafe<void>();
       ends.push(ended);
+      let closed = false;
       return {
         // The portal lists streams in its own order; display indexes go left to right.
         streams: [right, left],
@@ -45,13 +63,16 @@ const harness = (options: {
           record(`button ${button.toString(16)} ${pressed ? "down" : "up"}`),
         pointerAxis: (dx, dy) => record(`axis ${dx} ${dy}`),
         keyboardKeysym: (keysym, pressed) =>
-          pressed && keysym === options.failKeyPress
+          keysym === (pressed ? options.failKeyPress : options.failKeyRelease)
             ? Effect.fail(
                 new PortalCallError({ member: "NotifyKeyboardKeysym", cause: "rejected" }),
               )
             : record(`key ${keysym.toString(16)} ${pressed ? "down" : "up"}`),
+        // Idempotent, like the portal's.
         close: Effect.suspend(() => {
           Deferred.doneUnsafe(ended, Effect.void);
+          if (closed) return Effect.void;
+          closed = true;
           return Queue.offer(closes, index);
         }).pipe(Effect.asVoid),
       };
@@ -63,24 +84,52 @@ const harness = (options: {
         openSession: (restoreToken) =>
           Effect.suspend(() => {
             opens.push(restoreToken);
-            return opens.length === 1 && options.firstOpen === "cancelled"
-              ? Effect.fail(new ComputerUseConsentError({ outcome: "cancelled" }))
-              : Effect.succeed(makeSession(opens.length));
+            if (opens.length > 1 || options.firstOpen === undefined) {
+              return Effect.succeed(makeSession(opens.length));
+            }
+            if (options.firstOpen === "cancelled") {
+              return Effect.fail(new ComputerUseConsentError({ outcome: "cancelled" }));
+            }
+            // A consent dialog nobody answers; interrupting it is how the portal closes it.
+            return Deferred.succeed(dialogShown, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.onInterrupt(() => record("dialog closed")),
+            );
           }),
-        capture: Effect.succeed({ png: png(400, 100), bounds: wholeDesktop }),
+        capture: Effect.suspend(() =>
+          failCaptures-- > 0
+            ? Effect.fail(
+                new ComputerUseOperationError({ operation: "screenshot", cause: "spectacle" }),
+              )
+            : Effect.succeed({ png: png(400, 100), ...layout(1) }),
+        ),
       }),
     );
-    const services = layer.pipe(
-      Layer.provide(desktop),
+    // layerTest never emits changes; the service needs them to see the setting turn off.
+    const settings = Layer.effect(
+      ServerSettings.ServerSettingsService,
+      Effect.gen(function* () {
+        const base = yield* ServerSettings.ServerSettingsService;
+        const changes = yield* PubSub.unbounded<Settings>();
+        return ServerSettings.ServerSettingsService.of({
+          ...base,
+          updateSettings: (patch) =>
+            base.updateSettings(patch).pipe(Effect.tap((next) => PubSub.publish(changes, next))),
+          subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
+        });
+      }),
+    ).pipe(
       Layer.provide(
         ServerSettings.ServerSettingsService.layerTest({
           enableAgentComputerAccess: options.enabled ?? true,
         }),
       ),
     );
+    const services = layer.pipe(Layer.provide(desktop), Layer.provideMerge(settings));
     return {
       events,
       opens,
+      dialogShown: Deferred.await(dialogShown),
       takeClose: Queue.take(closes),
       endFromDesktop: (session: number) => Deferred.doneUnsafe(ends[session - 1]!, Effect.void),
       services,
@@ -184,16 +233,102 @@ describe("ComputerUse", () => {
     }),
   );
 
+  it.effect("releases held modifiers and ends control when a key release fails", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ failKeyRelease: 0x74 });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        yield* computer.screenshot({ threadId: threadA });
+        const error = yield* Effect.flip(
+          computer.act({ threadId: threadA, action: "key", keys: "ctrl+t" }),
+        );
+        expect(error).toMatchObject({ _tag: "ComputerUseOperationError", operation: "input" });
+        expect(test.events).toEqual(["key ffe3 down", "key 74 down", "key ffe3 up"]);
+        // Ending the session makes the desktop drop the stuck key.
+        expect(yield* test.takeClose).toBe(1);
+        const next = yield* Effect.flip(click(threadA, 1, 1));
+        expect(next.message).toContain("Call `computer_screenshot` first");
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
   it.effect("ends idle control after ten minutes and keeps the grant", () =>
     Effect.gen(function* () {
       const test = yield* harness({});
       yield* Effect.gen(function* () {
         const computer = yield* ComputerUse;
-        yield* computer.screenshot({ threadId: threadA });
+        // A first screenshot that fails still started a session, which must not outlive idling.
+        const invalid = yield* Effect.flip(computer.screenshot({ threadId: threadA, display: 2 }));
+        expect(invalid.message).toBe("There is no display 2. Displays are 0 to 1.");
         yield* TestClock.adjust("10 minutes");
         expect(yield* test.takeClose).toBe(1);
         yield* computer.screenshot({ threadId: threadB });
+        yield* TestClock.adjust("10 minutes");
+        expect(yield* test.takeClose).toBe(2);
         expect(test.opens).toEqual([null, "token-1"]);
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
+  it.effect("frees the desktop when the first screenshot cannot capture", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ failCaptures: 1 });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        const failed = yield* Effect.flip(computer.screenshot({ threadId: threadA }));
+        expect(failed).toMatchObject({
+          _tag: "ComputerUseOperationError",
+          operation: "screenshot",
+        });
+        expect(yield* test.takeClose).toBe(1);
+        yield* computer.screenshot({ threadId: threadB });
+        expect(test.opens).toEqual([null, "token-1"]);
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
+  it.effect("turning the setting off closes an unanswered prompt and refuses queued calls", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ firstOpen: "pending" });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const pending = yield* Effect.forkChild(
+          Effect.flip(computer.screenshot({ threadId: threadA })),
+        );
+        yield* test.dialogShown;
+        const queued = yield* Effect.forkChild(
+          Effect.flip(computer.screenshot({ threadId: threadA })),
+        );
+        yield* settings.updateSettings({ enableAgentComputerAccess: false });
+        expect((yield* Fiber.join(pending)).message).toContain("Settings > Devices");
+        expect(test.events).toEqual(["dialog closed"]);
+        expect((yield* Fiber.join(queued)).message).toContain("Settings > Devices");
+        expect(test.opens).toEqual([null]);
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
+  it.effect("stopping closes this thread's unanswered prompt", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ firstOpen: "pending" });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        const pending = yield* Effect.forkChild(
+          Effect.flip(computer.screenshot({ threadId: threadA })),
+        );
+        yield* test.dialogShown;
+        expect(yield* computer.stop({ threadId: threadB, forget: false })).toEqual({
+          stopped: false,
+        });
+        expect(test.events).toEqual([]);
+        expect(yield* computer.stop({ threadId: threadA, forget: false })).toEqual({
+          stopped: true,
+        });
+        expect(test.events).toEqual(["dialog closed"]);
+        expect((yield* Fiber.join(pending)).message).toContain("stopped");
+        yield* computer.screenshot({ threadId: threadB });
+        expect(test.opens).toEqual([null, null]);
       }).pipe(Effect.provide(test.services));
     }),
   );
@@ -224,7 +359,8 @@ describe("ComputerUse", () => {
 
   it("maps physical capture pixels to logical display coordinates", () => {
     // A 2x display: the capture is twice the logical size.
-    const shot = renderScreenshot({ png: png(800, 200), bounds: wholeDesktop }, [left, right], 1);
+    const shot = renderScreenshot({ png: png(800, 200), ...layout(2) }, [left, right], 1);
+    if (typeof shot === "string") throw new Error(shot);
     expect(shot.frame).toEqual({
       originX: 200,
       originY: 0,
@@ -241,19 +377,70 @@ describe("ComputerUse", () => {
     });
   });
 
+  it.each([
+    ["an image at another scale", png(400, 100), layout(2), [left, right]],
+    ["a stream on no current screen", png(400, 100), layout(1), [left, { ...right, x: 210 }]],
+  ])("refuses a capture that does not line up: %s", (_, image, capturedLayout, streams) => {
+    expect(renderScreenshot({ png: image, ...capturedLayout }, streams, undefined)).toContain(
+      "The screen layout changed",
+    );
+  });
+
   it("shows only the screens the user shared", () => {
-    const capture = { png: png(400, 100, 255), bounds: wholeDesktop };
+    const capture = { png: png(400, 100, 255), ...layout(1) };
     const onlyRight = renderScreenshot(capture, [right], undefined);
+    if (typeof onlyRight === "string") throw new Error(onlyRight);
     expect(onlyRight.frame).toMatchObject({ originX: 200, width: 200, height: 100 });
 
     // A shorter screen leaves a corner of the shared area that no screen covers.
     const short = { ...right, height: 50 };
-    const shot = renderScreenshot(capture, [left, short], undefined);
+    const shot = renderScreenshot(
+      { ...capture, ...layout(1, [left, short]) },
+      [left, short],
+      undefined,
+    );
+    if (typeof shot === "string") throw new Error(shot);
     const image = decodePng(shot.png);
     const pixel = (x: number, y: number) => image.data[(y * image.width + x) * 3];
     expect([pixel(10, 80), pixel(300, 10), pixel(300, 80)]).toEqual([255, 255, 0]);
     expect(locatePoint(shot.frame, [left, short], 300, 80)).toBe(
       "(300, 80) is not on a shared display.",
     );
+  });
+
+  it("never averages an unshared screen into a downscaled screenshot", () => {
+    // Three 3x screens; the middle one is unshared and green, and downscaling straddles its edges.
+    const screens = [
+      { nodeId: 1, x: 0, y: 0, width: 320, height: 200 },
+      { nodeId: 2, x: 320, y: 0, width: 301, height: 200 },
+      { nodeId: 3, x: 621, y: 0, width: 379, height: 200 },
+    ];
+    const width = 3000;
+    const height = 600;
+    const data = new Uint8Array(width * height * 3);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++)
+        data[(y * width + x) * 3 + (x >= 960 && x < 1863 ? 1 : 0)] = 255;
+    }
+    const shot = renderScreenshot(
+      {
+        png: encodePng({ width, height, data }),
+        bounds: { x: 0, y: 0, width: 1000, height: 200 },
+        scale: 3,
+        screens,
+      },
+      [screens[0]!, screens[2]!],
+      undefined,
+    );
+    if (typeof shot === "string") throw new Error(shot);
+    const image = decodePng(shot.png);
+    expect(image.width).toBeLessThan(width);
+    const brightest = (channel: number) =>
+      image.data.reduce(
+        (max, value, index) => (index % 3 === channel ? Math.max(max, value) : max),
+        0,
+      );
+    expect(brightest(1)).toBe(0);
+    expect(brightest(0)).toBe(255);
   });
 });
