@@ -828,7 +828,7 @@ it.effect(
         assert.isTrue(waitedB.waitTimedOut);
         assert.equal((yield* h.listed(b.thread.id, waitedB.taskId)).task?.completionWake, "always");
 
-        // ...and its failure names it and links its child in the root's notice.
+        // Its failure joins the unread result in the root's completion notice.
         const settledB = yield* h.taskSettles(waitedB.taskId);
         yield* h.finishTurn(h.childTurn(waitedB.childThreadId), "failed");
         yield* Fiber.join(settledB);
@@ -843,8 +843,7 @@ it.effect(
           outcome: "failed",
           source: {
             kind: "delegated_task",
-            taskIds: [waitedB.taskId],
-            childThreadId: waitedB.childThreadId!,
+            taskIds: [fromA.taskId, waitedB.taskId],
           },
         });
 
