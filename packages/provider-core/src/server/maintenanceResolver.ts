@@ -576,9 +576,13 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const args = ["upgrade", miseTool];
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     // Mise reads its settings from this environment, so each one gets its own cached answer.
-    const envKey = NodeCrypto.createHash("sha256")
-      .update(JSON.stringify(Object.entries(context.env).toSorted(([a], [b]) => (a < b ? -1 : 1))))
-      .digest("hex");
+    const envHash = NodeCrypto.createHash("sha256");
+    for (const [name, value] of Object.entries(context.env).toSorted(([a], [b]) =>
+      a < b ? -1 : 1,
+    )) {
+      envHash.update(`${name}\0${value ?? ""}\0`);
+    }
+    const envKey = envHash.digest("hex");
     const capabilities = makeProviderMaintenanceCapabilities({
       ...owner,
       updateExecutable: misePath,
