@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -137,10 +138,14 @@ it.effect(
 /** Answers each tool call with the next scripted response for that tool. */
 const scriptedTools = (script: Record<string, Array<unknown>>) => {
   const calls: Array<{ readonly tool: string; readonly args: unknown }> = [];
-  const call = ((tool: string, args: unknown) => {
+  const call = ((tool: string, args: unknown, schema: Schema.Decoder<unknown>) => {
     calls.push({ tool, args });
     const next = script[tool]?.shift();
-    return next === undefined ? Effect.die(`unscripted ${tool} call`) : Effect.succeed(next);
+    return next === undefined
+      ? Effect.die(`unscripted ${tool} call`)
+      : tool === "t3_thread_wait"
+        ? Schema.decodeEffect(schema)(next).pipe(Effect.orDie)
+        : Effect.succeed(next);
   }) as ThreadTools["call"];
   return { tools: { call } satisfies ThreadTools, calls };
 };
@@ -175,8 +180,8 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
     assert.deepStrictEqual(
       calls.filter((entry) => entry.tool === "t3_thread_wait").map((entry) => entry.args),
       [
-        { threadId, runId, timeoutMs: 15_000 },
-        { threadId, runId, timeoutMs: 15_000 },
+        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
+        { threadId, runId, timeoutMs: 15_000, returnOnInput: true },
       ],
     );
   }),
@@ -234,6 +239,24 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
       status: "completed",
     });
   }),
+);
+
+it.effect.each(["running", "completed"] as const)(
+  "--wait reads legacy pending requests and rechecks its %s run",
+  (status) =>
+    Effect.gen(function* () {
+      const { tools } = scriptedTools({
+        t3_thread_wait: [
+          { threadId, runId, status: "running", timedOut: true },
+          { threadId, runId, status, timedOut: status === "running" },
+        ],
+        t3_thread_read: [{ thread: { pendingRequestCount: 1 } }],
+      });
+      assert.deepStrictEqual(
+        yield* waitForRun(tools, threadId, runId),
+        status === "running" ? { type: "needs_input" } : { type: "ended", runId, status },
+      );
+    }),
 );
 
 /** Serves t3_thread_read pages the way the server does: positions count every item. */

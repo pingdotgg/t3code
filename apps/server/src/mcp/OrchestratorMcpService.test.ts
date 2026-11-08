@@ -37,6 +37,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
+import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -3649,6 +3651,94 @@ describe("OrchestratorMcpService thread lookup", () => {
         Effect.provide(
           service([], sent, {
             getThreadShell: () => Effect.die("Unauthorized target access"),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect.each([
+    { name: "legacy client", returnOnInput: undefined, agent: false, pending: false },
+    { name: "updated client", returnOnInput: true, agent: false, pending: true },
+    { name: "thread caller", returnOnInput: undefined, agent: true, pending: true },
+    { name: "terminal-only thread caller", returnOnInput: false, agent: true, pending: false },
+  ])("preserves wait semantics for $name", (scenario) =>
+    Effect.gen(function* () {
+      const runId = RunId.make("run:compat-wait");
+      const projection = {
+        ...idleThreadProjection(launched),
+        runs: [{ id: runId, ordinal: 1, status: "running" }],
+        nodes: [{ id: "node:compat-wait", runId }],
+        runtimeRequests: [
+          {
+            id: "request:compat-wait",
+            nodeId: "node:compat-wait",
+            kind: "command",
+            status: "pending",
+            responseCapability: { type: "live" },
+            createdAt: DateTime.makeUnsafe(0),
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const management = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(
+          ThreadManagementService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+                Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+                ServerSettings.layerTest(),
+                Layer.mock(Orchestrator.OrchestratorV2)({
+                  getThreadEventSequence: () => Effect.succeed(0),
+                  getThreadRecords: () => Effect.succeed(projection),
+                  streamStoredEventsFrom: () => Stream.never,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      const sent = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const waiting = yield* mcp
+          .waitForThread(
+            {
+              ...client,
+              ...(scenario.agent
+                ? {
+                    thread: {
+                      threadId: launched.id,
+                      providerSessionId: "session:compat-wait",
+                      providerInstanceId: ProviderInstanceId.make("codex"),
+                    },
+                  }
+                : {}),
+            },
+            {
+              threadId: launched.id,
+              runId,
+              timeoutMs: 60_000,
+              ...(scenario.returnOnInput === undefined
+                ? {}
+                : { returnOnInput: scenario.returnOnInput }),
+            },
+          )
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("1 minute");
+        const result = yield* Fiber.join(waiting);
+        assert.equal(result.timedOut, !scenario.pending);
+        assert.equal(result.status, "running");
+        assert.equal(
+          result.pendingApproval?.requestId ?? null,
+          scenario.pending ? "request:compat-wait" : null,
+        );
+      }).pipe(
+        Effect.provide(
+          service([launched], sent, {
+            getThreadRecords: () => Effect.succeed(projection),
+            getProjectThreadRecords: () => Effect.succeed(projection),
+            waitForThread: management.waitForThread,
           }),
         ),
       );

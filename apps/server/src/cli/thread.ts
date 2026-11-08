@@ -435,6 +435,12 @@ type WaitOutcome =
     }
   | { readonly type: "needs_input" };
 
+// Keep the missing flag observable: older servers need the thread-wide request fallback.
+const CliThreadWaitResult = Schema.Struct({
+  ...OrchestratorMcpThreadWaitResult.fields,
+  hasPendingQuestion: Schema.optional(Schema.Boolean),
+});
+
 /**
  * Waits for this exact run, following a restart to its continuation, so a
  * message another client sends meanwhile cannot stand in for its result.
@@ -445,8 +451,12 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
   runId: RunId,
 ) {
   const waitSlice = (timeoutMs: number) =>
-    tools.call("t3_thread_wait", { threadId, runId, timeoutMs }, OrchestratorMcpThreadWaitResult);
-  const ended = (waited: OrchestratorMcpThreadWaitResult) =>
+    tools.call(
+      "t3_thread_wait",
+      { threadId, runId, timeoutMs, returnOnInput: true },
+      CliThreadWaitResult,
+    );
+  const ended = (waited: typeof CliThreadWaitResult.Type) =>
     ({ type: "ended", runId: waited.runId, status: waited.status }) satisfies WaitOutcome;
   while (true) {
     const waited = yield* waitSlice(WAIT_SLICE_MS);
@@ -454,6 +464,20 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
       return { type: "needs_input" } satisfies WaitOutcome;
     }
     if (!waited.timedOut) return ended(waited);
+    if (waited.hasPendingQuestion === undefined) {
+      const { thread } = yield* tools.call(
+        "t3_thread_read",
+        { threadId, limit: 1, runLimit: 1 },
+        OrchestratorMcpThreadReadResult,
+      );
+      if (thread.pendingRequestCount > 0) {
+        // A later run can own the request if our run finished since the timeout.
+        const recheck = yield* waitSlice(1);
+        return recheck.hasPendingQuestion || recheck.pendingApproval !== null || recheck.timedOut
+          ? ({ type: "needs_input" } satisfies WaitOutcome)
+          : ended(recheck);
+      }
+    }
   }
 });
 

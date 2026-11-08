@@ -133,6 +133,12 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
 }
 
+/** External clients must opt in: older CLIs treat every non-timeout as a terminal run. */
+export const threadWaitReturnsOnInput = (
+  scope: McpInvocationScope,
+  returnOnInput: boolean | undefined,
+): boolean => returnOnInput ?? (scope.thread !== undefined || scope.client?.linked === true);
+
 /**
  * T3 Code renders `t3-thread://` links as thread chips. Other MCP clients cannot open them, so
  * they get the hosted link Copy thread copies, which opens the thread in either app or a browser.
