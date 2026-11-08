@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
+import { availableFileEditors } from "./editorPreferences";
 import {
   revealInFileExplorerLabelForKind,
   revealInFileExplorerLabelForOs,
@@ -90,7 +91,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const availableEditors = availableFileEditors(serverConfig?.availableEditors ?? []);
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:

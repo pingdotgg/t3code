@@ -2,10 +2,15 @@ import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connect
 import { EnvironmentId, type KeybindingRule, type ServerConfig } from "@t3tools/contracts";
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { Atom, AtomRegistry } from "effect/reactivity";
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { resolveShortcutCommand } from "../keybindings";
-import { createShortcutKeybindingsAtom } from "./server";
+import {
+  createShortcutKeybindingsAtom,
+  environmentAvailableEditorsAtom,
+  serverEnvironment,
+} from "./server";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 
 const PRIMARY = EnvironmentId.make("primary");
 const A = EnvironmentId.make("a");
@@ -65,6 +70,21 @@ function makeHarness(input: {
 const registries: AtomRegistry.AtomRegistry[] = [];
 afterEach(() => {
   for (const registry of registries.splice(0)) registry.dispose();
+});
+
+it("reads installed apps from the destination environment instead of the primary", () => {
+  const primaryConfig = Atom.make({ ...config([]), availableEditors: ["idea"] } as ServerConfig);
+  const destinationConfig = Atom.make({
+    ...config([]),
+    availableEditors: ["ghostty", "file-manager"],
+  } as ServerConfig);
+  using _config = vi
+    .spyOn(serverEnvironment, "configValueAtom")
+    .mockImplementation((id) => (id === PRIMARY ? primaryConfig : destinationConfig));
+  const registry = AtomRegistry.make({ initialValues: [[primaryEnvironmentIdAtom, PRIMARY]] });
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  expect(registry.get(environmentAvailableEditorsAtom(A))).toEqual(["ghostty", "file-manager"]);
+  expect(registry.get(environmentAvailableEditorsAtom(PRIMARY))).toEqual(["idea"]);
 });
 
 describe("createShortcutKeybindingsAtom", () => {

@@ -1,7 +1,18 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveFileContextMenuAbsolutePath } from "./fileContextMenu";
+const run = vi.hoisted(() => vi.fn());
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => ({ availableEditors: ["idea", "ghostty", "file-manager"] }),
+}));
+vi.mock("./state/server", () => ({
+  serverEnvironment: { configValueAtom: () => undefined },
+}));
+vi.mock("./state/shell", () => ({ shellEnvironment: { openInEditor: undefined } }));
+vi.mock("./state/use-atom-command", () => ({ useAtomCommand: () => run }));
+
+import { resolveFileContextMenuAbsolutePath, useFileContextMenu } from "./fileContextMenu";
 
 const BASE_TARGET = {
   environmentId: EnvironmentId.make("environment-local"),
@@ -41,4 +52,14 @@ describe("resolveFileContextMenuAbsolutePath", () => {
       }),
     ).toBeNull();
   });
+});
+
+it("excludes project-only apps from file actions", async () => {
+  run.mockReset();
+  const menu = useFileContextMenu(BASE_TARGET.environmentId);
+  expect(menu.buildItems(BASE_TARGET).find((item) => item.id === "open-with")?.children).toEqual([
+    { id: "editor:idea", label: "IntelliJ IDEA" },
+  ]);
+  await menu.activate("editor:ghostty", BASE_TARGET);
+  expect(run).not.toHaveBeenCalled();
 });

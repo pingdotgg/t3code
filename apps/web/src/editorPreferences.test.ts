@@ -5,7 +5,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
+import { assert, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
@@ -27,7 +27,13 @@ vi.mock("./hooks/useLocalStorage", () => ({
   useLocalStorage: vi.fn(),
 }));
 
-import { useOpenInPreferredEditor } from "./editorPreferences";
+import {
+  availableFileEditors,
+  availableProjectOpeners,
+  resolvePreferredEditor,
+  resolvePreferredProjectOpener,
+  useOpenInPreferredEditor,
+} from "./editorPreferences";
 
 const primary = EnvironmentId.make("primary");
 const secondary = EnvironmentId.make("secondary");
@@ -66,4 +72,24 @@ it("checks revocation and regrant when a retained editor callback is invoked", a
     input: { cwd: "/work/readme.md:5", editor: "vscode" },
   });
   expect(state.setPreference).toHaveBeenCalledTimes(1);
+});
+
+const available = ["idea", "ghostty", "file-manager"] as const;
+
+describe("editor preferences", () => {
+  it("keeps IntelliJ for files and excludes Ghostty", () => {
+    expect(availableFileEditors(available)).toEqual(["idea", "file-manager"]);
+    expect(resolvePreferredEditor(available, "idea")).toBe("idea");
+  });
+
+  it("keeps IntelliJ available for projects alongside Ghostty", () => {
+    expect(availableProjectOpeners(available)).toEqual(["ghostty", "idea", "file-manager"]);
+    expect(resolvePreferredProjectOpener(available, null, "idea")).toBe("idea");
+    expect(resolvePreferredProjectOpener(available, "ghostty", "idea")).toBe("ghostty");
+  });
+
+  it("resolves project and file preferences independently", () => {
+    expect(resolvePreferredProjectOpener(available, "file-manager", "idea")).toBe("file-manager");
+    expect(resolvePreferredEditor(available, "idea")).toBe("idea");
+  });
 });

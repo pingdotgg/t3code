@@ -66,6 +66,27 @@ interface TargetPathAndPosition {
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const GHOSTTY_APP_BUNDLE = "Ghostty.app";
+const GHOSTTY_SCRIPTING_DEFINITION_PARTS = ["Contents", "Resources", "Ghostty.sdef"] as const;
+const GHOSTTY_OSASCRIPT_COMMAND = "/usr/bin/osascript";
+const GHOSTTY_OPEN_PROJECT_SCRIPT = `on run argv
+  set projectDirectory to item 1 of argv
+  set ghosttyWasRunning to application id "com.mitchellh.ghostty" is running
+
+  tell application id "com.mitchellh.ghostty"
+    set surfaceConfig to new surface configuration
+    set initial working directory of surfaceConfig to projectDirectory
+
+    if ghosttyWasRunning and (count of windows) > 0 then
+      set projectTab to new tab in front window with configuration surfaceConfig
+      select tab projectTab
+    else
+      set projectWindow to new window with configuration surfaceConfig
+      activate window projectWindow
+    end if
+    activate
+  end tell
+end run`;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -362,6 +383,52 @@ function resolveWslFileManagerPath(target: string, distroName: string): string {
   return `\\\\wsl.localhost\\${distroName}${relativePath.length > 0 ? `\\${relativePath}` : ""}`;
 }
 
+export const GhosttyApplicationPaths = Context.Reference<ReadonlyArray<string>>(
+  "t3/process/externalLauncher/GhosttyApplicationPaths",
+  {
+    defaultValue: () => {
+      const applicationPaths = [`/Applications/${GHOSTTY_APP_BUNDLE}`];
+      const home = process.env.HOME?.trim();
+      if (home) applicationPaths.push(`${home}/Applications/${GHOSTTY_APP_BUNDLE}`);
+      return applicationPaths;
+    },
+  },
+);
+
+function ghosttyScriptingDefinitionPaths(
+  path: Path.Path,
+  applicationPaths: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return applicationPaths.map((applicationPath) =>
+    path.join(applicationPath, ...GHOSTTY_SCRIPTING_DEFINITION_PARTS),
+  );
+}
+
+const isGhosttyAvailable = Effect.fn("externalLauncher.isGhosttyAvailable")(function* (
+  platform: NodeJS.Platform,
+): Effect.fn.Return<boolean, never, FileSystem.FileSystem | Path.Path> {
+  if (platform !== "darwin") return false;
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const applicationPaths = yield* GhosttyApplicationPaths;
+  for (const scriptingDefinitionPath of ghosttyScriptingDefinitionPaths(path, applicationPaths)) {
+    if (yield* fileSystem.exists(scriptingDefinitionPath).pipe(Effect.orElseSucceed(() => false))) {
+      return true;
+    }
+  }
+  return false;
+});
+
+function buildGhosttyLaunch(target: string): EditorLaunch {
+  return {
+    editor: "ghostty",
+    target,
+    command: GHOSTTY_OSASCRIPT_COMMAND,
+    args: ["-e", GHOSTTY_OPEN_PROJECT_SCRIPT, target],
+  };
+}
+
 function buildBrowserLaunch(
   target: string,
   platform: NodeJS.Platform,
@@ -405,6 +472,13 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    if (editor.id === "ghostty") {
+      if (yield* isGhosttyAvailable(platform)) {
+        available.push(editor.id);
+      }
+      continue;
+    }
+
     if (editor.commands === null) {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);
@@ -473,6 +547,43 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
+  }
+
+  if (editorDef.id === "ghostty") {
+    if (platform !== "darwin") {
+      return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+    }
+    if (!(yield* isGhosttyAvailable(platform))) {
+      return yield* new ExternalLauncherCommandNotFoundError({
+        editor: input.editor,
+        command: GHOSTTY_APP_BUNDLE,
+      });
+    }
+
+    const launch = buildGhosttyLaunch(input.cwd);
+    const fileSystem = yield* FileSystem.FileSystem;
+    const targetInfo = yield* fileSystem.stat(input.cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ExternalLauncherEditorSpawnError({
+            editor: launch.editor,
+            target: launch.target,
+            command: launch.command,
+            args: launch.args,
+            cause,
+          }),
+      ),
+    );
+    if (targetInfo.type !== "Directory") {
+      return yield* new ExternalLauncherEditorSpawnError({
+        editor: launch.editor,
+        target: launch.target,
+        command: launch.command,
+        args: launch.args,
+        cause: new Error("Ghostty project targets must be directories."),
+      });
+    }
+    return launch;
   }
 
   if (editorDef.commands) {

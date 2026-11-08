@@ -19,6 +19,48 @@ import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
+const LAST_PROJECT_OPENER_KEY = "t3code:last-project-opener";
+
+export function availableFileEditors(
+  availableEditors: ReadonlyArray<EditorId>,
+): ReadonlyArray<EditorId> {
+  const availableEditorIds = new Set(availableEditors);
+  return EDITORS.filter((editor) => editor.canOpenFiles && availableEditorIds.has(editor.id)).map(
+    (editor) => editor.id,
+  );
+}
+
+export function availableProjectOpeners(
+  availableEditors: ReadonlyArray<EditorId>,
+): ReadonlyArray<EditorId> {
+  const availableEditorIds = new Set(availableEditors);
+  return EDITORS.filter(
+    (editor) =>
+      editor.canOpenDirectories && editor.showInProjectPicker && availableEditorIds.has(editor.id),
+  ).map((editor) => editor.id);
+}
+
+export function resolvePreferredEditor(
+  availableEditors: ReadonlyArray<EditorId>,
+  storedEditor: EditorId | null,
+): EditorId | null {
+  const fileEditors = availableFileEditors(availableEditors);
+  if (storedEditor && fileEditors.includes(storedEditor)) return storedEditor;
+  return fileEditors[0] ?? null;
+}
+
+export function resolvePreferredProjectOpener(
+  availableEditors: ReadonlyArray<EditorId>,
+  storedProjectOpener: EditorId | null,
+  storedEditor: EditorId | null,
+): EditorId | null {
+  const projectOpeners = availableProjectOpeners(availableEditors);
+  if (storedProjectOpener && projectOpeners.includes(storedProjectOpener)) {
+    return storedProjectOpener;
+  }
+  if (storedEditor && projectOpeners.includes(storedEditor)) return storedEditor;
+  return projectOpeners[0] ?? null;
+}
 
 export class PreferredEditorEnvironmentRequiredError extends Schema.TaggedError<PreferredEditorEnvironmentRequiredError>()(
   "PreferredEditorEnvironmentRequiredError",
@@ -46,20 +88,33 @@ export class PreferredEditorUnavailableError extends Schema.TaggedError<Preferre
 
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
-
-  const effectiveEditor =
-    lastEditor && availableEditors.includes(lastEditor)
-      ? lastEditor
-      : (EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null);
+  const effectiveEditor = resolvePreferredEditor(availableEditors, lastEditor);
 
   return [effectiveEditor, setLastEditor] as const;
 }
 
-function resolveAndPersistPreferredEditor(availableEditors: readonly EditorId[]): EditorId | null {
-  const availableEditorIds = new Set(availableEditors);
+export function usePreferredProjectOpener(availableEditors: ReadonlyArray<EditorId>) {
+  const [lastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
+  const [lastProjectOpener, setLastProjectOpener] = useLocalStorage(
+    LAST_PROJECT_OPENER_KEY,
+    null,
+    EditorId,
+  );
+  const effectiveProjectOpener = resolvePreferredProjectOpener(
+    availableEditors,
+    lastProjectOpener,
+    lastEditor,
+  );
+
+  return [effectiveProjectOpener, setLastProjectOpener] as const;
+}
+
+export function resolveAndPersistPreferredEditor(
+  availableEditors: readonly EditorId[],
+): EditorId | null {
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
-  if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor = resolvePreferredEditor(availableEditors, stored);
+  if (editor === stored) return editor;
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }

@@ -47,8 +47,8 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    usePreferredEditor: (available: readonly EditorId[]) => {
-      const [preferred, setPreferred] = actual.usePreferredEditor(available);
+    usePreferredProjectOpener: (available: readonly EditorId[]) => {
+      const [preferred, setPreferred] = actual.usePreferredProjectOpener(available);
       const recordPreferred: typeof setPreferred = (editor) => {
         state.setPreferred(editor);
         setPreferred(editor);
@@ -104,6 +104,7 @@ async function setup() {
       for (const listener of state.listeners) listener();
       const node = (
         <OpenInPicker
+          mode="project"
           environmentId={selected}
           keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
           availableEditors={availableEditors}
@@ -118,12 +119,12 @@ async function setup() {
   }
 
   function byLabel(label: string) {
-    const element = document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);
+    const element = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
     expect(element, label).not.toBeNull();
     return element!;
   }
 
-  const primaryButton = () => byLabel("Open file in preferred editor");
+  const primaryButton = () => byLabel("Open project in app");
   const menuItems = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
 
   async function click(element: HTMLElement) {
@@ -184,7 +185,7 @@ describe("host editor access", () => {
 
     await renderPicker();
     expect(primaryButton().disabled).toBe(true);
-    expect(byLabel("Choose editor").disabled).toBe(true);
+    expect(byLabel("Choose project app").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
 });

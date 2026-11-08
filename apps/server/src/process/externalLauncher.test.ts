@@ -60,6 +60,7 @@ function makeMockDetachedHandle(input: MockSpawnResult & { readonly onUnref?: ()
 const layerTest = (input: {
   readonly platform: NodeJS.Platform;
   readonly env?: Record<string, string>;
+  readonly ghosttyApplicationPaths?: ReadonlyArray<string>;
   readonly resolveExecutable?: (command: string) => string | undefined;
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
@@ -87,6 +88,7 @@ const layerTest = (input: {
   return Layer.mergeAll(
     ExternalLauncher.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, layerSpawner))),
     Layer.succeed(HostProcess.Platform, input.platform),
+    Layer.succeed(ExternalLauncher.GhosttyApplicationPaths, input.ghosttyApplicationPaths ?? []),
     Layer.succeed(
       SpawnExecutableResolution,
       (command) => input.resolveExecutable?.(command) ?? command,
@@ -905,4 +907,119 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
       ),
     );
   }),
+);
+
+it.effect("discovers scriptable Ghostty app bundles only on macOS", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ghostty-" });
+    const ghosttyApp = path.join(tempDir, "Ghostty.app");
+    const resourcesDir = path.join(ghosttyApp, "Contents", "Resources");
+    yield* fileSystem.makeDirectory(resourcesDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(resourcesDir, "Ghostty.sdef"), "<dictionary />");
+
+    const discover = (platform: NodeJS.Platform, applicationPaths: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform,
+            env: { PATH: "" },
+            ghosttyApplicationPaths: applicationPaths,
+          }),
+        ),
+      );
+
+    assert.equal((yield* discover("darwin", [ghosttyApp])).includes("ghostty"), true);
+    assert.equal((yield* discover("linux", [ghosttyApp])).includes("ghostty"), false);
+    assert.equal(
+      (yield* discover("darwin", [path.join(tempDir, "Missing.app")])).includes("ghostty"),
+      false,
+    );
+
+    const legacyApp = path.join(tempDir, "Legacy Ghostty.app");
+    yield* fileSystem.makeDirectory(path.join(legacyApp, "Contents", "Resources"), {
+      recursive: true,
+    });
+    assert.equal((yield* discover("darwin", [legacyApp])).includes("ghostty"), false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("opens project directories in Ghostty without interpolating the path", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ghostty-" });
+    const ghosttyApp = path.join(tempDir, "Ghostty.app");
+    const resourcesDir = path.join(ghosttyApp, "Contents", "Resources");
+    yield* fileSystem.makeDirectory(resourcesDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(resourcesDir, "Ghostty.sdef"), "<dictionary />");
+    const projectDir = path.join(tempDir, "project's files");
+    yield* fileSystem.makeDirectory(projectDir);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "ghostty", cwd: projectDir });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: "/usr/bin" },
+          ghosttyApplicationPaths: [ghosttyApp],
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, "/usr/bin/osascript");
+    assert.equal(spawned.args[0], "-e");
+    assert.include(spawned.args[1], "new tab in front window");
+    assert.include(spawned.args[1], "new window with configuration");
+    assert.notInclude(spawned.args[1], projectDir);
+    assert.equal(spawned.args[2], projectDir);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects file and missing Ghostty targets", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ghostty-" });
+    const ghosttyApp = path.join(tempDir, "Ghostty.app");
+    const resourcesDir = path.join(ghosttyApp, "Contents", "Resources");
+    yield* fileSystem.makeDirectory(resourcesDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(resourcesDir, "Ghostty.sdef"), "<dictionary />");
+    const filePath = path.join(tempDir, "source.ts");
+    yield* fileSystem.writeFileString(filePath, "export {};");
+
+    const rejectTarget = (cwd: string) =>
+      Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.launchEditor({ editor: "ghostty", cwd }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            platform: "darwin",
+            env: { PATH: "/usr/bin" },
+            ghosttyApplicationPaths: [ghosttyApp],
+          }),
+        ),
+      );
+
+    assert.instanceOf(
+      yield* rejectTarget(filePath),
+      ExternalLauncher.ExternalLauncherEditorSpawnError,
+    );
+    assert.instanceOf(
+      yield* rejectTarget(path.join(tempDir, "missing")),
+      ExternalLauncher.ExternalLauncherEditorSpawnError,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

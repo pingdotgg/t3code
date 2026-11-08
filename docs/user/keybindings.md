@@ -102,6 +102,22 @@ New defaults do not replace commands you customized. If a new default overlaps o
 of your shortcuts, [rule order](#precedence) decides which runs.
 Invalid rules are ignored; if the file cannot be parsed, T3 Code uses defaults.
 
+## Project opener
+
+`editor.openFavorite` defaults to `mod+o` and opens the active project with the app remembered by
+the project header's **Open** menu. This project choice is separate from the editor used for file
+links, diffs, previews, and configuration files.
+
+On macOS, Ghostty appears in the project menu when Ghostty 1.3 or newer is installed in the system
+or user Applications folder. If Ghostty is already running, T3 Code opens the project in a new tab
+in its front window; otherwise it creates a window. macOS may ask for Automation permission the
+first time T3 Code controls Ghostty. Ghostty can also disable this integration through its
+`macos-applescript` setting.
+
+Ghostty is an additional project opener. IntelliJ IDEA remains available for both projects
+and files. Ghostty always opens on the Mac hosting the selected environment, including
+when you connect remotely.
+
 ## Rule shape
 
 Each rule requires a `key` shortcut and a `command` ID. An optional `when`
