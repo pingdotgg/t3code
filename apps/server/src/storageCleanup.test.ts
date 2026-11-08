@@ -2244,12 +2244,16 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("keeps a recent age-only worktree without inspecting Git or reporting it clean", () =>
+  it.live.each([
+    { days: 8, reason: "Inactive for 1 of 8 days" },
+    { days: null, reason: "No rules apply" },
+  ])("keeps an ineligible age/delete-only worktree without Git ($days)", ({ days, reason }) =>
     runCleanupTest(
       Effect.gen(function* () {
         const fixture = yield* cleanupFixture({
           ...DEFAULT_SERVER_SETTINGS.storageCleanup,
-          worktreeAfterDays: 8,
+          worktreeAfterDays: days,
+          worktreeOnDelete: true,
         });
         fixture.setThreads([
           shell({
@@ -2264,7 +2268,7 @@ describe("storage cleanup reports and local file policies", () => {
         const report = yield* fixture.service.runNow;
         expect(report.entries[0]).toMatchObject({
           outcome: "kept",
-          reason: "Inactive for 1 of 8 days",
+          reason,
           bytes: null,
         });
         expect(fixture.gitInspections()).toBe(0);
