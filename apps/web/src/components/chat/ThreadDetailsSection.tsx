@@ -93,18 +93,21 @@ export function ThreadDetailsSection({
           {action}
         </div>
       ) : null}
-      <div
-        id={contentId}
-        ref={contentRef}
-        hidden={card && isCollapsed}
-        className={cn(
-          "flex flex-col",
-          card && "surface-composer rounded-lg p-0.5",
-          card && isCollapsed && "hidden",
-        )}
-      >
-        {children}
-      </div>
+      {/* A card with only a heading (Lineage keeping its menu) draws no empty tray. */}
+      {children == null ? null : (
+        <div
+          id={contentId}
+          ref={contentRef}
+          hidden={card && isCollapsed}
+          className={cn(
+            "flex flex-col",
+            card && "surface-composer rounded-lg p-0.5",
+            card && isCollapsed && "hidden",
+          )}
+        >
+          {children}
+        </div>
+      )}
     </section>
   );
 }
