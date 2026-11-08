@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import pairing from "../src/pkjs/pairing.js";
 import storage from "../src/pkjs/storage.js";
 import { installStorage } from "./xhr-shim.ts";

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import groups from "../src/pkjs/groups.js";
 
 const thread = (threadId: string, directory: string, extra: Record<string, unknown> = {}) => ({

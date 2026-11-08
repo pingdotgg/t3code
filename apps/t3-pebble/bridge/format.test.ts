@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import format from "../src/pkjs/format.js";
 import summary from "../src/pkjs/summary.js";
 

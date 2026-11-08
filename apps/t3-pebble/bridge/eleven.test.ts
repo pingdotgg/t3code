@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import eleven from "../src/pkjs/eleven.js";
 import { installStorage } from "./xhr-shim.ts";
 

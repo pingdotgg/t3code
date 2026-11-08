@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vite-plus/test";
 import mcp from "../src/pkjs/mcp.js";
+import { json, serve, text } from "./http-server.ts";
 import { installXhr } from "./xhr-shim.ts";
 
 function run<T>(invoke: (callback: (error: Error | null, value: T) => void) => void) {
@@ -14,54 +15,51 @@ test("initializes lazily, pages project metadata, and calls tools with session h
   const projectCursors: unknown[] = [];
   const toolArguments: Record<string, unknown>[] = [];
   const seen: Record<string, string | null>[] = [];
-  const upstream = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const body = await request.json();
-      seen.push({
-        authorization: request.headers.get("authorization"),
-        session: request.headers.get("mcp-session-id"),
-        protocol: request.headers.get("mcp-protocol-version"),
-      });
-      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
-      calls.push(body.method === "tools/call" ? body.params.name : body.method);
-      if (body.method === "tools/call") toolArguments.push(body.params.arguments);
-      const result =
-        body.method === "initialize"
-          ? { protocolVersion: "2025-03-26" }
-          : body.params.name === "t3_environment_read"
-            ? { label: "Laptop" }
-            : body.params.name === "t3_project_list"
-              ? (() => {
-                  projectCursors.push(body.params.arguments.cursor);
-                  const cursor = body.params.arguments.cursor;
-                  return cursor === 0
-                    ? { projects: [{ id: "a", workspaceRoot: "/code/a" }], nextCursor: 1 }
-                    : { projects: [{ id: "b", workspaceRoot: "/code/b" }], nextCursor: null };
-                })()
-              : body.params.name === "t3_thread_list"
-                ? {
-                    threads: [
-                      {
-                        threadId: "1",
-                        title: "Test",
-                        projectId: "a",
-                        providerInstanceId: "codex",
-                        updatedAt: new Date(0).toISOString(),
-                      },
-                    ],
-                    nextCursor: null,
-                  }
-                : body.params.name === "t3_thread_read"
-                  ? body.params.arguments.limit === 1
-                    ? { thread: { itemCount: 150 }, items: [] }
-                    : { items: [{ type: "user_message", text: "hi" }] }
-                  : { runId: "run" };
-      return Response.json(
-        { jsonrpc: "2.0", id: body.id, result },
-        { headers: { "mcp-session-id": "session" } },
-      );
-    },
+  const upstream = await serve(async (request) => {
+    const body = await request.json<any>();
+    seen.push({
+      authorization: request.headers.get("authorization"),
+      session: request.headers.get("mcp-session-id"),
+      protocol: request.headers.get("mcp-protocol-version"),
+    });
+    if (body.method === "notifications/initialized") return { status: 202 };
+    calls.push(body.method === "tools/call" ? body.params.name : body.method);
+    if (body.method === "tools/call") toolArguments.push(body.params.arguments);
+    const result =
+      body.method === "initialize"
+        ? { protocolVersion: "2025-03-26" }
+        : body.params.name === "t3_environment_read"
+          ? { label: "Laptop" }
+          : body.params.name === "t3_project_list"
+            ? (() => {
+                projectCursors.push(body.params.arguments.cursor);
+                const cursor = body.params.arguments.cursor;
+                return cursor === 0
+                  ? { projects: [{ id: "a", workspaceRoot: "/code/a" }], nextCursor: 1 }
+                  : { projects: [{ id: "b", workspaceRoot: "/code/b" }], nextCursor: null };
+              })()
+            : body.params.name === "t3_thread_list"
+              ? {
+                  threads: [
+                    {
+                      threadId: "1",
+                      title: "Test",
+                      projectId: "a",
+                      providerInstanceId: "codex",
+                      updatedAt: new Date(0).toISOString(),
+                    },
+                  ],
+                  nextCursor: null,
+                }
+              : body.params.name === "t3_thread_read"
+                ? body.params.arguments.limit === 1
+                  ? { thread: { itemCount: 150 }, items: [] }
+                  : { items: [{ type: "user_message", text: "hi" }] }
+                : { runId: "run" };
+    return json(
+      { jsonrpc: "2.0", id: body.id, result },
+      { headers: { "mcp-session-id": "session" } },
+    );
   });
   try {
     mcp.configure({ origin: `http://127.0.0.1:${upstream.port}`, token: "mcp-test" });
@@ -95,33 +93,30 @@ test("initializes lazily, pages project metadata, and calls tools with session h
     await run<any>((callback) => mcp.send("1", "hello", callback));
     expect(toolArguments.at(-1)).toMatchObject({ threadId: "1", message: "hello", mode: "queue" });
   } finally {
-    upstream.stop(true);
+    upstream.stop();
     restore();
   }
 });
 
 test("reads structured results from server-sent events", async () => {
   const restore = installXhr();
-  const upstream = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const body = await request.json();
-      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
-      const result =
-        body.method === "initialize"
-          ? { protocolVersion: "2025-03-26" }
-          : { structuredContent: { label: "Streamed" } };
-      return new Response(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`, {
-        headers: { "content-type": "text/event-stream", "mcp-session-id": "stream" },
-      });
-    },
+  const upstream = await serve(async (request) => {
+    const body = await request.json<any>();
+    if (body.method === "notifications/initialized") return { status: 202 };
+    const result =
+      body.method === "initialize"
+        ? { protocolVersion: "2025-03-26" }
+        : { structuredContent: { label: "Streamed" } };
+    return text(`data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result })}\n\n`, {
+      headers: { "content-type": "text/event-stream", "mcp-session-id": "stream" },
+    });
   });
   try {
     mcp.configure({ origin: `http://127.0.0.1:${upstream.port}`, token: "mcp-test" });
     const value = await run<any>((callback) => mcp.call("t3_environment_read", {}, callback));
     expect(value).toEqual({ label: "Streamed" });
   } finally {
-    upstream.stop(true);
+    upstream.stop();
     restore();
   }
 });
@@ -130,25 +125,22 @@ test("resets the session after an HTTP failure and initializes again", async () 
   const restore = installXhr();
   let initializeCount = 0;
   let fail = true;
-  const upstream = Bun.serve({
-    port: 0,
-    async fetch(request) {
-      const body = await request.json();
-      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
-      if (body.method === "initialize") {
-        initializeCount++;
-        return Response.json(
-          { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-03-26" } },
-          { headers: { "mcp-session-id": "session" } },
-        );
-      }
-      if (fail) return new Response("failed", { status: 500 });
-      return Response.json({
-        jsonrpc: "2.0",
-        id: body.id,
-        result: { structuredContent: { threads: [] } },
-      });
-    },
+  const upstream = await serve(async (request) => {
+    const body = await request.json<any>();
+    if (body.method === "notifications/initialized") return { status: 202 };
+    if (body.method === "initialize") {
+      initializeCount++;
+      return json(
+        { jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-03-26" } },
+        { headers: { "mcp-session-id": "session" } },
+      );
+    }
+    if (fail) return text("failed", { status: 500 });
+    return json({
+      jsonrpc: "2.0",
+      id: body.id,
+      result: { structuredContent: { threads: [] } },
+    });
   });
   try {
     mcp.configure({ origin: `http://127.0.0.1:${upstream.port}`, token: "mcp-test" });
@@ -157,7 +149,7 @@ test("resets the session after an HTTP failure and initializes again", async () 
     await run<any>((callback) => mcp.threads(0, callback));
     expect(initializeCount).toBe(2);
   } finally {
-    upstream.stop(true);
+    upstream.stop();
     restore();
   }
 });

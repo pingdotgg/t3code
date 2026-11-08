@@ -24,7 +24,7 @@ PebbleKit JS runs only while the watch app is open. Thread polling and speech st
 
 ## Development
 
-Run `bun test bridge` to test the watch app's request, pairing, and UI helpers. `pebble build` builds the watch app; `./install.sh PHONE_IP` also installs it. Use `pebble install --emulator emery` to run without a physical watch and `pebble screenshot --emulator emery --no-open SCREENSHOT.png` to capture its screen.
+Run `vp test run apps/t3-pebble/bridge` from the repository root to test the watch app's request, pairing, and UI helpers. `pebble build` builds the watch app; `./install.sh PHONE_IP` also installs it. Use `pebble install --emulator emery` to run without a physical watch and `pebble screenshot --emulator emery --no-open SCREENSHOT.png` to capture its screen.
 
 Direct requests to your T3 server and to `api.elevenlabs.io` come from the phone's WebView, so the server must allow cross-origin MCP requests from the Pebble app. Verify pairing and speech on a real phone before relying on them.
 
