@@ -153,7 +153,7 @@ const target: LiveActivities.TargetRow = {
 function layerFor(input: {
   readonly attempts: Array<DeliveryAttempts.DeliveryAttemptInput>;
   readonly sourceJobClaims?: ReadonlyMap<string, DeliveryAttempts.DeliverySourceJobClaimResult>;
-  readonly releaseFailures?: { remaining: number };
+  readonly releaseFailures?: number;
   readonly queuedJobs?: Array<SignedApnsDeliveryJob>;
   readonly markedDeliveries?: Array<
     Parameters<LiveActivities.LiveActivities["Service"]["markDelivery"]>[0]
@@ -169,6 +169,7 @@ function layerFor(input: {
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
 }) {
+  let releaseFailuresLeft = input.releaseFailures ?? 0;
   return ApnsDeliveries.layer.pipe(
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
@@ -210,8 +211,8 @@ function layerFor(input: {
             }),
           releaseSourceJob: ({ sourceJobId }) =>
             Effect.suspend(() => {
-              if (input.releaseFailures && input.releaseFailures.remaining > 0) {
-                input.releaseFailures.remaining -= 1;
+              if (releaseFailuresLeft > 0) {
+                releaseFailuresLeft -= 1;
                 return Effect.fail(
                   new DeliveryAttempts.DeliveryAttemptRecordPersistenceError({
                     operation: "release-source-job",
@@ -940,9 +941,15 @@ describe("ApnsDeliveries", () => {
     );
   });
 
-  it.effect.each([429, 500, 503, 599])(
-    "fails a signed push job for redelivery when APNs answers %i",
-    (status) => {
+  it.effect.each([
+    { status: 429, releaseFailures: 0 },
+    { status: 500, releaseFailures: 0 },
+    { status: 503, releaseFailures: 0 },
+    { status: 599, releaseFailures: 0 },
+    { status: 503, releaseFailures: 1 },
+  ])(
+    "fails a signed push job for redelivery when APNs answers $status (release failures: $releaseFailures)",
+    ({ status, releaseFailures }) => {
       const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
       const statuses = [status, 200];
       const payload = makeApnsDeliveryJobPayload({
@@ -979,7 +986,11 @@ describe("ApnsDeliveries", () => {
 
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        const failure = yield* deliveries.processSignedJob(signed).pipe(Effect.flip);
+        const fiber = yield* deliveries
+          .processSignedJob(signed)
+          .pipe(Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust("1 second");
+        const failure = yield* Fiber.join(fiber);
 
         expect(failure).toMatchObject({
           _tag: "ApnsDeliveryJobRetryableFailure",
@@ -998,6 +1009,7 @@ describe("ApnsDeliveries", () => {
         Effect.provide(
           layerFor({
             attempts,
+            releaseFailures,
             currentTargets: [
               {
                 ...target,
@@ -1011,72 +1023,6 @@ describe("ApnsDeliveries", () => {
       );
     },
   );
-
-  it.effect("releases the claim of a retryable job after a failed release attempt", () => {
-    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
-    const releaseFailures = { remaining: 1 };
-    const statuses = [503, 200];
-    const payload = makeApnsDeliveryJobPayload({
-      kind: "push_notification",
-      userId: target.user_id,
-      deviceId: target.device_id,
-      token: "apns-device-token",
-      aggregate: null,
-      notification: {
-        title: "Thread",
-        body: "Completed: Project",
-        environmentId: "env",
-        threadId: "thread",
-        deepLink: "/",
-      },
-      createdAt: "1970-01-01T00:00:00.000Z",
-      expiresAt: "1970-01-01T00:10:00.000Z",
-      jobId: "job-push-release-retry",
-    });
-    const signed = signApnsDeliveryJob({
-      secret: config.apnsDeliveryJobSigningSecret,
-      payload,
-    });
-    const execute = (request: HttpClientRequest.HttpClientRequest) =>
-      Effect.sync(() => {
-        const status = statuses.shift() ?? 200;
-        return HttpClientResponse.fromWeb(
-          request,
-          status === 200
-            ? new Response("", { status })
-            : Response.json({ reason: "ServiceUnavailable" }, { status }),
-        );
-      });
-
-    return Effect.gen(function* () {
-      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const fiber = yield* deliveries.processSignedJob(signed).pipe(Effect.flip, Effect.forkChild);
-      yield* TestClock.adjust("1 second");
-      const failure = yield* Fiber.join(fiber);
-
-      expect(failure).toMatchObject({
-        _tag: "ApnsDeliveryJobRetryableFailure",
-        sourceJobId: "job-push-release-retry",
-      });
-      expect(releaseFailures.remaining).toBe(0);
-      expect(attempts).toEqual([]);
-
-      const redelivered = yield* deliveries.processSignedJob(signed);
-
-      expect(redelivered).toMatchObject({ ok: true, apnsStatus: 200 });
-      expect(attempts).toMatchObject([{ sourceJobId: "job-push-release-retry", apnsStatus: 200 }]);
-    }).pipe(
-      Effect.provide(
-        layerFor({
-          attempts,
-          releaseFailures,
-          currentTargets: [{ ...target, push_token: "apns-device-token" }],
-          config: signingConfig,
-          execute,
-        }),
-      ),
-    );
-  });
 
   it.effect("fails a signed Live Activity job for redelivery when APNs is unreachable", () => {
     const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
