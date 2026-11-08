@@ -201,16 +201,20 @@ describe("ssh command", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
-  it.effect("reports the Tailscale SSH check link while ssh waits for approval", () => {
-    const url = "https://login.tailscale.com/a/1a2b3c4d5e6f";
+  it.effect.each([
+    { name: "reports the", code: "1a2b3c4d5e6f", reports: true },
+    { name: "ignores an overlong", code: "a".repeat(65), reports: false },
+  ])("$name Tailscale SSH check link while ssh waits for approval", ({ code, reports }) => {
+    const url = `https://login.tailscale.com/a/${code}`;
+    const expected = reports ? [url] : [];
     const reported: Array<string> = [];
     return Effect.gen(function* () {
       const stderrRead = yield* Deferred.make<void>();
       // Tailscale holds the session open after printing the link; split the
       // link across reads the way a pipe can.
       const stderr = Stream.make(
-        "# Tailscale SSH requires an additional check.\r\n# To authenticate, visit: https://login.tailscale.com/a/1a2b",
-        "3c4d5e6f\r\n",
+        `# Tailscale SSH requires an additional check.\r\n# To authenticate, visit: ${url.slice(0, -4)}`,
+        `${url.slice(-4)}\r\n`,
         "# Tailscale SSH requires an additional check.\r\n",
       ).pipe(
         Stream.map((chunk) => encoder.encode(chunk)),
@@ -232,11 +236,11 @@ describe("ssh command", () => {
       );
       yield* Deferred.await(stderrRead);
 
-      assert.deepEqual(reported, [url]);
+      assert.deepEqual(reported, expected);
 
       yield* TestClock.adjust(Duration.millis(1));
       yield* Fiber.join(fiber);
-      assert.deepEqual(reported, [url]);
+      assert.deepEqual(reported, expected);
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer())));
   });
 });

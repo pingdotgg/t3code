@@ -138,7 +138,7 @@ const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.E
 // Tailscale SSH "check" mode prints this link and holds the session open until
 // someone approves it, so stderr must be read while ssh is still running.
 const TAILSCALE_CHECK_URL_PATTERN =
-  /To authenticate, visit: (https:\/\/login\.tailscale\.com\/a\/[\w-]+)\r?\n/u;
+  /To authenticate, visit: (https:\/\/login\.tailscale\.com\/a\/[\w-]{1,64})\r?\n/u;
 
 const collectSshStderr = <E>(
   stream: Stream.Stream<Uint8Array, E>,
