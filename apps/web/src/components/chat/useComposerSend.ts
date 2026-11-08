@@ -492,8 +492,13 @@ export function useComposerSend(input: ComposerSendInput) {
     const pendingSnapShotText = waitForSnapShotContexts(readDraftImages().map(({ id }) => id));
     if (pendingSnapShotText) {
       sendInFlightRef.current = true;
-      await pendingSnapShotText;
-      sendInFlightRef.current = false;
+      try {
+        await pendingSnapShotText;
+      } finally {
+        sendInFlightRef.current = false;
+      }
+      // The composer now belongs to whatever thread is open; don't send it to this one.
+      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
     }
     const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
