@@ -9,6 +9,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import {
   ChartNoAxesColumnIcon,
+  GitForkIcon,
   PanelRightIcon,
   SettingsIcon,
   SquareDashedIcon,
@@ -34,7 +35,8 @@ import {
 
 import { ProjectFavicon } from "../components/ProjectFavicon";
 import { ContentButton } from "../components/ui/button";
-import { PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
+import { cn } from "../lib/utils";
+import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -158,6 +160,7 @@ export function usePaneSiblingTabs(
 }
 
 export type LayoutTabMenuId =
+  | "layout:keep"
   | "layout:split-right"
   | "layout:split-down"
   | "layout:new-column"
@@ -182,6 +185,9 @@ export function buildLayoutTabMenuItems(
   );
   const hasSiblings = location.pane.tabs.length > 1;
   const items: ContextMenuItem<LayoutTabMenuId>[] = [
+    ...(location.tab.ghostOf
+      ? [{ id: "layout:keep", label: "Keep open", icon: "pin" } as const]
+      : []),
     {
       id: "layout:split-right",
       label: "Split right",
@@ -250,6 +256,9 @@ export function runLayoutTabMenuAction(action: LayoutTabMenuId, tabId: string): 
   const location = findLayoutTab(store.layout, (tab) => tab.id === tabId);
   if (!location) return;
   switch (action) {
+    case "layout:keep":
+      store.keepTab(tabId);
+      return;
     case "layout:split-right":
       splitLayoutTab(tabId, "right");
       return;
@@ -385,6 +394,7 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
               type="button"
               data-layout-pane-tab={tab.id}
               onClick={focusTab}
+              onDoubleClick={() => useLayoutStore.getState().keepTab(tab.id)}
               onAuxClick={(event) => closeLayoutTabOnMiddleClick(event, tab.id)}
               onPointerDown={(event) => beginLayoutTabDrag(event, tab.id)}
               onMouseDown={(event) => {
@@ -396,7 +406,10 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
           }
         >
           <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
-          <span className={PANE_INACTIVE_TAB_TITLE_CLASS} dir={textDirection(label.title)}>
+          <span
+            className={cn(PANE_INACTIVE_TAB_TITLE_CLASS, tab.ghostOf && PANE_GHOST_TAB_TITLE_CLASS)}
+            dir={textDirection(label.title)}
+          >
             {label.title}
           </span>
         </TooltipTrigger>
@@ -423,6 +436,7 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         : null;
   const draftId = target?.kind === "draft" ? target.draftId : null;
   const thread = useQuietThreadShell(threadRef);
+  const ghostParent = useQuietThreadShell(tab.ghostOf ?? null);
   const terminalRef =
     tab.content.kind === "surface" && tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID
       ? tab.content.threadRef
@@ -571,6 +585,13 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     };
   }
   const title = thread?.title ?? "New thread";
+  if (tab.ghostOf) {
+    return {
+      icon: <GitForkIcon aria-hidden className="size-3.5 shrink-0" />,
+      title,
+      tooltip: ghostTabTooltip(title, ghostParent?.title),
+    };
+  }
   const icon =
     draftId !== null ? (
       <SquarePenIcon aria-hidden className="size-3.5 shrink-0" />
@@ -578,4 +599,20 @@ export function useLayoutTabLabel(tab: LayoutTab): {
       <ProjectFavicon project={project} className="size-3.5 shrink-0" />
     ) : null;
   return { icon, title, tooltip: project ? `${project.title} / ${title}` : title };
+}
+
+/** A ghost tab names the thread it was opened from and how to keep it. */
+export function ghostTabTooltip(title: string, parentTitle: string | undefined): string {
+  return [title, parentTitle ? `Opened from ${parentTitle}` : null, "Double-click to keep open"]
+    .filter(Boolean)
+    .join("\n");
+}
+
+/** The thread a tab is a ghost of (`LayoutTab.ghostOf`), or null for an ordinary tab. */
+export function useLayoutTabGhostOf(tabId: string | null) {
+  return useLayoutStore((state) =>
+    tabId === null
+      ? null
+      : (findLayoutTab(state.layout, (tab) => tab.id === tabId)?.tab.ghostOf ?? null),
+  );
 }
