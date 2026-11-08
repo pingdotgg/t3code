@@ -203,6 +203,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   readonly autoMergeEnabled?: boolean;
   readonly autoMergeMethod?: PullRequestMergeMethod;
+  /** Host says branch rules allow an immediate merge. Absent when the host does not report it. */
+  readonly canMergeNow?: boolean;
   readonly workflowApprovalsRequired?: number;
 }
 

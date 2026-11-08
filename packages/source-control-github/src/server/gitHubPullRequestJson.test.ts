@@ -518,6 +518,11 @@ describe("pull request detail decoding", () => {
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
   });
 
+  it("reads merge readiness from mergeStateStatus", () => {
+    expect(detailOf([], {}).viewerAccess.canMergeNow).toBe(false);
+    expect(detailOf([], { mergeStateStatus: "CLEAN" }).viewerAccess.canMergeNow).toBe(true);
+  });
+
   it("shows a re-running check once, as the run that is happening now", () => {
     const detail = detailOf([
       inWorkflow({

@@ -87,6 +87,8 @@ export function resolvePullRequestPrimaryControl(input: {
   readonly mergeability: PullRequestMergeability;
   readonly checksState: ContractPullRequestChecksState | null;
   readonly autoMergeEnabled: boolean | undefined;
+  /** Host-baked readiness (reviews, checks, …). Absent when the host does not report it. */
+  readonly canMergeNow?: boolean;
   readonly hasMergeMethod: boolean;
   readonly canMerge: boolean;
   readonly canMarkReady: boolean;
@@ -98,6 +100,12 @@ export function resolvePullRequestPrimaryControl(input: {
   if (input.isDraft) return input.canMarkReady ? "ready" : null;
   if (input.autoMergeEnabled) return "auto-merge-armed";
   if (!input.hasMergeMethod) return null;
+  if (input.canMergeNow === false && input.autoMergeEnabled === false && input.canEnableAutoMerge) {
+    return "enable-auto-merge";
+  }
+  if (input.canMergeNow === true) {
+    return input.canMerge ? "merge" : null;
+  }
   if (
     input.autoMergeEnabled === false &&
     input.checksState !== null &&
@@ -283,6 +291,7 @@ type PullRequestActionableDetail = Pick<
   | "viewerPermissions"
   | "mergeCapabilities"
   | "autoMergeEnabled"
+  | "canMergeNow"
 >;
 
 export function allowedPullRequestMergeMethods(
@@ -370,12 +379,17 @@ export function resolveThreadPanelPullRequestAction(
   // Auto-merge already waits on the host; do not keep a Merge control beside Commit.
   if (detail.autoMergeEnabled === true) return null;
   const hasMergeMethod = allowedPullRequestMergeMethods(detail).length > 0;
-  if (
-    checks === "pending" &&
+  const canEnableAutoMerge =
     detail.autoMergeEnabled === false &&
     canPerformPullRequestAction(detail, "enable-auto-merge") &&
-    hasMergeMethod
-  ) {
+    hasMergeMethod;
+  if (detail.canMergeNow === false && canEnableAutoMerge) {
+    return "enable-auto-merge";
+  }
+  if (detail.canMergeNow === true) {
+    return canPerformPullRequestAction(detail, "merge") && hasMergeMethod ? "merge" : null;
+  }
+  if (checks === "pending" && canEnableAutoMerge) {
     return "enable-auto-merge";
   }
   if (checks === "pending") return null;

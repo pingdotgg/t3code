@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
   autoMergeEnabled: false as boolean | undefined,
+  canMergeNow: undefined as boolean | undefined,
   actions: ["merge"] as Array<"merge" | "enable-auto-merge">,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
@@ -49,6 +50,7 @@ const queryData = () => ({
     url: null,
   })),
   autoMergeEnabled: state.autoMergeEnabled,
+  canMergeNow: state.canMergeNow,
   capabilities: { actions: state.actions, mergeMethods: state.mergeMethods },
   viewerPermissions: { actions: state.actions },
   mergeCapabilities: {
@@ -246,6 +248,37 @@ it("offers enable auto-merge while checks are pending", async () => {
   expect(state.perform).toHaveBeenCalledWith("enable-auto-merge", "squash");
 });
 
+it("offers enable auto-merge when branch rules block even if checks pass", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  state.canMergeNow = false;
+  state.actions = ["merge", "enable-auto-merge"];
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Enable auto-merge",
+    ),
+  ).toBe(true);
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Merge",
+    ),
+  ).toBe(false);
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -260,6 +293,7 @@ async function setup() {
   state.status = "success";
   state.extraStatus = null;
   state.autoMergeEnabled = false;
+  state.canMergeNow = undefined;
   state.actions = ["merge"];
   state.mergeMethods = ["merge"];
   useUiStateStore.getState().setPullRequestMergeMethod("merge");

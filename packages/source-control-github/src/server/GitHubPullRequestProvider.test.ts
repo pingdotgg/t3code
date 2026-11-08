@@ -151,6 +151,20 @@ it.effect("advertises standalone branch deletion for source repository writers",
 );
 
 describe("gitHubViewerPermissions", () => {
+  it("withholds enable-auto-merge when the pull request can merge immediately", () => {
+    expect(
+      gitHubViewerPermissions({
+        canWrite: true,
+        canDeleteBranch: true,
+        canTriage: true,
+        canUpdate: true,
+        didAuthor: false,
+        autoMergeAllowed: true,
+        canMergeNow: true,
+      }).actions,
+    ).not.toContain("enable-auto-merge");
+  });
+
   it("offers everything to a viewer who can write to the repository", () => {
     expect(
       gitHubViewerPermissions({

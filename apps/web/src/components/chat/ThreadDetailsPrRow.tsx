@@ -81,6 +81,9 @@ import {
 const isSettledWithoutChecks = (result: AsyncResult.AsyncResult<unknown, unknown>) =>
   result._tag === "Success" && result.value === null;
 
+const selectEnvironmentQueryWaiting = <A, E>(result: AsyncResult.AsyncResult<A, E>) =>
+  result.waiting;
+
 export function ThreadDetailsPrRow({
   environmentId,
   pr,
@@ -126,6 +129,7 @@ export function ThreadDetailsPrRow({
         });
   // Select query parts because polling rebuilds unchanged results.
   const detailData = useEnvironmentQuerySelector(detailAtom, selectEnvironmentQueryData);
+  const detailPending = useEnvironmentQuerySelector(detailAtom, selectEnvironmentQueryWaiting);
   const detailQuery = useEnvironmentQueryRefresh(detailAtom);
   const supportsChecks =
     serverConfigs.get(environmentId)?.environment.capabilities.pullRequestChecks === true;
@@ -168,6 +172,7 @@ export function ThreadDetailsPrRow({
       onActed?.();
     },
   });
+  const actionBusy = actionPending || detailPending;
   const { handoff, startHandoff } = usePullRequestHandoffs({ environmentId, detail });
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
@@ -470,7 +475,7 @@ export function ThreadDetailsPrRow({
                       size="sm"
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
-                      disabled={actionPending || handoff !== null}
+                      disabled={actionBusy || handoff !== null}
                       onClick={trailingAction.onClick}
                     />
                   }
@@ -516,7 +521,7 @@ export function ThreadDetailsPrRow({
               </AlertDialogClose>
               <Button
                 size="sm"
-                disabled={actionPending}
+                disabled={actionBusy}
                 onClick={() => {
                   setConfirming(null);
                   void perform(rowAction, selectedMergeMethod);

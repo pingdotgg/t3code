@@ -488,6 +488,9 @@ export const make = Effect.gen(function* () {
           ...(pullRequest.comparison?.behindBy == null
             ? {}
             : { behindBy: pullRequest.comparison.behindBy }),
+          ...(pullRequest.viewerAccess.canMergeNow === undefined
+            ? {}
+            : { canMergeNow: pullRequest.viewerAccess.canMergeNow }),
         })),
         Effect.mapError(fail("getChangeRequest")),
       ),
