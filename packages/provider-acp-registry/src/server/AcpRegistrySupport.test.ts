@@ -607,6 +607,56 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect(
+    "launches a global package found through a relative PATH entry by absolute path",
+    () => {
+      const agent = makeAgent({
+        uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
+      });
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-relative-package-path-",
+        });
+        const toolchain = yield* makeFakeUvToolchain(cacheDir);
+        const installer = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        yield* installer.resolve(settings(), "/workspace", toolchain.environment);
+
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(
+          Effect.provideService(SpawnExecutableResolution, (command) => {
+            if (command === "uv") return toolchain.uvPath;
+            if (command === "fast-agent") {
+              return path.relative(process.cwd(), toolchain.executablePath);
+            }
+            return undefined;
+          }),
+        );
+        const resolved = yield* resolver.resolve(settings(), "/workspace", toolchain.environment);
+
+        expect(path.isAbsolute(resolved.spawn.command)).toBe(true);
+        expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
+          yield* fileSystem.realPath(toolchain.executablePath),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+          ),
+        ),
+      );
+    },
+  );
+
   it.effect("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },

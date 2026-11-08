@@ -1894,7 +1894,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             effectiveEnvironment,
           ),
         );
-        command = installed.executablePath;
+        command = anchorToProcessCwd(installed.executablePath);
         args = distribution.args;
         commandBinDirectory = installed.binDirectory;
       } else {
