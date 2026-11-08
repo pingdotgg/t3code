@@ -1,5 +1,7 @@
 import type { ConfirmDialogOptions, ContextMenuItem, LocalApi } from "@t3tools/contracts";
 
+import { isMacPlatform } from "@t3tools/shared/keybindings";
+
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
@@ -44,16 +46,15 @@ export function createLocalApi(): LocalApi {
         items: readonly ContextMenuItem<T>[],
         position?: { x: number; y: number },
       ): Promise<T | null> => {
-        if (window.desktopBridge) {
+        // Native menus only fit the app's look on macOS; elsewhere the styled DOM menu wins.
+        if (window.desktopBridge && isMacPlatform(navigator.platform)) {
           return window.desktopBridge.showContextMenu(items, position) as Promise<T | null>;
         }
         return showContextMenuFallback(items, position);
       },
       // Unlike native menus, the DOM fallback needs dismissal when underlying state disappears.
       close: async () => {
-        if (!window.desktopBridge) {
-          dismissContextMenu();
-        }
+        dismissContextMenu();
       },
     },
     persistence: {

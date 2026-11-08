@@ -1249,3 +1249,12 @@ describe("DesktopWindow", () => {
     }),
   );
 });
+
+describe("isTilingCompositor", () => {
+  it("matches tiling compositors in XDG_CURRENT_DESKTOP lists", () => {
+    assert.isTrue(DesktopWindow.isTilingCompositor("Hyprland"));
+    assert.isTrue(DesktopWindow.isTilingCompositor("sway:wlroots"));
+    assert.isFalse(DesktopWindow.isTilingCompositor("ubuntu:GNOME"));
+    assert.isFalse(DesktopWindow.isTilingCompositor(undefined));
+  });
+});

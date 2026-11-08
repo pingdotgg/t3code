@@ -242,6 +242,15 @@ function concealPendingQuitWindow(
   window.setOpacity(0);
 }
 
+const TILING_COMPOSITORS = ["hyprland", "sway", "i3", "niri", "river"];
+
+export function isTilingCompositor(currentDesktop: string | undefined): boolean {
+  return (currentDesktop ?? "")
+    .toLowerCase()
+    .split(":")
+    .some((desktop) => TILING_COMPOSITORS.includes(desktop));
+}
+
 function getWindowTitleBarOptions(
   shouldUseDarkColors: boolean,
   platform: NodeJS.Platform,
@@ -254,6 +263,11 @@ function getWindowTitleBarOptions(
         y: MACOS_WORKSPACE_TOPBAR_HEIGHT / 2 - MACOS_WINDOW_BUTTON_RADIUS,
       },
     };
+  }
+
+  // Tiling compositors manage windows themselves; their overlay buttons draw behind the app's controls.
+  if (platform === "linux" && isTilingCompositor(process.env.XDG_CURRENT_DESKTOP)) {
+    return { titleBarStyle: "hidden" };
   }
 
   return {

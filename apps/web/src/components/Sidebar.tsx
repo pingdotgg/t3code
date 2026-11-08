@@ -1243,6 +1243,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) setOpenMobile(false);
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
+  const startWorkspaceInProject = useStableCallback((group: SidebarProjectSnapshot) => {
+    if (isMobile) setOpenMobile(false);
+    void handleNewThread(scopeProjectRef(group.environmentId, group.id), { envMode: "worktree" });
+  });
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1252,6 +1256,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           api.contextMenu.show(
             [
               { id: "new-thread", label: "New thread" },
+              { id: "new-workspace", label: "New workspace", icon: "git-branch" },
               { id: "copy-path", label: "Copy path" },
               ...(canPinProject(group)
                 ? [
@@ -1269,6 +1274,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         switch (clicked.value) {
           case "new-thread":
             startThreadInProjectFolder(group);
+            return;
+          case "new-workspace":
+            startWorkspaceInProject(group);
             return;
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
@@ -3227,7 +3235,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               onSelect={(projectKey) => setProjectScopeKeys(projectKey ? [projectKey] : [])}
               onToggle={toggleProjectScopeKey}
               onAddProject={openAddProjectCommandPalette}
-              onProjectSettings={(event, project) => void handleProjectSettings(event, project)}
+              onNewWorkspace={startWorkspaceInProject}
+              onProjectContextMenu={handleProjectFolderContextMenu}
             />
           )}
           {isSearchingThreads ? (
