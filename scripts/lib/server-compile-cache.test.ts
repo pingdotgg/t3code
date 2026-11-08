@@ -6,7 +6,7 @@ import * as NodeURL from "node:url";
 import { expect, it } from "vite-plus/test";
 import { cacheKey, seedPreparedCache } from "./server-compile-cache.ts";
 
-it.each(["x64", "arm64"])("skips prepared bytecode generation on FreeBSD %s", async (arch) => {
+it("skips prepared bytecode generation for unsupported platforms", async () => {
   const { spawnSync } = await import("node:child_process");
   const hook = NodeURL.fileURLToPath(
     new URL("../prepare-server-compile-cache.cjs", import.meta.url),
@@ -16,8 +16,7 @@ it.each(["x64", "arm64"])("skips prepared bytecode generation on FreeBSD %s", as
     [
       "-e",
       `Object.defineProperty(process, "platform", { value: "freebsd" });
-       Object.defineProperty(process, "arch", { value: ${JSON.stringify(arch)} });
-       require(${JSON.stringify(hook)})({ electronPlatformName: "freebsd", arch: ${arch === "x64" ? 1 : 3} }).catch(error => { console.error(error); process.exitCode = 1; });`,
+       require(${JSON.stringify(hook)})({ electronPlatformName: "freebsd", arch: 1 }).catch(error => { console.error(error); process.exitCode = 1; });`,
     ],
     { encoding: "utf8" },
   );
@@ -25,16 +24,22 @@ it.each(["x64", "arm64"])("skips prepared bytecode generation on FreeBSD %s", as
   expect(result.stdout).toContain("Skipping unsupported target freebsd");
 });
 
-it.each(["darwin", "linux"] as const)("prepares %s x64 cache", async (platform) => {
+// macOS runs on an ARM64 host to exercise the Rosetta build-host check.
+it.each([
+  {
+    platform: "darwin",
+    hostArch: "arm64",
+    resources: "Fixture.app/Contents/Resources",
+    executable: "Fixture.app/Contents/MacOS/Fixture",
+  },
+  { platform: "linux", hostArch: "x64", resources: "resources", executable: "fixture" },
+])("prepares $platform x64 cache", async ({ platform, hostArch, ...layout }) => {
   const { spawnSync } = await import("node:child_process");
   const root = NodeFS.realpathSync(
-    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-rosetta-cache-")),
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-hook-cache-")),
   );
   try {
-    const resources =
-      platform === "darwin"
-        ? NodePath.join(root, "Fixture.app", "Contents", "Resources")
-        : NodePath.join(root, "resources");
+    const resources = NodePath.join(root, layout.resources);
     const archive = NodePath.join(resources, "app.asar");
     const dist = NodePath.join(archive, "apps/server/dist");
     const helper = NodePath.join(archive, "apps/desktop/dist-electron/serverCompileCache.cjs");
@@ -49,7 +54,7 @@ it.each(["darwin", "linux"] as const)("prepares %s x64 cache", async (platform) 
     const hook = NodeURL.fileURLToPath(
       new URL("../prepare-server-compile-cache.cjs", import.meta.url),
     );
-    // Node stands in for the packaged engine; macOS still exercises the Rosetta build-host check.
+    // Node stands in for the packaged engine.
     const result = spawnSync(
       process.execPath,
       [
@@ -58,11 +63,11 @@ it.each(["darwin", "linux"] as const)("prepares %s x64 cache", async (platform) 
       const childProcess = require("node:child_process");
       const spawn = childProcess.spawnSync;
       childProcess.spawnSync = (executable, args, options) => {
-        require("node:assert/strict").equal(executable, ${JSON.stringify(platform === "darwin" ? NodePath.join(root, "Fixture.app", "Contents", "MacOS", "Fixture") : NodePath.join(root, "fixture"))});
+        require("node:assert/strict").equal(executable, ${JSON.stringify(NodePath.join(root, layout.executable))});
         return spawn(process.execPath, args, options);
       };
       Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });
-      Object.defineProperty(process, "arch", { value: ${JSON.stringify(platform === "darwin" ? "arm64" : "x64")} });
+      Object.defineProperty(process, "arch", { value: ${JSON.stringify(hostArch)} });
       require(${JSON.stringify(hook)})({
         appOutDir: ${JSON.stringify(root)}, electronPlatformName: ${JSON.stringify(platform)}, arch: 1,
         packager: { appInfo: { productFilename: "Fixture" }, executableName: "fixture" }
