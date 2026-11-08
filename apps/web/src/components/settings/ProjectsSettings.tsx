@@ -15,6 +15,7 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
@@ -157,23 +158,38 @@ function ProjectChooser() {
       </SettingsEmptyState>
       <SettingsSection title="Your projects">
         <div className="p-1">
-          {groups.map((group) => (
-            <Button
-              key={group.projectKey}
-              variant="ghost"
-              className="w-full justify-start"
-              aria-label={`Open ${group.displayName} settings`}
-              onClick={() => selectScope({ project: group.projectKey })}
-            >
-              <ProjectFavicon project={group} className="size-4 shrink-0" />
-              <span className="shrink-0 text-label">{group.displayName}</span>
-              <span className="min-w-0 truncate text-meta text-dim-foreground">
-                {group.memberProjects.length === 1
-                  ? group.memberProjects[0]?.workspaceRoot
-                  : `${group.memberProjects.length} checkouts`}
-              </span>
-            </Button>
-          ))}
+          {groups.map((group) => {
+            const location =
+              group.memberProjects.length === 1
+                ? group.memberProjects[0]?.workspaceRoot
+                : `${group.memberProjects.length} checkouts`;
+            return (
+              <Tooltip key={group.projectKey}>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      className="w-full justify-start"
+                      aria-label={`Open ${group.displayName} settings`}
+                      onClick={() => selectScope({ project: group.projectKey })}
+                    />
+                  }
+                >
+                  <ProjectFavicon project={group} className="size-4 shrink-0" />
+                  <span className="min-w-0 truncate text-label">{group.displayName}</span>
+                  <span className="min-w-0 flex-1 truncate text-left text-meta text-dim-foreground">
+                    {location}
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  <span className="flex flex-col gap-0.5">
+                    <span>{group.displayName}</span>
+                    <span>{location}</span>
+                  </span>
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
         </div>
       </SettingsSection>
     </SettingsPageContainer>
