@@ -18,7 +18,7 @@ const CHANGE_REQUEST_PATH = /^\/codebase\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u;
 const KIND = SourceControlProviderKind.make("cursor-origin");
 
 /** A cursor.com page names a repository on Origin's git host, which is what projects key under. */
-function parseChangeRequestUrl(url: URL): ParsedChangeRequestUrl | null {
+export function parseChangeRequestUrl(url: URL): ParsedChangeRequestUrl | null {
   const hostname = url.hostname.toLowerCase();
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (hostname !== "cursor.com" && hostname !== "www.cursor.com") return null;

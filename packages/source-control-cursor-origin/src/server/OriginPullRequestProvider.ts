@@ -2,6 +2,7 @@ import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Hash from "effect/Hash";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -128,6 +129,7 @@ const editedAt = (comment: OriginComment) =>
 function toThreads(
   comments: ReadonlyArray<OriginComment>,
   avatars: OriginAvatars,
+  headSha: string | null,
 ): PullRequestReviewThread[] {
   const threads = new Map<string, PullRequestReviewThread>();
   for (const comment of comments) {
@@ -140,7 +142,8 @@ function toThreads(
       line: line !== null && line > 0 ? line : null,
       side: thread.side === "left" ? ("left" as const) : ("right" as const),
       isResolved: Boolean(thread.resolvedAt),
-      isOutdated: false,
+      // Origin anchors a thread to the version it was left on and does not move it forward.
+      isOutdated: Boolean(headSha && thread.version?.headSha && thread.version.headSha !== headSha),
       comments: [],
     };
     threads.set(thread.id, {
@@ -335,19 +338,41 @@ export const make = Effect.gen(function* () {
         nextCursor: null,
       })),
     );
+  const versionKey = (pullRequest: OriginPullRequest) => {
+    const head = pullRequest.version?.headSha ?? pullRequest.head.sha;
+    const base = pullRequest.version?.baseSha ?? pullRequest.base.sha;
+    return head && base ? `${base}...${head}` : null;
+  };
   // Keyed by `cwd, repository, number, base...head` for a pull request's patch, or by
   // `cwd, repository, , commit` for one commit's.
   const patches = yield* Cache.makeWith(
     (key: string) => {
       const [cwd = "", repository = "", number = "", commits = ""] = key.split("\n");
-      return readPatch(
-        cwd,
-        number === ""
-          ? `${OriginCli.originRepositoryPath(repository)}/commits/${encodeURIComponent(commits)}/files`
-          : pullPath(repository, Number(number), "/files"),
+      if (number === "")
+        return readPatch(
+          cwd,
+          `${OriginCli.originRepositoryPath(repository)}/commits/${encodeURIComponent(commits)}/files`,
+        ).pipe(Effect.map((patch) => ({ ...patch, pinned: true })));
+      // `/files` always answers for the newest version, so a push during the read must not be
+      // kept under the version the key names.
+      return readPatch(cwd, pullPath(repository, Number(number), "/files")).pipe(
+        Effect.flatMap((patch) =>
+          recover(
+            cli
+              .api(
+                { cwd, operation: "getPullRequest", path: pullPath(repository, Number(number)) },
+                OriginPullRequestSchema,
+              )
+              .pipe(Effect.map(versionKey)),
+            null,
+          ).pipe(Effect.map((version) => ({ ...patch, pinned: version === commits }))),
+        ),
       );
     },
-    { capacity: 64, timeToLive: (exit) => (Exit.isSuccess(exit) ? "1 hour" : 0) },
+    {
+      capacity: 64,
+      timeToLive: (exit) => (Exit.isSuccess(exit) && exit.value.pinned ? "1 hour" : 0),
+    },
   );
 
   // Every pull request into a branch compares against the same tip, so it is read once a moment.
@@ -518,6 +543,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // Origin pages by a token longer than the service's cursor can carry, so the cursor names it by
+  // hash. A cursor from before a restart finds nothing and ends the list there.
+  const pageTokens = new Map<string, string>();
+  const pageTokenKey = (token: string) => {
+    const key = `${(Hash.string(token) >>> 0).toString(36)}-${token.length}`;
+    pageTokens.delete(key);
+    pageTokens.set(key, token);
+    if (pageTokens.size > 256) pageTokens.delete(pageTokens.keys().next().value ?? "");
+    return key;
+  };
+
+  // Origin merges a stacked pull request together with every open one below it, which the panel
+  // does not show, so those merges are left to Origin.
+  const refuseStackedMerge = Effect.fn("OriginPullRequestProvider.refuseStackedMerge")(function* (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) {
+    const read = (number: number) =>
+      getPull({ ...input, number }).pipe(Effect.mapError(fail("runAction")));
+    const parent = (yield* read(input.number)).stack?.parentPullRequest?.number;
+    if (parent == null) return;
+    if (originState(yield* read(Number(parent))) !== "open") return;
+    return yield* unsupported(
+      "runAction",
+      `This pull request is stacked on #${parent}. Merge #${parent} first, or merge the stack on Cursor Origin.`,
+    );
+  });
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("cursor-origin"),
     capabilities: CAPABILITIES,
@@ -555,11 +607,16 @@ export const make = Effect.gen(function* () {
     listChangeRequests: Effect.fn("OriginPullRequestProvider.listChangeRequests")(
       function* (input) {
         const limit = Math.min(Math.max(input.limit, 1), PAGE_SIZE);
+        const resume = input.cursor?.resumeAfter;
+        const pageToken = resume === undefined ? undefined : pageTokens.get(resume);
+        if (resume !== undefined && pageToken === undefined)
+          return { items: [], truncated: false, continues: false };
         const query = new URLSearchParams({
           state: input.state,
           pageSize: String(limit),
           sortBy: "updated",
           ...(input.involvement === "authored" ? { author: input.viewer } : {}),
+          ...(pageToken === undefined ? {} : { pageToken }),
         });
         const avatarArgs = [
           "pr",
@@ -596,11 +653,12 @@ export const make = Effect.gen(function* () {
           pullRequests.map((pullRequest) => pullRequest.author),
           avatarArgs,
         );
+        const next = page.nextPageToken || null;
         return {
           items: pullRequests.map((pullRequest) => toProviderChangeRequest(pullRequest, avatars)),
-          truncated: Boolean(page.nextPageToken),
-          // Pages continue by an opaque token, which the service's date cursor cannot carry.
-          continues: false,
+          truncated: next !== null,
+          continues: next !== null,
+          ...(next === null ? {} : { resumeAfter: pageTokenKey(next) }),
         };
       },
       Effect.mapError(fail("listChangeRequests")),
@@ -713,10 +771,12 @@ export const make = Effect.gen(function* () {
             unread,
             true,
           ),
+          // The detail is read alongside, so this is usually its cached answer.
+          recover(getPull(input), null),
         ],
-        { concurrency: 3 },
+        { concurrency: 4 },
       ).pipe(
-        Effect.flatMap(([comments, reviews, commits]) =>
+        Effect.flatMap(([comments, reviews, commits, pullRequest]) =>
           avatarsFor(
             input.cwd,
             [
@@ -724,26 +784,30 @@ export const make = Effect.gen(function* () {
               ...reviews.items.map((review) => review.author),
             ],
             viewArgs(input, "author,reviews,comments"),
-          ).pipe(Effect.map((avatars) => [comments, reviews, commits, avatars] as const)),
+          ).pipe(
+            Effect.map(
+              (avatars) =>
+                [comments, reviews, commits, avatars, pullRequest?.head.sha ?? null] as const,
+            ),
+          ),
         ),
         Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.map(([comments, reviews, commits, avatars]): ProviderChangeRequestActivity => {
-          const discussion: PullRequestComment[] = comments.items
-            .filter((comment) => !isThreadComment(comment))
-            .map((comment) => ({
-              id: comment.id,
-              kind: "issue-comment",
-              author: originActor(comment.author, avatars),
-              body: comment.body ?? "",
-              createdAt: comment.createdAt,
-              editedAt: editedAt(comment),
-              url: null,
-              path: null,
-              reviewState: null,
-            }));
-          const reviewComments: PullRequestComment[] = reviews.items
-            .filter((review) => !review.dismissal?.dismissedAt)
-            .map((review) => ({
+        Effect.map(
+          ([comments, reviews, commits, avatars, headSha]): ProviderChangeRequestActivity => {
+            const discussion: PullRequestComment[] = comments.items
+              .filter((comment) => !isThreadComment(comment))
+              .map((comment) => ({
+                id: comment.id,
+                kind: "issue-comment",
+                author: originActor(comment.author, avatars),
+                body: comment.body ?? "",
+                createdAt: comment.createdAt,
+                editedAt: editedAt(comment),
+                url: null,
+                path: null,
+                reviewState: null,
+              }));
+            const reviewComments: PullRequestComment[] = reviews.items.map((review) => ({
               id: review.id,
               kind: "review",
               author: originActor(review.author, avatars),
@@ -751,32 +815,34 @@ export const make = Effect.gen(function* () {
               createdAt: review.submittedAt,
               url: null,
               path: null,
-              reviewState:
-                review.verdict === "approve"
+              reviewState: review.dismissal?.dismissedAt
+                ? "DISMISSED"
+                : review.verdict === "approve"
                   ? "APPROVED"
                   : review.verdict === "request_changes"
                     ? "CHANGES_REQUESTED"
                     : "COMMENTED",
             }));
-          const all = [...discussion, ...reviewComments].toSorted((left, right) =>
-            left.createdAt.localeCompare(right.createdAt),
-          );
-          return {
-            comments: all,
-            commentCount: all.length,
-            commentsTruncated: comments.truncated || reviews.truncated,
-            reviewThreadsTruncated: comments.truncated,
-            reviewThreads: toThreads(comments.items, avatars),
-            commits: commits.items.map((commit) => ({
-              oid: commit.sha,
-              messageHeadline: commit.commit.message.split("\n")[0] ?? "",
-              committedDate:
-                commit.commit.committer?.date ?? commit.commit.author?.date ?? UNKNOWN_TIME,
-              ...(commit.stats?.additions == null ? {} : { additions: commit.stats.additions }),
-              ...(commit.stats?.deletions == null ? {} : { deletions: commit.stats.deletions }),
-            })),
-          };
-        }),
+            const all = [...discussion, ...reviewComments].toSorted((left, right) =>
+              left.createdAt.localeCompare(right.createdAt),
+            );
+            return {
+              comments: all,
+              commentCount: all.length,
+              commentsTruncated: comments.truncated || reviews.truncated,
+              reviewThreadsTruncated: comments.truncated,
+              reviewThreads: toThreads(comments.items, avatars, headSha),
+              commits: commits.items.map((commit) => ({
+                oid: commit.sha,
+                messageHeadline: commit.commit.message.split("\n")[0] ?? "",
+                committedDate:
+                  commit.commit.committer?.date ?? commit.commit.author?.date ?? UNKNOWN_TIME,
+                ...(commit.stats?.additions == null ? {} : { additions: commit.stats.additions }),
+                ...(commit.stats?.deletions == null ? {} : { deletions: commit.stats.deletions }),
+              })),
+            };
+          },
+        ),
       );
     },
 
@@ -789,18 +855,20 @@ export const make = Effect.gen(function* () {
       (input.commit === undefined
         ? getPull(input).pipe(
             Effect.flatMap((pullRequest) => {
-              const head = pullRequest.version?.headSha ?? pullRequest.head.sha;
-              const base = pullRequest.version?.baseSha ?? pullRequest.base.sha;
-              return head && base
+              const version = versionKey(pullRequest);
+              return version
                 ? Cache.get(
                     patches,
-                    `${input.cwd}\n${input.repository}\n${input.number}\n${base}...${head}`,
+                    `${input.cwd}\n${input.repository}\n${input.number}\n${version}`,
                   )
                 : readPatch(input.cwd, pullPath(input.repository, input.number, "/files"));
             }),
           )
         : Cache.get(patches, `${input.cwd}\n${input.repository}\n\n${input.commit}`)
-      ).pipe(Effect.mapError(fail("getDiff"))),
+      ).pipe(
+        Effect.map(({ patch, truncated, nextCursor }) => ({ patch, truncated, nextCursor })),
+        Effect.mapError(fail("getDiff")),
+      ),
 
     listReviewerCandidates: () =>
       unsupported("listReviewerCandidates", "Cursor Origin does not list reviewer candidates."),
@@ -817,9 +885,13 @@ export const make = Effect.gen(function* () {
       const action = (() => {
         switch (input.action) {
           case "merge":
-            return write(input, "runAction", "POST", `${path}/merge`, {
-              mergeMethod: input.mergeMethod === "squash" ? "squash" : "merge",
-            });
+            return refuseStackedMerge(input).pipe(
+              Effect.andThen(
+                write(input, "runAction", "POST", `${path}/merge`, {
+                  mergeMethod: input.mergeMethod === "squash" ? "squash" : "merge",
+                }),
+              ),
+            );
           case "close":
             return write(input, "runAction", "PATCH", path, { state: "closed" });
           case "reopen":

@@ -96,6 +96,13 @@ export const OriginPullRequestSchema = Schema.Struct({
     ),
   ),
   webUrl: Schema.String,
+  stack: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        parentPullRequest: Schema.optional(Schema.NullOr(Schema.Struct({ number: Int64 }))),
+      }),
+    ),
+  ),
   version: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -128,6 +135,7 @@ export type OriginRepository = typeof OriginRepositorySchema.Type;
 
 const ThreadSchema = Schema.Struct({
   id: Schema.String,
+  version: Schema.optional(Schema.NullOr(Schema.Struct({ headSha: OptionalString }))),
   path: OptionalString,
   side: OptionalString,
   startLine: Schema.optional(Schema.NullOr(Int64)),
@@ -334,7 +342,14 @@ export function checksState(
   checks: ReadonlyArray<PullRequestCheck>,
 ): PullRequestChecksState | null {
   if (checks.length === 0) return null;
-  if (checks.some((check) => check.status === "failure" || check.status === "action-required"))
+  if (
+    checks.some(
+      (check) =>
+        check.status === "failure" ||
+        check.status === "cancelled" ||
+        check.status === "action-required",
+    )
+  )
     return "failing";
   if (checks.some((check) => check.status === "pending")) return "pending";
   return "passing";
@@ -356,6 +371,7 @@ export function originFilesPatch(
         ...(added ? ["new file mode 100644"] : removed ? ["deleted file mode 100644"] : []),
         ...(oldPath !== file.filename
           ? [
+              `similarity index ${file.patch ? 0 : 100}%`,
               `rename from ${quoteGitPatchPath(oldPath)}`,
               `rename to ${quoteGitPatchPath(file.filename)}`,
             ]

@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { SourceControlProviderError, SourceControlProviderKind } from "@t3tools/contracts";
-import { CURSOR_ORIGIN_WEB_BASE_URL } from "../shared/definition.ts";
+import { CURSOR_ORIGIN_WEB_BASE_URL, parseChangeRequestUrl } from "../shared/definition.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
@@ -77,6 +77,16 @@ function originPullNumber(reference: string): number | null {
   const match = /(?:^#?|\/pull\/)(\d+)(?:\/[^?#]*)?(?:[?#].*)?$/u.exec(reference.trim());
   const number = Number(match?.[1]);
   return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+/** A cursor.com pull request URL names its own repository, which need not be the checkout's. */
+function pullReference(reference: string) {
+  const trimmed = reference.trim();
+  const link = URL.canParse(trimmed) ? parseChangeRequestUrl(new URL(trimmed)) : null;
+  return {
+    repository: link?.repository ?? null,
+    number: link?.number ?? originPullNumber(trimmed),
+  };
 }
 
 const cloneUrls = (repository: OriginRepository, fallbackName: string) => {
@@ -173,8 +183,9 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: Effect.fn("OriginSourceControlProvider.getChangeRequest")(
       function* (input) {
-        const repository = yield* cli.resolveRepository(input);
-        const number = originPullNumber(input.reference);
+        const reference = pullReference(input.reference);
+        const repository = reference.repository ?? (yield* cli.resolveRepository(input));
+        const number = reference.number;
         if (number === null)
           return yield* new OriginCli.OriginCliError({
             operation: "getChangeRequest",
@@ -268,8 +279,8 @@ export const make = Effect.gen(function* () {
         );
         // Origin creates repositories internal (visible to the whole team) and only takes a
         // visibility on update, so the repository is made private straight after.
-        return cloneUrls(
-          yield* cli.api(
+        const madePrivate = yield* cli
+          .api(
             {
               cwd: input.cwd,
               operation: "createRepository",
@@ -278,9 +289,21 @@ export const make = Effect.gen(function* () {
               body: { visibility: "private" },
             },
             OriginRepositorySchema,
-          ),
-          `${owner}/${name}`,
-        );
+          )
+          .pipe(
+            Effect.retry({ times: 2 }),
+            Effect.mapError(
+              (cause) =>
+                new OriginCli.OriginCliError({
+                  operation: "createRepository",
+                  cwd: input.cwd,
+                  reason: "failed",
+                  detail: `Created ${owner}/${name}, but could not make it private, so your Cursor team can still see it. Set it to private on cursor.com.`,
+                  cause,
+                }),
+            ),
+          );
+        return cloneUrls(madePrivate, `${owner}/${name}`);
       },
       (effect, input) =>
         effect.pipe(mapError("createRepository", input.cwd, { repository: input.repository })),
@@ -299,7 +322,14 @@ export const make = Effect.gen(function* () {
     checkoutChangeRequest: Effect.fn("OriginSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const repository = yield* cli.resolveRepository(input);
-        const number = originPullNumber(input.reference);
+        const { repository: linked, number } = pullReference(input.reference);
+        if (linked !== null && linked !== repository.toLowerCase())
+          return yield* new OriginCli.OriginCliError({
+            operation: "checkoutChangeRequest",
+            cwd: input.cwd,
+            reason: "not-found",
+            detail: `That pull request is in ${linked}, not this checkout's ${repository}.`,
+          });
         yield* cli.execute({
           cwd: input.cwd,
           operation: "checkoutChangeRequest",
