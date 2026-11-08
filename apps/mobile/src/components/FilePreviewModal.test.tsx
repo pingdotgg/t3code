@@ -133,19 +133,7 @@ it("handles a failed sibling without leaving a pending page", async () => {
   });
 });
 
-it("closes the preview when the selected image cannot be resolved", async () => {
-  harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
-    if (resource.url.endsWith("missing.png")) throw new Error("not found");
-    return `https://signed.test/${resource.url.split("/").pop()}`;
-  });
-  const selected = image("https://github.com/missing.png");
-  await using preview = await openGallery(selected, [image("https://github.com/a.png"), selected]);
-
-  expect(preview.onRequestClose).toHaveBeenCalledOnce();
-  expect(harness.alert).toHaveBeenCalledOnce();
-});
-
-it("says which file was missing and asks to reconnect only without a connection", async () => {
+it("closes the preview with the reason the selected image cannot be resolved", async () => {
   const resource = {
     _tag: "media-file",
     threadId: ThreadId.make("thread"),
@@ -160,11 +148,17 @@ it("says which file was missing and asks to reconnect only without a connection"
     [new AssetWorkspaceAssetNotFoundError({ resource }), "File not found: v2/a.png"],
     [null, "Reconnect to this environment and try again."],
   ] as const) {
-    harness.refreshAssetUrl.mockImplementation(async () => {
+    harness.refreshAssetUrl.mockImplementation(async (_environmentId, resource) => {
+      if ("url" in resource) return "https://signed.test/a.png";
       if (failure) throw failure;
       return null;
     });
-    await using _preview = await openGallery(selected, [selected]);
+    await using preview = await openGallery(selected, [
+      image("https://github.com/a.png"),
+      selected,
+    ]);
+    expect(preview.onRequestClose).toHaveBeenCalledOnce();
+    expect(harness.alert).toHaveBeenCalledOnce();
     expect(harness.alert).toHaveBeenCalledWith("Could not open preview", message);
   }
 });
