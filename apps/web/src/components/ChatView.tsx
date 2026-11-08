@@ -364,7 +364,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
 import { publishThreadChatBridge } from "../layout/threadSurfaceBridge";
-import { runInNewLayoutTab } from "../layout/layoutStore";
+import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { assetEnvironment } from "../state/assets";
@@ -3169,7 +3169,11 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onComposerSendStable = useStableCallback(onSend);
+  // Writing in a ghost tab keeps it open.
+  const onComposerSendStable = useStableCallback((...args: Parameters<typeof onSend>) => {
+    if (layoutPane.tabId !== null) useLayoutStore.getState().keepTab(layoutPane.tabId);
+    return onSend(...args);
+  });
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
@@ -3604,7 +3608,12 @@ export default function ChatView(props: ChatViewProps) {
                     ? {}
                     : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
                   onOpenThread={onOpenRelatedThreadStable}
-                  parentThreadLink={parentThreadLink}
+                  // The header's parent tab already names a subagent's parent here.
+                  parentThreadLink={
+                    headerParentThreadLink !== null && parentThreadLink?.sideChat !== true
+                      ? null
+                      : parentThreadLink
+                  }
                   workflowOpening={workflowOpening}
                   supportsConversationRollback={supportsConversationRollback}
                   threadStartCheckpointReady={threadStartCheckpointReady}
@@ -3704,7 +3713,7 @@ export default function ChatView(props: ChatViewProps) {
                         className="empty:hidden"
                       />
                       {hasThreadNow ? (
-                        <div className="px-3.5 pt-2">
+                        <div className="ps-2.5 pe-3.25 pt-2">
                           <ThreadNow
                             key={routeThreadKey}
                             attention={attentionNow}
