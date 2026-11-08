@@ -1727,6 +1727,17 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
     );
   }
   for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
+  // A page check must not pass because the grader never saw the file a path call shows.
+  if ([...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].some((call) => call.args?.page)) {
+    for (const call of calls)
+      if (
+        /^html_(?:preview|render)$/.test(call.tool) &&
+        isRecord(call.input) &&
+        call.input.path !== undefined &&
+        call.input.page === undefined
+      )
+        add(`page known ${call.tool} ${valueText(call.input.path)}`, false);
+  }
   for (const tool of expect.notCalls ?? []) add(`notCalls ${tool}`, count(tool) === 0);
   if (expect.order !== undefined) {
     const firsts = expect.order.map((tool) => calls.findIndex((call) => call.tool === tool));

@@ -29,7 +29,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { openMediaFile, readMediaFileHeader } from "../assets/MediaFile.ts";
+import { openMediaFile } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
 import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
@@ -449,7 +449,7 @@ const make = Effect.gen(function* () {
       return yield* unreadable;
     }
     // Open without following links and recheck the path, so a link or FIFO swapped in is refused.
-    const bytes = yield* Effect.scoped(
+    const html = yield* Effect.scoped(
       Effect.gen(function* () {
         const file = yield* openMediaFile(realPath).pipe(
           Effect.mapError((cause) => new HtmlRenderFileError({ path: filePath, cause })),
@@ -463,12 +463,13 @@ const make = Effect.gen(function* () {
             sizeBytes: Number(file.info.size),
           });
         }
-        return yield* readMediaFileHeader(realPath, file, Number(file.info.size)).pipe(
-          Effect.mapError((cause) => new HtmlRenderFileError({ path: filePath, cause })),
-        );
+        // readFile reads to EOF; a single read may return fewer bytes and cut the page short.
+        return yield* Effect.tryPromise({
+          try: () => file.handle.readFile("utf8"),
+          catch: (cause) => new HtmlRenderFileError({ path: filePath, cause }),
+        });
       }),
     );
-    const html = new TextDecoder().decode(bytes);
     return HTML_DOCUMENT_START.test(html) ? html : yield* unreadable;
   });
 

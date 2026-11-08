@@ -327,6 +327,7 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
   ]);
   assert.deepEqual(failed(expect, run([render])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
+    "page known html_render /tmp/v.html",
   ]);
 });
 

@@ -273,20 +273,25 @@ describe("HtmlRender", () => {
       yield* fileSystem.writeFileString(file, "<!doctype html><p>First draft</p>");
       const page = { path: file, title: "Report", height: 300 };
 
-      const reference = yield* htmlRender.publish({ threadId, ...page });
+      const first = yield* htmlRender.publish({ threadId, ...page });
       yield* fileSystem.writeFileString(file, "<!doctype html><p>Second draft</p>");
+      const second = yield* htmlRender.publish({ threadId, ...page });
+      const inline = { html: "<!doctype html><p>First draft</p>", title: "Report", height: 300 };
+      const inlineReference = yield* htmlRender.publish({ threadId, ...inline });
 
       const stored = yield* fileSystem.readFileString(
         resolveAttachmentPathById({
           attachmentsDir: config.attachmentsDir,
-          attachmentId: reference.attachmentId,
+          attachmentId: first.attachmentId,
         }) ?? "",
       );
       expect(stored).toContain("<p>First draft</p>");
       expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, path: `${file}x` })).toBe(
         undefined,
       );
-      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reference);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, inline)).toEqual(inlineReference);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(first);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
     }).pipe(Effect.provide(layerTest)),
   );

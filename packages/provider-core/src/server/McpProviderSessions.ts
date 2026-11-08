@@ -44,7 +44,8 @@ export class McpProviderSessions extends Context.Service<
       },
       reference: HtmlRenderReference,
     ) => Effect.Effect<void>;
-    // A reported attachment consumes that exact page; otherwise only unique input matches count.
+    // A reported attachment consumes that exact page; otherwise the oldest page for a path, or a
+    // unique inline match.
     readonly takeHtmlRender: (
       threadId: ThreadId,
       input: PageInput,
@@ -60,38 +61,35 @@ interface PageInput {
   readonly height?: unknown;
 }
 
-const pageSourceMatcher = (input: PageInput): ((page: KeptHtmlRender) => boolean) | undefined => {
+const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput): number => {
+  const height =
+    typeof input.height === "string" && input.height.trim() !== ""
+      ? Number(input.height)
+      : input.height;
+  const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
   const path = input.path;
   if (typeof path === "string" && path.length > 0) {
-    return (page) => page.path === path;
+    // An edited file is published again under the same path; completions arrive in publish order.
+    return kept.findIndex((page) => page.path === path && sameFrame(page));
   }
   const html = input.html;
   if (typeof html !== "string" || html.length === 0) {
-    return undefined;
+    return -1;
   }
   const htmlHash = hashHtml(html);
   const tail = html.startsWith(BOUNDED_TEXT_MARKER)
     ? html.slice(BOUNDED_TEXT_MARKER.length)
     : undefined;
-  return (page) =>
-    page.htmlHash === htmlHash ||
-    (tail !== undefined &&
-      tail.length > 0 &&
-      tail.length < page.htmlLength &&
-      page.htmlEnd.endsWith(tail));
-};
-
-const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput): number => {
-  const matchesSource = pageSourceMatcher(input);
-  if (matchesSource === undefined) {
-    return -1;
-  }
-  const height =
-    typeof input.height === "string" && input.height.trim() !== ""
-      ? Number(input.height)
-      : input.height;
   const matches = kept.flatMap((page, index) =>
-    page.title === input.title && page.height === height && matchesSource(page) ? [index] : [],
+    page.path === undefined &&
+    sameFrame(page) &&
+    (page.htmlHash === htmlHash ||
+      (tail !== undefined &&
+        tail.length > 0 &&
+        tail.length < page.htmlLength &&
+        page.htmlEnd.endsWith(tail)))
+      ? [index]
+      : [],
   );
   return matches.length === 1 ? matches[0]! : -1;
 };
