@@ -2596,6 +2596,8 @@ describe("PreviewManager", () => {
         const firstReady = yield* Deferred.make<void>();
         const secondReady = yield* Deferred.make<void>();
         let registrations = 0;
+        const focusCallsAtStart: number[] = [];
+        // The host's Annotate button holds keyboard focus; the guest only reports window focus.
         const guest = {
           ...makeTestPreviewWebContents(async () => ({
             toPNG: () => Buffer.from("unused"),
@@ -2603,11 +2605,16 @@ describe("PreviewManager", () => {
             getSize: () => ({ width: 1, height: 1 }),
           })),
           isFocused: () => true,
-          focus: vi.fn(),
+          focusedFrame: null as object | null,
+          focus: vi.fn(() => {
+            guest.focusedFrame = {};
+          }),
           send: (channel: string, ...args: unknown[]) => {
             webviewSend(channel, ...args);
-            if (channel === "preview:start-pick")
+            if (channel === "preview:start-pick") {
+              focusCallsAtStart.push(guest.focus.mock.calls.length);
               Deferred.doneUnsafe(registrations++ === 0 ? firstReady : secondReady, Effect.void);
+            }
           },
           once: vi.fn(),
           ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
@@ -2639,6 +2646,7 @@ describe("PreviewManager", () => {
           .pickElement("tab_1", { sessionId: "second", shortcuts: [] })
           .pipe(Effect.forkChild);
         yield* Deferred.await(secondReady);
+        expect(focusCallsAtStart).toEqual([1, 1]);
         expect(yield* Fiber.join(first)).toBeNull();
         webviewSend.mockClear();
         yield* manager.updateAnnotationVoice(state);
