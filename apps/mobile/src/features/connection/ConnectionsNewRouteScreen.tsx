@@ -13,7 +13,7 @@ import {
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
-import { Linking, Pressable, StyleSheet, View } from "react-native";
+import { Linking, Platform, Pressable, StyleSheet, View } from "react-native";
 import Svg, { Defs, RadialGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -193,6 +193,7 @@ function PairingForm({
       <ScrollView
         nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
