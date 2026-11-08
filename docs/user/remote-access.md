@@ -354,8 +354,8 @@ t3 environment link <address> --access <mode>
 Remove-Item Env:T3CODE_PAIRING_CODE
 ```
 
-In fish, read it with `read --silent --export T3CODE_PAIRING_CODE` and clear it
-afterwards with `set --erase T3CODE_PAIRING_CODE`.
+In fish, read it with `read --global --silent --export T3CODE_PAIRING_CODE` and
+clear it afterwards with `set --erase --global T3CODE_PAIRING_CODE`.
 
 You can pass the code with `--pairing-code <code>` instead, but entering it on
 the command line exposes it in process arguments and shell history.
