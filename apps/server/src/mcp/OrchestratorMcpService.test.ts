@@ -21,6 +21,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  SECRET_REQUEST_UNSAVED_NOTE,
   SecretRef,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -1413,6 +1414,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         } as unknown as OrchestrationV2StoredEvent);
       const dependencies = Layer.mergeAll(
         NodeServices.layer,
+        NodeCrypto.layer,
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () =>
             Effect.gen(function* () {
@@ -1482,15 +1484,21 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* TestClock.adjust("10 minutes");
         }
         const result = yield* Fiber.join(waiting);
+        const status = (
+          {
+            saved: "saved",
+            declined: "declined",
+            "the run ending": "cancelled",
+            "an answer before the wait": "saved",
+            "an answer during the first read": "saved",
+            "no answer": "timed_out",
+          } as const
+        )[outcome];
         assert.deepEqual(
           result,
-          outcome === "saved" ||
-            outcome === "an answer before the wait" ||
-            outcome === "an answer during the first read"
-            ? { status: "saved", secretRef }
-            : outcome === "declined"
-              ? { status: "declined" }
-              : { status: outcome === "no answer" ? "timed_out" : "cancelled" },
+          status === "saved"
+            ? { status, secretRef }
+            : { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] },
         );
         if (outcome === "the run ending" || outcome === "no answer") {
           assert.equal(card?.secretStatus, "cancelled");

@@ -17,6 +17,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
@@ -805,6 +806,8 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
             getThreadRecords: () => Effect.sync(projection),
             getThreadShell: () =>
               Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+            getThreadEventSequence: () => Effect.succeed(0),
+            streamStoredEventsFrom: () => Stream.never,
             dispatch: (command) => Effect.sync(() => void dispatched.push(command) as never),
           } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
           ServerSettings.layerTest(),
