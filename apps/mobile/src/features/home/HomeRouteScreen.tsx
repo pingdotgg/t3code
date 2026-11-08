@@ -40,6 +40,7 @@ import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspace
 import { WorkspaceListEmptyDetail } from "../layout/workspace/WorkspaceListEmptyDetail";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { buildHomeListFilterMenuItems, homeListFilterEnvironments } from "./home-list-filter-menu";
+import { ProjectFilterSheet } from "./ProjectFilterSheet";
 
 export function HomeRouteScreen() {
   const nativePrimaryColumn = use(NativePrimaryColumnContext);
@@ -58,6 +59,7 @@ export function HomeRouteScreen() {
   const selectTab = useSelectWorkspaceTab();
   const workspace = useWorkspaceTabs();
   const [localSearchQuery, setLocalSearchQuery] = useState("");
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const searchQuery =
     Platform.OS === "android"
       ? primarySidebarSearchQuery
@@ -138,6 +140,9 @@ export function HomeRouteScreen() {
       ).map((scope) => ({
         key: scope.key,
         label: scope.title,
+        pinned: scope.pinned,
+        project: scope.representative,
+        members: scope.projects,
       })),
     [projectScopes, threads],
   );
@@ -174,7 +179,7 @@ export function HomeRouteScreen() {
               selectedEnvironmentId,
               selectedProjectKey,
               onEnvironmentChange: setSelectedEnvironmentId,
-              onProjectChange: setSelectedProjectKey,
+              onOpenProjectPicker: () => setProjectPickerOpen(true),
             }),
           }}
         />
@@ -226,6 +231,14 @@ export function HomeRouteScreen() {
           visible={visible}
         />
         <ThreadUndoNotice visible={visible} />
+        {projectPickerOpen ? (
+          <ProjectFilterSheet
+            projects={projectFilterOptions}
+            selectedProjectKey={selectedProjectKey}
+            onProjectChange={setSelectedProjectKey}
+            onClose={() => setProjectPickerOpen(false)}
+          />
+        ) : null}
       </>
     </AndroidHomeFabLayout>
   );
