@@ -160,7 +160,6 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
     request: AcpSchema.DisconnectMcpRequest,
   ): Effect.fn.Return<AcpSchema.DisconnectMcpResponse, AcpMcpOverAcpError> {
     const connection = yield* connectionFor(request.connectionId);
-    connections.delete(request.connectionId);
     const sessionId = connection.sessionId;
     if (sessionId !== null) {
       const response = yield* Effect.tryPromise({
@@ -187,6 +186,8 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         () => response.body?.cancel().catch(() => undefined) ?? Promise.resolve(),
       );
     }
+    // Forget the connection only once the session is closed, so a retry or dispose can close it.
+    connections.delete(request.connectionId);
     return {};
   });
 

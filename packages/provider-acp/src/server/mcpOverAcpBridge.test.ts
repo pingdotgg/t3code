@@ -15,6 +15,7 @@ describe("AcpMcpOverAcpBridge", () => {
         readonly headers: Headers;
         readonly body: unknown;
       }> = [];
+      let deletes = 0;
       const bridge = yield* makeAcpMcpOverAcpBridge({
         endpoint: "http://127.0.0.1:1/mcp",
         authorization: "Bearer bridge-test",
@@ -24,7 +25,8 @@ describe("AcpMcpOverAcpBridge", () => {
           const headers = new Headers(init?.headers);
           const body = init?.body === undefined ? null : JSON.parse(String(init.body));
           requests.push({ method, headers, body });
-          if (method === "DELETE") return new Response(null, { status: 204 });
+          if (method === "DELETE")
+            return new Response(null, { status: ++deletes === 1 ? 503 : 204 });
           if (body === null || typeof body !== "object") return new Response(null, { status: 202 });
           const request = body as { readonly id?: unknown; readonly method?: unknown };
           if (request.method === "initialize") {
@@ -71,7 +73,13 @@ describe("AcpMcpOverAcpBridge", () => {
         connectionId: connected.connectionId,
         method: "notifications/initialized",
       });
+      // A rejected close keeps the connection, so the session can still be closed.
+      const rejected = yield* bridge
+        .disconnect({ connectionId: connected.connectionId })
+        .pipe(Effect.flip);
+      expect(rejected.message).toContain("HTTP 503");
       yield* bridge.disconnect({ connectionId: connected.connectionId });
+      expect(deletes).toBe(2);
 
       expect(requests[0]?.headers.get("authorization")).toBe("Bearer bridge-test");
       expect(requests[1]?.headers.get("mcp-session-id")).toBe("session-42");
