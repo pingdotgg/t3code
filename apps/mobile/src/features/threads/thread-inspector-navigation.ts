@@ -4,6 +4,8 @@ import { Platform } from "react-native";
 
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 
+export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
+
 export type ThreadInspectorTarget = {
   readonly type: "thread" | "device";
   readonly environmentId: string;

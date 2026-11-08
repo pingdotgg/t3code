@@ -1,10 +1,44 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type TerminalSummary } from "@t3tools/contracts";
 import { selectRunningSubprocessTerminalIds } from "@t3tools/client-runtime/state/terminal";
+import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 
-import { selectKnownTerminalSessions } from "./terminalSessions";
+import {
+  attachedTerminalSessionAtom,
+  knownTerminalSessionsAtom,
+  selectKnownTerminalSessions,
+} from "./terminalSessions";
 
-vi.mock("./terminal", () => ({ terminalEnvironment: {} }));
+const attachCalls = vi.hoisted(() => [] as unknown[]);
+const metadataAtom = await vi.hoisted(async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return Atom.make<AsyncResult.AsyncResult<ReadonlyArray<TerminalSummary>>>(
+    AsyncResult.initial(true),
+  );
+});
+vi.mock("./terminal", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  return {
+    terminalEnvironment: {
+      attach: (request: unknown) => {
+        attachCalls.push(request);
+        return Atom.make(AsyncResult.initial(true));
+      },
+      metadata: () => metadataAtom,
+    },
+  };
+});
+vi.mock("./session", async () => {
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const granted = Atom.make(AsyncResult.success({}));
+  return {
+    environmentSession: { sessionStateAtom: () => granted },
+    sessionHasScope: () => true,
+    useEnvironmentScope: () => true,
+  };
+});
 
 const environmentA = EnvironmentId.make("environment-a");
 const threadA = ThreadId.make("thread-a");
@@ -75,5 +109,54 @@ describe("selectKnownTerminalSessions", () => {
     ).toBe("Renamed");
     expect(selectKnownTerminalSessions([other], environmentA, threadA)).toEqual([]);
     expect(selectKnownTerminalSessions([other], environmentA, threadB)).toBe(beforeB);
+  });
+});
+
+describe("knownTerminalSessionsAtom", () => {
+  const metadataResult = (...terminals: ReadonlyArray<TerminalSummary>) =>
+    AsyncResult.success<ReadonlyArray<TerminalSummary>>(terminals);
+
+  it("notifies only when the thread's own terminals change", () => {
+    const registry = AtomRegistry.make();
+    const sessions = knownTerminalSessionsAtom(environmentA, threadA);
+    expect(registry.get(sessions)).toBeNull();
+
+    const first = summary(threadA, "terminal-1");
+    const other = summary(threadB, "terminal-1");
+    registry.set(metadataAtom, metadataResult(first));
+    const notified: unknown[] = [];
+    const unsubscribe = registry.subscribe(sessions, (value) => notified.push(value));
+    const before = registry.get(sessions);
+
+    registry.set(metadataAtom, metadataResult(first, other));
+    registry.set(metadataAtom, metadataResult(first, { ...other, label: "Renamed" }));
+    expect(notified).toEqual([]);
+    expect(registry.get(sessions)).toBe(before);
+
+    registry.set(metadataAtom, metadataResult({ ...first, label: "Renamed" }, other));
+    expect(notified).toHaveLength(1);
+
+    const previousSuccess = Option.some(metadataResult(first));
+    registry.set(metadataAtom, AsyncResult.failure(Cause.die("unavailable"), { previousSuccess }));
+    expect(registry.get(sessions)).toBeNull();
+    unsubscribe();
+  });
+});
+
+describe("attachedTerminalSessionAtom", () => {
+  it("attaches with the launch input it was keyed by", () => {
+    attachCalls.length = 0;
+    const input = {
+      threadId: threadA,
+      terminalId: "terminal-1",
+      cwd: "/repo",
+      worktreePath: null,
+      env: { T3CODE_PROJECT_ROOT: "/repo" },
+    };
+    const atom = attachedTerminalSessionAtom(environmentA, input);
+    expect(attachedTerminalSessionAtom(environmentA, { ...input })).toBe(atom);
+
+    AtomRegistry.make().get(atom);
+    expect(attachCalls).toEqual([{ environmentId: environmentA, input }]);
   });
 });

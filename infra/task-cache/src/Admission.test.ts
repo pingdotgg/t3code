@@ -2,9 +2,10 @@ import { expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
 import * as Admission from "./Admission.ts";
 
-it.effect("queues uploads and releases the permit when an upload is interrupted", () =>
+it.effect("rejects excess uploads immediately and releases interrupted uploads", () =>
   Effect.gen(function* () {
     const admission = yield* Admission.Admission;
     const entered = yield* Deferred.make<void>();
@@ -20,11 +21,12 @@ it.effect("queues uploads and releases the permit when an upload is interrupted"
       )
       .pipe(Effect.forkChild);
     yield* Deferred.await(secondEntered);
-    const third = yield* admission
-      .withPermit(true, Effect.succeed("restored"))
-      .pipe(Effect.forkChild);
+    const rejected = yield* admission
+      .withPermit(true, Effect.die("must not run"))
+      .pipe(Effect.exit);
+    expect(rejected).toEqual(Exit.fail(new Admission.AdmissionRejected()));
     yield* Fiber.interrupt(first);
-    expect(yield* Fiber.join(third)).toBe("restored");
+    expect(yield* admission.withPermit(true, Effect.succeed("restored"))).toBe("restored");
     yield* Fiber.interrupt(second);
   }).pipe(Effect.provide(Admission.layer)),
 );

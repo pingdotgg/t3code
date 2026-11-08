@@ -3,9 +3,7 @@ import { DEFAULT_COMPATIBILITY_DATE } from "./internal/constants.ts";
 import * as Plugin from "./Plugin.ts";
 import { Runtime } from "./Runtime.ts";
 
-class HttpServer extends Plugin.Service<HttpServer>()(
-  "cloudflare-runtime/plugin/HttpServer",
-) {}
+class HttpServer extends Plugin.Service<HttpServer>()("cloudflare-runtime/plugin/HttpServer") {}
 
 /**
  * Publish an HTTP dev server under a Worker name for local service bindings.
