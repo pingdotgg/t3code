@@ -89,6 +89,8 @@ export interface RemoteDesktopSession {
   readonly restoreToken: string | null;
   /** Completes when the desktop or the user ends the session, or the bus drops. */
   readonly closed: Effect.Effect<void>;
+  /** Whether `closed` has completed, without waiting. */
+  readonly isClosed: Effect.Effect<boolean>;
   /** `x` and `y` are logical coordinates inside `stream`. */
   readonly pointerMotionAbsolute: (
     stream: PortalStream,
@@ -444,6 +446,7 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
       streams,
       restoreToken: asString(variantValue(started, "restore_token")) ?? null,
       closed: Deferred.await(closed),
+      isClosed: Deferred.isDone(closed),
       pointerMotionAbsolute: (stream, x, y) =>
         notify("NotifyPointerMotionAbsolute", "oa{sv}udd", [stream.nodeId, x, y]),
       pointerButton: (button, pressed) =>

@@ -16,6 +16,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -35,6 +36,13 @@ const SCROLL_STEP = 15;
 /** KWin flips the portal's vertical axis before sending it to apps, so down is negative here. */
 const SCROLL_DOWN_SIGN = -1;
 
+/** A shared stream, cut to the screen it matched in a capture. */
+interface SharedArea {
+  readonly stream: PortalStream;
+  /** The only logical area this stream's pixels and input may cover. */
+  readonly rect: DesktopRect;
+}
+
 /** How pixels in the last screenshot map to the desktop's logical coordinates. */
 export interface ScreenshotFrame {
   readonly originX: number;
@@ -43,6 +51,7 @@ export interface ScreenshotFrame {
   readonly scaleY: number;
   readonly width: number;
   readonly height: number;
+  readonly shared: ReadonlyArray<SharedArea>;
 }
 
 interface ActiveControl {
@@ -55,8 +64,9 @@ interface ActiveControl {
 
 interface Opening {
   readonly owner: ThreadId;
-  /** Interrupting it closes the consent dialog. */
-  readonly fiber: Fiber.Fiber<RemoteDesktopSession, OpenSessionError>;
+  readonly ticket: object;
+  /** Null when cancelled. Interrupting it closes the consent dialog. */
+  readonly fiber: Fiber.Fiber<ActiveControl | null, OpenSessionError>;
 }
 
 interface ControlState {
@@ -85,6 +95,14 @@ const matches = (a: DesktopRect, b: DesktopRect) =>
   Math.abs(a.width - b.width) <= 1 &&
   Math.abs(a.height - b.height) <= 1;
 
+const intersect = (a: DesktopRect, b: DesktopRect): DesktopRect | null => {
+  const x = Math.max(a.x, b.x);
+  const y = Math.max(a.y, b.y);
+  const right = Math.min(a.x + a.width, b.x + b.width);
+  const bottom = Math.min(a.y + a.height, b.y + b.height);
+  return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
+};
+
 const layoutChanged =
   "The screen layout changed since control started. Call `computer_screenshot` again to start over.";
 
@@ -102,14 +120,24 @@ export const renderScreenshot = (
   const bounds = capture.bounds;
   if (
     Math.abs(image.width - bounds.width * capture.scale) > 2 * capture.scale ||
-    Math.abs(image.height - bounds.height * capture.scale) > 2 * capture.scale ||
-    !displays.every((shared) => capture.screens.some((screen) => matches(shared, screen)))
+    Math.abs(image.height - bounds.height * capture.scale) > 2 * capture.scale
   ) {
     return layoutChanged;
   }
+  // Rounding can leave a stream a pixel off its screen, so only their overlap counts as shared.
+  const shared: Array<SharedArea> = [];
+  for (const stream of displays) {
+    const screen = capture.screens.find((candidate) => matches(stream, candidate));
+    const rect = screen === undefined ? null : intersect(stream, screen);
+    if (rect === null) return layoutChanged;
+    shared.push({ stream, rect });
+  }
   const pixelsX = image.width / bounds.width;
   const pixelsY = image.height / bounds.height;
-  const area = display === undefined ? workspaceBounds(displays) : displays[display]!;
+  const area =
+    display === undefined
+      ? workspaceBounds(shared.map((entry) => entry.rect))
+      : shared[display]!.rect;
   const left = Math.max(0, Math.min(image.width - 1, Math.round((area.x - bounds.x) * pixelsX)));
   const top = Math.max(0, Math.min(image.height - 1, Math.round((area.y - bounds.y) * pixelsY)));
   const rect = {
@@ -119,19 +147,19 @@ export const renderScreenshot = (
     height: Math.max(1, Math.min(image.height - top, Math.round(area.height * pixelsY))),
   };
   // Black out unshared pixels before downscaling, so no output pixel averages any of them in.
-  const shared = new Uint8Array(rect.width);
+  const visibleColumns = new Uint8Array(rect.width);
   for (let row = rect.y; row < rect.y + rect.height; row++) {
     const y = bounds.y + (row + 0.5) / pixelsY;
-    shared.fill(0);
-    for (const stream of displays) {
-      if (y < stream.y || y >= stream.y + stream.height) continue;
-      // Pixels whose centres fall inside the stream, as `contains` decides.
-      const from = Math.ceil((stream.x - bounds.x) * pixelsX - 0.5) - rect.x;
-      const to = Math.ceil((stream.x + stream.width - bounds.x) * pixelsX - 0.5) - rect.x;
-      shared.fill(1, Math.max(0, from), Math.max(0, Math.min(rect.width, to)));
+    visibleColumns.fill(0);
+    for (const { rect: visible } of shared) {
+      if (y < visible.y || y >= visible.y + visible.height) continue;
+      // Pixels whose centres fall inside the area, as `contains` decides.
+      const from = Math.ceil((visible.x - bounds.x) * pixelsX - 0.5) - rect.x;
+      const to = Math.ceil((visible.x + visible.width - bounds.x) * pixelsX - 0.5) - rect.x;
+      visibleColumns.fill(1, Math.max(0, from), Math.max(0, Math.min(rect.width, to)));
     }
     for (let column = 0; column < rect.width; column++) {
-      if (shared[column] === 0) {
+      if (visibleColumns[column] === 0) {
         const index = (row * image.width + rect.x + column) * 3;
         image.data.fill(0, index, index + 3);
       }
@@ -145,6 +173,7 @@ export const renderScreenshot = (
     scaleY: area.height / size.height,
     width: size.width,
     height: size.height,
+    shared,
   };
   return { png: encodePng(cropAndResize(image, rect, size.width, size.height)), frame };
 };
@@ -152,7 +181,6 @@ export const renderScreenshot = (
 /** A screenshot pixel as a position inside one stream, or why it has none. */
 export const locatePoint = (
   frame: ScreenshotFrame,
-  displays: ReadonlyArray<PortalStream>,
   x: number,
   y: number,
 ): { readonly stream: PortalStream; readonly x: number; readonly y: number } | string => {
@@ -162,9 +190,9 @@ export const locatePoint = (
   // Aim at the centre of the pixel, which matters once the screenshot is downscaled.
   const globalX = frame.originX + (Math.floor(x) + 0.5) * frame.scaleX;
   const globalY = frame.originY + (Math.floor(y) + 0.5) * frame.scaleY;
-  const stream = displays.find((display) => contains(display, globalX, globalY));
-  if (stream === undefined) return `(${x}, ${y}) is not on a shared display.`;
-  return { stream, x: globalX - stream.x, y: globalY - stream.y };
+  const area = frame.shared.find((entry) => contains(entry.rect, globalX, globalY));
+  if (area === undefined) return `(${x}, ${y}) is not on a shared display.`;
+  return { stream: area.stream, x: globalX - area.stream.x, y: globalY - area.stream.y };
 };
 
 const displaySummaries = (displays: ReadonlyArray<PortalStream>): Array<ComputerDisplay> =>
@@ -232,52 +260,63 @@ const make = Effect.gen(function* () {
     endedFor: null,
   });
 
-  const closeActive = (options: { readonly forget: boolean }) =>
-    Ref.modify(state, (current) => [
-      current.active,
-      {
-        ...current,
-        active: null,
-        restoreToken: options.forget ? null : current.restoreToken,
-      },
-    ]).pipe(
+  // Revoking needs no lock: state changes are atomic, and running calls race `session.closed`.
+  /** Ends control, or only `session`'s, and returns once the portal session is closed. */
+  const closeActive = (options: {
+    readonly forget: boolean;
+    readonly session?: RemoteDesktopSession;
+  }) =>
+    Ref.modify(state, (current) =>
+      current.active !== null &&
+      (options.session === undefined || current.active.session === options.session)
+        ? [
+            current.active,
+            {
+              ...current,
+              active: null,
+              restoreToken: options.forget ? null : current.restoreToken,
+            },
+          ]
+        : [null, current],
+    ).pipe(
       Effect.flatMap((active) =>
         active === null ? Effect.succeed(false) : active.session.close.pipe(Effect.as(true)),
       ),
     );
 
   const closeIfActive = (session: RemoteDesktopSession) =>
-    Ref.get(state).pipe(
-      Effect.flatMap((current) =>
-        current.active?.session === session ? closeActive({ forget: false }) : Effect.void,
-      ),
-      Effect.asVoid,
-    );
+    closeActive({ forget: false, session }).pipe(Effect.asVoid);
 
-  /** Closes a consent dialog still waiting for the user, and waits until it is gone. */
-  const cancelOpening = (owner: ThreadId | null) =>
-    Ref.get(state).pipe(
-      Effect.flatMap((current) =>
-        current.opening !== null && (owner === null || current.opening.owner === owner)
-          ? Fiber.interrupt(current.opening.fiber).pipe(Effect.as(true))
-          : Effect.succeed(false),
+  /**
+   * Takes a dialog still waiting for the user out of state, so it can never start control, and
+   * returns once its fiber has closed the dialog or the session the user just allowed.
+   */
+  const cancelOpening = (which: (opening: Opening) => boolean, forget: boolean) =>
+    Ref.modify(state, (current) =>
+      current.opening !== null && which(current.opening)
+        ? [
+            current.opening,
+            { ...current, opening: null, restoreToken: forget ? null : current.restoreToken },
+          ]
+        : [null, current],
+    ).pipe(
+      Effect.flatMap((opening) =>
+        opening === null
+          ? Effect.succeed(false)
+          : Fiber.interrupt(opening.fiber).pipe(Effect.as(true)),
       ),
     );
 
   // The user ended control from the desktop, which also revokes the saved grant.
+  const endedByDesktop = (session: RemoteDesktopSession) =>
+    Ref.update(state, (current) =>
+      current.active?.session === session
+        ? { ...current, active: null, restoreToken: null, endedFor: current.active.owner }
+        : current,
+    ).pipe(Effect.andThen(session.close));
+
   const watchClosed = (session: RemoteDesktopSession) =>
-    session.closed.pipe(
-      Effect.andThen(
-        lock.withPermit(
-          Ref.update(state, (current) =>
-            current.active?.session === session
-              ? { ...current, active: null, restoreToken: null, endedFor: current.active.owner }
-              : current,
-          ),
-        ),
-      ),
-      Effect.andThen(session.close),
-    );
+    session.closed.pipe(Effect.andThen(endedByDesktop(session)));
 
   const touch = (session: RemoteDesktopSession) =>
     FiberHandle.run(idleTimer)(
@@ -316,6 +355,53 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /**
+   * Opens a session and starts control with it, unless `cancelOpening` took the dialog first.
+   * Runs uninterruptibly but for the session's arrival, so the hand-off always settles.
+   */
+  const openControl = Effect.fn("ComputerUse.openControl")(function* (
+    threadId: ThreadId,
+    ticket: object,
+    restoreToken: string | null,
+  ) {
+    const exit = yield* Effect.exit(Effect.interruptible(desktop.openSession(restoreToken)));
+    const failed = Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause);
+    const active: ActiveControl | null = Exit.isSuccess(exit)
+      ? {
+          owner: threadId,
+          session: exit.value,
+          displays: [...exit.value.streams].sort((a, b) => a.x - b.x || a.y - b.y),
+          frame: null,
+        }
+      : null;
+    const claimed = yield* Ref.modify(state, (current) =>
+      current.opening?.ticket === ticket
+        ? [
+            true,
+            {
+              ...current,
+              opening: null,
+              active: active ?? current.active,
+              restoreToken:
+                active !== null
+                  ? active.session.restoreToken
+                  : failed
+                    ? null
+                    : current.restoreToken,
+            },
+          ]
+        : [false, current],
+    );
+    if (!claimed) {
+      // `cancelOpening` is waiting for this fiber, so the session closes before it returns.
+      if (active !== null) yield* active.session.close;
+      return null;
+    }
+    if (Exit.isFailure(exit) && failed) return yield* Effect.failCause(exit.cause);
+    if (active !== null) yield* Effect.forkIn(watchClosed(active.session), scope);
+    return active;
+  });
+
   const ensureControl = Effect.fn("ComputerUse.ensureControl")(function* (threadId: ThreadId) {
     yield* takeEnded(threadId);
     const current = yield* Ref.get(state);
@@ -324,41 +410,70 @@ const make = Effect.gen(function* () {
     }
     const reason = yield* desktop.unavailableReason;
     if (reason !== null) return yield* new ComputerUseUnavailableError({ reason });
-    // A fiber of its own, so turning the setting off or `stop` can close the dialog.
-    const fiber = yield* Effect.forkChild(desktop.openSession(current.restoreToken));
+    // Checked again after the lookup above, so a setting turned off meanwhile shows no dialog.
+    yield* requireEnabled;
+    // A fiber of its own, so turning the setting off or `stop` can close the dialog. It starts
+    // after this fiber registers it, so it always finds its ticket.
+    const ticket = {};
+    const fiber = yield* Effect.forkIn(openControl(threadId, ticket, current.restoreToken), scope, {
+      uninterruptible: true,
+    });
     yield* Ref.update(state, (value) => ({
       ...value,
-      opening: { owner: threadId, fiber },
+      opening: { owner: threadId, ticket, fiber },
       endedFor: null,
     }));
     const exit = yield* Fiber.await(fiber).pipe(
-      Effect.onInterrupt(() => Fiber.interrupt(fiber)),
-      Effect.ensuring(Ref.update(state, (value) => ({ ...value, opening: null }))),
+      // The agent stopped waiting, so close the dialog as `stop` would.
+      Effect.onInterrupt(() => cancelOpening((opening) => opening.ticket === ticket, false)),
     );
-    if (Exit.isFailure(exit)) {
-      if (Cause.hasInterruptsOnly(exit.cause)) {
-        yield* requireEnabled;
-        return yield* new ComputerUseUnavailableError({
-          reason: "Desktop control was stopped before the user answered the prompt.",
-        });
-      }
-      yield* Ref.update(state, (value) => ({ ...value, restoreToken: null }));
-      return yield* Effect.failCause(exit.cause);
+    if (Exit.isFailure(exit)) return yield* Effect.failCause(exit.cause);
+    if (exit.value === null) {
+      yield* requireEnabled;
+      return yield* new ComputerUseUnavailableError({
+        reason: "Desktop control was stopped before the user answered the prompt.",
+      });
     }
-    const session = exit.value;
-    const active: ActiveControl = {
-      owner: threadId,
-      session,
-      displays: [...session.streams].sort((a, b) => a.x - b.x || a.y - b.y),
-      frame: null,
-    };
-    yield* Ref.update(state, (value) => ({
-      ...value,
-      active,
-      restoreToken: session.restoreToken,
-    }));
-    yield* Effect.forkIn(watchClosed(session), scope);
-    return active;
+    return exit.value;
+  });
+
+  /** A setting check that also ends `session`'s control, so a revoked grant never lingers. */
+  const requireEnabledFor = (session: RemoteDesktopSession) =>
+    requireEnabled.pipe(Effect.tapError(() => closeActive({ forget: true, session })));
+
+  /** Why control ended under a running call, told the way the thread's next call would hear it. */
+  const controlEnded = (active: ActiveControl) =>
+    endedByDesktop(active.session).pipe(
+      Effect.andThen(requireEnabled),
+      Effect.andThen(takeEnded(active.owner)),
+      Effect.andThen(
+        Effect.fail(
+          new ComputerUseUnavailableError({
+            reason: "Desktop control ended before this call finished.",
+          }),
+        ),
+      ),
+    );
+
+  /** Runs `effect` with `active`'s session, abandoning it and its result if control ends first. */
+  const whileControlled = Effect.fn("ComputerUse.whileControlled")(function* <A, E>(
+    active: ActiveControl,
+    effect: Effect.Effect<A, E>,
+  ) {
+    const result = yield* Effect.raceFirst(
+      Effect.asSome(effect),
+      Effect.as(active.session.closed, Option.none<A>()),
+    );
+    const current = yield* Ref.get(state);
+    if (
+      Option.isNone(result) ||
+      current.active?.session !== active.session ||
+      (yield* active.session.isClosed)
+    ) {
+      return yield* controlEnded(active);
+    }
+    yield* requireEnabledFor(active.session);
+    return result.value;
   });
 
   const requireControl = (threadId: ThreadId) =>
@@ -381,25 +496,29 @@ const make = Effect.gen(function* () {
           const active = yield* ensureControl(input.threadId);
           yield* touch(active.session);
           // The user may have turned the setting off while the dialog was answered.
-          yield* requireEnabled;
+          yield* requireEnabledFor(active.session);
           if (input.display !== undefined && input.display >= active.displays.length) {
             return yield* invalid(
               `There is no display ${input.display}. Displays are 0 to ${active.displays.length - 1}.`,
             );
           }
           // A failed capture ends control, so a broken first screenshot never strands the desktop.
-          const shot = yield* desktop.capture.pipe(
-            Effect.flatMap((capture) =>
-              Effect.try({
-                try: () => renderScreenshot(capture, active.displays, input.display),
-                catch: (cause) => new ComputerUseOperationError({ operation: "screenshot", cause }),
-              }),
+          const shot = yield* whileControlled(
+            active,
+            desktop.capture.pipe(
+              Effect.flatMap((capture) =>
+                Effect.try({
+                  try: () => renderScreenshot(capture, active.displays, input.display),
+                  catch: (cause) =>
+                    new ComputerUseOperationError({ operation: "screenshot", cause }),
+                }),
+              ),
+              Effect.filterOrFail(
+                (shot): shot is Exclude<typeof shot, string> => typeof shot !== "string",
+                () => new ComputerUseUnavailableError({ reason: layoutChanged }),
+              ),
+              Effect.tapError(() => closeIfActive(active.session)),
             ),
-            Effect.filterOrFail(
-              (shot): shot is Exclude<typeof shot, string> => typeof shot !== "string",
-              () => new ComputerUseUnavailableError({ reason: layoutChanged }),
-            ),
-            Effect.tapError(() => closeIfActive(active.session)),
           );
           yield* Ref.update(state, (value) =>
             value.active?.session === active.session
@@ -428,13 +547,18 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireEnabled;
         const active = yield* requireControl(input.threadId);
-        const plan = yield* planAction(input, active.frame, active.displays);
+        const plan = yield* planAction(input, active.frame);
         // The portal may hold a key or button that failed to release. Ending the session makes
         // KDE drop its virtual input device once no other remote session shares it, and KWin
         // then releases whatever that device still holds.
-        yield* runPlan(active.session, plan).pipe(
-          Effect.tapError(() => closeIfActive(active.session)),
-          Effect.mapError((cause) => new ComputerUseOperationError({ operation: "input", cause })),
+        yield* whileControlled(
+          active,
+          runPlan(active.session, plan).pipe(
+            Effect.tapError(() => closeIfActive(active.session)),
+            Effect.mapError(
+              (cause) => new ComputerUseOperationError({ operation: "input", cause }),
+            ),
+          ),
         );
         yield* touch(active.session);
       }),
@@ -443,8 +567,7 @@ const make = Effect.gen(function* () {
 
   const stop: ComputerUse["Service"]["stop"] = Effect.fn("ComputerUse.stop")(function* (input) {
     // A pending screenshot holds the lock until its dialog is gone, so never wait behind one.
-    if (yield* cancelOpening(input.threadId)) {
-      if (input.forget) yield* Ref.update(state, (value) => ({ ...value, restoreToken: null }));
+    if (yield* cancelOpening((opening) => opening.owner === input.threadId, input.forget)) {
       return { stopped: true };
     }
     const owner = yield* Ref.get(state).pipe(
@@ -468,7 +591,7 @@ const make = Effect.gen(function* () {
   yield* changes.pipe(
     Stream.filter((value) => !value.enableAgentComputerAccess),
     Stream.runForEach(() =>
-      cancelOpening(null).pipe(Effect.andThen(lock.withPermit(closeActive({ forget: true })))),
+      cancelOpening(() => true, true).pipe(Effect.andThen(closeActive({ forget: true }))),
     ),
     Effect.forkIn(scope),
   );
@@ -498,13 +621,12 @@ type InputStep =
 const planAction = Effect.fn("ComputerUse.planAction")(function* (
   input: ComputerActInput,
   frame: ScreenshotFrame,
-  displays: ReadonlyArray<PortalStream>,
 ): Effect.fn.Return<ReadonlyArray<InputStep>, ComputerUseInvalidActionError> {
   const point = (x: number | undefined, y: number | undefined, label: string) => {
     if (x === undefined || y === undefined) {
       return Effect.fail(invalid(`\`${input.action}\` needs ${label} from the latest screenshot.`));
     }
-    const located = locatePoint(frame, displays, x, y);
+    const located = locatePoint(frame, x, y);
     return typeof located === "string"
       ? Effect.fail(invalid(located))
       : Effect.succeed<MoveStep>({ _tag: "move", ...located });
