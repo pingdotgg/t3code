@@ -2306,9 +2306,19 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
-    Effect.tryPromise({
-      try: (signal) => runOperation(request, signal).finally(() => markUsed(request)),
+  const handleRequest = Effect.fn("ServerBrowser.handleRequest")(function* (
+    connectionId: string,
+    request: PreviewAutomationRequest,
+  ) {
+    // Queued work expires at the request's timeout; a started run past it marks its tab busy.
+    const expiry = yield* Scope.make();
+    const signal = yield* Effect.abortSignal.pipe(Scope.provide(expiry));
+    yield* Effect.sleep(request.timeoutMs).pipe(
+      Effect.andThen(Scope.close(expiry, Exit.void)),
+      Effect.forkChild,
+    );
+    const outcome = yield* Effect.tryPromise({
+      try: () => runOperation(request, signal).finally(() => markUsed(request)),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
       // Lets the operation report its own timeout first, yet answers before the broker's
@@ -2324,6 +2334,7 @@ const make = Effect.gen(function* () {
             }),
           ),
       }),
+      Effect.ensuring(Scope.close(expiry, Exit.void)),
       Effect.match({
         onSuccess: (result) => ({ ok: true as const, result }),
         onFailure: (error) => ({
@@ -2335,16 +2346,16 @@ const make = Effect.gen(function* () {
           },
         }),
       }),
-      Effect.flatMap((outcome) =>
-        broker.respond({
-          clientId: SERVER_HOST_CLIENT_ID,
-          connectionId,
-          requestId: request.requestId,
-          ...outcome,
-        }),
-      ),
-      Effect.ignore,
     );
+    yield* broker
+      .respond({
+        clientId: SERVER_HOST_CLIENT_ID,
+        connectionId,
+        requestId: request.requestId,
+        ...outcome,
+      })
+      .pipe(Effect.ignore);
+  });
 
   const mirrorManagerEvent = (event: PreviewEvent) =>
     Effect.promise(async () => {

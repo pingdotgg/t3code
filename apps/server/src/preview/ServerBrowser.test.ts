@@ -2589,3 +2589,39 @@ it.effect("a recording stop that never finishes leaves its tab busy", () =>
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.effect("a queued action whose timeout passes while it waits never runs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const started = Promise.withResolvers<void>();
+      const finish = Promise.withResolvers<void>();
+      page.emulateMedia.mockImplementationOnce(() => {
+        started.resolve();
+        return finish.promise;
+      });
+      const slow = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 3_000,
+        })
+        .pipe(Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      const queued = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      // The host answers in arrival order, so the click is queued once this answers.
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      // Past the click's timeout but before the server answers it.
+      yield* TestClock.adjust("1200 millis");
+      finish.resolve();
+      yield* Fiber.join(slow);
+      expect(yield* Fiber.join(queued)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      expect(page.locator).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
