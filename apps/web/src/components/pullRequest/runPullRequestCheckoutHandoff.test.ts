@@ -45,12 +45,21 @@ const terminology = sourceControlClients.get(undefined).changeRequest;
 
 type PreparedResult = AtomCommandResult<PullRequestCheckoutPrepared, unknown>;
 
+const opened = { draftId: "draft-1" as never, threadId: "thread-1" as never };
+
 function reset() {
   state.add.mockClear().mockReturnValue(state.toastId);
   state.update.mockClear();
   state.setPrompt.mockClear();
   state.setReviewComments.mockClear();
   state.getComposerDraft.mockReturnValue({ prompt: "", reviewComments: [] });
+}
+
+function cancelFromToast() {
+  const toast = state.add.mock.calls[0]?.[0] as
+    | { actionProps?: { onClick?: () => void } }
+    | undefined;
+  toast?.actionProps?.onClick?.();
 }
 
 it("puts the task in the composer before checkout finishes", async () => {
@@ -63,7 +72,7 @@ it("puts the task in the composer before checkout finishes", async () => {
     mode: "worktree",
     task: { prompt: "Fix the failing check" },
     clearHandoff,
-    openThread: async () => ({ draftId: "draft-1" as never, threadId: "thread-1" as never }),
+    openThread: async () => opened,
     prepare: () => prepare.promise,
     pointThread,
   });
@@ -84,17 +93,22 @@ it("puts the task in the composer before checkout finishes", async () => {
     }),
   );
   await pending;
-  expect(pointThread).toHaveBeenCalledWith({
-    branch: "pr-1",
-    worktreePath: "/tmp/pr-1",
-    isOnPullRequestHead: true,
-  });
+  expect(pointThread).toHaveBeenCalledWith(
+    {
+      branch: "pr-1",
+      worktreePath: "/tmp/pr-1",
+      isOnPullRequestHead: true,
+    },
+    opened,
+  );
   expect(clearHandoff).toHaveBeenCalled();
   expect(state.update).toHaveBeenCalledWith(
     state.toastId,
     expect.objectContaining({
       type: "success",
       title: "Checkout ready",
+      timeout: 8_000,
+      actionProps: undefined,
     }),
   );
 });
@@ -109,22 +123,21 @@ it("cancels preparation and keeps the prompt without pointing the thread", async
     mode: "worktree",
     task: { prompt: "Fix the failing check" },
     clearHandoff,
-    openThread: async () => ({ draftId: "draft-1" as never, threadId: "thread-1" as never }),
+    openThread: async () => opened,
     prepare: () => prepare.promise,
     pointThread,
   });
 
   await vi.waitFor(() => expect(state.setPrompt).toHaveBeenCalled());
-  const toast = state.add.mock.calls[0]?.[0] as
-    | { actionProps?: { onClick?: () => void } }
-    | undefined;
-  toast?.actionProps?.onClick?.();
+  cancelFromToast();
   expect(clearHandoff).toHaveBeenCalled();
   expect(state.update).toHaveBeenCalledWith(
     state.toastId,
     expect.objectContaining({
       type: "info",
-      title: "Cancelled checkout preparation",
+      title: "Stopped applying the checkout",
+      timeout: 8_000,
+      actionProps: undefined,
     }),
   );
 
@@ -136,5 +149,33 @@ it("cancels preparation and keeps the prompt without pointing the thread", async
     }),
   );
   await pending;
+  expect(pointThread).not.toHaveBeenCalled();
+});
+
+it("seeds the prompt when cancel lands while openThread is still pending", async () => {
+  reset();
+  const open = deferred<typeof opened>();
+  const clearHandoff = vi.fn();
+  const pointThread = vi.fn(async () => true);
+  const pending = runPullRequestCheckoutHandoff({
+    terminology,
+    mode: "worktree",
+    task: { prompt: "Fix the failing check" },
+    clearHandoff,
+    openThread: () => open.promise,
+    prepare: async () =>
+      AsyncResult.success({
+        branch: "pr-1",
+        worktreePath: "/tmp/pr-1",
+        isOnPullRequestHead: true,
+      }),
+    pointThread,
+  });
+
+  cancelFromToast();
+  expect(state.setPrompt).not.toHaveBeenCalled();
+  open.resolve(opened);
+  await pending;
+  expect(state.setPrompt).toHaveBeenCalledWith("draft-1", "Fix the failing check");
   expect(pointThread).not.toHaveBeenCalled();
 });
