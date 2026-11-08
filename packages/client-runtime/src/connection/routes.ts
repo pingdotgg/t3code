@@ -647,6 +647,7 @@ export function planGatewayPeerReconcile(input: {
       if (desiredById.has(peer.environmentId)) return false;
       if (input.retain?.has(peer.environmentId) === true) return false;
       // Unknown ownership: only remove peers this client previously desired.
+      // In-memory ownership resets on restart, so prior-session registrations are left alone.
       if (input.previousDesired !== undefined && !input.previousDesired.has(peer.environmentId)) {
         return false;
       }
@@ -654,6 +655,31 @@ export function planGatewayPeerReconcile(input: {
     })
     .map((peer) => peer.environmentId);
   return { add, remove };
+}
+
+/**
+ * Peers this client may later auto-remove. Keep prior ownership while still desired;
+ * claim new peers only when already listed or when add succeeded (never after a failed add).
+ */
+export function claimedGatewayPeerIds(input: {
+  readonly desired: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+  readonly previousDesired: ReadonlySet<EnvironmentId>;
+  readonly addAttempts: ReadonlyArray<EnvironmentId>;
+  readonly addSucceeded: ReadonlySet<EnvironmentId>;
+}): ReadonlySet<EnvironmentId> {
+  const attempted = new Set(input.addAttempts);
+  const claimed = new Set<EnvironmentId>();
+  for (const peer of input.desired) {
+    const id = peer.environmentId;
+    if (input.previousDesired.has(id)) {
+      claimed.add(id);
+      continue;
+    }
+    if (!attempted.has(id) || input.addSucceeded.has(id)) {
+      claimed.add(id);
+    }
+  }
+  return claimed;
 }
 
 /**
