@@ -83,6 +83,12 @@ export function bitbucketProviderFailure(
   }
   if (
     (error._tag === "BitbucketResponseError" || error._tag === "BitbucketResponseBodyReadError") &&
+    error.status === 403
+  ) {
+    return { reason: "forbidden" };
+  }
+  if (
+    (error._tag === "BitbucketResponseError" || error._tag === "BitbucketResponseBodyReadError") &&
     error.status === 404
   ) {
     return { reason: "not-found" };

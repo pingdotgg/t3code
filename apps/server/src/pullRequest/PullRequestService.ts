@@ -1292,9 +1292,13 @@ export const make = Effect.gen(function* () {
 
     const viewerResults = yield* resolveViewers(projects, viewerRoots);
     const viewers: Record<string, string> = {};
+    const accountless = new Set<string>();
     for (const result of viewerResults) {
       if (result.viewer !== null) viewers[result.host] = result.viewer;
+      // A forbidden lookup means a credential with no account access, like a Bitbucket access token.
+      else if (result.error?.reason === "forbidden") accountless.add(result.host);
     }
+    const isReadable = (host: string) => viewers[host] !== undefined || accountless.has(host);
 
     const providers: ReadonlyArray<PullRequestProviderSummary> = [
       ...viewerResults.map((result) => {
@@ -1306,8 +1310,11 @@ export const make = Effect.gen(function* () {
           searchesOnHost: capabilities?.search ?? false,
           actions: capabilities?.actions ?? [],
           projectCount: projectCounts.get(result.host) ?? 1,
-          configured: result.viewer !== null,
-          detail: result.error === null ? null : providerDetail(requirementOf, result.error),
+          configured: isReadable(result.host),
+          detail:
+            result.error === null || isReadable(result.host)
+              ? null
+              : providerDetail(requirementOf, result.error),
         };
       }),
       ...[...unimplemented].map(([host, { kind, projectCount }]) => ({
@@ -1325,9 +1332,12 @@ export const make = Effect.gen(function* () {
       continuation === null
         ? projects
         : projects.filter(({ cursorKey }) => continuation.has(cursorKey));
-    const readable = selected.filter(({ host }) => viewers[host] !== undefined);
+    // With no account to name, a host has nothing authored by or awaiting the viewer.
+    const readable = selected.filter(
+      ({ host }) => viewers[host] !== undefined || (involvement === "all" && accountless.has(host)),
+    );
     const unreadable = selected
-      .filter(({ host }) => viewers[host] === undefined)
+      .filter(({ host }) => !isReadable(host))
       .map(({ project, repository }) => ({
         projectId: project.id,
         projectTitle: project.title,
@@ -1335,7 +1345,9 @@ export const make = Effect.gen(function* () {
       }));
     if (readable.length === 0) {
       const errors = viewerResults.flatMap((result) =>
-        result.error === null || !selected.some(({ host }) => host === result.host)
+        result.error === null ||
+        isReadable(result.host) ||
+        !selected.some(({ host }) => host === result.host)
           ? []
           : [result.error],
       );
@@ -1363,7 +1375,7 @@ export const make = Effect.gen(function* () {
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
       {
-        const viewer = viewers[project.host]!;
+        const viewer = viewers[project.host] ?? "";
         const key = project.cursorKey;
         return project.api
           .listChangeRequests({
@@ -1476,7 +1488,7 @@ export const make = Effect.gen(function* () {
       const separately = () =>
         Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
       if (readAcross === undefined) return separately();
-      const viewer = viewers[first.host]!;
+      const viewer = viewers[first.host] ?? "";
       const cursor = cursorOf(first);
       return readAcross({
         cwd: first.project.workspaceRoot,

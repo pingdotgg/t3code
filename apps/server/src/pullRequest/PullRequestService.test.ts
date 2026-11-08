@@ -817,6 +817,60 @@ it.effect("calls a transient viewer failure a failed operation, not a signed-out
   }),
 );
 
+it.effect("lists a host whose credential cannot read the account, with no viewer", () =>
+  Effect.gen(function* () {
+    const bitbucket = SourceControlProviderKind.make("bitbucket");
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(bitbucket, {
+          getViewer: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: bitbucket,
+                operation: "getViewer",
+                reason: "forbidden",
+                detail: "Bitbucket returned HTTP 403.",
+              }),
+            ),
+          listChangeRequests: () =>
+            Effect.succeed({
+              items: [changeRequest(7, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open", involvement: "all" });
+    const mine = yield* service.list({ state: "open", filters: { author: "@me" } });
+    const authored = yield* service.list({ state: "open", involvement: "authored" });
+
+    assert.deepStrictEqual(
+      result.entries.map((entry) => entry.number),
+      [7],
+    );
+    assert.deepStrictEqual(result.viewers, {});
+    assert.deepStrictEqual(
+      result.providers.map(({ host, configured, detail }) => ({ host, configured, detail })),
+      [{ host: "bitbucket.org", configured: true, detail: null }],
+    );
+    assert.deepStrictEqual(mine.entries, []);
+    assert.deepStrictEqual(authored.entries, []);
+    assert.deepStrictEqual(authored.errors, []);
+  }),
+);
+
 it.effect("reports an unusable host over a merely failing one", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
