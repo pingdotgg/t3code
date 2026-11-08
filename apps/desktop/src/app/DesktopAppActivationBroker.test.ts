@@ -35,6 +35,22 @@ describe("DesktopAppActivationBroker", () => {
     broker.close();
   });
 
+  it("keeps a request with its own timeout pending past the default deadline", async () => {
+    using _timers = { [Symbol.dispose]: () => vi.useRealTimers() };
+    vi.useFakeTimers();
+    const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
+    const settled = vi.fn();
+
+    const response = broker.request(request, 120_000);
+    void response.then(settled);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(settled).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await expect(response).resolves.toMatchObject({ ok: false, code: "request-timeout" });
+    broker.close();
+  });
+
   it("fails an in-flight request when the renderer goes away", async () => {
     const broker = new DesktopAppActivationBroker({ requestTimeoutMs: 1_000, activate: vi.fn() });
     broker.registerRenderer(vi.fn());

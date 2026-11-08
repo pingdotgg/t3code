@@ -13,10 +13,21 @@ import {
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { it } from "@effect/vitest";
+import * as NodePathLayer from "@effect/platform-node/NodePath";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import { afterEach, describe, expect } from "vite-plus/test";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import type * as Electron from "electron";
+import { afterEach, describe, expect, vi } from "vite-plus/test";
 
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import { startDesktopAppControlServer } from "./DesktopAppActivation.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const openServers: Array<{ close: () => Promise<void> }> = [];
 
@@ -163,4 +174,99 @@ describe("desktop app control server", () => {
       });
     }),
   );
+});
+
+function makeOpenWorkspaceHarness(input: {
+  readonly localEnvironmentEnabled: boolean;
+  readonly window: Option.Option<Electron.BrowserWindow>;
+}) {
+  const activate = vi.fn();
+  const showMessageBox = vi.fn();
+  const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, {
+        stateDir: NodePath.join(NodeOS.tmpdir(), "t3-open-workspace-test"),
+        platform: "darwin",
+      } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]),
+      Effect.provideService(DesktopWindow.DesktopWindow, {
+        activate: Effect.sync(activate),
+      } as unknown as DesktopWindow.DesktopWindow["Service"]),
+      Effect.provideService(DesktopAppSettings.DesktopAppSettings, {
+        get: Effect.succeed({
+          ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+          localEnvironmentEnabled: input.localEnvironmentEnabled,
+        }),
+      } as unknown as DesktopAppSettings.DesktopAppSettings["Service"]),
+      Effect.provideService(ElectronDialog.ElectronDialog, {
+        showMessageBox: (options: Electron.MessageBoxOptions, owner?: Electron.BrowserWindow) =>
+          Effect.sync(() => {
+            showMessageBox(options, owner);
+            return { response: 0, checkboxChecked: false };
+          }),
+      } as unknown as ElectronDialog.ElectronDialog["Service"]),
+      Effect.provideService(ElectronWindow.ElectronWindow, {
+        main: Effect.succeed(input.window),
+        currentMainOrFirst: Effect.succeed(input.window),
+      } as unknown as ElectronWindow.ElectronWindow["Service"]),
+      Effect.provide(NodePathLayer.layer),
+    );
+  return { activate, showMessageBox, provide };
+}
+
+describe("openWorkspace", () => {
+  it.effect("refuses without dispatching while the local environment is off", () => {
+    const harness = makeOpenWorkspaceHarness({
+      localEnvironmentEnabled: false,
+      window: Option.none(),
+    });
+    return Effect.gen(function* () {
+      const activation = yield* DesktopAppActivation.make;
+      yield* activation.openWorkspace("/Users/someone/private-project");
+
+      expect(harness.activate).not.toHaveBeenCalled();
+      expect(harness.showMessageBox).toHaveBeenCalledWith(
+        expect.objectContaining({ detail: expect.stringContaining("local environment") }),
+        undefined,
+      );
+    }).pipe(harness.provide);
+  });
+
+  it.effect("attaches a failed open's error to the main window", () => {
+    const dispatched = Deferred.makeUnsafe<DesktopAppActivationRequest>();
+    const webContents = {
+      isDestroyed: () => false,
+      on: () => undefined,
+      once: () => undefined,
+      removeListener: () => undefined,
+      send: (_channel: string, sent: DesktopAppActivationRequest) =>
+        Deferred.doneUnsafe(dispatched, Effect.succeed(sent)),
+    };
+    const window = { webContents } as unknown as Electron.BrowserWindow;
+    const harness = makeOpenWorkspaceHarness({
+      localEnvironmentEnabled: true,
+      window: Option.some(window),
+    });
+    return Effect.gen(function* () {
+      const activation = yield* DesktopAppActivation.make;
+      yield* activation.setRendererReady(true);
+      const opening = yield* Effect.forkChild(
+        activation.openWorkspace("/Users/someone/private-project"),
+      );
+      const sent = yield* Deferred.await(dispatched);
+      yield* activation.complete({
+        version: 1,
+        requestId: sent.requestId,
+        ok: false,
+        code: "environment-unavailable",
+        message: "Not connected.",
+      });
+      yield* Fiber.join(opening);
+
+      expect(harness.activate).toHaveBeenCalledOnce();
+      expect(harness.showMessageBox).toHaveBeenCalledWith(
+        expect.objectContaining({ detail: "Not connected." }),
+        window,
+      );
+    }).pipe(harness.provide);
+  });
 });

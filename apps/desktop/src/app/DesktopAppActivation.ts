@@ -330,6 +330,18 @@ export const make = Effect.gen(function* () {
     },
   });
 
+  const showOpenFolderError = Effect.fn("DesktopAppActivation.showOpenFolderError")(function* (
+    detail: string,
+  ) {
+    const owner = yield* electronWindow.currentMainOrFirst;
+    yield* electronDialog
+      .showMessageBox(
+        { type: "error", message: "Could not open folder", detail, buttons: ["OK"] },
+        Option.getOrUndefined(owner),
+      )
+      .pipe(Effect.catch((cause) => logWarning("failed to show the open folder error", { cause })));
+  });
+
   const clearRegisteredRenderer = () => {
     detachRendererListeners?.();
     detachRendererListeners = null;
@@ -398,11 +410,9 @@ export const make = Effect.gen(function* () {
     }),
     openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
       if (!(yield* desktopSettings.get).localEnvironmentEnabled) {
-        yield* electronDialog.showErrorBox(
-          "Could not open folder",
+        return yield* showOpenFolderError(
           "Turn on the local environment in Settings to open folders in T3 Code.",
         );
-        return;
       }
       const response = yield* Effect.promise(() =>
         broker.request(
@@ -421,7 +431,7 @@ export const make = Effect.gen(function* () {
       yield* logWarning("failed to open a workspace", { code: response.code });
       // Quitting settles queued requests this way, and an error box would block shutdown.
       if (response.code === "renderer-unavailable") return;
-      yield* electronDialog.showErrorBox("Could not open folder", response.message);
+      yield* showOpenFolderError(response.message);
     }),
   });
 });

@@ -242,10 +242,16 @@ export const make = Effect.gen(function* () {
         openWebLink(url) ||
         openAppLink(url);
       for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
+      const isDirectory = (path: string) => {
+        try {
+          return NodeFS.statSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+        } catch {
+          return false;
+        }
+      };
       handleOpenFile = (path) => {
         void runPromise(
-          DesktopWebLinks.isWebPageFile(path) &&
-            !NodeFS.statSync(path, { throwIfNoEntry: false })?.isDirectory()
+          DesktopWebLinks.isWebPageFile(path) && !isDirectory(path)
             ? webLinks.receive(NodeURL.pathToFileURL(path).href)
             : appActivation.openWorkspace(path),
         );
