@@ -358,9 +358,34 @@ describe("AcpRegistrySupport", () => {
         "/workspace",
       );
 
+      expect(path.isAbsolute(resolved.spawn.command)).toBe(true);
       expect(yield* fileSystem.realPath(resolved.spawn.command)).toBe(
         yield* fileSystem.realPath(commandPath),
       );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
+  it.effect("launches a drive-relative Windows executable from the drive it was validated on", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-drive-" });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, () => "C:tools\\agent.exe"),
+      );
+      const resolved = yield* resolver.resolve(
+        decodeAcpRegistrySettings({ source: "local", commandPath: "C:tools\\agent.exe" }),
+        "D:\\workspace",
+      );
+
+      expect(resolved.spawn.command).toMatch(/^C:\\.*\\tools\\agent\.exe$/u);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),

@@ -38,6 +38,8 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { sha256 } from "@noble/hashes/sha2";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect Path follows the host; Windows commands need win32 resolution.
+import * as NodePath from "node:path";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
@@ -1699,11 +1701,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
-  // Node fs resolved a relative command from process.cwd(); normalizing `..` could pick another file past a symlink.
+  // Node fs resolved a relative command from process.cwd(); on POSIX, normalizing `..` could pick another file past a symlink.
   const anchorToProcessCwd = (command: string) =>
-    path.isAbsolute(command) || (platform === "win32" && /^[a-z]:/iu.test(command))
-      ? command
-      : `${process.cwd()}${path.sep}${command}`;
+    platform === "win32"
+      ? NodePath.win32.resolve(command)
+      : path.isAbsolute(command)
+        ? command
+        : `${process.cwd()}${path.sep}${command}`;
 
   const validateLocalExecutable = (command: string) =>
     platform === "win32" && /\.(?:cmd|bat)$/iu.test(command)
