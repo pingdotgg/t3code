@@ -973,7 +973,7 @@ function DeviceIntegrationControls({
             >
               {pending === `update-${tool}`
                 ? t("settings.code.devices.updating")
-                : t("settings.code.devices.updateTo", { version: version.requiredVersion })}
+                : t("settings.code.devices.update")}
             </Button>
           ) : null}
           {state.supportsToolInspection ? (
