@@ -121,6 +121,7 @@ let activeLiveActivityRegistrationRetry: ReturnType<typeof setTimeout> | null = 
 let relayTokenProvider: (() => Promise<string | null>) | null = null;
 let relayTokenProviderIdentity: string | null = null;
 let deviceRegistrationGeneration = 0;
+let androidConfigurationWrite = 0;
 let activeDeviceRegistration: {
   readonly input: DeviceRegistrationInput;
   operation: Promise<void>;
@@ -659,14 +660,32 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     input.preferencesOverride,
   );
   if (expectedGeneration !== deviceRegistrationGeneration) return;
-  if (relayTokenProvider && relayTokenProviderIdentity) {
-    configureAndroidAgentNotifications(
-      deviceId,
-      relayTokenProviderIdentity,
-      preferences.liveActivitiesEnabled !== false,
-    );
-  }
-  const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
+  const configureAndroid = (registered: Preferences) => {
+    if (relayTokenProvider && relayTokenProviderIdentity) {
+      configureAndroidAgentNotifications(
+        deviceId,
+        relayTokenProviderIdentity,
+        registered.liveActivitiesEnabled !== false,
+      );
+    }
+  };
+  configureAndroid(preferences);
+  const configurationWrite = ++androidConfigurationWrite;
+  const restoreAndroidPreferences = Effect.sync(() => {
+    if (
+      expectedGeneration === deviceRegistrationGeneration &&
+      configurationWrite === androidConfigurationWrite
+    ) {
+      configureAndroid(storedPreferences);
+    }
+  });
+  // A failed registration must not leave its preference applied natively while the relay keeps
+  // the old one, unless a newer registration has configured the device since.
+  const restoreAndroidOnError = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    Effect.onError(effect, () => restoreAndroidPreferences);
+  const pushTokenRegistration = yield* restoreAndroidOnError(
+    nativePushTokenRegistration(input?.observedPushToken),
+  );
   const bundleId =
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
@@ -690,7 +709,7 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
       preferences,
     }),
     expectedGeneration,
-  );
+  ).pipe(restoreAndroidOnError);
 });
 
 function registerDeviceForCurrentUser(): Effect.Effect<
