@@ -447,6 +447,20 @@ export function UsageLimitsSection({
                   {DRIVER_LABEL[pool.driver] ?? pool.driver}
                 </Text>
               </View>
+              {pool.accounts
+                .filter((account) => account.limits.windows.length === 0)
+                .map((account) => (
+                  <View
+                    key={account.key}
+                    className="flex-row items-center gap-3 rounded-[24px] border-continuous bg-grouped-card p-4"
+                  >
+                    {account.email ? <AccountChip email={account.email} /> : null}
+                    <Text className="min-w-0 flex-1 text-sm font-t3-medium text-foreground">
+                      {accountName(account)}
+                    </Text>
+                    <Text className="text-xs text-foreground-muted">Limits unavailable</Text>
+                  </View>
+                ))}
               {windows.map((window) => {
                 const details =
                   pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;

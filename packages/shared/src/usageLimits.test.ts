@@ -674,7 +674,11 @@ describe("pools", () => {
     ]) {
       const failed = {
         ...account,
-        usageLimits: { checkedAt, windows: [], unavailable },
+        usageLimits: {
+          checkedAt: "2026-09-03T11:01:00.000Z",
+          windows: [],
+          unavailable,
+        },
       };
       input.set(EnvironmentId.make("env-b"), {
         entry: { target: { label: "Desktop" } },
@@ -688,11 +692,49 @@ describe("pools", () => {
           ],
         },
       });
-      expect(collectLimitAccounts(input)).toHaveLength(1);
+      const collected = collectLimitAccounts(input);
+      expect(collected).toHaveLength(2);
+      expect(collected.map((entry) => entry.limits.windows.length)).toEqual([1, 0]);
+      expect(collectLimitPools(collected, Date.parse(checkedAt))[0]?.accounts).toHaveLength(2);
       expect(collectLimitNotices(input)).toEqual([
         `Desktop · hub · account@example.com: ${unavailable.message ?? "Could not read limits."}`,
       ]);
+      input.delete(EnvironmentId.make("env-a"));
+      expect(collectLimitAccounts(input)).toHaveLength(2);
+      expect(
+        collectLimitPools(collectLimitAccounts(input), Date.parse(checkedAt))[0]?.windows,
+      ).toEqual([]);
+      input.set(EnvironmentId.make("env-a"), {
+        ...laptop,
+        serverConfig: {
+          providers: [],
+          usageLimitSources: [{ ...source, accounts: [account] }],
+        },
+      });
     }
+    input.clear();
+    const stale = {
+      ...account,
+      usageLimits: {
+        ...account.usageLimits,
+        unavailable: { reason: "probeFailed" as const },
+      },
+    };
+    input.set(EnvironmentId.make("env-a"), {
+      ...laptop,
+      serverConfig: {
+        providers: [],
+        usageLimitSources: [
+          {
+            ...source,
+            accounts: [stale],
+          },
+        ],
+      },
+    });
+    const retained = collectLimitPools(collectLimitAccounts(input), Date.parse(checkedAt));
+    expect(retained[0]?.windows[0]?.members[0]?.window).toMatchObject(window);
+    expect(collectLimitNotices(input)).toHaveLength(1);
   });
 
   it("keys a hub account without an email by hub, so two environments on one hub share it", () => {

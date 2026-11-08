@@ -298,7 +298,14 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           !previous.environments.some((seen) => seen.environmentId === candidate.environmentId),
       ),
     ];
-    const winner = fresher ? next : previous;
+    const winner =
+      Boolean(next.limits.windows.length) !== Boolean(previous.limits.windows.length)
+        ? next.limits.windows.length
+          ? next
+          : previous
+        : fresher
+          ? next
+          : previous;
     const creditSource = creditSources.get(key);
     // A hub e-mail names the account better than the driver's default instance name.
     const hubEmail = [previous, next].some(
@@ -360,7 +367,11 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;
       for (const account of source.accounts) {
-        if (limitsNotice(account.usageLimits) !== null) continue;
+        if (
+          limitsNotice(account.usageLimits) !== null &&
+          account.usageLimits.unavailable?.reason !== "probeFailed"
+        )
+          continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
         merge(resolveKey(account) ?? key, {
           key,

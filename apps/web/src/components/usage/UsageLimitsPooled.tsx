@@ -585,6 +585,14 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         />
         {label}
       </h2>
+      {pool.accounts
+        .filter((account) => account.limits.windows.length === 0)
+        .map((account) => (
+          <div key={account.key} className="flex items-center gap-3 rounded-xl border p-4">
+            <AccountName account={account} className="min-w-0 flex-1 text-sm font-medium" />
+            <span className="text-xs text-muted-foreground">Limits unavailable</span>
+          </div>
+        ))}
       {windows.map((window) => {
         const details = pool.driver === "cursor" ? cursorUsageWindowDetails(window.id) : undefined;
         return (
