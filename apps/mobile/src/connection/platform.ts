@@ -268,6 +268,13 @@ const layerEnvironmentOwnedDataCleanup = Layer.succeed(
           mobileThreadTriageOutboxStore.clearEnvironment(environmentId),
         ],
         { concurrency: "unbounded", discard: true },
+      ).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not clear mobile environment-owned data.", {
+            environmentId,
+            cause,
+          }),
+        ),
       ),
     ),
   }),
