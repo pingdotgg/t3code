@@ -84,7 +84,7 @@ describe("Antigravity process environment", () => {
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
       command: "/release/acp",
-      args: ["--uid="],
+      args: ["--uid=", "--alsologtostderr"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -366,6 +366,37 @@ describe("Antigravity stdout compatibility", () => {
 });
 
 describe("Antigravity stderr compatibility", () => {
+  it.effect.each([
+    "I1022 11:04:37.910207 1865358 local_connection.py:551] harness stderr: Agent run failed: failed to handle call hook response: no pending hook for ID hook_request_2",
+    "E1022 11:04:37.910207 1865358 server.py:5275] Failed to rebuild agent for session native-session; connection unrecoverable",
+    "E1022 11:04:37.910207 1865358 server.py:5266] Agent connection lost for session native-session after rebuild retry",
+  ])("retires the transport on a native harness failure: %s", (line) =>
+    Effect.gen(function* () {
+      const handleStderr = makeAntigravityStderrHandler();
+      yield* handleStderr(line.slice(0, 70));
+      const error = yield* handleStderr(`${line.slice(70)}\r\n`).pipe(Effect.flip);
+      expect(error._tag).toBe("AcpTransportError");
+      expect(error.message).not.toContain("native-session");
+      expect(error.message).not.toContain("hook_request_2");
+    }),
+  );
+
+  it.effect(
+    "does not classify task prose or unrelated native warnings as a transport failure",
+    () =>
+      Effect.gen(function* () {
+        const handleStderr = makeAntigravityStderrHandler();
+        yield* handleStderr("Agent run failed: example from a task\n");
+        yield* handleStderr("Agent connection was lost and could not be re-established\n");
+        yield* handleStderr(
+          "I1022 11:04:37.910207 1865358 server.py:5142] Agent connection closed for session native-session; rebuilding agent and retrying the turn once.\n",
+        );
+        yield* handleStderr(
+          "W1022 11:04:37.910207 1865358 telemetry.py:431] No business auth manager configured\n",
+        );
+      }),
+  );
+
   it.effect("forwards fragmented native sign-in URLs from runtime 1.1.1", () =>
     Effect.gen(function* () {
       const urls: string[] = [];
