@@ -29,6 +29,7 @@ const AGENT_DOWNLOAD_WINDOW_MS = 5_000;
 const FOCUS_IDLE = "5 seconds";
 /** Well inside the server's attach timeout, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
+const ERR_ABORTED = -3;
 
 export interface DesktopBrowserTabKey {
   readonly threadId: string;
@@ -479,14 +480,15 @@ export const make = Effect.gen(function* () {
     // Electron does not pause a guest for the debugger, so Playwright connecting during its first
     // commit builds its utility world in the discarded document and every wait on it hangs.
     const { webContents } = debuggee;
+    // ERR_ABORTED is a newer navigation replacing this one, whose commit is still to come.
     const onFailLoad = (
       _event: Electron.Event,
-      _code: number,
+      code: number,
       _description: string,
       _url: string,
       isMainFrame: boolean,
     ) => {
-      if (isMainFrame) ready();
+      if (isMainFrame && code !== ERR_ABORTED) ready();
     };
     const ready = () => {
       if (tab.stopWaiting === null) return;
