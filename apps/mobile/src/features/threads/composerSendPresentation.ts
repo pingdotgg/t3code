@@ -36,6 +36,8 @@ const LOCAL_COMMAND_LABEL: Record<ComposerLocalCommand, string> = {
 
 export function resolveComposerSendPresentation(input: {
   readonly editingQueuedMessage: boolean;
+  readonly isDraft: boolean;
+  readonly replyingToApproval: boolean;
   readonly running: boolean;
   readonly canSteer: boolean;
   readonly localCommand: ComposerLocalCommand | null;
@@ -51,7 +53,11 @@ export function resolveComposerSendPresentation(input: {
       offersFollowUpChoice: false,
     };
   }
-  if (input.localCommand !== null) {
+  if (
+    input.localCommand !== null &&
+    !(input.isDraft && (input.localCommand === "feedback" || input.localCommand === "side-chat")) &&
+    !(input.replyingToApproval && input.localCommand === "side-chat")
+  ) {
     return {
       label: LOCAL_COMMAND_LABEL[input.localCommand],
       icon: "arrow.up",

@@ -210,6 +210,7 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
 
 export interface ThreadComposerProps {
   readonly isDraft?: boolean;
+  readonly replyingToApproval: boolean;
   readonly canOperateThread: boolean;
   readonly placeholder: string;
   readonly contentMaxWidth?: number;
@@ -535,6 +536,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     );
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
+    isDraft: props.isDraft === true,
+    replyingToApproval: props.replyingToApproval,
     running: props.activeThreadBusy,
     canSteer: props.canSteerActiveTurn,
     localCommand:
