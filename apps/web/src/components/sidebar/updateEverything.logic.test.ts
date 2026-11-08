@@ -45,6 +45,20 @@ function machine(
   };
 }
 
+// A desktop-mode server the desktop app cannot control, such as a WSL backend or an older app.
+function withoutDesktopControl(base: UpdateEverythingMachine): UpdateEverythingMachine {
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...base.serverConfig!.environment,
+        capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
+      },
+    },
+  };
+}
+
 describe("collectServerUpdateTargets", () => {
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
@@ -67,6 +81,7 @@ describe("collectServerUpdateTargets", () => {
         machine("current", "0.0.50", "boot-service"),
         machine("current-offline", "0.0.50", "boot-service", { connected: false }),
         machine("manual", "0.0.40", undefined),
+        withoutDesktopControl(machine("wsl-backend", "0.0.40", "desktop-managed")),
       ],
       "0.0.50",
     );
@@ -82,31 +97,7 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
-    ]);
-  });
-
-  it("sends desktop servers without the desktop update channel to that machine's app", () => {
-    // A WSL backend runs in desktop mode, but wsl.exe cannot pass it the desktop's control fd.
-    const wsl = machine("wsl-backend", "0.0.40", "desktop-managed");
-    const { targets, skipped } = collectServerUpdateTargets(
-      [
-        {
-          ...wsl,
-          serverConfig: {
-            ...wsl.serverConfig!,
-            environment: {
-              ...wsl.serverConfig!.environment,
-              capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
-            },
-          },
-        },
-      ],
-      "0.0.50",
-    );
-
-    expect(targets).toEqual([]);
-    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
-      ["wsl-backend", "update the desktop app on that machine"],
+      ["wsl-backend", "update it on that machine"],
     ]);
   });
 
@@ -240,15 +231,9 @@ describe("collectChannelSwitchTargets", () => {
         host(machine("service", "0.1.2", "boot-service"), 70),
         // A Stable tag built a migration the latest Nightly does not have yet.
         host(machine("ahead", "0.1.3", "boot-service"), 73),
-        machine("old-desktop", "0.1.2", "desktop-managed", {
-          serverConfig: {
-            ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!,
-            environment: {
-              ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!.environment,
-              capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
-            },
-          },
-        }),
+        withoutDesktopControl(machine("old-desktop", "0.1.2", "desktop-managed")),
+        // Already on Nightly, so it needs an update rather than a channel switch.
+        withoutDesktopControl(machine("behind-desktop", OLD_NIGHTLY, "desktop-managed")),
         machine("current", NIGHTLY, "boot-service"),
         // The server refuses a track its policy rules out, so the dialog skips it up front.
         managedHost(host(machine("no-nightly", "0.1.2", "boot-service"), 70)),
@@ -264,7 +249,8 @@ describe("collectChannelSwitchTargets", () => {
         "ahead",
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
-      ["old-desktop", "switch the desktop app on that machine"],
+      ["old-desktop", "switch its channel on that machine"],
+      ["behind-desktop", "update it on that machine"],
       [
         "no-nightly",
         "Example Corp manages T3 Code updates. Only stable releases can be installed.",
