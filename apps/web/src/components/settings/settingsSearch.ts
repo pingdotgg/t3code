@@ -253,14 +253,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
-    id: "worktree-fast-checkout",
-    title: "Fast checkout",
-    to: "/settings/worktrees",
-    scope: "environment-defaults",
-    fastWorktreeCheckoutOnly: true,
-    searchTerms: ["fast worktree checkout clone apfs copy-on-write cache macos speed"],
-  },
-  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/maintenance",
@@ -504,6 +496,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     scope: "environment",
     searchTerms: ["beta alpha simlock callstack simulator emulator ios android pool lease gateway"],
+  },
+  {
+    id: "worktree-fast-checkout",
+    title: "Fast worktree checkout",
+    to: "/settings/labs",
+    scope: "environment",
+    fastWorktreeCheckoutOnly: true,
+    searchTerms: ["beta fast worktree checkout clone apfs copy-on-write cache macos speed"],
   },
   {
     id: "voice-transcription-destination",
