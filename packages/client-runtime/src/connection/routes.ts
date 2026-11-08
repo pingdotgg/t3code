@@ -621,6 +621,11 @@ export function planGatewayPeerReconcile(input: {
   }>;
   /** Peers the catalog reaches through this gateway; never unregister them. */
   readonly retain?: ReadonlySet<EnvironmentId>;
+  /**
+   * Peers this client last registered from its own catalog. Without this, a second client
+   * with an empty catalog would unregister peers still needed by others.
+   */
+  readonly previousDesired?: ReadonlySet<EnvironmentId>;
 }): {
   readonly add: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
   readonly remove: ReadonlyArray<EnvironmentId>;
@@ -638,10 +643,15 @@ export function planGatewayPeerReconcile(input: {
     if (listedOrigin !== url) add.push({ environmentId, url });
   }
   const remove = input.listed
-    .filter(
-      (peer) =>
-        !desiredById.has(peer.environmentId) && input.retain?.has(peer.environmentId) !== true,
-    )
+    .filter((peer) => {
+      if (desiredById.has(peer.environmentId)) return false;
+      if (input.retain?.has(peer.environmentId) === true) return false;
+      // Unknown ownership: only remove peers this client previously desired.
+      if (input.previousDesired !== undefined && !input.previousDesired.has(peer.environmentId)) {
+        return false;
+      }
+      return true;
+    })
     .map((peer) => peer.environmentId);
   return { add, remove };
 }

@@ -771,11 +771,34 @@ describe("gateway peer upstream selection", () => {
           { environmentId: move, httpBaseUrl: "http://192.168.1.99:3773/" },
           { environmentId: drop, httpBaseUrl: "http://192.168.1.30:3773/" },
         ],
+        previousDesired: new Set([keep, move, drop]),
       }),
     ).toEqual({
       add: [{ environmentId: move, url: "http://192.168.1.20:3773" }],
       remove: [drop],
     });
+  });
+
+  it("does not remove peers another client may still need", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const otherClientPeer = EnvironmentId.make("env_other");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [{ environmentId: keep, url: "http://192.168.1.10:3773" }],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: otherClientPeer, httpBaseUrl: "http://192.168.1.50:3773/" },
+        ],
+        previousDesired: new Set([keep]),
+      }),
+    ).toEqual({ add: [], remove: [] });
+    expect(
+      planGatewayPeerReconcile({
+        desired: [],
+        listed: [{ environmentId: otherClientPeer, httpBaseUrl: "http://192.168.1.50:3773/" }],
+        previousDesired: new Set(),
+      }),
+    ).toEqual({ add: [], remove: [] });
   });
 
   it("does not remove peers the catalog still reaches through this gateway", () => {
