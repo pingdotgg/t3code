@@ -58,8 +58,11 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     storage.removeItem(key).pipe(Effect.mapError((cause) => catalogError("delete", cause)));
   const state = yield* Ref.make<Option.Option<ConnectionCatalogDocumentType>>(Option.none());
   const lock = yield* Semaphore.make(1);
+  const legacyAwaitingSave = yield* Ref.make(false);
 
-  const loadLegacyCatalog = Effect.fn("mobile.connectionStorage.loadLegacyCatalog")(function* () {
+  const loadLegacyCatalog = Effect.fn("mobile.connectionStorage.loadLegacyCatalog")(function* (
+    persist: boolean,
+  ) {
     const legacyRaw = yield* getItem(LEGACY_CONNECTIONS_KEY);
     const catalog =
       legacyRaw === null || legacyRaw.trim() === ""
@@ -73,9 +76,13 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
             ),
           );
     if (legacyRaw !== null && legacyRaw.trim() !== "") {
-      const encoded = yield* encodeCatalog(catalog);
-      yield* setItem(CONNECTION_CATALOG_KEY, encoded);
-      yield* deleteItem(LEGACY_CONNECTIONS_KEY);
+      if (persist) {
+        const encoded = yield* encodeCatalog(catalog);
+        yield* setItem(CONNECTION_CATALOG_KEY, encoded);
+        yield* deleteItem(LEGACY_CONNECTIONS_KEY);
+      } else {
+        yield* Ref.set(legacyAwaitingSave, true);
+      }
     }
     return catalog;
   });
@@ -89,15 +96,15 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     let catalog: ConnectionCatalogDocumentType;
     if (raw !== null && raw.trim() !== "") {
       catalog = yield* decodeCatalog(raw).pipe(
-        // Do not delete it: a newer bundle may have written a shape this one cannot read.
+        // Keep it: a newer bundle may have written a shape this one cannot read.
         Effect.catch((error) =>
           Effect.logWarning("Ignoring unreadable mobile connection catalog", error).pipe(
-            Effect.andThen(loadLegacyCatalog()),
+            Effect.andThen(loadLegacyCatalog(false)),
           ),
         ),
       );
     } else {
-      catalog = yield* loadLegacyCatalog();
+      catalog = yield* loadLegacyCatalog(true);
     }
     yield* Ref.set(state, Option.some(catalog));
     return catalog;
@@ -112,6 +119,9 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
           const encoded = yield* encodeCatalog(next);
           yield* setItem(CONNECTION_CATALOG_KEY, encoded);
           yield* Ref.set(state, Option.some(next));
+          if (yield* Ref.getAndSet(legacyAwaitingSave, false)) {
+            yield* deleteItem(LEGACY_CONNECTIONS_KEY);
+          }
         }),
       );
     },

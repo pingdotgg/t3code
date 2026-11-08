@@ -74,7 +74,7 @@ describe("mobile connection catalog storage", () => {
     }),
   );
 
-  it.effect("falls back to valid legacy data when the current catalog is corrupt", () =>
+  it.effect("falls back to legacy data without overwriting a catalog it cannot read", () =>
     Effect.gen(function* () {
       const memory = makeStorage({
         [CONNECTION_CATALOG_KEY]: "{not-json",
@@ -98,10 +98,11 @@ describe("mobile connection catalog storage", () => {
       );
 
       expect((yield* catalog.read).targets).toHaveLength(1);
-      expect(memory.deleted).toEqual([LEGACY_CONNECTIONS_KEY]);
+      expect(memory.deleted).toEqual([]);
+      expect(memory.values.get(CONNECTION_CATALOG_KEY)).toBe("{not-json");
 
       yield* catalog.update((document) => document);
-      expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);
+      expect(memory.values.get(CONNECTION_CATALOG_KEY)).not.toBe("{not-json");
       expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(false);
     }),
   );
