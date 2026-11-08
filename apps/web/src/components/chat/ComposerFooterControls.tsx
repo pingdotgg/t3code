@@ -2,6 +2,7 @@ import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/c
 import { createModelSelection } from "@t3tools/shared/model";
 import { type ComponentProps, memo, useId, useRef, useState } from "react";
 
+import type { ComposerLocalCommand } from "@t3tools/client-runtime/state/composer-dispatch";
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -201,6 +202,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   canInterrupt: boolean;
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
+  localCommand: ComposerLocalCommand | null;
   alternateShortcutLabel: string | null;
   voiceInputActive?: boolean;
   isSendBusy: boolean;
@@ -228,6 +230,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         canInterrupt={props.canInterrupt}
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
+        localCommand={props.localCommand}
         alternateShortcutLabel={props.alternateShortcutLabel}
         voiceInputActive={props.voiceInputActive ?? false}
         isSendBusy={props.isSendBusy}

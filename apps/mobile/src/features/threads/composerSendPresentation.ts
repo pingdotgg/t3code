@@ -1,6 +1,7 @@
 import {
   alternateComposerDispatchAction,
   type ActiveTurnComposerAction,
+  type ComposerLocalCommand,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 
 import type { FollowUpBehavior } from "../../lib/followUpBehavior";
@@ -24,10 +25,20 @@ const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
   restart: "Restart",
 };
 
+const LOCAL_COMMAND_LABEL: Record<ComposerLocalCommand, string> = {
+  "side-chat": "Start side chat",
+  clear: "Start fresh session",
+  plan: "Switch to Plan",
+  build: "Switch to Build",
+  feedback: "Submit feedback",
+  "usage-limits": "Show usage limits",
+};
+
 export function resolveComposerSendPresentation(input: {
   readonly editingQueuedMessage: boolean;
   readonly running: boolean;
   readonly canSteer: boolean;
+  readonly localCommand: ComposerLocalCommand | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly deliveryDeferred: boolean;
 }): ComposerSendPresentation {
@@ -35,6 +46,15 @@ export function resolveComposerSendPresentation(input: {
     return {
       label: "Update queued message",
       icon: "checkmark",
+      action: null,
+      alternate: null,
+      offersFollowUpChoice: false,
+    };
+  }
+  if (input.localCommand !== null) {
+    return {
+      label: LOCAL_COMMAND_LABEL[input.localCommand],
+      icon: "arrow.up",
       action: null,
       alternate: null,
       offersFollowUpChoice: false,

@@ -1,6 +1,18 @@
 export type ComposerDispatchMode = "auto" | "queue" | "steer" | "restart";
 export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
 
+/**
+ * A command the composer handles itself instead of delivering a message to the
+ * active turn, so the send button must not promise a queue or steer delivery.
+ */
+export type ComposerLocalCommand =
+  | "side-chat"
+  | "clear"
+  | "plan"
+  | "build"
+  | "feedback"
+  | "usage-limits";
+
 export function resolveComposerDispatchMode(input: {
   readonly running: boolean;
   readonly alternateModifier: boolean;

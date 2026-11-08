@@ -49,11 +49,16 @@ import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime
 import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  isClearComposerCommand,
+  parseSideChatCommand,
+  serializeComposerFileLink,
+} from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { USAGE_LIMITS_COMMAND, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { parseCodexFeedbackCommand } from "@t3tools/client-runtime/state/threads";
 import {
   memo,
   use,
@@ -79,6 +84,7 @@ import {
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
   extendReplacementRangeForTrailingSpace,
+  parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -239,6 +245,7 @@ import type { PendingApproval, PendingUserInput, TimelineEntry } from "../../ses
 import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
+  type ComposerLocalCommand,
 } from "@t3tools/client-runtime/state/composer-dispatch";
 import {
   resolveProviderSkillsForCwd,
@@ -1078,6 +1085,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContexts.length === 0 &&
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
+  const composerHoldsOnlyText =
+    composerImages.length + composerFiles.length === 0 &&
+    composerSendState.sendableTerminalContexts.length === 0 &&
+    composerPreviewAnnotations.length === 0 &&
+    composerReviewComments.length === 0 &&
+    composerThreadContexts.length === 0 &&
+    composerEnvironmentContexts.length === 0;
+  const standaloneComposerSlashCommand =
+    composerHoldsOnlyText && planModeUiEnabled && multipleModelSelections === null
+      ? parseStandaloneComposerSlashCommand(prompt)
+      : null;
+  const sideChatHandlesDraft =
+    parseSideChatCommand(prompt) !== null &&
+    (props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null);
+  const localComposerCommand: ComposerLocalCommand | null = sideChatHandlesDraft
+    ? "side-chat"
+    : composerHoldsOnlyText && props.onUsageLimitsCommand && isUsageLimitsCommand(prompt)
+      ? "usage-limits"
+      : composerHoldsOnlyText &&
+          selectedProvider === "codex" &&
+          multipleModelSelections === null &&
+          parseCodexFeedbackCommand(prompt.trim())
+        ? "feedback"
+        : composerHoldsOnlyText &&
+            props.onFreshSession !== undefined &&
+            isClearComposerCommand(prompt)
+          ? "clear"
+          : standaloneComposerSlashCommand === "plan"
+            ? "plan"
+            : standaloneComposerSlashCommand === "default"
+              ? "build"
+              : null;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
   const {
     items: composerMenuItems,
@@ -3552,6 +3591,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canInterrupt={canInterrupt}
                     followUpBehavior={followUpBehavior}
                     canSteer={!isCompacting}
+                    localCommand={localComposerCommand}
                     alternateShortcutLabel={shortcutLabelForCommand(
                       keybindings,
                       "composer.sendAlternate",
