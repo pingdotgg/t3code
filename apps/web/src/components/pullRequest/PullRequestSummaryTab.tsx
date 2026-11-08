@@ -666,14 +666,10 @@ export function PullRequestSummaryTab({
               disabled={pendingFinding !== null && pendingFinding !== undefined}
               onClick={() => onFixFinding(finding)}
             >
-              <span className="inline-flex items-baseline gap-1">
-                <HammerIcon className="size-3 self-center" />
-                <span>
-                  {pendingFinding === pullRequestFindingKey(finding)
-                    ? "Preparing..."
-                    : pullRequestFixFindingLabel(finding, fixInThisThread)}
-                </span>
-              </span>
+              <HammerIcon className="size-3" />
+              {pendingFinding === pullRequestFindingKey(finding)
+                ? "Preparing..."
+                : pullRequestFixFindingLabel(finding, fixInThisThread)}
             </Button>
           ) : null}
           {onAddToChat && chat !== null ? (

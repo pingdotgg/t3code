@@ -3,7 +3,6 @@ import type { Nodes as MdastNodes } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import {
   aiReviewerFixText,
-  hasAiReviewerEasyFix,
   parseAiReviewerFeedback,
 } from "@t3tools/client-runtime/ai-reviewer-feedback";
 import {
@@ -1013,20 +1012,12 @@ export type PullRequestFinding =
   | { readonly kind: "check"; readonly check: PullRequestCheck }
   | { readonly kind: "comment"; readonly comment: PullRequestComment };
 
-function findingHasEasyFix(finding: PullRequestFinding): boolean {
-  if (finding.kind === "check") return false;
-  if (finding.kind === "comment") return hasAiReviewerEasyFix(finding.comment.body);
-  return finding.thread.comments.some((comment) => hasAiReviewerEasyFix(comment.body));
-}
-
-/** Easy fix when the remark already carries a machine-readable agent prompt. */
+/** Same labels as check fixes; agent prompts still prefer the compact handoff text. */
 export function pullRequestFixFindingLabel(
-  finding: PullRequestFinding,
+  _finding: PullRequestFinding,
   inThisThread: boolean,
 ): string {
-  const easy = findingHasEasyFix(finding);
-  if (inThisThread) return easy ? "Easy fix" : "Fix";
-  return easy ? "Easy fix in a thread" : "Fix in a thread";
+  return inThisThread ? "Fix" : "Fix in a thread";
 }
 
 export function pullRequestFindingKey(finding: PullRequestFinding): string {

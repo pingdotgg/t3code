@@ -884,7 +884,7 @@ describe("one finding handed over on its own", () => {
     }
   });
 
-  it("prefers an AI reviewer's agent prompt and labels that finding Easy fix", () => {
+  it("prefers an AI reviewer's agent prompt and uses the same Fix label as checks", () => {
     const body = `_⚠️ Potential issue_ | _🟠 Major_
 
 **Null deref on empty input.**
@@ -917,11 +917,8 @@ In apps/web/src/page.tsx around line 12, Guard against null before calling helpe
     );
     expect(handoff.reviewComments[1]?.text).not.toContain("Analysis chain");
     expect(handoff.reviewComments[1]?.text).not.toContain("Null deref on empty input");
-    expect(pullRequestFixFindingLabel({ kind: "thread", thread }, false)).toBe(
-      "Easy fix in a thread",
-    );
-    expect(pullRequestFixFindingLabel({ kind: "thread", thread }, true)).toBe("Easy fix");
-    expect(pullRequestFixFindingLabel({ kind: "thread", thread: reviewThread }, true)).toBe("Fix");
+    expect(pullRequestFixFindingLabel({ kind: "thread", thread }, false)).toBe("Fix in a thread");
+    expect(pullRequestFixFindingLabel({ kind: "thread", thread }, true)).toBe("Fix");
   });
 });
 
