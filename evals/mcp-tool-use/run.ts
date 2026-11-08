@@ -1575,6 +1575,9 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && (typeof input.html === "string") === (typeof input.path === "string")) {
     return failed("Pass exactly one of html or path.");
   }
+  if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
+    return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
+  }
   const mock = testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
@@ -1703,14 +1706,19 @@ const isPageTool = (tool: string) => tool === "html_preview" || tool === "html_r
 const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
   if (!isPageTool(tool) || !isRecord(input)) return input;
   const path = valueText(input.path);
-  // A patch may name the file relative to the agent's working directory. When two written files
-  // could be this one, the page is unknown, so page checks fail instead of grading a stale copy.
+  // A patch may name the file relative to the agent's working directory. When written files that
+  // could be this one differ, the page is unknown, so page checks fail rather than grade a stale copy.
   const written = [...files].filter(
     ([file]) =>
-      file === path || (!file.startsWith("/") && path.endsWith(`/${file.replace(/^\.\//, "")}`)),
+      file === path ||
+      (!file.startsWith("/") && path.endsWith(`/${file.replace(/^(?:\.\/)+/, "")}`)),
   );
   const page =
-    typeof input.html === "string" ? input.html : written.length === 1 ? written[0]![1] : undefined;
+    typeof input.html === "string"
+      ? input.html
+      : new Set(written.map(([, page]) => page)).size === 1
+        ? written[0]![1]
+        : undefined;
   return page === undefined ? input : { ...input, page };
 };
 
@@ -1719,16 +1727,17 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const written = scriptsBefore(run.calls);
-  // A refused page call showed nothing, so it neither previews nor renders.
-  const calls = run.calls.flatMap((call, index) =>
-    call.failed && isPageTool(call.tool)
-      ? []
-      : [{ ...call, input: withPage(call.tool, withOptionsObject(call.input), written[index]!) }],
-  );
+  const attempted = run.calls.map((call, index) => ({
+    ...call,
+    input: withPage(call.tool, withOptionsObject(call.input), written[index]!),
+  }));
+  // A refused page call showed nothing, so it neither previews nor renders, but it still counts
+  // against callsMustNot: the agent sent what it sent.
+  const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
-  const found = ({ tool, args = {} }: McpToolUseCall) =>
-    calls.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+  const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
+    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
@@ -1742,7 +1751,8 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
         ),
     );
   }
-  for (const call of expect.callsMustNot ?? []) add(`callsMustNot ${label(call)}`, !found(call));
+  for (const call of expect.callsMustNot ?? [])
+    add(`callsMustNot ${label(call)}`, !found(call, attempted));
   // A page check must not pass because the grader never saw the file a path call shows.
   const pageTools = [...(expect.calls ?? []), ...(expect.callsMustNot ?? [])].flatMap((call) =>
     call.args?.page === undefined ? [] : call.tool.split("|"),

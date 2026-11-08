@@ -41,7 +41,7 @@ const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   if (limits.runtimeMode !== "full-access") {
     return yield* new OrchestratorMcpFailure({
       code: "capability_denied",
-      message: "This thread asks before it reads files, so pass html instead of path.",
+      message: "Pass html instead of path: only full-access threads may pass a path.",
     });
   }
   return { path: input.path } satisfies HtmlRender.HtmlRenderSource;

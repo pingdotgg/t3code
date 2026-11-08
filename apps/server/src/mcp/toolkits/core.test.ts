@@ -252,6 +252,8 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
   });
 });
 
+const fullAccessThreadId = ThreadId.make("mcp-core-full-access-thread");
+
 it.effect("returns an HTML render reference that Codex and Claude tool rows both carry", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -272,17 +274,22 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
-    // This thread asks before reading files, so the server will not read one for it.
-    const byPath = yield* server
-      .callTool({
-        name: "html_render",
-        arguments: { path: "/tmp/revenue.html", title: "Revenue", height: 240 },
-      })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(declaredFailure(byPath)).toMatchObject({ code: "capability_denied" });
+    // Only a full-access thread may have the server read a file for it.
+    const byPath = (caller: McpInvocationContext.McpInvocationScope) =>
+      server
+        .callTool({
+          name: "html_render",
+          arguments: { path: "/tmp/t3-missing-revenue.html", title: "Revenue", height: 240 },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
+          Effect.provideService(McpSchema.McpServerClient, client),
+          Effect.map(declaredFailure),
+        );
+    expect(yield* byPath(scope)).toMatchObject({ code: "capability_denied" });
+    expect(
+      yield* byPath({ ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } }),
+    ).toMatchObject({ code: "invalid_request" });
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
@@ -298,14 +305,14 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () =>
+            getThreadShell: (id) =>
               Effect.succeed({
-                id: threadId,
+                id,
                 deletedAt: null,
                 archivedAt: null,
                 activeRunId: RunId.make("mcp-core-run"),
                 providerInstanceId: ProviderInstanceId.make("codex"),
-                runtimeMode: "approval-required",
+                runtimeMode: id === fullAccessThreadId ? "full-access" : "approval-required",
                 interactionMode: "default",
               } as OrchestrationV2ThreadShell),
           }),
