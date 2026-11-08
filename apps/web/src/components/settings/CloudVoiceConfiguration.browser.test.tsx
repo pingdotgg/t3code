@@ -139,7 +139,7 @@ it.each(["openai", "soniox"] as const)(
   },
 );
 
-it("OpenRouter needs an exact model, and changing it writes no credential", async () => {
+it("OpenRouter needs an exact model, changing it writes no credential, and providers an older server omits ask for an update", async () => {
   const id = EnvironmentId.make("voice-host");
   const target = new PrimaryConnectionTarget({
     environmentId: id,
@@ -196,9 +196,15 @@ it("OpenRouter needs an exact model, and changing it writes no credential", asyn
             </SettingsScopeProvider>,
           );
           const destination = screen.getByRole("combobox", { name: "Transcribe with" });
+          const dialog = page.getByRole("dialog");
+          await destination.click();
+          await page.getByRole("option", { name: "Soniox via Laptop" }).click();
+          await expect
+            .element(dialog.getByText("Update Laptop to use Soniox dictation."))
+            .toBeVisible();
+          await dialog.getByRole("button", { name: "Cancel" }).click();
           await destination.click();
           await page.getByRole("option", { name: "OpenRouter via Laptop" }).click();
-          const dialog = page.getByRole("dialog");
           const save = dialog.getByRole("button", { name: "Save and enable" });
           await expect.element(save).toBeDisabled();
           const picker = dialog.getByRole("combobox", { name: "OpenRouter model" });
