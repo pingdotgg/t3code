@@ -68,6 +68,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps vault notes, which are host files, behind filesystem read scope", () => {
+    for (const method of [WS_METHODS.notesList, WS_METHODS.notesRead]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthFilesystemReadScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

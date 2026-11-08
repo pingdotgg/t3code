@@ -64,6 +64,14 @@ export class ProviderRegistry extends Context.Service<
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
+    /**
+     * A user-requested refresh of usage limits: skips each instance's cached usage probe,
+     * which a plain refresh may serve for minutes. Instances without one fall back to refresh.
+     */
+    readonly refreshUsage: (
+      instanceId?: ProviderInstanceId,
+    ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
+
     /** Re-reads secret-backed environments first, so a fixed secret applies without a restart. */
     readonly reloadSecretsAndRefresh: (
       instanceId?: ProviderInstanceId,
@@ -685,6 +693,29 @@ export const layer = Layer.effect(
       return yield* refreshOneSource(instance);
     });
 
+    const refreshUsage = Effect.fn("refreshUsage")(function* (instanceId?: ProviderInstanceId) {
+      yield* syncLiveSourcesAndContinue;
+      const instances = [...(yield* Ref.get(liveSubsRef)).values()].filter(
+        (instance) => instanceId === undefined || instance.instanceId === instanceId,
+      );
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          instance.snapshot.refreshUsage === undefined
+            ? refreshOneSource(instance)
+            : instance.snapshot.refreshUsage.pipe(
+                Effect.ignoreCause({ log: true }),
+                Effect.andThen(instance.snapshot.getSnapshot),
+                Effect.flatMap((provider) =>
+                  correlateSnapshotWithSource(buildSnapshotSource(instance), provider),
+                ),
+                Effect.flatMap(syncProvider),
+              ),
+        { concurrency: "unbounded", discard: true },
+      );
+      return yield* Ref.get(providersRef);
+    });
+
     const reloadSecretsAndRefresh = Effect.fn("reloadSecretsAndRefresh")(function* (
       instanceId?: ProviderInstanceId,
     ) {
@@ -1075,6 +1106,8 @@ export const layer = Layer.effect(
         refresh(provider).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshInstance: (instanceId: ProviderInstanceId) =>
         refreshInstance(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
+      refreshUsage: (instanceId?: ProviderInstanceId) =>
+        refreshUsage(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       reloadSecretsAndRefresh: (instanceId?: ProviderInstanceId) =>
         reloadSecretsAndRefresh(instanceId).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshWorkspaceSnapshot: (input) =>

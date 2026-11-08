@@ -4,7 +4,6 @@ import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
-  ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
   type EnvironmentId,
   type UsageProviderKind,
@@ -15,10 +14,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Cause from "effect/Cause";
-import {
-  cursorKeychainAccessEnvironments,
-  refreshUsageLimits,
-} from "@t3tools/client-runtime/state/usage";
+import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
   usageEnvironmentProgress,
@@ -73,7 +69,6 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
   WorkspaceBreadcrumb,
@@ -100,7 +95,12 @@ import {
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  providersWithUsage,
+  rankProvidersByMetric,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -222,9 +222,6 @@ export function UsagePage() {
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
   );
-  const cursorAccessEnvironments = hiddenProviders.has("cursor")
-    ? []
-    : cursorKeychainAccessEnvironments(selectedEnvironments);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -250,7 +247,7 @@ export function UsagePage() {
     if (nextMetric === "limits") setLimitsNow(Date.now());
     updatePreferences({ metric: nextMetric });
   };
-  const refreshLimits = (automatic = false, afterPending = false) =>
+  const refreshLimits = (automatic = false) =>
     // Settled so the timestamp still advances when a refresh throws.
     settlePromise(() =>
       Promise.all(
@@ -259,9 +256,12 @@ export function UsagePage() {
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
             return refreshUsageLimits(
               environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
+              () =>
+                refreshProviders({
+                  environmentId,
+                  input: automatic ? {} : { refreshUsageLimits: true },
+                }),
               automatic,
-              afterPending,
             );
           }
         }),
@@ -525,17 +525,6 @@ export function UsagePage() {
                 selectedEnvironmentIds={selectedEnvironmentIds}
                 hiddenProviders={hiddenProviders}
                 now={limitsNow}
-                cursorPrompt={
-                  cursorAccessEnvironments.length > 0 ? (
-                    <CursorEnableLimits
-                      environments={cursorAccessEnvironments}
-                      onEnabled={() => {
-                        void refresh();
-                        void refreshLimits(false, true);
-                      }}
-                    />
-                  ) : null
-                }
               />
             ) : shown === null ? (
               <UsageSkeleton />
@@ -560,12 +549,7 @@ export function UsagePage() {
                 selectedEnvironments={selectedEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
-                cursorAccessEnvironments={cursorAccessEnvironments}
                 showChatGptSharing={showChatGptSharing}
-                onCursorEnabled={() => {
-                  void refresh();
-                  void refreshLimits(false, true);
-                }}
                 onSelectModel={selectUsageModel}
               />
             )}
@@ -613,9 +597,7 @@ function UsageOverview({
   selectedEnvironments,
   hiddenProviders,
   refreshingUsage,
-  cursorAccessEnvironments,
   showChatGptSharing,
-  onCursorEnabled,
   onSelectModel,
 }: {
   readonly merged: MergedUsage;
@@ -628,9 +610,7 @@ function UsageOverview({
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
-  readonly cursorAccessEnvironments: readonly EnvironmentUsageStatus[];
   readonly showChatGptSharing: boolean;
-  readonly onCursorEnabled: () => void;
   readonly onSelectModel: (key: string) => void;
 }) {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
@@ -670,20 +650,7 @@ function UsageOverview({
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
     0,
   );
-  const cursorInsertAt =
-    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
-  const summaryRows: ReadonlyArray<
-    | { readonly kind: "usage"; readonly provider: UsageProviderKind }
-    | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
-  > = [
-    ...activeProviders
-      .slice(0, cursorInsertAt)
-      .map((provider) => ({ kind: "usage" as const, provider })),
-    ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
-    ...activeProviders
-      .slice(cursorInsertAt)
-      .map((provider) => ({ kind: "usage" as const, provider })),
-  ];
+  const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
@@ -735,19 +702,7 @@ function UsageOverview({
             </div>
           ) : null}
 
-          {summaryRows.map((row) => {
-            if (row.kind === "enable") {
-              return (
-                <CursorEnableRow
-                  key={`enable:${row.environment.environmentId}`}
-                  environmentId={row.environment.environmentId}
-                  label={row.environment.label}
-                  showEnvironment={selectedEnvironments.length > 1}
-                  onEnabled={onCursorEnabled}
-                />
-              );
-            }
-            const provider = row.provider;
+          {rankedProviders.map((provider) => {
             const totals = merged.providers.find((entry) => entry.provider === provider);
             const share = metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
             const providerSessions = totals?.sessions ?? 0;
@@ -1070,134 +1025,6 @@ function UsageOverview({
         )}
       </section>
     </div>
-  );
-}
-
-const CURSOR_KEYCHAIN_COPY = "Requires access to your Cursor login in macOS Keychain.";
-
-function CursorEnableButton({
-  environmentId,
-  label,
-  onEnabled,
-  tooltip,
-  buttonText = "Enable",
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly onEnabled: () => void;
-  readonly tooltip: boolean;
-  readonly buttonText?: string;
-}) {
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "enable Cursor account usage",
-  });
-  const [pending, setPending] = useState(false);
-  const enable = async () => {
-    setPending(true);
-    const result = await updateSettings({
-      environmentId,
-      input: { patch: { cursorKeychainUsageEnabled: true } },
-    });
-    if (result._tag === "Success") onEnabled();
-    setPending(false);
-  };
-  const button = tooltip ? (
-    <InlineButton
-      disabled={pending}
-      aria-busy={pending}
-      aria-label={`Enable Cursor usage from ${label}`}
-      onClick={() => void enable()}
-    >
-      {buttonText}
-    </InlineButton>
-  ) : (
-    <Button
-      size="sm"
-      variant="outline"
-      disabled={pending}
-      aria-busy={pending}
-      aria-label={`Enable Cursor usage from ${label}`}
-      onClick={() => void enable()}
-    >
-      {buttonText}
-    </Button>
-  );
-  if (!tooltip) return button;
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup>{CURSOR_KEYCHAIN_COPY}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function CursorEnableRow({
-  environmentId,
-  label,
-  showEnvironment,
-  onEnabled,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly label: string;
-  readonly showEnvironment: boolean;
-  readonly onEnabled: () => void;
-}) {
-  return (
-    <div className="flex min-w-0 items-baseline justify-between gap-4 text-sm">
-      <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
-        <span
-          aria-hidden
-          className="size-2 shrink-0 rounded-full"
-          style={{ backgroundColor: PROVIDER_PRESENTATION.cursor.color }}
-        />
-        <ProviderMark provider="cursor" className="size-4" />
-        <span className="truncate">Cursor{showEnvironment ? ` · ${label}` : ""}</span>
-      </span>
-      <CursorEnableButton
-        environmentId={environmentId}
-        label={label}
-        onEnabled={onEnabled}
-        tooltip
-      />
-    </div>
-  );
-}
-
-function CursorEnableLimits({
-  environments,
-  onEnabled,
-}: {
-  readonly environments: readonly EnvironmentUsageStatus[];
-  readonly onEnabled: () => void;
-}) {
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="flex items-center gap-2 text-sm font-medium text-foreground">
-        <ProviderInstanceIcon
-          driverKind={ProviderDriverKind.make("cursor")}
-          displayName="Cursor"
-          indicatorBackground="var(--background)"
-          className="size-5"
-          iconClassName="size-4 text-foreground/80"
-        />
-        Cursor
-      </h2>
-      <div className="flex flex-col items-start gap-3 rounded-lg border border-border/60 p-4">
-        <p className="text-xs text-muted-foreground">{CURSOR_KEYCHAIN_COPY}</p>
-        <div className="flex flex-wrap gap-2">
-          {environments.map((environment) => (
-            <CursorEnableButton
-              key={environment.environmentId}
-              environmentId={environment.environmentId}
-              label={environment.label}
-              buttonText={environments.length > 1 ? `Enable on ${environment.label}` : "Enable"}
-              onEnabled={onEnabled}
-              tooltip={false}
-            />
-          ))}
-        </div>
-      </div>
-    </section>
   );
 }
 

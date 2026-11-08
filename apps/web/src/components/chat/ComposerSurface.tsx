@@ -21,8 +21,8 @@ function Shell({
         "before:pointer-events-none before:absolute before:inset-0 before:z-0 before:rounded-2xl before:bg-(--chat-composer-glass-surface)/(--glass-opacity) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:before:bg-(--chat-composer-glass-surface)",
         "has-data-[composer-banner-surface=attached]:before:hidden",
-        // With a context row below, the card paints its own glass (see Host) so the row stays bare.
-        "data-context-row:before:hidden",
+        // As in monocode, the context row shares the card's glass and outline below a divider.
+        "data-context-row:after:pointer-events-none data-context-row:after:absolute data-context-row:after:inset-0 data-context-row:after:z-20 data-context-row:after:rounded-2xl data-context-row:after:border data-context-row:after:border-(--chat-composer-outline)",
         className,
       )}
       {...props}
@@ -39,8 +39,8 @@ function Host({ className, ...props }: ComponentProps<"div">) {
       data-slot="composer-host"
       className={cn(
         "relative z-10 w-full rounded-2xl shadow-composer after:z-1 dark:shadow-none",
-        "group-data-context-row/composer-surface:before:pointer-events-none group-data-context-row/composer-surface:before:absolute group-data-context-row/composer-surface:before:inset-0 group-data-context-row/composer-surface:before:-z-1 group-data-context-row/composer-surface:before:rounded-2xl group-data-context-row/composer-surface:before:bg-(--chat-composer-glass-surface)/(--glass-opacity) group-data-context-row/composer-surface:before:backdrop-blur-(--glass-blur) group-data-context-row/composer-surface:before:backdrop-saturate-(--glass-saturation)",
         outlineClasses,
+        "group-data-context-row/composer-surface:after:hidden",
         "group-has-data-[composer-banner-surface=attached]/composer-surface:shadow-none group-has-data-[composer-banner-surface=attached]/composer-surface:before:hidden group-has-data-[composer-banner-surface=attached]/composer-surface:after:hidden",
         className,
       )}
@@ -68,13 +68,13 @@ function Main({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/** A plain row under the card (environment, worktree, branch) with no surface of its own. */
+/** The row under the input (environment, worktree, branch), inside the card below a divider. */
 function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
       data-slot="composer-context-strip"
       className={cn(
-        "group/composer-context relative flex w-full items-center gap-2 overflow-x-clip px-2 pt-2 text-muted-foreground",
+        "group/composer-context relative flex w-full items-center gap-2 overflow-x-clip border-t border-(--chat-composer-outline) px-3 py-2 text-muted-foreground",
         className,
       )}
       {...props}

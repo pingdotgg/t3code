@@ -5,7 +5,7 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
 import {
   PullRequestMarkdownTextarea,
-  type PullRequestMentionScope,
+  type PullRequestCompletionScope,
 } from "~/components/pullRequest/PullRequestMarkdownTextarea";
 import {
   SpeechTextField,
@@ -41,7 +41,7 @@ interface DiffCommentAnnotationProps {
   secondaryAction?: DiffCommentSecondaryAction;
   focusOnMount?: boolean;
   /** Set only for pull request comments, where `@` completes the repository's users. */
-  mentionScope?: PullRequestMentionScope | null;
+  completionScope?: PullRequestCompletionScope | null;
 }
 
 export function DiffCommentAnnotation({
@@ -60,7 +60,7 @@ export function DiffCommentAnnotation({
   pending = false,
   secondaryAction,
   focusOnMount = true,
-  mentionScope = null,
+  completionScope = null,
 }: DiffCommentAnnotationProps) {
   const [localDraftText, setLocalDraftText] = useState("");
   const displayedText = kind === "draft" && !onTextChange ? localDraftText : text;
@@ -129,7 +129,7 @@ export function DiffCommentAnnotation({
     >
       <PullRequestMarkdownTextarea
         ref={textareaRef}
-        mentionScope={mentionScope}
+        completionScope={completionScope}
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"

@@ -705,6 +705,20 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("remembers the last inline toggle as the details card default for every thread", () => {
+    const visibility = (ref: typeof refA) =>
+      selectThreadPanelVisibility(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        ref,
+      );
+    useRightPanelStore.getState().toggleThreadPanel(refA, "inline");
+    expect(visibility(refB)).toEqual({ inlineOpen: false, popoverOpen: false });
+
+    useRightPanelStore.getState().toggleThreadPanel(refB, "inline");
+    expect(visibility(refA)).toEqual({ inlineOpen: true, popoverOpen: false });
+    expect(useRightPanelStore.getState().threadPanelVisibilityByThreadKey).toEqual({});
+  });
+
   it("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
     useRightPanelStore.getState().open(refA, "diff");

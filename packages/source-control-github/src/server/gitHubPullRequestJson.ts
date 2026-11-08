@@ -7,6 +7,7 @@ import { GraphQL } from "effect/graphql";
 import type {
   PullRequestStackMembership,
   PullRequestActor,
+  PullRequestReferenceCandidate,
   PullRequestPreview,
   PullRequestCheck,
   PullRequestCheckStatus,
@@ -65,6 +66,8 @@ import type {
   PullRequestSubject,
   RepositoryAuthors,
   RepositoryLabels,
+  RepositoryReferences,
+  ReferenceCandidate,
   ReviewerCandidates,
   ViewerPermissions,
 } from "./pullRequestReads.graphql.ts";
@@ -72,6 +75,8 @@ import type {
   ReactionGroup,
   ReviewDismissals,
   ReviewThreadComments,
+  ReviewThreadPage,
+  ReviewThreadPages,
   ReviewThreads,
   ThreadComment,
 } from "./pullRequestReviews.graphql.ts";
@@ -504,7 +509,7 @@ export function toPullRequestActionSummary(
   };
 }
 
-/** GitHub's reviewDecision ignores reviews outside branch rules, including app approvals. */
+/** Prefer GitHub's reviewDecision; only use latest reviews when it is absent (e.g. bot approvals). */
 function toReviewDecisionWithReviews(
   value: string | null | undefined,
   reviews: ReadonlyArray<LatestReviewFields> | undefined,
@@ -513,7 +518,7 @@ function toReviewDecisionWithReviews(
   if (summarized === "approved" || summarized === "changes-requested") return summarized;
   const states = new Set((reviews ?? []).map((review) => review.state?.trim().toUpperCase() ?? ""));
   if (states.has("CHANGES_REQUESTED")) return "changes-requested";
-  if (states.has("APPROVED")) return "approved";
+  if (summarized === null && states.has("APPROVED")) return "approved";
   return summarized;
 }
 
@@ -1310,11 +1315,8 @@ type ReviewThreadsPullRequest = NonNullable<
   NonNullable<ReviewThreads.Result["repository"]>["pullRequest"]
 >;
 
-export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewThreadPage | null {
-  const pullRequest = result.repository?.pullRequest;
-  if (pullRequest == null) return null;
-  const viewer = trimmed(result.viewer.login);
-  const threads = pullRequest.reviewThreads;
+/** A page of threads and the people commenting on them, whichever query carried it. */
+function toReviewThreadEntries(threads: ReviewThreadPage, viewer: string | null) {
   const threadNodes = nodesOf(threads);
   const entries = threadNodes.flatMap((thread): ReadonlyArray<GitHubReviewThreadEntry> => {
     const path = trimmed(thread.path);
@@ -1338,27 +1340,58 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
       },
     ];
   });
+  return {
+    entries,
+    nextCursor: nextCursorOf(threads.pageInfo),
+    authors: threadNodes.flatMap((thread) =>
+      nodesOf(thread.comments).map((comment) => comment.author),
+    ),
+  };
+}
+
+function collectActors(raws: ReadonlyArray<ActorFields | null | undefined>) {
+  const avatarsByLogin = new Map<string, string>();
+  const botLogins = new Set<string>();
+  for (const raw of raws) {
+    const login = trimmed(raw?.login);
+    const avatarUrl = trimmed(raw?.avatarUrl);
+    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
+    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
+  }
+  return { avatarsByLogin, botLogins };
+}
+
+export function toLaterReviewThreadPage(
+  result: ReviewThreadPages.Result,
+): Pick<GitHubReviewThreadPage, "threads" | "nextCursor" | "avatarsByLogin" | "botLogins"> | null {
+  const threads = result.repository?.pullRequest?.reviewThreads;
+  if (threads === undefined) return null;
+  const { entries, nextCursor, authors } = toReviewThreadEntries(
+    threads,
+    trimmed(result.viewer.login),
+  );
+  return { threads: entries, nextCursor, ...collectActors(authors) };
+}
+
+export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewThreadPage | null {
+  const pullRequest = result.repository?.pullRequest;
+  if (pullRequest == null) return null;
+  const viewer = trimmed(result.viewer.login);
+  const page = toReviewThreadEntries(pullRequest.reviewThreads, viewer);
   const requestedReviewers = nodesOf(pullRequest.reviewRequests).map(
     (node): ActorFields | null => node.requestedReviewer,
   );
   const latestReviews = nodesOf(pullRequest.latestReviews);
   const comments = nodesOf(pullRequest.comments);
   const reviews = nodesOf(pullRequest.reviews);
-  const avatarsByLogin = new Map<string, string>();
-  const botLogins = new Set<string>();
-  for (const raw of [
+  const { avatarsByLogin, botLogins } = collectActors([
     pullRequest.author,
     ...comments.map((node) => node.author),
     ...reviews.map((node) => node.author),
     ...requestedReviewers,
     ...latestReviews.map((node) => node.author),
-    ...threadNodes.flatMap((thread) => nodesOf(thread.comments).map((comment) => comment.author)),
-  ]) {
-    const login = trimmed(raw?.login);
-    const avatarUrl = trimmed(raw?.avatarUrl);
-    if (login !== null && avatarUrl !== null) avatarsByLogin.set(login, avatarUrl);
-    if (login !== null && toActor(raw)?.isBot) botLogins.add(login);
-  }
+    ...page.authors,
+  ]);
   const reviewers = new Map<string, PullRequestActor>();
   for (const raw of [...requestedReviewers, ...latestReviews.map((node) => node.author)]) {
     const actor = toActor(raw) ?? toRequestedTeam(raw);
@@ -1388,8 +1421,8 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
     if (reactions.length > 0) reactionsById.set(id, reactions);
   }
   return {
-    threads: entries,
-    nextCursor: nextCursorOf(threads.pageInfo),
+    threads: page.entries,
+    nextCursor: page.nextCursor,
     reactions: toReactions(pullRequest.reactionGroups, viewer),
     reactionsById,
     editedAtById,
@@ -1459,6 +1492,7 @@ export interface GitHubBaseComparison {
 /** assignableUsers avoids push/read:org requirements. Keep requested outsiders/apps removable. */
 export function toReviewerCandidates(
   result: ReviewerCandidates.Result,
+  query?: string,
 ): PullRequestReviewerCandidateList | null {
   const repository = result.repository;
   if (repository == null) return null;
@@ -1482,8 +1516,10 @@ export function toReviewerCandidates(
       isRequested: true,
     });
   }
+  const hostMatches = new Set<string>();
   for (const node of nodesOf(repository.assignableUsers)) {
     const login = trimmed(node.login);
+    if (login !== null) hostMatches.add(login);
     if (login === null || login === author || candidates.has(`user ${login}`)) continue;
     candidates.set(`user ${login}`, {
       id: login,
@@ -1495,7 +1531,9 @@ export function toReviewerCandidates(
     });
   }
   return {
-    candidates: [...candidates.values()],
+    candidates: [...candidates.values()].filter(
+      (candidate) => !query?.trim() || (candidate.kind === "user" && hostMatches.has(candidate.id)),
+    ),
     truncated: repository.assignableUsers.pageInfo.hasNextPage,
   };
 }
@@ -1573,6 +1611,64 @@ export function toRepositoryAuthors(
         : [{ login, name: trimmed(node.name), avatarUrl: trimmed(node.avatarUrl) }];
     }),
     truncated: repository.mentionableUsers.pageInfo.hasNextPage,
+  };
+}
+
+/** The `search` string for {@link toRepositoryReferences}; a numeric query searches recent items. */
+export function referenceSearchQuery(repository: string, query: string | undefined): string {
+  const text = query?.trim() ?? "";
+  const titled = text.length === 0 || /^\d+$/.test(text) ? [] : [`in:title ${searchPhrase(text)}`];
+  return [`repo:${repository}`, ...titled, "sort:updated-desc"].join(" ");
+}
+
+/** Quote user text so GitHub cannot interpret it as qualifiers that widen the listing. */
+export function searchPhrase(query: string): string {
+  return `"${query.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
+
+type ReferenceNode =
+  | ReferenceCandidate
+  | NonNullable<NonNullable<RepositoryReferences.Result["search"]["nodes"]>[number]>;
+
+function toReferenceCandidate(node: ReferenceNode): PullRequestReferenceCandidate | null {
+  if (node.__typename === "Issue") {
+    return {
+      reference: `#${node.number}`,
+      kind: "issue",
+      number: node.number,
+      title: node.title,
+      state: node.issueState === "OPEN" ? "open" : "closed",
+    };
+  }
+  if (node.__typename === "PullRequest") {
+    return {
+      reference: `#${node.number}`,
+      kind: "change-request",
+      number: node.number,
+      title: node.title,
+      state:
+        node.pullRequestState === "OPEN"
+          ? "open"
+          : node.pullRequestState === "MERGED"
+            ? "merged"
+            : "closed",
+    };
+  }
+  return null;
+}
+
+export function toRepositoryReferences(result: RepositoryReferences.Result): {
+  readonly items: ReadonlyArray<PullRequestReferenceCandidate>;
+  readonly truncated: boolean;
+} {
+  const exact = result.repository?.issueOrPullRequest;
+  const nodes = [...(exact == null ? [] : [exact]), ...nodesOf(result.search)];
+  return {
+    items: nodes.flatMap((node) => {
+      const candidate = toReferenceCandidate(node);
+      return candidate === null ? [] : [candidate];
+    }),
+    truncated: result.search.pageInfo.hasNextPage,
   };
 }
 

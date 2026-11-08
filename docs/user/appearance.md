@@ -43,9 +43,9 @@ preference is saved separately on each device.
 
 ## Motion
 
-The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
-**Panel animations** slider above 0 ms to add motion, up to 400 ms, unless reduced motion is enabled
-in your operating system. Moving between threads always snaps to the selected thread's panel state
+The main sidebar, right panel, and terminal drawer slide open and closed over 200 ms by default,
+unless reduced motion is enabled in your operating system. Set **Panel animations** between 0 ms
+(immediate) and 400 ms. Moving between threads always snaps to the selected thread's panel state
 without replaying its transitions.
 
 ## Custom themes
@@ -57,7 +57,9 @@ change. Export your theme as JSON to share it.
 ## Environment themes
 
 Environment themes and defaults come from the server serving your web app or the desktop app's
-main local environment. app.t3.codes and additional connections do not use them.
+main local environment. With the desktop app's local environment off, they come from the
+[background service](./background-service.md) on the same machine while the app is connected to
+it. app.t3.codes and other connections do not use them.
 
 Select a published theme in **Settings → Appearance** to follow its palette as the server updates
 it. **Duplicate** makes an independent copy you can edit. A saved custom theme with the same ID

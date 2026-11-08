@@ -326,7 +326,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               openTarget(target);
             }}
             className={cn(
-              "min-w-0 shrink justify-between whitespace-nowrap",
+              "min-w-0 shrink justify-between whitespace-nowrap bg-foreground/6 hover:bg-foreground/10",
               props.compact
                 ? "max-w-42 shrink-0"
                 : !props.isComposerOwned && "max-w-48 sm:max-w-56",

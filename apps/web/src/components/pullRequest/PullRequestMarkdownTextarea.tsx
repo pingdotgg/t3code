@@ -1,15 +1,21 @@
 import type {
   EnvironmentId,
   ProjectId,
-  PullRequestActor,
   PullRequestDetailView,
   PullRequestRef,
+  PullRequestReferenceCandidate,
 } from "@t3tools/contracts";
 import {
-  detectPullRequestMention,
-  insertPullRequestMention,
-  narrowPullRequestMentions,
+  debouncedPullRequestCompletionSearch,
+  detectPullRequestComposerTrigger,
+  insertPullRequestCompletion,
+  pullRequestCompletionKey,
+  pullRequestCompletions,
+  type PullRequestCompletion,
+  type PullRequestCompletionSupport,
+  type PullRequestComposerTrigger,
 } from "@t3tools/shared/pullRequestComposerTrigger";
+import { CircleCheckIcon, CircleDotIcon } from "lucide-react";
 import { useId, useState, type Ref } from "react";
 import { flushSync } from "react-dom";
 
@@ -19,27 +25,27 @@ import { useDebouncedValue } from "~/state/queries";
 
 import { Popover, PopoverPopup } from "../ui/popover";
 import { Textarea, type TextareaProps } from "../ui/textarea";
-import { PullRequestActorAvatar } from "./pullRequestPresentation";
+import { PULL_REQUEST_STATE_PRESENTATION } from "./pullRequestIcons";
+import { PullRequestActorAvatar, resolvePullRequestState } from "./pullRequestPresentation";
 
-/** The repository whose users an `@` completes. */
-export interface PullRequestMentionScope {
+/** The repository whose users `@` completes and whose issues and change requests `#` does. */
+export interface PullRequestCompletionScope {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly support: PullRequestCompletionSupport;
 }
 
-/** Null on hosts that cannot search their users, so `@` never opens a list that cannot fill. */
-export function pullRequestMentionScope(
+/** Null on hosts that complete nothing, so no sigil opens a list that cannot fill. */
+export function pullRequestCompletionScope(
   detail: Pick<PullRequestDetailView, "capabilities">,
   environmentId: EnvironmentId,
   reference: PullRequestRef,
-): PullRequestMentionScope | null {
-  return detail.capabilities.mentions === true
-    ? { environmentId, projectId: reference.projectId }
+): PullRequestCompletionScope | null {
+  const { mentions, referenceSigils } = detail.capabilities;
+  return mentions === true || (referenceSigils?.length ?? 0) > 0
+    ? { environmentId, projectId: reference.projectId, support: { mentions, referenceSigils } }
     : null;
 }
-
-const MENTION_SEARCH_DEBOUNCE_MS = 200;
-const MENTION_SUGGESTION_LIMIT = 8;
 // About a full list of suggestions. The popup fits itself to the space it opens into, so it never
 // flips once results grow it; the side is picked up front from the room a full list needs.
 const SUGGESTION_LIST_HEIGHT = 320;
@@ -50,43 +56,117 @@ function suggestionSide(target: HTMLTextAreaElement): "top" | "bottom" {
   return below < SUGGESTION_LIST_HEIGHT && rect.top > below ? "top" : "bottom";
 }
 
-function useMentionCandidates(scope: PullRequestMentionScope | null, query: string | null) {
-  const typed = query ?? "";
-  const search = typed === "" ? undefined : typed.slice(0, 100);
-  const sent = useDebouncedValue(search, MENTION_SEARCH_DEBOUNCE_MS);
+const COMPLETION_SEARCH_DEBOUNCE_MS = 200;
+const COMPLETION_SUGGESTION_LIMIT = 8;
+
+function useCompletions(
+  scope: PullRequestCompletionScope | null,
+  trigger: PullRequestComposerTrigger | null,
+) {
+  const key = pullRequestCompletionKey(trigger);
+  const sentKey = useDebouncedValue(key, COMPLETION_SEARCH_DEBOUNCE_MS);
+  const sent =
+    trigger === null ? undefined : debouncedPullRequestCompletionSearch(trigger, sentKey);
   const hosted = usePullRequestFilterOptions(
-    scope === null || query === null
+    scope === null || trigger === null
       ? []
       : [
           {
             environmentId: scope.environmentId,
-            input: {
-              kind: "authors",
-              projectId: scope.projectId,
-              ...(sent ? { query: sent } : {}),
-            },
+            input:
+              trigger.kind === "mention"
+                ? { kind: "authors", projectId: scope.projectId, ...(sent ? { query: sent } : {}) }
+                : {
+                    kind: "references",
+                    projectId: scope.projectId,
+                    sigil: trigger.sigil,
+                    ...(sent ? { query: sent } : {}),
+                  },
           },
         ],
   );
   // Older answers stay useful while the debounced search catches up, narrowed to what is typed now.
+  const completions = pullRequestCompletions(trigger, hosted, COMPLETION_SUGGESTION_LIMIT);
   return {
-    candidates: narrowPullRequestMentions(hosted.authors, typed, MENTION_SUGGESTION_LIMIT),
-    isPending: hosted.isPending || sent !== search,
+    completions,
+    isPending: hosted.isPending || sentKey !== key,
     failed: hosted.error !== null,
   };
 }
+
+function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCandidate }) {
+  const presentation =
+    candidate.kind === "change-request"
+      ? resolvePullRequestState({ state: candidate.state, isDraft: false })
+      : candidate.state === "open"
+        ? {
+            label: "Open issue",
+            Icon: CircleDotIcon,
+            toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName,
+          }
+        : {
+            label: "Closed issue",
+            Icon: CircleCheckIcon,
+            toneClassName: PULL_REQUEST_STATE_PRESENTATION.merged.toneClassName,
+          };
+  return (
+    <presentation.Icon
+      role="img"
+      aria-label={presentation.label}
+      className={cn("size-4 shrink-0", presentation.toneClassName)}
+    />
+  );
+}
+
+function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
+  if (completion.kind === "mention") {
+    const { actor } = completion;
+    return (
+      <>
+        <PullRequestActorAvatar actor={actor} className="size-5" />
+        <span className="truncate font-medium">{actor.login}</span>
+        {actor.name && actor.name !== actor.login ? (
+          <span className="min-w-0 truncate text-muted-foreground">{actor.name}</span>
+        ) : null}
+      </>
+    );
+  }
+  const { candidate } = completion;
+  return (
+    <>
+      <ReferenceStateIcon candidate={candidate} />
+      <span className="shrink-0 font-medium tabular-nums">{candidate.reference}</span>
+      <span className="min-w-0 truncate text-muted-foreground">{candidate.title}</span>
+    </>
+  );
+}
+
+const EMPTY_STATE = {
+  mention: {
+    label: "Mention a user",
+    pending: "Searching users...",
+    failed: "Couldn't search users on the host",
+    none: "No matching users",
+  },
+  reference: {
+    label: "Reference an issue or change request",
+    pending: "Searching...",
+    failed: "Couldn't search the host",
+    none: "No matching issues or change requests",
+  },
+} as const;
 
 function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
   if (typeof ref === "function") ref(value);
   else if (ref) ref.current = value;
 }
 
-/** A markdown textarea for pull request text that completes `@login` from the repository's users. */
+/** A markdown textarea for pull request text that completes `@login`, `#123` and GitLab `!123`. */
 export function PullRequestMarkdownTextarea({
   ref,
   value,
   onValueChange,
-  mentionScope,
+  completionScope,
   onKeyDown,
   onSelect,
   onFocus,
@@ -95,7 +175,7 @@ export function PullRequestMarkdownTextarea({
 }: Omit<TextareaProps, "value" | "onChange"> & {
   readonly value: string;
   readonly onValueChange: (value: string) => void;
-  readonly mentionScope: PullRequestMentionScope | null;
+  readonly completionScope: PullRequestCompletionScope | null;
 }) {
   const listId = useId();
   const [element, setElement] = useState<HTMLTextAreaElement | null>(null);
@@ -105,29 +185,30 @@ export function PullRequestMarkdownTextarea({
   const [highlight, setHighlight] = useState({ query: "", index: 0 });
 
   const trigger =
-    mentionScope === null || caret === null || props.readOnly
+    completionScope === null || caret === null || props.readOnly
       ? null
-      : detectPullRequestMention(value, caret);
+      : detectPullRequestComposerTrigger(value, caret, completionScope.support);
   const open = trigger !== null && trigger.rangeStart !== dismissedAt;
-  const { candidates, isPending, failed } = useMentionCandidates(
-    mentionScope,
-    open ? trigger.query : null,
-  );
+  const {
+    completions: candidates,
+    isPending,
+    failed,
+  } = useCompletions(completionScope, open ? trigger : null);
   const activeIndex =
     trigger !== null && highlight.query === trigger.query
       ? Math.min(highlight.index, Math.max(0, candidates.length - 1))
       : 0;
   const active = open ? candidates[activeIndex] : undefined;
-  const optionId = (login: string) => `${listId}-${login}`;
+  const optionId = (token: string) => `${listId}-${token}`;
 
   const syncCaret = (target: HTMLTextAreaElement) => {
     setSide(suggestionSide(target));
     setCaret(target.selectionStart === target.selectionEnd ? target.selectionStart : null);
   };
 
-  const select = (actor: PullRequestActor) => {
+  const select = (completion: PullRequestCompletion) => {
     if (trigger === null || element === null) return;
-    const next = insertPullRequestMention(value, trigger, actor.login);
+    const next = insertPullRequestCompletion(value, trigger, completion.token);
     flushSync(() => onValueChange(next.text));
     element.setSelectionRange(next.cursor, next.cursor);
     setCaret(next.cursor);
@@ -142,11 +223,11 @@ export function PullRequestMarkdownTextarea({
           assignRef(ref, node);
         }}
         value={value}
-        role={mentionScope === null ? undefined : "combobox"}
-        aria-autocomplete={mentionScope === null ? undefined : "list"}
-        aria-expanded={mentionScope === null ? undefined : open}
+        role={completionScope === null ? undefined : "combobox"}
+        aria-autocomplete={completionScope === null ? undefined : "list"}
+        aria-expanded={completionScope === null ? undefined : open}
         aria-controls={open && candidates.length > 0 ? listId : undefined}
-        aria-activedescendant={active ? optionId(active.login) : undefined}
+        aria-activedescendant={active ? optionId(active.token) : undefined}
         onChange={(event) => {
           onValueChange(event.target.value);
           syncCaret(event.target);
@@ -210,16 +291,21 @@ export function PullRequestMarkdownTextarea({
           side={side}
           align="start"
           padding="compact"
-          width="sm"
+          width={trigger?.kind === "reference" ? "md" : "sm"}
           initialFocus={false}
           finalFocus={false}
         >
           {candidates.length > 0 ? (
-            <div id={listId} role="listbox" aria-label="Mention a user" className="-mx-1.5">
-              {candidates.map((actor, index) => (
+            <div
+              id={listId}
+              role="listbox"
+              aria-label={EMPTY_STATE[trigger?.kind ?? "mention"].label}
+              className="-mx-1.5"
+            >
+              {candidates.map((completion, index) => (
                 <div
-                  key={actor.login}
-                  id={optionId(actor.login)}
+                  key={completion.token}
+                  id={optionId(completion.token)}
                   role="option"
                   aria-selected={index === activeIndex}
                   className={cn(
@@ -231,23 +317,19 @@ export function PullRequestMarkdownTextarea({
                   }}
                   // Keeps focus, and the caret, in the textarea.
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => select(actor)}
+                  onClick={() => select(completion)}
                 >
-                  <PullRequestActorAvatar actor={actor} className="size-5" />
-                  <span className="truncate font-medium">{actor.login}</span>
-                  {actor.name && actor.name !== actor.login ? (
-                    <span className="min-w-0 truncate text-muted-foreground">{actor.name}</span>
-                  ) : null}
+                  <CompletionRow completion={completion} />
                 </div>
               ))}
             </div>
           ) : (
             <p className="px-1 text-xs text-muted-foreground">
-              {isPending
-                ? "Searching users..."
-                : failed
-                  ? "Couldn't search users on the host"
-                  : "No matching users"}
+              {
+                EMPTY_STATE[trigger?.kind ?? "mention"][
+                  isPending ? "pending" : failed ? "failed" : "none"
+                ]
+              }
             </p>
           )}
         </PopoverPopup>
