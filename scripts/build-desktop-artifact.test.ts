@@ -1678,7 +1678,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("shows the munim Windows build as T3 Code but keeps its exe and folder", () =>
+  it.effect("shows the munim Windows build as T3 Code, exe included", () =>
     Effect.gen(function* () {
       const config = yield* createBuildConfig(
         "win",
@@ -1697,8 +1697,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(config.appId, "com.munim.mtcode");
       assert.equal(nsis.shortcutName, "T3 Code");
       assert.equal(nsis.uninstallDisplayName, "T3 Code");
-      // Taskbar pins point at this file, so it keeps its old name.
-      assert.equal(win.executableName, "MT Code");
+      // The exe takes the product name, so Task Manager shows T3 Code too.
+      assert.notProperty(win, "executableName");
 
       const official = yield* createBuildConfig(
         "win",

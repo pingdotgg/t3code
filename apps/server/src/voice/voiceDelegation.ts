@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { CommandId, MessageId, VoiceApiError, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
+import { resolveAppDisplayName } from "../appDisplayName.ts";
 import type { ThreadManagementServiceShape } from "../orchestration-v2/ThreadManagementService.ts";
 
 /** Only the thread-management entry points a spoken request needs. */
@@ -39,7 +40,9 @@ export const delegateVoiceRequest = Effect.fn("delegateVoiceRequest")(function* 
     .getThreadShell(threadId)
     .pipe(Effect.mapError((error) => unavailable(describe(error))));
   if (shell === null || shell.archivedAt !== null) {
-    return yield* unavailable("Open an existing, active MT Code task before starting voice.");
+    return yield* unavailable(
+      `Open an existing, active ${resolveAppDisplayName()} task before starting voice.`,
+    );
   }
   if (shell.activeRunId !== null) {
     return yield* unavailable(

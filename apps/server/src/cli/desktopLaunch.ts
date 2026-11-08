@@ -50,6 +50,8 @@ export function windowsDesktopExecutableCandidates(localAppData: string): Readon
   const out: Array<string> = [];
   for (const name of DESKTOP_APP_NAMES) {
     out.push(NodePath.join(programs, "t3-code", `${name}.exe`));
+    // The Munim per-user installer uses its package name, "mtcode", as the folder.
+    out.push(NodePath.join(programs, "mtcode", `${name}.exe`));
     out.push(NodePath.join(programs, name, `${name}.exe`));
   }
   return out;

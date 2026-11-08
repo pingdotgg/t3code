@@ -18,7 +18,8 @@ import * as Electron from "electron";
 /** Built-in icons, resolved from the assets shipped beside the app. */
 const BUILT_IN_FILES: Readonly<Record<string, string>> = {
   default: "black-macos-1024.png",
-  light: "munim-icon-light-1024.png",
+  // A colour-inverted T3 tile: black mark on white.
+  light: "light-macos-1024.png",
   // The T3 tile is already a white mark on black, which is what "Dark" means.
   dark: "black-macos-1024.png",
 };

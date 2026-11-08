@@ -26,6 +26,7 @@ it("resolves common Windows install paths under Local AppData", () => {
     candidates,
     NodePath.join(localAppData, "Programs", "T3 Code (Nightly)", "T3 Code (Nightly).exe"),
   );
+  assert.include(candidates, NodePath.join(localAppData, "Programs", "mtcode", "T3 Code.exe"));
 });
 
 it("recognizes AppImage-minted Linux desktop entries for gtk-launch", () => {

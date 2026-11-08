@@ -174,13 +174,13 @@ it.effect("refuses to speak into an archived or missing task", () =>
       "Anything",
     ).pipe(Effect.flip);
     expect(missing._tag).toBe("VoiceApiError");
-    expect(missing.message).toContain("active MT Code task");
+    expect(missing.message).toContain("active T3 Code task");
 
     const archived = yield* delegateVoiceRequest(
       makeThreads({ shell: makeShell({ archivedAt: "2026-01-01T00:00:00.000Z" }) }),
       THREAD_ID,
       "Anything",
     ).pipe(Effect.flip);
-    expect(archived.message).toContain("active MT Code task");
+    expect(archived.message).toContain("active T3 Code task");
   }),
 );

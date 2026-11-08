@@ -52,13 +52,13 @@ const OFFICIAL: DesktopDistroIdentity = {
 const MUNIM: DesktopDistroIdentity = {
   id: "munim",
   appId: "com.munim.mtcode",
-  // Shown as T3 Code; ids, folders, schemes and the exe name stay MT so an
-  // existing install keeps its data, pins and links.
+  // Shown as T3 Code, exe included; ids, folders and schemes stay MT so an
+  // existing install keeps its data and links.
   productName: "T3 Code",
   packageName: "mtcode",
   artifactName: "MT-Code-${version}-${arch}.${ext}",
   description: "T3 Code desktop build",
-  author: "Munim, Inc.",
+  author: "T3 Code fork",
   updateRepository: "munimtechnologies/mtcode",
   protocolSchemes: ["mtcode", "mtcode-dev"],
   protocolName: "T3 Code",
@@ -67,7 +67,6 @@ const MUNIM: DesktopDistroIdentity = {
   linuxMaintainer: "Munim Technologies <support@munimtech.com>",
   nsisShortcutName: "T3 Code",
   nsisInstallDirectoryName: "mtcode",
-  windowsExecutableName: "MT Code",
 };
 
 export function resolveDesktopDistroId(

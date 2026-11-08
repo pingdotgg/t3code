@@ -1064,7 +1064,7 @@ export const MT_CODE_LIGHT_THEME_COLORS: ThemeColors = {
  */
 export const MT_CODE_THEME: ThemeDefinition = {
   id: MT_CODE_THEME_ID,
-  label: "MT Code",
+  label: "Charcoal",
   appearance: "light",
   colors: MT_CODE_LIGHT_THEME_COLORS,
   variants: {

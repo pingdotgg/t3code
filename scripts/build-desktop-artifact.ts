@@ -1132,6 +1132,7 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
 /** Icon files the App icon setting can switch the running app to. */
 export const ALTERNATE_APP_ICON_FILES = [
   "assets/prod/black-macos-1024.png",
+  "assets/prod/light-macos-1024.png",
   "assets/munim/munim-icon-light-1024.png",
   "assets/munim/munim-icon-dark-1024.png",
 ] as const;
