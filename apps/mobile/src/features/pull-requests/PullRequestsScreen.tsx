@@ -418,12 +418,13 @@ export function PullRequestsScreen(
                         : "Connect an environment"
                 }
                 detail={
-                  result.error ??
-                  (targets.length && connectedTargets.length === 0
-                    ? "Reconnect to load pull requests that aren't saved on this device."
-                    : targets.length
-                      ? "Pull requests from the selected environments' projects appear here."
-                      : "Add an environment in Settings to browse its pull requests.")
+                  result.error
+                    ? "Expand the loading errors above for details."
+                    : targets.length && connectedTargets.length === 0
+                      ? "Reconnect to load pull requests that aren't saved on this device."
+                      : targets.length
+                        ? "Pull requests from the selected environments' projects appear here."
+                        : "Add an environment in Settings to browse its pull requests."
                 }
                 variant="plain"
               />
