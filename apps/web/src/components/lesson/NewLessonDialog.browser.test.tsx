@@ -155,7 +155,14 @@ const NO_RUNNABLE_CLAUDE = [
 
 describe("NewLessonDialog", () => {
   it.each([
-    ["prefers the public Claude pool", null, ALL, "full-access", LESSON_SELECTION, "auto"],
+    [
+      "uses the default model when nothing is remembered",
+      null,
+      ALL,
+      "full-access",
+      PROJECT_DEFAULT,
+      "auto",
+    ],
     [
       "uses a remembered lesson model",
       LESSON_SELECTION,
@@ -169,21 +176,13 @@ describe("NewLessonDialog", () => {
       { ...LESSON_SELECTION, instanceId: ProviderInstanceId.make("missing") },
       ALL,
       "full-access",
-      LESSON_SELECTION,
+      PROJECT_DEFAULT,
       "auto",
     ],
     [
       "ignores a remembered model the provider no longer lists",
       { ...LESSON_SELECTION, model: "claude-retired-4" },
       ALL,
-      "full-access",
-      LESSON_SELECTION,
-      "auto",
-    ],
-    [
-      "falls back to the project default when no Claude can run",
-      null,
-      NO_RUNNABLE_CLAUDE,
       "full-access",
       PROJECT_DEFAULT,
       "auto",
@@ -201,7 +200,7 @@ describe("NewLessonDialog", () => {
       null,
       ALL,
       "approval-required",
-      LESSON_SELECTION,
+      PROJECT_DEFAULT,
       "approval-required",
     ],
   ] as const)(

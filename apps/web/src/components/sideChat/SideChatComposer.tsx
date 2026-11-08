@@ -39,11 +39,7 @@ import {
   classifyComposerAttachmentFile,
   shouldHandleComposerAttachmentPaste,
 } from "../chat/composerAttachmentFiles";
-import {
-  confirmAccountSwitch,
-  prepareTurnAttachments,
-  restoreComposerDraft,
-} from "../chat/chatViewSend";
+import { prepareTurnAttachments, restoreComposerDraft } from "../chat/chatViewSend";
 import { optimisticMessageAttachments, snapshotComposerSend } from "../ChatView.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -344,17 +340,6 @@ export function SideChatComposer(props: {
         });
 
     sendInFlight.current = true;
-    if (
-      modelSelection &&
-      !(await confirmAccountSwitch(
-        instanceEntries,
-        shell.modelSelection.instanceId,
-        modelSelection.instanceId,
-      ))
-    ) {
-      sendInFlight.current = false;
-      return;
-    }
     setSending(true);
     const messageId = newMessageId();
     // oxlint-disable-next-line react/purity -- dispatch payloads need the creation timestamp

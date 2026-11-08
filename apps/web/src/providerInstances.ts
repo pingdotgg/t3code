@@ -271,16 +271,3 @@ export function resolveProjectDefaultProviderModelSelection(
   const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
   return entry && model ? { instanceId: entry.instanceId, model } : null;
 }
-
-/** The confirm text for a send that would move a thread to another account of its provider. */
-export function accountSwitchConfirmMessage(
-  entries: ReadonlyArray<ProviderInstanceEntry>,
-  currentInstanceId: ProviderInstanceId,
-  nextInstanceId: ProviderInstanceId,
-): string | null {
-  if (currentInstanceId === nextInstanceId) return null;
-  const current = entries.find((entry) => entry.instanceId === currentInstanceId);
-  const next = entries.find((entry) => entry.instanceId === nextInstanceId);
-  if (!current || !next || current.driverKind !== next.driverKind) return null;
-  return `Switch this thread to ${next.displayName}?\nIt runs on ${current.displayName} now.`;
-}

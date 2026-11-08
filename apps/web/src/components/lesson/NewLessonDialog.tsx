@@ -58,7 +58,6 @@ export function openNewLesson(request: Request) {
   useLessonDialog.setState({ request });
 }
 
-const LESSON_MODEL = "claude-sonnet-5-5";
 const LESSON_MODEL_SCHEMA = Schema.NullOr(ModelSelection);
 
 function lessonModelSelection(
@@ -79,13 +78,7 @@ function lessonModelSelection(
   ) {
     return remembered;
   }
-  const preferred =
-    entries.find(
-      (entry) => entry.instanceId === "claude-public-pool" && offers(entry, LESSON_MODEL),
-    ) ?? entries.find((entry) => entry.driverKind === "claudeAgent" && offers(entry, LESSON_MODEL));
-  return preferred
-    ? createModelSelection(preferred.instanceId, LESSON_MODEL, [{ id: "effort", value: "high" }])
-    : fallback;
+  return fallback;
 }
 
 const depthOptions = [
