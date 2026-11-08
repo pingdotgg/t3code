@@ -416,7 +416,7 @@ gets the link Copy thread copies, `https://app.t3.codes/threads/<environmentId>/
 on the server's `T3CODE_HOSTED_APP_URL`, for threads in this environment. The
 hosted app offers the desktop app, the mobile app, or itself.
 
-List and read results report `snoozed` and `snoozedUntil`, and
+List and read results report `snoozed`, `snoozedUntil`, and `pinned`, and
 `t3_thread_list` filters on `snoozed`. The server's `isSnoozed` follows the
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
 wakes early only when it has a pending request or fails after snoozing. Completed
