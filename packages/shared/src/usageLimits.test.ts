@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  usageLimitContinuationTargets,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1515,5 +1516,52 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("usageLimitContinuationTargets", () => {
+  const models = (...slugs: string[]) =>
+    slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null }));
+  const current = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6.1-sol",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const limited = provider({
+    auth: { status: "authenticated", email: "a@example.com" },
+    models: models("gpt-6.1-sol"),
+  });
+  const work = provider({
+    instanceId: ProviderInstanceId.make("codex_work"),
+    auth: { status: "authenticated", email: "b@example.com" },
+    models: models("gpt-6.1-sol"),
+  });
+  const targets = (other: ServerProvider) =>
+    usageLimitContinuationTargets({ current, providers: [limited, other], now }).map(
+      (target) => target.selection,
+    );
+
+  it("keeps the model and options on another account", () => {
+    expect(targets(work)).toEqual([{ ...current, instanceId: work.instanceId }]);
+  });
+  it("falls back to the account's first model", () => {
+    expect(targets({ ...work, models: models("gpt-6-mini") })).toEqual([
+      { instanceId: work.instanceId, model: "gpt-6-mini" },
+    ]);
+  });
+  it.each([
+    { driver: ProviderDriverKind.make("claudeAgent") },
+    { auth: { status: "authenticated" as const, email: "a@example.com" } },
+    { auth: { status: "unauthenticated" as const } },
+    { enabled: false },
+    { models: [] },
+    {
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [{ ...window, usedPercent: 100 }],
+      },
+    },
+  ])("skips an account that cannot continue: %j", (overrides) => {
+    expect(targets({ ...work, ...overrides })).toEqual([]);
   });
 });

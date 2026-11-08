@@ -82,23 +82,64 @@ export function resolveNewThreadModelSelection(input: {
   if (
     !provider ||
     !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
-        input.settings,
-        input.projectId ?? null,
-        fallback.instanceId,
-      ))
+    !fallback ||
+    !canRunTurns(fallback, input) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model)
   )
     return unchanged;
   return {
     selection: input.fallbackSelection,
     fallback: { provider, resetsAt: window.resetsAt ?? null },
   };
+}
+
+function canRunTurns(
+  provider: ServerProvider,
+  input: { readonly settings?: ServerSettings; readonly projectId?: ProjectId | null },
+) {
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated" &&
+    isProviderAvailable(provider) &&
+    (!input.settings ||
+      resolveProjectProviderInstanceEnabled(
+        input.settings,
+        input.projectId ?? null,
+        provider.instanceId,
+      ))
+  );
+}
+
+/** Other accounts of the limited instance's driver that a usage-limited thread can continue on. */
+export function usageLimitContinuationTargets(input: {
+  readonly current: ModelSelection;
+  readonly providers: readonly ServerProvider[];
+  readonly now: number;
+  readonly settings?: ServerSettings;
+  readonly projectId?: ProjectId | null;
+}): ReadonlyArray<{ readonly provider: ServerProvider; readonly selection: ModelSelection }> {
+  const current = input.providers.find((entry) => entry.instanceId === input.current.instanceId);
+  if (!current) return [];
+  return input.providers.flatMap((provider) => {
+    if (
+      provider.instanceId === current.instanceId ||
+      provider.driver !== current.driver ||
+      // The same signed-in account shares the exhausted limit.
+      (provider.auth.email !== undefined && provider.auth.email === current.auth.email) ||
+      !canRunTurns(provider, input)
+    )
+      return [];
+    const model = provider.models.some((entry) => entry.slug === input.current.model)
+      ? input.current.model
+      : provider.models[0]?.slug;
+    if (model === undefined || exhaustedUsageWindow(provider, input.now, model)) return [];
+    const selection: ModelSelection =
+      model === input.current.model
+        ? { ...input.current, instanceId: provider.instanceId }
+        : { instanceId: provider.instanceId, model };
+    return [{ provider, selection }];
+  });
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";

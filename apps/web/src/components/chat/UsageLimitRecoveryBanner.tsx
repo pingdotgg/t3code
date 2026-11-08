@@ -31,7 +31,15 @@ type RecoveryProps = {
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
+  /** Other accounts the stopped run can continue on now. */
+  continueOn?: ReadonlyArray<ContinueOnTarget>;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+};
+
+type ContinueOnTarget = {
+  readonly instanceId: string;
+  readonly label: string;
+  readonly onSelect: () => Promise<void>;
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
@@ -53,9 +61,14 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const continueOn = !settled && !requestPending ? (props.continueOn ?? []) : [];
+  const recoveryActions =
+    canSchedule || continueOn.length > 0 ? (
+      <>
+        {continueOn.length > 0 ? <ContinueOnActions key={runId} targets={continueOn} /> : null}
+        {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+      </>
+    ) : null;
   const displayAt =
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil
@@ -150,6 +163,37 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
       >
         {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
       </InlineButton>
+    </span>
+  );
+}
+
+function ContinueOnActions({ targets }: { targets: ReadonlyArray<ContinueOnTarget> }) {
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  async function select(target: ContinueOnTarget) {
+    setPendingId(target.instanceId);
+    try {
+      await target.onSelect();
+    } catch (cause) {
+      toastManager.add({
+        type: "error",
+        title: `Could not continue on ${target.label}`,
+        description: cause instanceof Error ? cause.message : "An error occurred.",
+      });
+    }
+    setPendingId(null);
+  }
+  return (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+      {targets.map((target) => (
+        <InlineButton
+          key={target.instanceId}
+          touchTarget="padded"
+          disabled={pendingId !== null}
+          onClick={() => void select(target)}
+        >
+          {pendingId === target.instanceId ? "Continuing..." : `Continue on ${target.label}`}
+        </InlineButton>
+      ))}
     </span>
   );
 }

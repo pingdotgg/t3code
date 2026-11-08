@@ -30,6 +30,7 @@ import {
   EnvironmentId,
   MessageId,
   ThreadId,
+  type ModelSelection,
   type ProjectScript,
 } from "@t3tools/contracts";
 import {
@@ -88,7 +89,10 @@ import { useSelectedThreadGitActions } from "../../state/use-selected-thread-git
 import { useSelectedThreadGitState } from "../../state/use-selected-thread-git-state";
 import { useSelectedThreadRequests } from "../../state/use-selected-thread-requests";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
-import { useThreadComposerState } from "../../state/use-thread-composer-state";
+import {
+  updateThreadDraftModelSelection,
+  useThreadComposerState,
+} from "../../state/use-thread-composer-state";
 import { resolveMergeBackTargetThreadId } from "@t3tools/client-runtime/state/thread-relationships";
 import { resolveLatestMergeBackRun } from "@t3tools/client-runtime/state/thread-workflows";
 import { threadEnvironment } from "../../state/threads";
@@ -660,7 +664,18 @@ function ThreadRouteContent(
     });
   };
 
-  const handleResumeQueue = async () => {
+  const handleResumeQueue = () => resumeWith(null);
+  const handleContinueOn = (modelSelection: ModelSelection) => {
+    if (composer.composerDraftKey !== null) {
+      updateThreadDraftModelSelection(
+        composer.composerDraftKey,
+        modelSelection,
+        serverConfig?.providers ?? [],
+      );
+    }
+    return resumeWith(modelSelection);
+  };
+  const resumeWith = async (modelSelectionOverride: ModelSelection | null) => {
     if (!selectedThread) return;
     const result = await resumeThread({
       thread: selectedThread,
@@ -668,7 +683,7 @@ function ThreadRouteContent(
       queueHeld: composer.queueHeld,
       runtimeMode: composer.runtimeMode ?? selectedThread.runtimeMode,
       interactionMode: composer.interactionMode ?? selectedThread.interactionMode,
-      modelSelection: composer.modelSelection,
+      modelSelection: modelSelectionOverride ?? composer.modelSelection,
       messageId: MessageId.make(uuidv4()),
       createdAt: new Date().toISOString(),
       setRuntimeMode: setThreadRuntimeMode,
@@ -1058,6 +1073,11 @@ function ThreadRouteContent(
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
           onResumeQueue={
             composer.queueHeld || composer.resumableRunId !== null ? handleResumeQueue : null
+          }
+          onContinueOn={
+            composer.resumableRunId !== null && composer.canSwitchThreadProvider
+              ? handleContinueOn
+              : null
           }
           onSendMessage={composer.onSendMessage}
           offersSideChat={composer.sideChatUnavailableReason === null}
