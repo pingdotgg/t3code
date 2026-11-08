@@ -492,6 +492,17 @@ export function useComposerCommandMenu({
       }));
     }
 
+    if (trigger.kind === "environment") {
+      return environmentId
+        ? matchComposerEnvironmentItems({
+            environments,
+            environmentId,
+            query: trigger.query,
+            listAllWhenEmpty: true,
+          })
+        : [];
+    }
+
     if (trigger.kind === "path") {
       const threadItems = environmentId
         ? matchComposerThreadItems({
@@ -529,7 +540,7 @@ export function useComposerCommandMenu({
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "environment") {
-      if (!ownerKey || trigger.kind !== "path") return;
+      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "environment")) return;
       const record = environmentComposerContext(item.environmentId, item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);

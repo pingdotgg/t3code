@@ -116,5 +116,13 @@ describe("matchComposerEnvironmentItems", () => {
         query: "",
       }),
     ).toEqual([]);
+    expect(
+      matchComposerEnvironmentItems({
+        environments,
+        environmentId: EnvironmentId.make("env-here"),
+        query: "",
+        listAllWhenEmpty: true,
+      }).map((item) => item.label),
+    ).toEqual(["Hetzner VPS", "Mac mini"]);
   });
 });
