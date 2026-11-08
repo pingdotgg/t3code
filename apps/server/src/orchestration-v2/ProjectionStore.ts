@@ -6491,6 +6491,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       INNER JOIN orchestration_v2_projection_turn_items i
         ON i.node_id = task.subagent_id AND i.thread_id = task.thread_id AND i.type = 'subagent'
       WHERE task.status IN ('completed', 'interrupted', 'failed', 'cancelled')
+        AND r.status <> 'rolled_back'
         AND task.completion_delivery_state IN ('claimed', 'pending')
         AND task.origin = 'app_owned'
         ${threadIds === undefined ? sql`` : sql`AND task.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
