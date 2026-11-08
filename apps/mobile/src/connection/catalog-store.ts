@@ -80,6 +80,14 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     return catalog;
   });
 
+  // Migration saves the catalog before removing the legacy key, so retry a removal that failed.
+  const removeLeftoverLegacyKey = getItem(LEGACY_CONNECTIONS_KEY).pipe(
+    Effect.flatMap((legacyRaw) =>
+      legacyRaw === null ? Effect.void : deleteItem(LEGACY_CONNECTIONS_KEY),
+    ),
+    Effect.catch((error) => Effect.logWarning("Could not remove legacy mobile connections", error)),
+  );
+
   const loadUnlocked = Effect.fn("mobile.connectionStorage.loadCatalog")(function* () {
     const cached = yield* Ref.get(state);
     if (Option.isSome(cached)) {
@@ -89,6 +97,7 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
     let catalog: ConnectionCatalogDocumentType;
     if (raw !== null && raw.trim() !== "") {
       catalog = yield* decodeCatalog(raw).pipe(
+        Effect.tap(() => removeLeftoverLegacyKey),
         Effect.catch((error) =>
           Effect.logWarning("Discarding corrupt mobile connection catalog", error).pipe(
             Effect.andThen(deleteItem(CONNECTION_CATALOG_KEY)),

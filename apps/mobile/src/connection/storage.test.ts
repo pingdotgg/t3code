@@ -18,19 +18,34 @@ import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 function makeStorage(initial: Readonly<Record<string, string>>) {
   const values = new Map(Object.entries(initial));
   const deleted: Array<string> = [];
+  let removalFails = false;
   const storage = MobileSecureStorage.MobileSecureStorage.of({
     getItem: (key) => Effect.sync(() => values.get(key) ?? null),
     setItem: (key, value) =>
       Effect.sync(() => {
         values.set(key, value);
       }),
-    removeItem: (key) =>
-      Effect.sync(() => {
+    removeItem: (key) => {
+      if (removalFails) {
+        removalFails = false;
+        return Effect.fail(
+          new MobileSecureStorage.MobileSecureStorageError({
+            operation: "delete",
+            key,
+            cause: "unavailable",
+          }),
+        );
+      }
+      return Effect.sync(() => {
         deleted.push(key);
         values.delete(key);
-      }),
+      });
+    },
   });
-  return { deleted, storage, values };
+  const failNextRemoval = () => {
+    removalFails = true;
+  };
+  return { deleted, failNextRemoval, storage, values };
 }
 
 describe("mobile connection catalog storage", () => {
@@ -53,13 +68,21 @@ describe("mobile connection catalog storage", () => {
       const memory = makeStorage({
         [LEGACY_CONNECTIONS_KEY]: JSON.stringify({ connections: [{ invalid: true }] }),
       });
-      const catalog = yield* make().pipe(
+      const launch = make().pipe(
         Effect.provideService(MobileSecureStorage.MobileSecureStorage, memory.storage),
       );
 
-      expect((yield* catalog.read).targets).toEqual([]);
-      expect(memory.deleted).toEqual([LEGACY_CONNECTIONS_KEY]);
+      memory.failNextRemoval();
+      yield* Effect.flip((yield* launch).read);
       expect(memory.values.has(CONNECTION_CATALOG_KEY)).toBe(true);
+      expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(true);
+
+      memory.failNextRemoval();
+      expect((yield* (yield* launch).read).targets).toEqual([]);
+      expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(true);
+
+      expect((yield* (yield* launch).read).targets).toEqual([]);
+      expect(memory.deleted).toEqual([LEGACY_CONNECTIONS_KEY]);
     }),
   );
 
