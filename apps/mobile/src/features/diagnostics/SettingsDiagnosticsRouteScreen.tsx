@@ -9,13 +9,14 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { crashReportingAvailable, setCrashReportsEnabled } from "../observability/observe";
 import { ListActionRow as SettingsActionRow } from "../../components/ui/ListActionRow";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
@@ -81,6 +82,7 @@ function appIdentity() {
 
 export function SettingsDiagnosticsRouteScreen() {
   const insets = useSafeAreaInsets();
+  const workspace = useWorkspaceTabs();
   const state = useCrashLogState();
   const [copied, setCopied] = useState(false);
 
@@ -99,7 +101,15 @@ export function SettingsDiagnosticsRouteScreen() {
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
+        contentContainerClassName="gap-6 px-5 pt-4"
+        contentContainerStyle={{
+          // Android ignores contentInset, so the floating One UI tabs need container padding.
+          paddingBottom:
+            Platform.OS === "ios"
+              ? Math.max(Math.max(insets.bottom, 18) + 18, workspace?.bottomClearance ?? 0) -
+                Math.max(insets.bottom, 18)
+              : Math.max(Math.max(insets.bottom, 18) + 18, workspace?.bottomClearance ?? 0),
+        }}
       >
         {crashReportingAvailable ? <CrashReportsSetting /> : null}
 
