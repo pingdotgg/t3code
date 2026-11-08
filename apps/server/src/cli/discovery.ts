@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
+import * as Console from "effect/Console";
+import * as Runtime from "effect/Runtime";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -32,6 +34,7 @@ class DiscoveryServerNotRunningError extends Schema.TaggedError<DiscoveryServerN
   "DiscoveryServerNotRunningError",
   { baseDir: Schema.String },
 ) {
+  override readonly [Runtime.errorReported] = false;
   override get message() {
     return `No running T3 Code server uses ${this.baseDir}. Start T3 Code, then retry.`;
   }
@@ -41,10 +44,24 @@ class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryProjectN
   "DiscoveryProjectNotFoundError",
   { identifier: Schema.String },
 ) {
+  override readonly [Runtime.errorReported] = false;
   override get message() {
     return `No T3 Code project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
   }
 }
+
+export const DiscoveryCliError = Schema.Union([
+  DiscoveryServerNotRunningError,
+  DiscoveryProjectNotFoundError,
+]);
+const isDiscoveryCliError = Schema.is(DiscoveryCliError);
+
+export const reportDiscoveryErrors = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.tapError((error) =>
+      isDiscoveryCliError(error) ? Console.error(error.message) : Effect.void,
+    ),
+  );
 
 export const resolveDiscoveryProject = Effect.fn("cli.discovery.resolveProject")(function* <
   P extends {
@@ -97,6 +114,7 @@ const readSnapshot = Effect.fn("cli.discovery.readSnapshot")(function* (
   const identity = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* identity.getEnvironmentId;
   const nowMs = yield* Clock.currentTimeMillis;
+  // Keep settlement-service dependencies off the CLI help and startup paths.
   const { listItemFromShell } = yield* Effect.promise(
     () => import("../orchestration-v2/threadSummary.ts"),
   );

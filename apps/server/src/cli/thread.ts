@@ -26,7 +26,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { mcpToolSession, type McpToolSession } from "../mcp/AcpMcpStdioBridge.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
-import { resolveDiscoveryProject, withDiscoverySnapshot } from "./discovery.ts";
+import { DiscoveryCliError, resolveDiscoveryProject, withDiscoverySnapshot } from "./discovery.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -77,16 +77,6 @@ export class ThreadUsageError extends Schema.TaggedError<ThreadUsageError>()("Th
   }
 }
 
-export class ThreadProjectNotFoundError extends Schema.TaggedError<ThreadProjectNotFoundError>()(
-  "ThreadProjectNotFoundError",
-  { identifier: Schema.String },
-) {
-  override readonly [Runtime.errorReported] = false;
-  override get message(): string {
-    return `No T3 Code project matches '${this.identifier}'. Pass a project id or a path inside a project.`;
-  }
-}
-
 /** Exit code 2 lets a script tell "needs a human" apart from a failed run. */
 export class ThreadNeedsInputError extends Schema.TaggedError<ThreadNeedsInputError>()(
   "ThreadNeedsInputError",
@@ -116,7 +106,7 @@ const ThreadCliError = Schema.Union([
   ThreadServerUnreachableError,
   ThreadToolFailedError,
   ThreadUsageError,
-  ThreadProjectNotFoundError,
+  DiscoveryCliError,
   ThreadNeedsInputError,
   ThreadRunEndedError,
 ]);

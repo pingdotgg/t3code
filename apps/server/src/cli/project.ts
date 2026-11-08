@@ -42,7 +42,7 @@ import {
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { withDiscoverySnapshot } from "./discovery.ts";
+import { reportDiscoveryErrors, withDiscoverySnapshot } from "./discovery.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 type ProjectMutationTarget = {
@@ -629,7 +629,7 @@ const projectListCommand = Command.make("list", {
           );
         }
       }),
-    ),
+    ).pipe(reportDiscoveryErrors),
   ),
 );
 

@@ -93,7 +93,10 @@ it.effect(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-connect-status-" });
-      const replies = (providerKind = "cloudflare_tunnel") => ({
+      const replies = (
+        providerKind = "cloudflare_tunnel",
+        httpBaseUrl = "https://this.example.test/",
+      ) => ({
         environments: [
           {
             environmentId: "other-host",
@@ -110,7 +113,7 @@ it.effect(
             label: "This",
             linkedAt: "2026-11-01",
             endpoint: {
-              httpBaseUrl: "https://this.example.test/",
+              httpBaseUrl,
               wsBaseUrl: "wss://this.example.test/",
               providerKind,
             },
@@ -160,6 +163,11 @@ it.effect(
       fetch.mockResolvedValue(Response.json(replies("manual")));
       yield* run("linked");
       assert.isNull(decodeStatus(String((yield* TestConsole.logLines).at(-1))).mcpUrl);
+      fetch.mockResolvedValue(Response.json(replies("cloudflare_tunnel", "not a URL")));
+      yield* run("linked");
+      const malformed = decodeStatus(String((yield* TestConsole.logLines).at(-1)));
+      assert.isNull(malformed.mcpUrl);
+      assert.isNotNull(malformed.addressLookupError);
       fetch.mockResolvedValue(new Response("unavailable", { status: 503 }));
       yield* run("linked");
       const failed = decodeStatus(String((yield* TestConsole.logLines).at(-1)));

@@ -675,6 +675,8 @@ const connectLinkCommand = Command.make("link", {
   ),
 );
 
+const decodeConnectEndpointUrl = Schema.decodeEffect(Schema.URLFromString);
+
 const readPublicConnectAddress = Effect.fn("cloud.cli.readPublicAddress")(function* (
   relayUrl: string,
 ) {
@@ -696,7 +698,7 @@ const readPublicConnectAddress = Effect.fn("cloud.cli.readPublicAddress")(functi
     (item) => item.environmentId === environmentId,
   )?.endpoint;
   if (endpoint?.providerKind !== "cloudflare_tunnel") return null;
-  const url = new URL(endpoint.httpBaseUrl);
+  const url = yield* decodeConnectEndpointUrl(endpoint.httpBaseUrl);
   return url.protocol === "https:" ? url.host : null;
 });
 

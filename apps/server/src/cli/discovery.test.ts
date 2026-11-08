@@ -9,6 +9,7 @@ import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Runtime from "effect/Runtime";
 import * as Layer from "effect/Layer";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
@@ -155,7 +156,11 @@ it.live("lists projects and all threads through HTTP, with project and status fi
         });
         server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
       }),
-      (server) => Effect.sync(() => server.close()),
+      (server) =>
+        Effect.callback<void>((resume) => {
+          server.close(() => resume(Effect.void));
+          server.closeAllConnections();
+        }),
     );
     const address = server.address();
     assert(address !== null && typeof address !== "string");
@@ -217,6 +222,27 @@ it.live("lists projects and all threads through HTTP, with project and status fi
     assert.include(String((yield* TestConsole.logLines).at(-1) ?? ""), "older  alpha  completed");
     assert.equal(requests.length, 16);
     assert.isTrue(requests.every((request) => request.startsWith("GET /api/")));
+    const unknownProject = yield* runThread([
+      "list",
+      "--project",
+      "missing-project",
+      ...flags,
+    ]).pipe(Effect.result);
+    assert(unknownProject._tag === "Failure");
+    assert.isFalse(Runtime.getErrorReported(unknownProject.failure));
+    assert.deepStrictEqual(yield* TestConsole.errorLines, [
+      "No T3 Code project matches 'missing-project'. Pass a project id or a path inside a project.",
+    ]);
+    const offlineBaseDir = `${baseDir}/offline`;
+    for (const run of [runProject, runThread]) {
+      const errorsBefore = (yield* TestConsole.errorLines).length;
+      const stopped = yield* run(["list", "--base-dir", offlineBaseDir]).pipe(Effect.result);
+      assert(stopped._tag === "Failure");
+      assert.isFalse(Runtime.getErrorReported(stopped.failure));
+      assert.deepStrictEqual((yield* TestConsole.errorLines).slice(errorsBefore), [
+        `No running T3 Code server uses ${offlineBaseDir}. Start T3 Code, then retry.`,
+      ]);
+    }
   }).pipe(
     Effect.scoped,
     Effect.provide(
