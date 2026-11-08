@@ -335,7 +335,7 @@ export interface AcpAdapterV2Flavor {
   readonly mcpOverHttp?: boolean;
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
-  ) => EffectAcpSchema.SessionNotification;
+  ) => ReadonlyArray<EffectAcpSchema.SessionNotification>;
   /**
    * Agent updates that belong to no turn (Kiro's own cloud-config fetch). They
    * are dropped before anything reads them, so they neither show in the turn
@@ -6335,9 +6335,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ) ?? Effect.void
                 );
               }
-              yield* handleSessionUpdate(
-                flavor.normalizeSessionUpdate?.(notification) ?? notification,
-              );
+              for (const normalized of flavor.normalizeSessionUpdate?.(notification) ?? [
+                notification,
+              ]) {
+                yield* handleSessionUpdate(normalized);
+              }
             },
             Effect.mapError(
               (cause) =>

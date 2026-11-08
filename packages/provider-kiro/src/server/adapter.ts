@@ -414,28 +414,40 @@ function steeringNotePrefixLength(text: string): number {
 /**
  * After an injected steer, Kiro's model ends its reply with a `[STEERING steer-…: …]`
  * note meant for Kiro's own UI. This drops it from the streamed text, holding back a
- * chunk end that may be the start of the note until the next chunk shows otherwise.
+ * chunk end that may be the start of the note until the next chunk shows otherwise,
+ * or a tool call, another non-text update or the steer's end releases it.
  */
 function makeKiroSteeringNoteFilter() {
   const sessions = new Map<string, { held: string; inNote: boolean }>();
+  const releaseHeld = (sessionId: string): ReadonlyArray<EffectAcpSchema.SessionNotification> => {
+    const state = sessions.get(sessionId);
+    if (state === undefined || state.held === "") return [];
+    const text = state.held;
+    state.held = "";
+    return [
+      {
+        sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      },
+    ];
+  };
   return (
     notification: EffectAcpSchema.SessionNotification,
-  ): EffectAcpSchema.SessionNotification => {
+  ): ReadonlyArray<EffectAcpSchema.SessionNotification> => {
     const { update } = notification;
     if (update.sessionUpdate === "session_info_update") {
       const kind = Option.getOrUndefined(decodeKiroSteeringInfo(update._meta))?.kiro.kind;
+      if (kind !== "steering_injected" && kind !== "steering_cleared") return [notification];
+      const released = releaseHeld(notification.sessionId);
       if (kind === "steering_injected") {
         sessions.set(notification.sessionId, { held: "", inNote: false });
-      } else if (kind === "steering_cleared") sessions.delete(notification.sessionId);
-      return notification;
+      } else sessions.delete(notification.sessionId);
+      return [...released, notification];
     }
     const state = sessions.get(notification.sessionId);
-    if (
-      state === undefined ||
-      update.sessionUpdate !== "agent_message_chunk" ||
-      update.content.type !== "text"
-    ) {
-      return notification;
+    if (state === undefined) return [notification];
+    if (update.sessionUpdate !== "agent_message_chunk" || update.content.type !== "text") {
+      return [...releaseHeld(notification.sessionId), notification];
     }
     let pending = state.held + update.content.text;
     let visible = "";
@@ -460,10 +472,12 @@ function makeKiroSteeringNoteFilter() {
       state.held = pending.slice(pending.length - held);
       break;
     }
-    return {
-      ...notification,
-      update: { ...update, content: { ...update.content, text: visible } },
-    };
+    return [
+      {
+        ...notification,
+        update: { ...update, content: { ...update.content, text: visible } },
+      },
+    ];
   };
 }
 

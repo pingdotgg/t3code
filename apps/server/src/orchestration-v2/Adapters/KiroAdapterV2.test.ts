@@ -1324,6 +1324,84 @@ describe("KiroAdapterV2 MCP tools", () => {
   );
 });
 
+describe("KiroAdapterV2 steering note", () => {
+  // Frame shapes from the Kiro 2.33.1 recording in fixtures/kiro_message_steering.
+  const kiroInfo = (kiro: Record<string, unknown>) =>
+    update({ sessionUpdate: "session_info_update", _meta: { kiro } });
+  const steerId = "steer-00000000-0000-4000-9000-000000000003";
+  const steeringInjected = kiroInfo({
+    kind: "steering_injected",
+    messageId: steerId,
+    content: "Answer differently",
+  });
+  const turnEnd = kiroInfo({
+    turnEnd: { stopReason: "end_turn" },
+    kind: "turn_end",
+    stopReason: "end_turn",
+  });
+  const steeringCleared = kiroInfo({ kind: "steering_cleared", messageIds: [steerId] });
+  const chunk = (text: string) =>
+    update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text } });
+  const readFile = [
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-read",
+      title: "Read file",
+      kind: "read",
+      status: "pending",
+      rawInput: { path: "README.md" },
+    }),
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool-read",
+      status: "completed",
+      rawOutput: "ok",
+      content: [{ type: "content", content: { type: "text", text: "ok" } }],
+    }),
+  ];
+
+  it.effect.each([
+    {
+      label: "at the end of the turn",
+      reply: [chunk("Fill in the blank: x = [")],
+      messages: ["Fill in the blank: x = ["],
+    },
+    {
+      label: "before a tool call",
+      reply: [chunk("Checking the list ["), ...readFile, chunk("All good.")],
+      messages: ["Checking the list [", "All good."],
+    },
+  ])("keeps a steered reply's trailing '[' in place $label", ({ label, reply, messages }) =>
+    runKiroScript({
+      scenario: `steering-bracket-${label.replaceAll(" ", "-")}`,
+      frames: [
+        ...openSessionFrames({
+          initialize: KIRO_V3_INITIALIZE,
+          configOptions: [modeOption, autopilotOption("on")],
+        }),
+        turnPrompt,
+        steeringInjected,
+        ...reply,
+        turnEnd,
+        steeringCleared,
+        answer("session/prompt", { stopReason: "end_turn" }),
+        ...closeSession,
+      ],
+      drive: ({ events, startTurn }) =>
+        Effect.gen(function* () {
+          yield* startTurn;
+          const texts = new Map<string, string>();
+          for (const event of yield* collectTurn(events)) {
+            if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+              texts.set(event.turnItem.id, event.turnItem.text);
+            }
+          }
+          assert.deepEqual([...texts.values()], messages);
+        }),
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+});
+
 describe("KiroAdapterV2 unknown model", () => {
   // Recorded live from Kiro 2.27.0 with the thread on a model id the account
   // lacks. Kiro has not advertised `model` yet, so T3 sends the id; Kiro

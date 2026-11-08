@@ -242,7 +242,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
             "cognition.ai/subagentSupport": true,
             "cognition.ai/messageGrouping": true,
           },
-          normalizeSessionUpdate: normalizeDevinSessionUpdate,
+          normalizeSessionUpdate: (notification) => [normalizeDevinSessionUpdate(notification)],
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
         }
@@ -254,7 +254,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           // Copilot CLI 1.0.105 rejects stdio MCP servers from the client.
           mcpOverHttp: true,
           registerExtensions: copilotRouting.registerExtensions,
-          normalizeSessionUpdate: copilotRouting.normalizeSessionUpdate,
+          normalizeSessionUpdate: (notification) => [
+            copilotRouting.normalizeSessionUpdate(notification),
+          ],
           extractSubagentUpdate: extractCopilotSubagentUpdate,
           restartRuntimeAfterPromptError: isCopilotLostSessionError,
         }),
