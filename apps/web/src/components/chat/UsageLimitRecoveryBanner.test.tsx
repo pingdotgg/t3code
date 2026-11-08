@@ -17,6 +17,7 @@ function bannerDescription(resetAt: Date, timestampFormat: TimestampFormat) {
     snoozedUntil: null,
     recovery: null,
     timestampFormat,
+    resetCredit: null,
     onChange: async () => {},
   }).description;
 }

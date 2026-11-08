@@ -254,15 +254,14 @@ export function useResetCredit(
     setStatus(null);
     const result = await consume({ environmentId, input });
     setBusy(false);
-    if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
-      return;
-    }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
+    const message =
+      result._tag === "Success"
+        ? (result.value.warning ?? OUTCOME_TEXT[result.value.outcome])
+        : "error" in result.cause && result.cause.error instanceof Error
+          ? result.cause.error.message
+          : "Could not use the reset credit.";
+    setStatus(message);
+    return { reset: result._tag === "Success" && result.value.outcome === "reset", message };
   };
 
   return { canManageProviders, confirming, setConfirming, busy, status, redeem };

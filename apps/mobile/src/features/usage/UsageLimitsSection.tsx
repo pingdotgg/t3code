@@ -1,10 +1,7 @@
-import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomMount, useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
-  AuthProvidersManageScope,
   type EnvironmentId,
-  type ProviderConsumeResetCreditOutcome,
   type ProviderConsumeResetCreditInput,
   type ServerProvider,
   type ServerProviderResetCredits,
@@ -25,9 +22,6 @@ import { Linking, Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
-import { serverEnvironment } from "../../state/server";
-import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { useAtomCommand } from "../../state/use-atom-command";
 import { useNowMinuteMs } from "../../lib/clock";
 import {
   environmentIdsKey,
@@ -36,6 +30,7 @@ import {
   refreshEnvironmentLimits,
 } from "./usageLimitsRefresh";
 import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { useResetCredit } from "./useResetCredit";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -220,13 +215,6 @@ export function AccountLimits(props: {
   );
 }
 
-const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
-  nothingToReset: "Nothing to reset right now.",
-  noCredit: "No reset credit left.",
-  alreadyRedeemed: "That credit was already redeemed.",
-};
-
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
@@ -235,12 +223,7 @@ export function ResetCredits(props: {
   readonly dense?: boolean;
 }) {
   const { environmentId, input, credits, now, dense = false } = props;
-  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
-  const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
-    reportFailure: false,
-  });
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const { canManageProviders, busy, status, confirm } = useResetCredit(environmentId, input);
   if (dense && credits.availableCount === 0 && status === null) return null;
 
   const expiresIn = credits.nextExpiresAt
@@ -252,35 +235,6 @@ export function ResetCredits(props: {
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
           expiresIn ? ` · next expires in ${expiresIn}` : ""
         }`;
-
-  const redeem = async () => {
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setBusy(true);
-    setStatus(null);
-    const result = await consume({ environmentId, input });
-    setBusy(false);
-    if (result._tag === "Success") {
-      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
-      return;
-    }
-    setStatus(
-      "error" in result.cause && result.cause.error instanceof Error
-        ? result.cause.error.message
-        : "Could not use the reset credit.",
-    );
-  };
-
-  const confirm = () => {
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    Dialog.alert(
-      "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
-      ],
-    );
-  };
 
   return (
     <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">

@@ -2,7 +2,11 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { AsyncResult } from "effect/reactivity";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { limitRecoveryOwnsSnooze } from "@t3tools/client-runtime/state/thread-execution";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ServerProviderResetCredits,
+} from "@t3tools/contracts";
 import {
   CHATGPT_USAGE_LIMIT_CODE,
   CHATGPT_USAGE_URL,
@@ -17,13 +21,17 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { useDeadlinePassed } from "../../lib/clock";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useResetCredit } from "../usage/useResetCredit";
 
 export function UsageLimitRecoveryCard({
   thread,
   environmentId,
+  resetCredits,
 }: {
   thread: EnvironmentThreadShell;
   environmentId: EnvironmentId;
+  /** The limited account's banked reset credits, when it reports any. */
+  resetCredits?: ServerProviderResetCredits | undefined;
 }) {
   const updateMetadata = useAtomCommand(threadEnvironment.updateMetadata);
   const [pending, setPending] = useState(false);
@@ -48,6 +56,7 @@ export function UsageLimitRecoveryCard({
       : resetAt;
   const [copied, setCopied] = useState(false);
   const [actionPending, setActionPending] = useState(false);
+  const instanceId = thread.runtime?.providerInstanceId ?? null;
   const code = thread.runtime?.lastErrorCode;
   // OpenAI's partner guidelines specify the ChatGPT notice and its action.
   const workspaceLimit = code === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
@@ -59,6 +68,7 @@ export function UsageLimitRecoveryCard({
     !runId
   )
     return null;
+  const canReset = instanceId !== null && (resetCredits?.availableCount ?? 0) > 0;
   const resetText = displayAt
     ? `${canSchedule && scheduled ? "Resumes" : "Resets"} ${new Date(displayAt).toLocaleString(
         undefined,
@@ -155,9 +165,12 @@ export function UsageLimitRecoveryCard({
                 ? `Usage limit reached. ${resetText}`
                 : "Usage limit reached. The provider did not report a reset time. Retry manually when your limit is available."}
         </Text>
-        {chatGptLimit || canSchedule ? (
+        {chatGptLimit || canSchedule || canReset ? (
           // The margins cancel the 44pt touch height so the links sit 8pt under the text.
           <View className="-mb-3 -mt-2 flex-row flex-wrap gap-x-4">
+            {canReset && instanceId !== null ? (
+              <ResetUsageAction environmentId={environmentId} instanceId={instanceId} />
+            ) : null}
             {chatGptLimit ? (
               <RecoveryAction
                 label={action.label}
@@ -189,6 +202,25 @@ export function UsageLimitRecoveryCard({
         ) : null}
       </View>
     </View>
+  );
+}
+
+function ResetUsageAction(props: {
+  readonly environmentId: EnvironmentId;
+  readonly instanceId: ProviderInstanceId;
+}) {
+  const { canManageProviders, busy, status, confirm } = useResetCredit(props.environmentId, {
+    instanceId: props.instanceId,
+  });
+  return (
+    <>
+      <RecoveryAction
+        label={busy ? "Resetting…" : "Reset usage"}
+        disabled={busy || !canManageProviders}
+        onPress={confirm}
+      />
+      {status ? <Text className="basis-full text-sm text-foreground">{status}</Text> : null}
+    </>
   );
 }
 

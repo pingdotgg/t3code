@@ -2563,6 +2563,20 @@ export default function ChatView(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  const limitRecoveryInstanceId = serverRuntime?.providerInstanceId ?? null;
+  const limitRecoveryCredits =
+    limitRecoveryRun === null || limitRecoveryInstanceId === null
+      ? undefined
+      : providerStatuses.find((provider) => provider.instanceId === limitRecoveryInstanceId)
+          ?.usageLimits?.resetCredits;
+  const limitRecoveryResetCredit =
+    limitRecoveryCredits === undefined || limitRecoveryInstanceId === null
+      ? null
+      : {
+          environmentId,
+          input: { instanceId: limitRecoveryInstanceId },
+          credits: limitRecoveryCredits,
+        };
   const limitRecoveryBanner =
     limitRecoveryRun !== null && activeThreadShell !== null
       ? usageLimitRecoveryBannerItem({
@@ -2575,6 +2589,7 @@ export default function ChatView(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          resetCredit: limitRecoveryResetCredit,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,

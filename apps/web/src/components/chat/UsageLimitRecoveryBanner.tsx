@@ -1,7 +1,11 @@
 import {
+  AuthProvidersManageScope,
+  type EnvironmentId,
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
+  type ProviderConsumeResetCreditInput,
   type RunId,
+  type ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { deadlineStore } from "@t3tools/client-runtime/clock";
@@ -15,6 +19,8 @@ import { useState } from "react";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { readEnvironmentScope } from "../../state/session";
+import { ResetCreditDialog, useResetCredit } from "../usage/UsageLimits";
 import { Button, InlineButton } from "../ui/button";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { toastManager } from "../ui/toast";
@@ -31,6 +37,12 @@ type RecoveryProps = {
   snoozedUntil: string | null;
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
+  /** Present when the limited account has banked reset credits. */
+  resetCredit: {
+    environmentId: EnvironmentId;
+    input: ProviderConsumeResetCreditInput;
+    credits: ServerProviderResetCredits;
+  } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
 
@@ -53,9 +65,23 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
-  ) : null;
+  const resetCredit =
+    props.resetCredit !== null && props.resetCredit.credits.availableCount > 0
+      ? props.resetCredit
+      : null;
+  const recoveryActions =
+    canSchedule || resetCredit !== null ? (
+      <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+        {resetCredit !== null ? (
+          <ResetCreditAction
+            key={`reset:${runId}`}
+            environmentId={resetCredit.environmentId}
+            input={resetCredit.input}
+          />
+        ) : null}
+        {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+      </span>
+    ) : null;
   const displayAt =
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil
@@ -99,6 +125,47 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
   };
 }
 
+function ResetCreditAction({
+  environmentId,
+  input,
+}: {
+  environmentId: EnvironmentId;
+  input: ProviderConsumeResetCreditInput;
+}) {
+  const { canManageProviders, confirming, setConfirming, busy, redeem } = useResetCredit(
+    environmentId,
+    input,
+  );
+  async function confirm() {
+    const result = await redeem();
+    if (result === undefined) return;
+    toastManager.add({
+      type: result.reset ? "success" : "error",
+      title: result.reset ? "Usage reset" : "Could not reset usage",
+      description: result.reset ? "Send a message to continue." : result.message,
+    });
+  }
+  return (
+    <>
+      <InlineButton
+        touchTarget="padded"
+        disabled={busy || !canManageProviders}
+        onClick={() => {
+          if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
+        }}
+      >
+        {busy ? "Resetting..." : "Reset usage"}
+      </InlineButton>
+      <ResetCreditDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={() => void confirm()}
+        disabled={!canManageProviders}
+      />
+    </>
+  );
+}
+
 function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: RecoveryProps) {
   const [pending, setPending] = useState(false);
 
@@ -139,7 +206,7 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   }
   // Inline errors would widen the actions column and crush the title.
   return (
-    <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+    <>
       <InlineButton touchTarget="padded" disabled={pending} onClick={() => void toggle("resume")}>
         {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
       </InlineButton>
@@ -150,6 +217,6 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
       >
         {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
       </InlineButton>
-    </span>
+    </>
   );
 }

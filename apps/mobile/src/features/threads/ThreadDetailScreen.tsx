@@ -1677,6 +1677,13 @@ function ThreadDetailBody(
                       key={props.selectedThread.latestRun?.runId}
                       thread={props.selectedThread}
                       environmentId={props.environmentId}
+                      resetCredits={
+                        props.serverConfig?.providers.find(
+                          (provider) =>
+                            provider.instanceId ===
+                            props.selectedThread.runtime?.providerInstanceId,
+                        )?.usageLimits?.resetCredits
+                      }
                     />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}
