@@ -52,8 +52,6 @@ import {
   readPullRequestDetailSnapshot,
   resolveDisplayedPullRequestDetail,
   resolvePullRequestReferenceHost,
-  resolvePullRequestPrimaryControl,
-  allowsSinglePullRequestMerge,
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
@@ -174,40 +172,6 @@ describe("review thread comment pages", () => {
       { id: "c2", body: "already in base" },
       { id: "c3", body: "next page" },
     ]);
-  });
-});
-
-describe("pull request primary control", () => {
-  const open = {
-    state: "open" as const,
-    isDraft: false,
-    mergeability: "mergeable" as const,
-    checksState: "passing" as const,
-    autoMergeEnabled: false,
-    hasMergeMethod: true,
-    canMerge: true,
-    canMarkReady: true,
-    canEnableAutoMerge: true,
-  };
-
-  // regression: #9188 pending/failing checks offered Merge instead of auto-merge
-  it("moves pending and failing checks to auto-merge", () => {
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "pending" })).toBe(
-      "enable-auto-merge",
-    );
-    expect(resolvePullRequestPrimaryControl({ ...open, checksState: "failing" })).toBe(
-      "enable-auto-merge",
-    );
-  });
-
-  it("does not offer auto-merge while the host state is unknown", () => {
-    expect(
-      resolvePullRequestPrimaryControl({
-        ...open,
-        checksState: "pending",
-        autoMergeEnabled: undefined,
-      }),
-    ).toBe("merge");
   });
 });
 
@@ -1821,24 +1785,6 @@ describe("cached pull request detail", () => {
     writePullRequestDetailSnapshot(storage, "env-1", hosted, detail({ url: "invalid url" }));
     expect(readPullRequestDetailSnapshot(storage, "env-1", hosted)).toBeNull();
   });
-});
-
-describe("single-PR merge compatibility during stack discovery", () => {
-  it.each([
-    [false, true, false, null, true],
-    [false, false, true, null, true],
-    [true, false, true, null, false],
-    [true, false, false, "Lookup failed", false],
-    [true, true, false, null, false],
-    [true, false, false, null, true],
-  ] as const)(
-    "capability=%s stack=%s pending=%s error=%s permits=%s",
-    (supportsStackActions, hasStack, stackPending, stackError, allowed) => {
-      expect(
-        allowsSinglePullRequestMerge({ supportsStackActions, hasStack, stackPending, stackError }),
-      ).toBe(allowed);
-    },
-  );
 });
 
 describe("readableFailure", () => {

@@ -22,7 +22,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { resolvePullRequestPrimaryControl } from "./pullRequestDetail.logic";
+import type { PullRequestPrimaryControl } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import type { resolvePullRequestState } from "./pullRequestPresentation";
 import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
@@ -203,7 +203,7 @@ export function PullRequestPrimaryAction({
   resolveConflicts,
 }: {
   pullRequestKey: string;
-  primaryAction: ReturnType<typeof resolvePullRequestPrimaryControl> | null;
+  primaryAction: PullRequestPrimaryControl;
   mergeBlockedReason: string | null;
   autoMergeArmed: boolean;
   armedAutoMergeLabel: string;

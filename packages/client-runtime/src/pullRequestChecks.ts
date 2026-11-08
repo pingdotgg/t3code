@@ -1,4 +1,19 @@
-import type { PullRequestCheck, PullRequestChecks, PullRequestDetail } from "@t3tools/contracts";
+import type {
+  PullRequestCheck,
+  PullRequestChecks,
+  PullRequestChecksState,
+  PullRequestDetail,
+} from "@t3tools/contracts";
+
+export function pullRequestChecksState(
+  checks: ReadonlyArray<PullRequestCheck>,
+): PullRequestChecksState | null {
+  if (checks.length === 0) return null;
+  const statuses = new Set(checks.map((check) => check.status));
+  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
+  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
+  return statuses.has("success") ? "passing" : null;
+}
 
 export function resolvePullRequestDetailChecks(
   detail: PullRequestDetail | null,

@@ -133,6 +133,10 @@ import {
   readableFailure,
   resolvePullRequestReferenceHost,
   resolvePullRequestPrimaryControl,
+  pullRequestArmedAutoMergeLabel,
+  pullRequestPendingAutoMergeLabel,
+  pullRequestShowsAutoMerge,
+  pullRequestShowsMergeNow,
   allowedPullRequestMergeMethods,
   allowsSinglePullRequestMerge,
   canDeletePullRequestBranch,
@@ -1123,13 +1127,10 @@ export function PullRequestDetailPanel({
     lastSelectedMergeMethod,
   );
   const selectedMergeMethodLabel = PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod];
-  const pendingAutoMergeLabel = `Auto-merge (${selectedMergeMethodLabel.toLowerCase()})`;
+  const pendingAutoMergeLabel = pullRequestPendingAutoMergeLabel(selectedMergeMethodLabel);
   const conflicting = isPullRequestConflicting(detail);
   const autoMergeArmed = detail?.state === "open" && detail.autoMergeEnabled === true;
-  const armedMergeMethod = detail?.autoMergeMethod;
-  const armedAutoMergeLabel = armedMergeMethod
-    ? `Auto-merge (${PULL_REQUEST_MERGE_METHOD_LABELS[armedMergeMethod].toLowerCase()})`
-    : "Auto-merge";
+  const armedAutoMergeLabel = pullRequestArmedAutoMergeLabel(detail?.autoMergeMethod);
   const workflowApprovalsRequired =
     detail?.state === "open" ? (detail.workflowApprovalsRequired ?? 0) : 0;
   const freshness = detail === null ? null : resolveBaseFreshness(detail);
@@ -1165,23 +1166,29 @@ export function PullRequestDetailPanel({
     can(detail.isDraft ? "ready" : "draft") &&
     !(detail.isDraft && primaryAction === "ready");
   const showsAutoMerge =
-    canMergeSinglePullRequest &&
-    detail?.state === "open" &&
-    ((autoMergeArmed && can("disable-auto-merge")) ||
-      (!autoMergeArmed &&
-        primaryAction !== "enable-auto-merge" &&
-        !detail.isDraft &&
-        !conflicting &&
-        can("enable-auto-merge") &&
-        allowedMergeMethods.length > 0));
+    detail !== null &&
+    pullRequestShowsAutoMerge({
+      canMergeSingle: canMergeSinglePullRequest,
+      state: detail.state,
+      autoMergeArmed,
+      canDisableAutoMerge: can("disable-auto-merge"),
+      canEnableAutoMerge: can("enable-auto-merge"),
+      primaryAction,
+      isDraft: detail.isDraft,
+      conflicting,
+      hasMergeMethod: allowedMergeMethods.length > 0,
+    });
   const showsMergeNow =
-    canMergeSinglePullRequest &&
-    detail?.state === "open" &&
-    (primaryAction === "enable-auto-merge" || primaryAction === "auto-merge-armed") &&
-    can("merge") &&
-    !detail.isDraft &&
-    !conflicting &&
-    allowedMergeMethods.length > 0;
+    detail !== null &&
+    pullRequestShowsMergeNow({
+      canMergeSingle: canMergeSinglePullRequest,
+      state: detail.state,
+      primaryAction,
+      canMerge: can("merge"),
+      isDraft: detail.isDraft,
+      conflicting,
+      hasMergeMethod: allowedMergeMethods.length > 0,
+    });
   const showsMergeMethods =
     detail?.state === "open" &&
     can("merge") &&

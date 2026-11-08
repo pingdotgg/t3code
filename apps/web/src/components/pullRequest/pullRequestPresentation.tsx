@@ -261,15 +261,7 @@ export function pullRequestChecksStatePresentation(state: PullRequestChecksState
   return CHECKS_STATE_PRESENTATION[state];
 }
 
-export function pullRequestChecksState(
-  checks: ReadonlyArray<PullRequestCheck>,
-): PullRequestChecksState | null {
-  if (checks.length === 0) return null;
-  const statuses = new Set(checks.map((check) => check.status));
-  if (statuses.has("failure") || statuses.has("cancelled")) return "failing";
-  if (statuses.has("pending") || statuses.has("action-required")) return "pending";
-  return statuses.has("success") ? "passing" : null;
-}
+export { pullRequestChecksState } from "@t3tools/client-runtime/pull-request-checks";
 
 const REVIEW_OUTCOME_PRESENTATION = {
   approved: {

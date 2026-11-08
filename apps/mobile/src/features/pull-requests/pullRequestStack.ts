@@ -75,11 +75,3 @@ export function pullRequestLayerParams<Params extends { readonly initialSummary?
   const { initialSummary: _, ...layer } = params;
   return { ...layer, number };
 }
-
-export function singlePullRequestMergeAllowed(input: {
-  readonly supportsStackActions: boolean;
-  readonly hasStack: boolean;
-  readonly isFresh: boolean;
-}) {
-  return !input.supportsStackActions || (!input.hasStack && input.isFresh);
-}

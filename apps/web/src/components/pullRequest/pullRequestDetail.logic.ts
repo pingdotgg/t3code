@@ -15,7 +15,6 @@ import {
   type PullRequestActor,
   type PullRequestBaseComparison,
   type PullRequestCheck,
-  type PullRequestChecksState as ContractPullRequestChecksState,
   type PullRequestComment,
   type PullRequestCommit,
   type PullRequestContextMetadata,
@@ -42,73 +41,17 @@ import {
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
 
-export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
-  merge: "Merge",
-  squash: "Squash and merge",
-  rebase: "Rebase and merge",
-};
-
-export function allowsSinglePullRequestMerge(input: {
-  supportsStackActions: boolean;
-  hasStack: boolean;
-  stackPending: boolean;
-  stackError: string | null;
-}): boolean {
-  return (
-    !input.supportsStackActions ||
-    (!input.hasStack && !input.stackPending && input.stackError === null)
-  );
-}
-
-export function resolvePullRequestMergeMethod(
-  allowed: ReadonlyArray<PullRequestMergeMethod>,
-  current: PullRequestMergeMethod | null,
-  projectDefault: PullRequestMergeMethod | undefined,
-  lastSelected: PullRequestMergeMethod,
-): PullRequestMergeMethod {
-  for (const method of [current, projectDefault, lastSelected]) {
-    if (method && allowed.includes(method)) return method;
-  }
-  return allowed[0] ?? "merge";
-}
-
-type PullRequestPrimaryControl =
-  | "resolve"
-  | "ready"
-  | "merge"
-  | "enable-auto-merge"
-  | "auto-merge-armed"
-  | "merged"
-  | "closed"
-  | null;
-
-export function resolvePullRequestPrimaryControl(input: {
-  readonly state: PullRequestState;
-  readonly isDraft: boolean;
-  readonly mergeability: PullRequestMergeability;
-  readonly checksState: ContractPullRequestChecksState | null;
-  readonly autoMergeEnabled: boolean | undefined;
-  readonly hasMergeMethod: boolean;
-  readonly canMerge: boolean;
-  readonly canMarkReady: boolean;
-  readonly canEnableAutoMerge: boolean;
-}): PullRequestPrimaryControl {
-  if (input.state === "merged") return "merged";
-  if (input.state === "closed") return "closed";
-  if (input.mergeability === "conflicting") return "resolve";
-  if (input.isDraft) return input.canMarkReady ? "ready" : null;
-  if (input.autoMergeEnabled) return "auto-merge-armed";
-  if (!input.hasMergeMethod) return null;
-  if (
-    input.autoMergeEnabled === false &&
-    input.checksState !== null &&
-    input.checksState !== "passing" &&
-    input.canEnableAutoMerge
-  ) {
-    return "enable-auto-merge";
-  }
-  return input.canMerge ? "merge" : null;
-}
+export {
+  allowsSinglePullRequestMerge,
+  PULL_REQUEST_MERGE_METHOD_LABELS,
+  pullRequestArmedAutoMergeLabel,
+  pullRequestPendingAutoMergeLabel,
+  pullRequestShowsAutoMerge,
+  pullRequestShowsMergeNow,
+  resolvePullRequestMergeMethod,
+  resolvePullRequestPrimaryControl,
+  type PullRequestPrimaryControl,
+} from "@t3tools/client-runtime/pull-request-merge";
 
 export function pullRequestCheckoutCommand(
   provider: SourceControlProviderKind,

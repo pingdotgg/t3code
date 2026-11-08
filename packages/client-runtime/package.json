@@ -507,6 +507,10 @@
       "types": "./src/pullRequestChecks.ts",
       "default": "./src/pullRequestChecks.ts"
     },
+    "./pull-request-merge": {
+      "types": "./src/pullRequestMerge.ts",
+      "default": "./src/pullRequestMerge.ts"
+    },
     "./pull-request-editing": {
       "types": "./src/pullRequestEditing.ts",
       "default": "./src/pullRequestEditing.ts"

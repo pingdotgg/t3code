@@ -1,10 +1,29 @@
 import type { PullRequestCheck, PullRequestDetail } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolvePullRequestDetailChecks } from "./pullRequestChecks.ts";
+import { pullRequestChecksState, resolvePullRequestDetailChecks } from "./pullRequestChecks.ts";
 
 const detail = (overrides: Partial<PullRequestDetail> = {}): PullRequestDetail =>
   ({ title: "Cache the title", state: "open", checks: [], ...overrides }) as PullRequestDetail;
+
+describe("pullRequestChecksState", () => {
+  const check = (status: PullRequestCheck["status"]): PullRequestCheck => ({
+    name: status,
+    status,
+    url: null,
+    description: null,
+  });
+
+  it("rolls checks up to failing, pending, or passing", () => {
+    expect(pullRequestChecksState([])).toBeNull();
+    expect(pullRequestChecksState([check("success")])).toBe("passing");
+    expect(pullRequestChecksState([check("pending"), check("success")])).toBe("pending");
+    expect(pullRequestChecksState([check("action-required")])).toBe("pending");
+    expect(pullRequestChecksState([check("failure"), check("pending")])).toBe("failing");
+    expect(pullRequestChecksState([check("cancelled")])).toBe("failing");
+    expect(pullRequestChecksState([check("skipped"), check("neutral")])).toBeNull();
+  });
+});
 
 describe("resolvePullRequestDetailChecks", () => {
   it("uses fresh checks for detail counts without replacing other PR fields", () => {

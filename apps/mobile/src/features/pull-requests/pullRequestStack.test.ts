@@ -5,7 +5,6 @@ import {
   pullRequestLayerParams,
   pullRequestStackMerge,
   savedPullRequestStack,
-  singlePullRequestMergeAllowed,
 } from "./pullRequestStack";
 
 const GITHUB = sourceControlClients.get("github").changeRequest;
@@ -100,28 +99,6 @@ describe("mobile stack merge scope", () => {
     expect(
       pullRequestStackMerge(stack, 99, sourceControlClients.get("gitlab").changeRequest).reason,
     ).toBe("This merge request is no longer in the stack. Refresh it.");
-  });
-  it("waits for successful discovery before allowing a single PR merge on modern servers", () => {
-    expect(
-      singlePullRequestMergeAllowed({
-        supportsStackActions: true,
-        hasStack: false,
-        isFresh: false,
-      }),
-    ).toBe(false);
-    expect(
-      singlePullRequestMergeAllowed({ supportsStackActions: true, hasStack: false, isFresh: true }),
-    ).toBe(true);
-    expect(
-      singlePullRequestMergeAllowed({ supportsStackActions: true, hasStack: true, isFresh: true }),
-    ).toBe(false);
-    expect(
-      singlePullRequestMergeAllowed({
-        supportsStackActions: false,
-        hasStack: false,
-        isFresh: false,
-      }),
-    ).toBe(true);
   });
 });
 
