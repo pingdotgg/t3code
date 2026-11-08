@@ -323,7 +323,7 @@ export const ChatHeader = memo(function ChatHeader({
             <div
               className={cn(
                 PANE_TAB_CLASS,
-                "inset-ring inset-ring-ring/50 focus-within:inset-ring-ring",
+                "max-w-full shrink-0 inset-ring inset-ring-ring/50 focus-within:inset-ring-ring",
               )}
             >
               {tabIcon}
@@ -349,8 +349,7 @@ export const ChatHeader = memo(function ChatHeader({
               />
             </div>
           ) : (
-            // The pane's own tab always keeps its icon.
-            <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-15 overflow-hidden")}>
+            <span className={LAYOUT_TAB_SLOT_CLASS}>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -395,7 +394,7 @@ export const ChatHeader = memo(function ChatHeader({
           ))}
           {hiddenTerminal ? (
             // The hidden terminal keeps a tab like any other pane tab.
-            <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-8.5 shrink-[2] overflow-hidden")}>
+            <span className={LAYOUT_TAB_SLOT_CLASS}>
               <Tooltip>
                 <TooltipTrigger
                   render={
@@ -562,7 +561,7 @@ function ParentThreadTab({
             size="sm"
             aria-label={`Open parent thread: ${link.title}`}
             onClick={() => onOpenThread(link.threadId)}
-            className="min-w-0 max-w-40 shrink [-webkit-app-region:no-drag]"
+            className="min-w-0 max-w-40 shrink-0 [-webkit-app-region:no-drag]"
           />
         }
       >

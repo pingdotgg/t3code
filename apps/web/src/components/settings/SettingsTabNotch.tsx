@@ -42,7 +42,7 @@ export function SettingsTabNotch({
         {siblingTabs.before.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
-        <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-15")}>
+        <span className={LAYOUT_TAB_SLOT_CLASS}>
           {/* Uncapped, unlike a chat tab: its breadcrumb filters use the header's free room. */}
           <div
             className={cn(PANE_TAB_CLASS, "max-w-none")}
