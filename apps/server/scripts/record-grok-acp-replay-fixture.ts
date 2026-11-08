@@ -377,6 +377,7 @@ const RecorderEnv = Config.all({
   T3_GROK_BIN: Config.String("T3_GROK_BIN").pipe(Config.option, Config.map(Option.getOrUndefined)),
   HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
   USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  TMPDIR: Config.String("TMPDIR").pipe(Config.option, Config.map(Option.getOrUndefined)),
 });
 
 const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: string) {
@@ -544,6 +545,20 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
   };
 
   const outputPath = readArgValues("--out")[0] ?? (yield* path.fromFileUrl(variant.transcriptFile));
+  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
+  if (Result.isFailure(liveFailure)) {
+    const dumpPath = path.join(
+      recorderEnv.TMPDIR ?? "/tmp",
+      `grok-replay-${fixtureName}-failed.json`,
+    );
+    yield* fs.writeFileString(dumpPath, encodeJson(transcript));
+    yield* Console.log(
+      `Live orchestration failed ${fixtureName} assertions; left ${outputPath} unchanged. Dump: ${dumpPath}`,
+      liveFailure.failure,
+    );
+    return yield* Effect.die(liveFailure.failure);
+  }
+
   const { entries: transcriptEntries, ...header } = transcript;
   yield* fs.writeFileString(
     outputPath,
@@ -554,11 +569,6 @@ const recordScenario = Effect.fn("recordGrokScenario")(function* (fixtureName: s
     ].join("\n"),
   );
   yield* Console.log(`Wrote ${transcriptEntries.length} Grok ACP replay entries to ${outputPath}`);
-
-  const liveFailure = Result.try(() => variant.assertOutput(result, transcript));
-  if (Result.isFailure(liveFailure)) {
-    yield* Console.log(`Live orchestration failed ${fixtureName} assertions:`, liveFailure.failure);
-  }
 });
 
 const scenarios = readArgValues("--scenario").flatMap((value) => value.split(","));
