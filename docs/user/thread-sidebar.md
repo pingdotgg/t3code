@@ -163,12 +163,12 @@ section is off. Each device keeps its own choice.
 
 Turn on **Settings → Labs → Sections by project** on web and desktop to list each section's
 threads under their project's name, in the same project order as the boring sidebar's folders.
-In the default sidebar this applies to the active list, Working, Snoozed, and Settled, so finished
-work returns to the top of its project and running work waits under its project in Working. In the
-boring sidebar, Snoozed and Settled list their threads this way. Threads stay in their order
-within each project. While this is on you can drag a thread onto the composer to mention it, but
-not within the sidebar; turning it off brings back your arrangement. Each device keeps its own
-choice.
+In the default sidebar this applies to the active list, Working, Snoozed, and Settled. With the
+Working section on, finished work returns to the top of its project and running work waits under
+its project in Working. In the boring sidebar, Snoozed and Settled list their threads this way.
+Threads keep their section's order within each project. While this is on you can drag a thread
+onto the composer to mention it, but not within the sidebar. An order you arranged in the default
+sidebar returns when you turn this off. Each device keeps its own choice.
 
 ## Settle finished work
 
