@@ -12,60 +12,20 @@ permissions:
   contents: read
   actions: read
 jobs:
-  bundle:
-    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
-      - uses: ./.github/actions/setup-ci-deps
-        with:
-          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
-      - run: vp test run --config ../vite.config.ts lib/server-compile-cache.test.ts
-        working-directory: scripts
-      - run: vp run build:desktop:bundle
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: js-bundle
-          path: |
-            apps/server/dist
-            apps/desktop/dist-electron
-          retention-days: 3
-  package:
-    needs: bundle
-    uses: ./.github/workflows/release-desktop.yml
-    with:
-      label: Linux ARM64 bytecode validation
-      runner: blacksmith-16vcpu-ubuntu-2404-arm
-      platform: linux
-      target: AppImage
-      arch: arm64
-      rust_target: aarch64-unknown-linux-gnu
-      resource_key: linux-arm64
-      version: 0.0.0-bytecode-test.1
-      ref: ${{ github.sha }}
-      release_channel: preview
-      relay_client_tracing: false
-      clerk_publishable_key: ""
-      clerk_jwt_template: ""
-      clerk_cli_oauth_client_id: ""
-      relay_url: ""
   verify:
-    needs: package
     runs-on: blacksmith-4vcpu-ubuntu-2404-arm
     timeout-minutes: 10
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: desktop-linux-arm64
+          run-id: 42515139484
+          github-token: ${{ github.token }}
           path: artifact
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/actions/setup-apt-mirrors
+          clean: false
       - uses: ./.github/actions/setup-apt-mirrors
       - run: sudo apt-get update && sudo apt-get install -y libgtk-3-0t64 libnss3 libasound2t64 libgbm1 libsecret-1-0
       - name: Verify prepared bytecode with packaged ARM64 Electron
