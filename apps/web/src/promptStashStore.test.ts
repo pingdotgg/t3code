@@ -199,6 +199,34 @@ describe("promptStashStore", () => {
     ]);
   });
 
+  it("refreshes on another tab's stash write or clear, ignoring other keys", async () => {
+    const shared = stubSharedStorage();
+    const tabWindow = new EventTarget();
+    vi.stubGlobal("window", tabWindow);
+    try {
+      const tab = (await importTab()).usePromptStashStore;
+      const dispatchStorage = (key: string | null) =>
+        tabWindow.dispatchEvent(Object.assign(new Event("storage"), { key }));
+      shared.stored.set(
+        PROMPT_STASH_STORAGE_KEY,
+        JSON.stringify({ version: 2, state: { entries: [makeEntry({ id: "other-tab" })] } }),
+      );
+
+      dispatchStorage("t3code:unrelated");
+      expect(tab.getState().entries).toEqual([]);
+
+      dispatchStorage(PROMPT_STASH_STORAGE_KEY);
+      expect(tab.getState().entries.map((entry) => entry.id)).toEqual(["other-tab"]);
+
+      // localStorage.clear() in another tab reports a null key.
+      shared.stored.clear();
+      dispatchStorage(null);
+      expect(tab.getState().entries).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   // regression: #4787 stashed prompts were lost when switching providers
   it("distinguishes a memory-only write (written, not durable) from a failed one", () => {
     const store = usePromptStashStore.getState();
