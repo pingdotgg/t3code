@@ -1738,16 +1738,21 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       const reply = typeof input.reply === "string" ? input.reply.trim() : "";
       if (reply === "")
         return failed(`Invalid parameters for tool '${name}': Missing key at ["reply"]`);
-      if (typeof input.source !== "string" || input.source.length > 500)
+      if (typeof input.source !== "string")
         return failed(`Invalid parameters for tool '${name}': Missing key at ["source"]`);
+      if (input.source.length > 500)
+        return failed(
+          `Invalid parameters for tool '${name}': source is longer than 500 characters`,
+        );
       const shownReply = foldCardReply(reply, input.source);
-      const quiz = name === "quiz_card" ? readQuizCard(input) : undefined;
+      const shown = { ...input, reply: shownReply };
+      const quiz = name === "quiz_card" ? readQuizCard(shown) : undefined;
       const problem =
         name === "quiz_card"
           ? quiz === undefined
             ? "Invalid quiz card."
             : quizCardProblem(quiz)
-          : readQuestionCard(input) === undefined
+          : readQuestionCard(shown) === undefined
             ? "Invalid question card."
             : undefined;
       if (problem !== undefined) return failed(problem);
