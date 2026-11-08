@@ -1010,8 +1010,7 @@ function TaskForm({
             <PickerRow
               label="Base branch"
               value={resolveNewTaskBranchLabel({
-                branchName:
-                  automaticBaseRef && automaticBaseRefs.data === null ? null : worktreeBaseRef,
+                branchName: automaticBaseRefLoading ? null : worktreeBaseRef,
                 startFromOrigin: draft.startFromOrigin,
                 workspaceMode: "worktree",
               })}
