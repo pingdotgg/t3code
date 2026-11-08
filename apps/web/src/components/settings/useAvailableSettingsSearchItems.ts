@@ -1,5 +1,4 @@
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
-import { formatChangeRequestText } from "@t3tools/client-runtime/source-control-clients";
 import { useChangeRequestTerms } from "~/hooks/useSettings";
 
 import { usePrimaryCloudLinkState } from "~/cloud/cloudLinkState";
@@ -15,6 +14,7 @@ import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
   filterAvailableSettingsSearchItems,
+  formatSettingsSearchTitle,
   getThreadAutoSettlementSearchAvailability,
 } from "./settingsSearch";
 
@@ -60,5 +60,5 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
-  }).map((item) => ({ ...item, title: formatChangeRequestText(item.title, terms) }));
+  }).map((item) => ({ ...item, title: formatSettingsSearchTitle(item, terms) }));
 }

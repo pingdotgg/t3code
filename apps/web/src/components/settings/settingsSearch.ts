@@ -1430,6 +1430,15 @@ export function isSettingsSearchScopeAvailable(
   }
 }
 
+export function formatSettingsSearchTitle(
+  item: Pick<SettingsSearchItem, "id" | "title">,
+  terms = currentChangeRequestTerms(),
+): string {
+  return item.id === "merge-request-terminology"
+    ? item.title
+    : formatChangeRequestText(item.title, terms);
+}
+
 export function searchableSetting(
   id: SettingsSearchItemId,
   terms = currentChangeRequestTerms(),
@@ -1438,7 +1447,7 @@ export function searchableSetting(
   readonly title: string;
 } {
   const { id: anchorId, title } = SEARCH_ITEMS_BY_ID.get(id)!;
-  return { id: anchorId, title: formatChangeRequestText(title, terms) };
+  return { id: anchorId, title: formatSettingsSearchTitle({ id, title }, terms) };
 }
 
 export function filterAvailableSettingsSearchItems(
@@ -1483,7 +1492,7 @@ export function searchSettings(
   const queryTokens = normalizedQuery.split(" ");
 
   return settingsForThisPlatform(items)
-    .map((item) => ({ ...item, title: formatChangeRequestText(item.title) }))
+    .map((item) => ({ ...item, title: formatSettingsSearchTitle(item) }))
     .flatMap((item, index) => {
       const title = normalizeSearchText(item.title);
       const fields = [

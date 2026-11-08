@@ -4,7 +4,10 @@ import {
   makeProviderSettingsSchema,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { UNKNOWN_SOURCE_CONTROL_CLIENT } from "@t3tools/client-runtime/source-control-clients";
+import {
+  setMergeRequestTerms,
+  UNKNOWN_SOURCE_CONTROL_CLIENT,
+} from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
 import {
@@ -14,6 +17,7 @@ import {
   isSettingsSearchScopeAvailable,
   movedSettingsPath,
   searchSettings,
+  searchableSetting,
   SETTINGS_NAV_GROUPS,
   SETTINGS_SEARCH_ITEMS,
   sourceControlHostSearchItems,
@@ -91,6 +95,20 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        expect(searchableSetting("merge-request-terminology").title).toBe(
+          "Use merge request terminology",
+        );
+        expect(
+          searchSettings("terminology").find((item) => item.id === "merge-request-terminology")
+            ?.title,
+        ).toBe("Use merge request terminology");
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("matches query words across fields and ranks the strongest result first", () => {
