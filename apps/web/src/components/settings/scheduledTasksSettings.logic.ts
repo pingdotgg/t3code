@@ -1,4 +1,4 @@
-import { isWebhookDedupeTemplate } from "@t3tools/contracts";
+import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -13,7 +13,9 @@ import {
   type ProviderInteractionMode,
   type ServerSettings,
   type VcsRef,
+  type ThreadId,
 } from "@t3tools/contracts";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   parseMaxDeliveryAge,
   parseWebhookFilterDrafts,
@@ -311,6 +313,59 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     filters,
     savedFilters: filters,
   };
+}
+
+export function moveDraftToThread(
+  draft: DraftState,
+  thread: { readonly id: ThreadId; readonly projectId: ProjectId },
+): DraftState {
+  return {
+    ...draft,
+    threadId: thread.id,
+    projectId: thread.projectId,
+    threadMode: draft.threadMode === "new_thread" ? "continue" : draft.threadMode,
+  };
+}
+
+/** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
+export function unbindDraftFromThread(draft: DraftState): DraftState {
+  if (!draft.threadId) return draft;
+  return {
+    ...draft,
+    threadId: "",
+    ...(draft.workspaceMode === "root"
+      ? { workspaceMode: "worktree" as const, startFromOrigin: true }
+      : {}),
+  };
+}
+
+export function changeDraftProject(draft: DraftState, projectId: string): DraftState {
+  if (projectId === draft.projectId) return draft;
+  return { ...unbindDraftFromThread(draft), projectId };
+}
+
+/** Threads a task can move to. The current one is left out; the picker always shows it. */
+export function scheduledTaskDestinationThreads(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  target: {
+    readonly environmentId: EnvironmentId;
+    readonly projectId: string;
+    readonly currentThreadId: ThreadId | null;
+    readonly query: string;
+  },
+): ReadonlyArray<EnvironmentThreadShell> {
+  const search = target.query.trim().toLocaleLowerCase();
+  return threads
+    .filter(
+      (thread) =>
+        thread.environmentId === target.environmentId &&
+        thread.projectId === target.projectId &&
+        thread.id !== target.currentThreadId &&
+        thread.archivedAt === null &&
+        isListedThreadLineage(thread.lineage) &&
+        thread.title.toLocaleLowerCase().includes(search),
+    )
+    .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 export function scheduledTaskDefaultModel(
