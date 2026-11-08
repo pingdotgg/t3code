@@ -9,7 +9,9 @@ import {
   type OrchestrationV2TurnItem,
   type ThreadId,
 } from "@t3tools/contracts";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import {
+  resolveT3McpSummaryAction,
   resolveT3McpToolDefinition,
   type T3McpToolDefinition,
   type T3McpToolSummaryAction,
@@ -17,7 +19,7 @@ import {
 import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-images";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { classifyToolActivity } from "@t3tools/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@t3tools/shared/toolOutput";
@@ -143,6 +145,16 @@ function workEntryToolName(
   return resolveT3McpToolDefinition(entry.toolTitle) ? entry.toolTitle : entry.label;
 }
 
+function workEntryToolInput(
+  entry: Pick<WorkLogPresentationEntry, "toolData" | "structuredPayload">,
+): unknown {
+  const item = entry.structuredPayload;
+  const data = asRecord(entry.toolData);
+  return item?.type === "dynamic_tool"
+    ? item.input
+    : (data?.arguments ?? data?.input ?? data?.rawInput);
+}
+
 function workEntryToolOutput(
   entry: Pick<WorkLogPresentationEntry, "toolData" | "structuredPayload">,
 ): unknown {
@@ -219,7 +231,10 @@ export function resolveWorkEntryToolPresentation(
   >,
   fallbackStatus?: "inProgress" | "completed",
 ) {
-  const definition = resolveT3McpToolDefinition(workEntryToolName(entry));
+  const definition = resolveT3McpToolDefinition(
+    workEntryToolName(entry),
+    workEntryToolInput(entry),
+  );
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
   return resolveT3McpToolPresentation(
     definition,
@@ -232,10 +247,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
 function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean {
@@ -268,9 +279,9 @@ function workEntryIndicatesToolFailureFromOutput(
   }
   const item = entry.structuredPayload;
   if (item?.type === "command_execution") {
-    if (item.outputIndicatesFailure || (item.exitCode !== undefined && item.exitCode !== 0)) {
-      return true;
-    }
+    // The exit code outranks text in the output or the command itself.
+    if (item.exitCode !== undefined) return item.exitCode !== 0;
+    if (item.outputIndicatesFailure) return true;
     if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) {
       return true;
     }
@@ -281,23 +292,48 @@ function workEntryIndicatesToolFailureFromOutput(
   return output.length > 0 && toolOutputIndicatesFailure(output);
 }
 
+// Rows are re-derived on every timeline update but entries are reused while
+// their item is unchanged, so these per-entry checks are computed once.
+const entryChecks = new WeakMap<
+  WorkLogPresentationEntry,
+  { failure?: boolean; displayFailure?: boolean; action?: ToolGroupAction }
+>();
+
+function checksFor(entry: WorkLogPresentationEntry) {
+  let checks = entryChecks.get(entry);
+  if (!checks) {
+    checks = {};
+    entryChecks.set(entry, checks);
+  }
+  return checks;
+}
+
 export function workEntryIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
+  return (checksFor(entry).failure ??= workEntryIndicatesToolFailureFromOutput(entry, true));
 }
 
 export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
+  return (checksFor(entry).displayFailure ??= workEntryIndicatesToolFailureFromOutput(
+    entry,
+    false,
+  ));
 }
 
-export function workEntryIndicatesToolSuccess(entry: WorkLogPresentationEntry): boolean {
-  return (
-    workLogEntryIsToolLike(entry) &&
-    !workEntryIndicatesToolFailure(entry) &&
-    entry.tone !== "thinking" &&
-    entry.toolLifecycleStatus !== "idle" &&
-    entry.toolLifecycleStatus !== "inProgress" &&
-    entry.toolLifecycleStatus !== "stopped"
-  );
+const HIDEABLE_TOOL_CALL_ITEM_TYPES: ReadonlySet<WorkLogPresentationEntry["itemType"]> = new Set([
+  "command_execution",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+]);
+
+export function workEntryHiddenByToolCallVisibility(
+  entry: WorkLogPresentationEntry,
+  visibility: ToolCallVisibility,
+): boolean {
+  if (visibility === "showAll" || !HIDEABLE_TOOL_CALL_ITEM_TYPES.has(entry.itemType)) return false;
+  if (visibility !== "hideSuccessful") return true;
+  return entry.toolLifecycleStatus === "completed" && !workEntryDisplayIndicatesToolFailure(entry);
 }
 
 function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean {
@@ -309,6 +345,10 @@ function workLogEntryIsLocalCodeSearch(entry: WorkLogPresentationEntry): boolean
 }
 
 export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
+  return (checksFor(entry).action ??= computeToolGroupAction(entry));
+}
+
+function computeToolGroupAction(entry: WorkLogPresentationEntry): ToolGroupAction {
   if (entry.itemType === "thread_created") return "thread-create";
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation?.action !== undefined) return presentation.action;
@@ -458,16 +498,8 @@ function toolGroupActionLabel(action: ToolGroupAction, count: number): string {
 }
 
 function t3ToolSummaryCall(entry: WorkLogPresentationEntry): T3ToolSummaryCall {
-  const item = entry.structuredPayload;
-  const data =
-    entry.toolData !== null && typeof entry.toolData === "object"
-      ? (entry.toolData as Record<string, unknown>)
-      : undefined;
   return {
-    input:
-      item?.type === "dynamic_tool"
-        ? item.input
-        : (data?.arguments ?? data?.input ?? data?.rawInput),
+    input: workEntryToolInput(entry),
     output: workEntryToolOutput(entry),
     outcome:
       entry.toolLifecycleStatus === "failed" ||
@@ -490,6 +522,7 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "thread-send":
     case "thread-interrupt":
     case "workflow-stop":
+    case "background-wait":
     case "schedule-create":
     case "schedule-update":
     case "schedule-delete":
@@ -544,7 +577,10 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
   >();
   const sources = new Map<string, ToolActivitySource>();
   for (const entry of entries) {
-    const t3Action = resolveT3McpToolDefinition(workEntryToolName(entry))?.summaryAction ?? null;
+    const t3Action = resolveT3McpSummaryAction(
+      workEntryToolName(entry),
+      t3ToolSummaryCall(entry).input,
+    );
     if (entry.toolSource && t3Action === null) {
       sources.set(entry.toolSource.key, entry.toolSource);
       continue;

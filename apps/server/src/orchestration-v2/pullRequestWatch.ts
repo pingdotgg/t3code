@@ -7,13 +7,10 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-/**
- * Wakes in a row that bring only comments. Check, conflict, or push news resets the count, so
- * this only stops a chatty bot looping an agent that is replying to it.
- */
+/** Bounds consecutive comment-only wakes to stop bot reply loops; check, conflict, or push news resets it. */
 export const PULL_REQUEST_WATCH_WAKE_LIMIT = 10;
 /** How long a head may go without any check before the agent is told none reported. */
-const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
+export const PULL_REQUEST_WATCH_NO_CHECKS_MS = 15 * 60_000;
 const LISTED_ITEMS = 10;
 const SNIPPET_LENGTH = 200;
 
@@ -30,7 +27,7 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
-// "action-required" is a finished check that needs someone, so the agent hears about it.
+// action-required is a finished check needing human input.
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
@@ -44,10 +41,11 @@ export function evaluatePullRequestWatch(
   now: number,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
-  const headSha = detail.headSha ?? null;
+  // Azure DevOps omits the head when its iteration read fails; that is not a push.
+  const headSha = detail.headSha ?? watch.headSha;
   const headMoved = headSha !== watch.headSha;
 
-  // An empty list keeps the last state: a host can answer with one when its check read fails.
+  // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
@@ -63,8 +61,7 @@ export function evaluatePullRequestWatch(
     const passedNow = gate.every((check) => check.status !== "pending" && !isFailedCheck(check));
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
-    // A required job created and finished between two passes is never seen pending. Without
-    // required checks, any check counts, and advisory bots keep adding passed ones: no wake.
+    // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
     const gateGrew = required.length > 0 && gateNames.some((name) => !told.includes(name));
     // Other checks still pending when required ones passed are owed one wake when all settle.
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
@@ -130,12 +127,14 @@ export function evaluatePullRequestWatch(
     ...atLatest.map((remark) => remark.id),
   ];
 
-  if (detail.mergeability === "conflicting" && !watch.conflicting) {
+  // Like a failed check, a conflict a push did not resolve is news for the new head.
+  const toldConflict = !headMoved && watch.conflicting;
+  if (detail.mergeability === "conflicting" && !toldConflict) {
     changes.push({ kind: "conflicting" });
   }
   // "unknown" is a host still computing after a push; only a clean answer clears a conflict.
   const conflicting =
-    detail.mergeability === "unknown" ? watch.conflicting : detail.mergeability === "conflicting";
+    detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
@@ -164,7 +163,11 @@ function snippet(body: string): string {
     .replaceAll(/<!--[\s\S]*?-->/g, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
-  return text.length <= SNIPPET_LENGTH ? text : `${text.slice(0, SNIPPET_LENGTH - 3)}...`;
+  if (text.length <= SNIPPET_LENGTH) return text;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(SNIPPET_LENGTH - 4);
+  const end = last >= 0xd800 && last <= 0xdbff ? SNIPPET_LENGTH - 4 : SNIPPET_LENGTH - 3;
+  return `${text.slice(0, end)}...`;
 }
 
 function listed<T>(items: ReadonlyArray<T>, line: (item: T) => string): Array<string> {
@@ -236,7 +239,7 @@ export function pullRequestWatchMessage(input: {
     "",
     exhausted
       ? `T3 Code stopped watching after ${PULL_REQUEST_WATCH_WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again.`
-      : "Look into each item and act on it as your task requires. T3 Code keeps watching and wakes you on the next change, so end your turn when you are done. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
+      : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
     (change) => change.kind === "checks-failed" || change.kind === "conflicting",

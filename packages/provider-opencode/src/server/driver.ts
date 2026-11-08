@@ -1,6 +1,7 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -15,6 +16,8 @@ import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -75,11 +78,7 @@ function isOpenCodeNativeCommandPath(commandPath: string): boolean {
   );
 }
 
-/**
- * OpenCode 1.x ships as `opencode-ai` and 2.x as `@opencode/cli`. An install is
- * only ever updated within its own package: T3 never moves a 1.x install onto
- * 2.x or back, since 2.x converts the shared database in place.
- */
+/** Update only within the installed package generation; 2.x converts the shared database in place. */
 export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
   makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
@@ -87,7 +86,10 @@ export const openCodeUpdateFor = (generation: ProbedOpenCode["generation"]) =>
     nativeUpdate: {
       args: ["upgrade"],
       isCommandPath: isOpenCodeNativeCommandPath,
+      requiresCommandPath: true,
     },
+    // mise's `opencode` follows releases into 2.x, so it would upgrade 1.x across that line.
+    mise: { tool: "opencode", upgrade: generation === "v2" },
   });
 
 type OpenCodeRuntimeProbe = Effect.Success<
@@ -104,11 +106,7 @@ function byOpenCodeRuntime<A, E, R, PE>(
   );
 }
 
-/**
- * Capability and selection reads are hot, so they use the last successful probe (1.x before one
- * lands) and never wait on a slow server. Opening a session waits for a probe, so each server is
- * spoken to in its own protocol.
- */
+// Hot reads use the last successful probe; session opens await it to select the correct protocol.
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
   readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
@@ -159,6 +157,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    generateTranscriptionPostProcessing: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateTranscriptionPostProcessing(input),
+        v2: v2.generateTranscriptionPostProcessing(input),
+      }),
   };
 }
 
@@ -166,7 +169,8 @@ export type OpenCodeDriverEnv =
   | OpenCodeAdapterV2.OpenCodeAdapterV2DriverEnv
   | ProviderHost.ProviderHost
   | ChildProcessSpawner.ChildProcessSpawner
-  | Crypto.Crypto
+  | Digest.Digest
+  | SecureRandom.SecureRandom
   | FileSystem.FileSystem
   | HttpClient.HttpClient
   | ProviderLatestVersions.ProviderLatestVersions
@@ -200,7 +204,7 @@ export const OpenCodeDriver: ProviderDriver<
     const openCodeRuntime = yield* OpenCodeRuntime.OpenCodeRuntime;
     const httpClient = yield* HttpClient.HttpClient;
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
-    const crypto = yield* Crypto.Crypto;
+    const digest = yield* Digest.Digest;
     const host = yield* ProviderHost.ProviderHost;
     const processEnv = yield* mergeProviderInstanceEnvironment(environment);
     const continuationIdentity = defaultProviderContinuationIdentity({
@@ -214,7 +218,13 @@ export const OpenCodeDriver: ProviderDriver<
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      // The instance registry has already read a referenced password from its secret provider.
+      serverPassword: settingsSecretLiteral(config.serverPassword),
+    } satisfies OpenCodeSettings;
     const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
       probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -259,7 +269,7 @@ export const OpenCodeDriver: ProviderDriver<
       accentColor,
       environment,
       enabled,
-      config,
+      config: effectiveConfig,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -343,6 +353,16 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     );
 
+    const checkUsageLimits = readOpenCodeGoUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
     const checkProvider = Effect.all(
       {
         provider: checkOpenCodeProviderStatus(
@@ -354,20 +374,12 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        usageLimits: readOpenCodeGoUsageLimits({
-          enabled: effectiveConfig.enabled,
-          serverUrl: effectiveConfig.serverUrl,
-          environment: processEnv,
-        }),
+        usageLimits: checkUsageLimits,
       },
       { concurrency: "unbounded" },
     ).pipe(
       Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
       Effect.map(stampIdentity),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, pathService),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.provideService(Crypto.Crypto, crypto),
       Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
     );
@@ -453,6 +465,7 @@ export const OpenCodeDriver: ProviderDriver<
       initialSnapshot: (settings) =>
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
+      checkUsageLimits,
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>

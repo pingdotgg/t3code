@@ -7,8 +7,7 @@ import * as Semaphore from "effect/Semaphore";
 
 import { isRelayUnavailable, relayRetryAfterMillis } from "./relayResponse.ts";
 
-// "revoked" leads to no action: relinking a deregistered environment is the
-// user's call, so startup neither retries nor relinks it.
+// Relinking revoked environments is the user's choice; startup takes no action.
 export type ManagedTunnelRegistrationResult =
   | { readonly status: "not_linked" | "ready" | "unavailable" | "superseded" | "revoked" }
   | {
@@ -42,12 +41,9 @@ export function managedTunnelStartupAction(input: {
 
 const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
-// Every host retries against the same relay, so while it is failing the
-// retries themselves are load. Backing off to minutes, and never sooner than
-// the relay's Retry-After, lets it recover instead of absorbing the storm.
-// Not HttpClient.retryTransient: it resends the identical request, and these
-// carry proofs that expire after 60 s or single-use link challenges, so each
-// retry has to re-run the whole operation.
+// Back off to minutes and honor Retry-After to avoid adding load to a failing relay.
+// Retries must rerun the operation: HttpClient.retryTransient would reuse proofs that
+// expire after 60 s or single-use link challenges.
 const RELAY_RETRY_MAX_DELAY = Duration.minutes(5);
 
 const relayRetrySchedule = Schedule.exponential("1 second").pipe(

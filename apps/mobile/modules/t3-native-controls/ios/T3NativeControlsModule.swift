@@ -3,8 +3,6 @@ import ExpoModulesCore
 import Security
 import UIKit
 
-// Expo Modules 2.0: plain members marked @JS are bound by the macro, while the
-// views and main-queue presenters stay in definition(). Both are merged.
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
@@ -12,6 +10,7 @@ public final class T3NativeControlsModule: Module {
   private var filePresentation: T3NativeFilePresentation?
 
   public func definition() -> ModuleDefinition {
+    Events("videoPlaybackChange")
     Constants {
       if #available(iOS 26.0, *) {
         return [
@@ -48,6 +47,10 @@ public final class T3NativeControlsModule: Module {
       Events("onMetricsChange")
     }
 
+    View(T3ScrollEdgeBleedView.self) {
+      ViewName("ScrollEdgeBleed")
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,
@@ -63,7 +66,8 @@ public final class T3NativeControlsModule: Module {
                            identifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    AsyncFunction("presentFiles") { (urls: [URL], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
+    // A nil URL is still resolving in JS and arrives later through updateFile.
+    AsyncFunction("presentFiles") { (urls: [URL?], titles: [String], selectedIndex: Int, sourceIdentifiers: [String], identifier: String, promise: Promise) in
       guard !urls.isEmpty, urls.count == titles.count, urls.count == sourceIdentifiers.count,
         urls.indices.contains(selectedIndex)
       else {
@@ -76,6 +80,11 @@ public final class T3NativeControlsModule: Module {
         return
       }
       file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+    }.runOnQueue(.main)
+
+    // A nil URL marks the item as one that could not be resolved.
+    AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
+      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
     }.runOnQueue(.main)
 
     OnDestroy {
@@ -158,12 +167,8 @@ public final class T3NativeControlsModule: Module {
     }
   }
 
-  // The geometry request above can fail transiently (for example before the
-  // scene is foreground-active), so callers poll this until it settles.
-  // Screen bounds — not the scene's interface orientation — decide the
-  // answer because they match the captured framebuffer: with iPadOS
-  // windowing active, a floating landscape window still reports a portrait
-  // screen, and screenshots would come out portrait.
+  // Geometry requests can fail before foreground activation; callers retry until bounds match.
+  // Use screen bounds because iPadOS floating-window orientation can differ from the captured framebuffer.
   @JS
   @MainActor
   func getInterfaceOrientation() async -> String {
@@ -249,10 +254,16 @@ public final class T3NativeControlsModule: Module {
         userInfo: [NSLocalizedDescriptionKey: "The video preview is no longer available."]
       )
     }
-    let presentation = T3NativeVideoPresentation(identifier: identifier, url: url, title: title) { [weak self] error in
-      self?.videoPresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let presentation = T3NativeVideoPresentation(
+      identifier: identifier, url: url, title: title,
+      onPlaybackChange: { [weak self] isPlaying in
+        self?.sendEvent("videoPlaybackChange", ["identifier": identifier, "isPlaying": isPlaying])
+      },
+      completion: { [weak self] error in
+        self?.videoPresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     videoPresentation = presentation
     presentation.present(from: presenter, sources: presentationSources, sourceIdentifier: sourceIdentifier)
   }

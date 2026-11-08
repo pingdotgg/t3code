@@ -7,7 +7,7 @@ import type {
   SelectedLineRange,
 } from "@pierre/diffs";
 import type { CodeViewHandle } from "@pierre/diffs/react";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -72,6 +72,8 @@ function appendAnnotationEntry(
 }
 
 interface AnnotatableCodeViewProps {
+  environmentId?: EnvironmentId | undefined;
+  projectId?: ProjectId | null | undefined;
   codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
@@ -104,6 +106,8 @@ interface DiffSelectionContext {
 }
 
 export function AnnotatableCodeView({
+  environmentId,
+  projectId,
   codeViewKey,
   files,
   pendingFiles,
@@ -225,8 +229,6 @@ export function AnnotatableCodeView({
     if (!range) return;
     const item = context.item;
     if (item.type !== "diff") return;
-    // Read from the item, not the file list, so the compiled callback keeps its identity
-    // as patches arrive; the viewer re-applies its options whenever it changes.
     const id = nextFileCommentId();
     const filePath = resolveFileDiffPath(item.fileDiff);
     const comment = buildDiffReviewComment({
@@ -285,7 +287,7 @@ export function AnnotatableCodeView({
           ? renderHeaderPrefix(item.fileDiff, item.id, item.collapsed === true)
           : null
       }
-      renderAnnotation={(annotation) => {
+      renderAnnotation={(...[annotation]) => {
         const hasDraft = annotation.metadata.entries.some((entry) => entry.kind === "draft");
         return (
           <div
@@ -294,6 +296,14 @@ export function AnnotatableCodeView({
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
                 key={entry.id}
+                environmentId={environmentId}
+                projectId={projectId}
+                ownerKey={JSON.stringify([
+                  environmentId,
+                  composerDraftTarget,
+                  codeViewKey,
+                  entry.id,
+                ])}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}
                 text={entry.kind === "draft" ? draftText : entry.text}

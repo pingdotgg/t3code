@@ -2,6 +2,7 @@ import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3to
 import * as Effect from "effect/Effect";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
+import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
 import {
   PullRequestProviderError,
@@ -9,6 +10,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
@@ -20,21 +22,18 @@ const CAPABILITIES: PullRequestCapabilities = {
   actions: [...definition.changeRequestActions],
   mergeMethods: ["merge", "squash", "rebase"],
   search: true,
-  // Bitbucket Cloud's API exposes no reaction on a pull request or on a comment, so none is
-  // read and none is offered.
   reactions: false,
+  mentions: false,
+  referenceSigils: [],
   review: {
     inlineComment: true,
     reply: true,
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: false },
   edit: { changeRequest: true, comment: true },
-  // Bitbucket Cloud states nothing about what a reviewer has already read: no endpoint carries a
-  // viewed file, and the per-pull-request properties it does offer are one value shared by
-  // everyone rather than one per reader. So the marks are kept here, and the client says whose
-  // they are rather than implying bitbucket.org will show them.
+  // Bitbucket PR properties are shared, not per-reader viewed marks.
   viewedFiles: "environment",
 };
 
@@ -64,7 +63,10 @@ export function bitbucketViewerPermissions(input: {
 export function bitbucketProviderFailure(
   error: BitbucketPullRequestApi.BitbucketPullRequestApiError,
 ): PullRequestProviderFailure {
-  if (error._tag === "BitbucketResponseError" && error.status === 401) {
+  if (
+    (error._tag === "BitbucketResponseError" && error.status === 401) ||
+    error._tag === "SettingsSecretUnresolvedError"
+  ) {
     return { reason: "unauthenticated" };
   }
   if (error._tag === "SourceControlRateLimitPausedError") {
@@ -112,8 +114,25 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
+/** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
+function toActionSummary(pullRequest: BitbucketPullRequest): ProviderChangeRequestSummary {
+  return {
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    author: pullRequest.author,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+    updatedAt: pullRequest.updatedAt,
+    ...(pullRequest.headSha ? { headSha: pullRequest.headSha } : {}),
+  };
+}
+
 export const make = Effect.gen(function* () {
   const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+  const servesHost = yield* BitbucketApi.BitbucketServesHost.pipe(Effect.orDie);
 
   const fail =
     (operation: string) => (error: BitbucketPullRequestApi.BitbucketPullRequestApiError) =>
@@ -121,7 +140,7 @@ export const make = Effect.gen(function* () {
         provider: SourceControlProviderKind.make("bitbucket"),
         operation,
         ...bitbucketProviderFailure(error),
-        detail: error.detail,
+        detail: error._tag === "SettingsSecretUnresolvedError" ? error.message : error.detail,
         cause: error,
       });
 
@@ -153,6 +172,7 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
+    servesHost,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
 
@@ -187,6 +207,20 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
+    getChangeRequestPreview: (input) =>
+      api.getPullRequest({ repository: input.repository, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
+      ),
+
     getChangeRequest: (input) => {
       const target = { repository: input.repository, number: input.number };
       return Effect.all(
@@ -218,8 +252,7 @@ export const make = Effect.gen(function* () {
             closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
             reviewers: pullRequest.reviewers,
             checks,
-            // Bitbucket publishes no per-repository list of allowed strategies, so the ones it
-            // supports are all offered and a strategy the repository forbids fails on merge.
+            // Bitbucket exposes no strategy permissions; unsupported strategies fail at merge.
             mergeCapabilities: { merge: true, squash: true, rebase: true },
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
           }),
@@ -256,7 +289,7 @@ export const make = Effect.gen(function* () {
         Effect.map((canWrite) => bitbucketViewerPermissions({ canWrite })),
       ),
 
-    // `/diff` answers with the whole patch and pages nothing, so the first slice is the last.
+    // `/diff` returns the whole patch without pagination.
     getDiff: (input) =>
       api
         .getPullRequestDiff({
@@ -278,8 +311,7 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(fail("getFileRevisions"))),
 
-    // Users only: Bitbucket requests a review of an account, and has no group that stands in for
-    // one on a pull request.
+    // Bitbucket supports user reviewers only.
     listReviewerCandidates: (input) =>
       api
         .listReviewerCandidates({ repository: input.repository, number: input.number })
@@ -303,7 +335,10 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(
+          Effect.mapError(fail("runAction")),
+          Effect.map((pullRequest) => pullRequest && toActionSummary(pullRequest)),
+        ),
 
     updateChangeRequest: (input) =>
       api

@@ -1,12 +1,12 @@
-import { PlatformServices } from "@/Util/PlatformServices.ts";
-import { describe, expect, it } from "alchemy-test";
+import { describe, expect, it } from "@alchemy.run/test";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
+import { PlatformServices } from "@/Util/PlatformServices.ts";
 
 const tarball = process.env.ALCHEMY_CLI_PACKAGE;
 const tarballDirectory = process.env.ALCHEMY_CLI_PACKAGES;
@@ -22,29 +22,17 @@ interface Invocation {
 }
 
 const invocations = (manager: Manager): ReadonlyArray<Invocation> => [
-  {
-    command: "node",
-    args: ["node_modules/alchemy/bin/cli.js"],
-    runtime: "node",
-  },
+  { command: "node", args: ["node_modules/alchemy/bin/cli.js"], runtime: "node" },
   { command: "bun", args: ["node_modules/alchemy/bin/cli.js"], runtime: "bun" },
   { command: "bun", args: ["--bun", "alchemy"], runtime: "bun" },
-  {
-    command: "bun",
-    args: ["x", "--bun", "--no-install", "alchemy"],
-    runtime: "bun",
-  },
+  { command: "bun", args: ["x", "--bun", "--no-install", "alchemy"], runtime: "bun" },
   ...packageCommands[manager],
 ];
 
 const packageCommands: Record<Manager, ReadonlyArray<Invocation>> = {
   npm: [
     { command: "npm", args: ["run", "cli", "--"], runtime: "node" },
-    {
-      command: "npm",
-      args: ["exec", "--offline", "--", "alchemy"],
-      runtime: "node",
-    },
+    { command: "npm", args: ["exec", "--offline", "--", "alchemy"], runtime: "node" },
     { command: "npx", args: ["--no-install", "alchemy"], runtime: "node" },
   ],
   pnpm: [
@@ -76,22 +64,14 @@ const canary = (manager: Manager) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const packageDir = yield* path.fromFileUrl(
-      new URL("../../", import.meta.url),
-    );
+    const packageDir = yield* path.fromFileUrl(new URL("../../", import.meta.url));
     const checkout = yield* fs.realPath(path.resolve(packageDir, "../.."));
-    const project = yield* fs.makeTempDirectoryScoped({
-      prefix: `alchemy-package-${manager}-`,
-    });
+    const project = yield* fs.makeTempDirectoryScoped({ prefix: `alchemy-package-${manager}-` });
     const projectRoot = yield* fs.realPath(project);
     expect(projectRoot.startsWith(`${checkout}${path.sep}`)).toBe(false);
 
     const dependencies: Record<string, string> = {};
-    for (const name of [
-      "effect",
-      "@effect/platform-bun",
-      "@effect/platform-node",
-    ]) {
+    for (const name of ["effect", "@effect/platform-bun", "@effect/platform-node"]) {
       const manifest = yield* fs.readFileString(
         path.join(packageDir, "node_modules", name, "package.json"),
       );
@@ -159,10 +139,7 @@ const canary = (manager: Manager) =>
           { concurrency: 3 },
         );
         return { stdout, stderr, exitCode };
-      }).pipe(
-        Effect.scoped,
-        Effect.timeout(installing ? "90 seconds" : "20 seconds"),
-      );
+      }).pipe(Effect.scoped, Effect.timeout(installing ? "90 seconds" : "20 seconds"));
 
     const packedFiles = tarballDirectory
       ? (yield* fs.readDirectory(path.resolve(tarballDirectory)))
@@ -172,11 +149,7 @@ const canary = (manager: Manager) =>
     const overrides: Record<string, string> = {};
     for (const packed of packedFiles) {
       expect((yield* fs.stat(packed)).type).toBe("File");
-      const manifest = yield* run("tar", [
-        "-xOf",
-        packed,
-        "package/package.json",
-      ]);
+      const manifest = yield* run("tar", ["-xOf", packed, "package/package.json"]);
       expect(manifest.exitCode).toBe(0);
       const { name } = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(Schema.Struct({ name: Schema.String })),
@@ -195,19 +168,14 @@ const canary = (manager: Manager) =>
         dependencies,
         overrides:
           manager === "npm"
-            ? Object.fromEntries(
-                Object.keys(overrides).map((name) => [name, `$${name}`]),
-              )
+            ? Object.fromEntries(Object.keys(overrides).map((name) => [name, `$${name}`]))
             : overrides,
       }),
     );
     if (manager === "pnpm") {
       yield* fs.writeFileString(
         path.join(project, "pnpm-workspace.yaml"),
-        JSON.stringify({
-          allowBuilds: { esbuild: true, workerd: true },
-          overrides,
-        }),
+        JSON.stringify({ allowBuilds: { esbuild: true, workerd: true }, overrides }),
       );
     }
     const installed = yield* run(
@@ -225,13 +193,10 @@ const canary = (manager: Manager) =>
     }
     expect({
       code: installed.exitCode,
-      output:
-        installed.exitCode === 0 ? "" : installed.stdout + installed.stderr,
+      output: installed.exitCode === 0 ? "" : installed.stdout + installed.stderr,
     }).toEqual({ code: 0, output: "" });
     for (const name of Object.keys(dependencies)) {
-      const resolved = yield* fs.realPath(
-        path.join(project, "node_modules", name),
-      );
+      const resolved = yield* fs.realPath(path.join(project, "node_modules", name));
       expect(resolved.startsWith(`${projectRoot}${path.sep}`)).toBe(true);
     }
     for (const scenario of [
@@ -245,9 +210,7 @@ const canary = (manager: Manager) =>
           JSON.stringify({
             compilerOptions: {
               jsx: scenario.jsx,
-              ...(scenario.jsx === "preserve"
-                ? { jsxImportSource: "solid-js" }
-                : {}),
+              ...(scenario.jsx === "preserve" ? { jsxImportSource: "solid-js" } : {}),
             },
           }),
         );
@@ -279,25 +242,13 @@ const canary = (manager: Manager) =>
         expect(probe.cwd).toBe(projectRoot);
         expect(probe.args).toEqual(args);
         const entry = yield* fs.realPath(probe.entry);
-        const imported = yield* fs.realPath(
-          yield* path.fromFileUrl(new URL(probe.alchemy)),
-        );
-        expect(
-          entry.startsWith(`${projectRoot}${path.sep}node_modules${path.sep}`),
-        ).toBe(true);
-        expect(
-          imported.startsWith(
-            `${projectRoot}${path.sep}node_modules${path.sep}`,
-          ),
-        ).toBe(true);
+        const imported = yield* fs.realPath(yield* path.fromFileUrl(new URL(probe.alchemy)));
+        expect(entry.startsWith(`${projectRoot}${path.sep}node_modules${path.sep}`)).toBe(true);
+        expect(imported.startsWith(`${projectRoot}${path.sep}node_modules${path.sep}`)).toBe(true);
       }
     }
     for (const invocation of invocations(manager)) {
-      const result = yield* run(
-        invocation.command,
-        [...invocation.args, "profile"],
-        "development",
-      );
+      const result = yield* run(invocation.command, [...invocation.args, "profile"], "development");
       expect(result.exitCode).toBe(1);
       expect(result.stdout + result.stderr).not.toContain("jsxDEV");
     }
@@ -312,33 +263,23 @@ const canary = (manager: Manager) =>
     ]);
     expect({
       code: destroyed.exitCode,
-      output:
-        destroyed.exitCode === 0 ? "" : destroyed.stdout + destroyed.stderr,
+      output: destroyed.exitCode === 0 ? "" : destroyed.stdout + destroyed.stderr,
     }).toEqual({ code: 0, output: "" });
   }).pipe(Effect.scoped, Effect.provide(PlatformServices));
 
-describe.sequential(
-  "packed CLI outside the checkout",
-  { tags: ["live"] },
-  () => {
-    if (
-      enabled &&
-      selectedManager !== undefined &&
-      !managers.some((manager) => manager === selectedManager)
-    ) {
-      throw new Error(
-        `Unknown ALCHEMY_CLI_PACKAGE_MANAGER: ${selectedManager}`,
-      );
-    }
-    for (const manager of managers) {
-      it.live.skipIf(
-        !enabled ||
-          (selectedManager !== undefined && selectedManager !== manager),
-      )(
-        `installs with ${manager} and runs production CLI across runtimes and entrypoints`,
-        () => canary(manager),
-        { timeout: 120_000 },
-      );
-    }
-  },
-);
+describe.sequential("packed CLI outside the checkout", { tags: ["live"] }, () => {
+  if (
+    enabled &&
+    selectedManager !== undefined &&
+    !managers.some((manager) => manager === selectedManager)
+  ) {
+    throw new Error(`Unknown ALCHEMY_CLI_PACKAGE_MANAGER: ${selectedManager}`);
+  }
+  for (const manager of managers) {
+    it.live.skipIf(!enabled || (selectedManager !== undefined && selectedManager !== manager))(
+      `installs with ${manager} and runs production CLI across runtimes and entrypoints`,
+      () => canary(manager),
+      { timeout: 120_000 },
+    );
+  }
+});

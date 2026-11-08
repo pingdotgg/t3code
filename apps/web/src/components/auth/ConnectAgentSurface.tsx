@@ -3,7 +3,9 @@ import {
   type AuthMcpApprovalDetails,
   AuthMcpApprovalError,
   AuthMcpClientAccess,
-  type AuthMcpAuthorizationRequest,
+  AuthMcpAuthorizationRequest,
+  isRuntimeModeAbove,
+  managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
@@ -16,15 +18,16 @@ import { type ReactNode, useEffect, useState } from "react";
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
+import { resolveMcpAccess } from "./ConnectAgentSurface.logic";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
-import { AuthSurfaceShell } from "./AuthSurfaceShell";
+import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
-const accessConfig: Record<
+export const accessConfig: Record<
   AuthMcpClientAccess,
   { readonly label: string; readonly description: string; readonly icon: LucideIcon }
 > = {
@@ -76,13 +79,13 @@ function runApproval<A>(
   ).catch((): Answer<A> => ({ kind: "error", message: UNREACHABLE }));
 }
 
+const decodeAuthorizationRequest = Schema.decodeSync(AuthMcpAuthorizationRequest);
+
 function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
-  return Object.fromEntries(new URL(window.location.href).searchParams);
+  return decodeAuthorizationRequest(Object.fromEntries(new URL(window.location.href).searchParams));
 }
 
-/**
- * A session may only grant access whose scopes it holds itself.
- */
+/** Sessions can grant only scopes they hold. */
 function oneClickApproves(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
   return details.csrfToken !== undefined && (details.oneClickAccess ?? []).includes(access);
 }
@@ -90,11 +93,16 @@ function oneClickApproves(details: AuthMcpApprovalDetails, access: AuthMcpClient
 export function ConnectAgentSurface() {
   const [authorization] = useState(readAuthorizationRequest);
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
-  const [access, setAccess] = useState<AuthMcpClientAccess>("read-only");
+  const [requestedAccess, setAccess] = useState<AuthMcpClientAccess>("auto");
+  const access = resolveMcpAccess(
+    requestedAccess,
+    loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
+  );
   const [pairingCode, setPairingCode] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the MCP OAuth approval and redirects the window or stores details, ignoring stale answers
   useEffect(() => {
     let cancelled = false;
     void runApproval((client) => client.mcpOAuth.approval({ payload: authorization })).then(
@@ -140,24 +148,24 @@ export function ConnectAgentSurface() {
 
   if (loaded.status === "loading") {
     return (
-      <AuthSurfaceShell>
+      <StandalonePage>
         <ConnectAgentHeading
           title="Checking the sign-in request"
           description="One moment while this environment verifies the agent's request."
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
-      </AuthSurfaceShell>
+      </StandalonePage>
     );
   }
 
   if (loaded.status === "invalid") {
     return (
-      <AuthSurfaceShell>
+      <StandalonePage>
         <ConnectAgentHeading title="This sign-in cannot continue" description={loaded.message} />
         <p className="mt-4 text-sm text-muted-foreground">
           Close this page and start the sign-in again from your agent.
         </p>
-      </AuthSurfaceShell>
+      </StandalonePage>
     );
   }
 
@@ -166,7 +174,7 @@ export function ConnectAgentSurface() {
   const canApprove = pending === null && (oneClick || pairingCode.trim().length > 0);
 
   return (
-    <AuthSurfaceShell>
+    <StandalonePage>
       <ConnectAgentHeading
         title={`Connect ${details.clientName}`}
         description={
@@ -208,7 +216,12 @@ export function ConnectAgentSurface() {
             onValueChange={(value) => setAccess(value as AuthMcpClientAccess)}
           >
             {AuthMcpClientAccess.literals.map((option) => (
-              <AccessOption key={option} access={option} selected={option === access} />
+              <AccessOption
+                key={option}
+                access={option}
+                selected={option === access}
+                managedReason={ceilingReason(details, option)}
+              />
             ))}
           </RadioGroup>
           <p className="text-xs text-muted-foreground">
@@ -235,8 +248,8 @@ export function ConnectAgentSurface() {
               value={pairingCode}
             />
             <p className="text-xs text-muted-foreground">
-              Create one in Settings → Connections, or run <code>t3 auth pairing create</code> on
-              this machine.
+              Create one in Settings → Sharing & access, or run <code>t3 auth pairing create</code>{" "}
+              on this machine.
             </p>
           </div>
         )}
@@ -261,7 +274,7 @@ export function ConnectAgentSurface() {
           </Button>
         </div>
       </form>
-    </AuthSurfaceShell>
+    </StandalonePage>
   );
 }
 
@@ -272,26 +285,33 @@ function ConnectAgentHeading({
   readonly title: string;
   readonly description: ReactNode;
 }) {
-  return (
-    <>
-      <p className="text-3xs font-semibold tracking-widest text-primary uppercase">Agent sign-in</p>
-      <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{description}</p>
-    </>
-  );
+  return <StandalonePageHeader context="Agent sign-in" title={title} description={description} />;
+}
+
+/** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
+function ceilingReason(details: AuthMcpApprovalDetails, access: AuthMcpClientAccess) {
+  const ceiling = details.runtimeModeCeiling;
+  return ceiling === undefined ||
+    access === "read-only" ||
+    !isRuntimeModeAbove(access, ceiling.maxRuntimeMode)
+    ? undefined
+    : managedRuntimeModeCeilingMessage(ceiling.organization, ceiling.maxRuntimeMode);
 }
 
 function AccessOption({
   access,
   selected,
+  managedReason,
 }: {
   readonly access: AuthMcpClientAccess;
   readonly selected: boolean;
+  readonly managedReason: string | undefined;
 }) {
   const { label, description, icon: Icon } = accessConfig[access];
   return (
     <RadioPrimitive.Root
       value={access}
+      disabled={managedReason !== undefined}
       className={cn(
         "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
@@ -309,7 +329,7 @@ function AccessOption({
       />
       <span className="min-w-0">
         <span className="block text-sm font-medium text-foreground">{label}</span>
-        <span className="block text-xs text-muted-foreground">{description}</span>
+        <span className="block text-xs text-muted-foreground">{managedReason ?? description}</span>
       </span>
     </RadioPrimitive.Root>
   );

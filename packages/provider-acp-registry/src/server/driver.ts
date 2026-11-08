@@ -11,7 +11,8 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -59,10 +60,7 @@ import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
-// How long a successful discovery probe stays valid. Periodic health
-// refreshes reuse it instead of spawning a fresh disposable ACP session;
-// failed or unauthenticated probes are never cached so a completed sign-in
-// is detected on the next refresh.
+// Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
@@ -84,6 +82,7 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
     generateBranchName: () => unsupported("generateBranchName"),
     generateThreadTitle: () => unsupported("generateThreadTitle"),
     generateReviewGuide: () => unsupported("generateReviewGuide"),
+    generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
   };
 };
 
@@ -209,9 +208,6 @@ function baseSnapshot(
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
     ...(iconUrl ? { iconUrl } : {}),
     continuation: { groupKey: input.continuationKey },
-    // The registry driver rejects every application text-generation operation,
-    // so selectors must not offer these instances for commit, PR, branch, or
-    // title generation.
     supportsTextGeneration: false,
     enabled: input.settings.enabled,
     installed: input.installed,
@@ -264,10 +260,28 @@ export function applyAcpRegistryLiveConfiguration(
   customModels: ReadonlyArray<string>,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
+  // session/load may omit models (Kimi returns `{}`); keep the probed list
+  // and apply any live option descriptors to it.
+  const probedModels = provider.models.filter((model) => !model.isCustom);
+  const discovery =
+    configuration.models.length > 0
+      ? configuration
+      : {
+          ...configuration,
+          models: probedModels.map((model) => ({
+            id: model.slug,
+            name: model.name,
+            description: null,
+          })),
+          currentModelId: probedModels.find((model) => model.isDefault)?.slug ?? null,
+        };
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models: modelsFromDiscovery(configuration, customModels),
+    models:
+      configuration.models.length === 0 && configuration.configOptions.length === 0
+        ? provider.models
+        : modelsFromDiscovery(discovery, customModels),
   };
 }
 
@@ -336,9 +350,7 @@ export function buildCheckedAcpRegistrySnapshot(
       : {}),
     installed: readiness.installed,
     version: readiness.version,
-    // A failed discovery probe on a ready installation is a warning, not an
-    // outage: the agent binary is present and a real turn may still work
-    // (for example after the user completes authentication).
+    // Failed discovery is a warning: an installed agent may still run real turns.
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
       ? {
@@ -453,7 +465,10 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
-export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost.ProviderHost;
+export type AcpRegistryDriverEnv =
+  | AcpRegistryAdapterV2DriverEnv
+  | Digest.Digest
+  | ProviderHost.ProviderHost;
 
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
   driverKind: DRIVER_KIND,
@@ -485,7 +500,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           .pipe(Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId))),
       );
     }
-    const crypto = yield* Crypto.Crypto;
+    const random = yield* SecureRandom.SecureRandom;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
@@ -581,7 +596,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     ).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
     );
     const enrichmentCache = yield* Ref.make<{
       readonly generation: number;
@@ -637,7 +652,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: () => checkProvider,
       checkProvider,
-      enrichSnapshot: ({ snapshot, getSnapshot, publishSnapshot }) => {
+      enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
+        snapshot,
+        getSnapshot,
+        publishSnapshot,
+      }) {
         if (!snapshot.installed) return Effect.void;
         const publishEnrichment = (
           Option.isSome(runtimeCoordinator)
@@ -647,7 +666,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   : effectiveConfig.agentId,
                 enrichProviderCached(snapshot),
               )
-            : enrichProviderCached(snapshot).pipe(Effect.map(Option.some))
+            : enrichProviderCached(snapshot).pipe(Effect.asSome)
         ).pipe(
           Effect.flatMap(
             Option.match({
@@ -719,7 +738,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             discard: true,
           },
         );
-      },
+      }),
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -738,13 +757,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         E,
         | AcpRegistrySupport.AcpRegistryCatalog
         | ChildProcessSpawner.ChildProcessSpawner
-        | Crypto.Crypto
+        | SecureRandom.SecureRandom
       >,
     ): Effect.Effect<A, E> => {
       const provided = effect.pipe(
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(SecureRandom.SecureRandom, random),
       );
       return Option.isSome(runtimeCoordinator)
         ? provided.pipe(
@@ -778,7 +797,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(Crypto.Crypto, crypto),
+      Effect.provideService(SecureRandom.SecureRandom, random),
     );
     const auth = {
       ...controller,
@@ -867,7 +886,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }).pipe(
             Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, random),
             Effect.tap(() => confirmedAuthentication.set(false)),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(

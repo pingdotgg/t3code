@@ -2,7 +2,6 @@ import { Host } from "@expo/ui/swift-ui";
 import type { ComponentProps } from "react";
 import { useControlTheme } from "./useControlTheme";
 
-/** SwiftUI shares the app's appearance and action tint. Row fills stay explicit. */
 export function NativeThemeHost(
   props: Omit<ComponentProps<typeof Host>, "colorScheme" | "seedColor">,
 ) {

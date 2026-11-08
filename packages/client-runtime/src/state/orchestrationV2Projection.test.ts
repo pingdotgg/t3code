@@ -219,8 +219,9 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     expect(next?.visibleTurnItems[0]).toBe(visibleTurnItems[0]);
   });
 
-  it("replaces only the updated visible item when membership is unchanged", () => {
-    const first = commandItem("item-first", "first");
+  it("replaces only the updated visible item and retains its deferred work cursor", () => {
+    const deferredWork = { cursor: "remaining-work", itemCount: 100, lastOrdinal: 101 };
+    const first = { ...commandItem("item-first", "first"), deferredWork };
     const second = commandItem("item-second", "second");
     const firstRow = {
       position: 0,
@@ -253,9 +254,10 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     } as OrchestrationV2DomainEvent;
 
     const next = applyOrchestrationV2ProjectionEvent(projection, event);
+    expect(next?.visibleTurnItems[0]?.item.deferredWork).toEqual(deferredWork);
     expect(next?.visibleTurnItems).not.toBe(projection.visibleTurnItems);
     expect(next?.visibleTurnItems[0]).not.toBe(firstRow);
-    expect(next?.visibleTurnItems[0]?.item).toBe(updated);
+    expect(next?.visibleTurnItems[0]?.item).toEqual({ ...updated, deferredWork });
     expect(next?.visibleTurnItems[1]).toBe(secondRow);
   });
 
@@ -637,4 +639,82 @@ it("rechecks visibility when an existing item changes runs without changing ordi
     [second.id, 1],
   ]);
   expect(projection.visibleTurnItems[0]?.item).toBe(first);
+});
+
+it("restores deduped bodies from the records it already holds, also in a partial timeline", () => {
+  const messageId = MessageId.make("message-deduped");
+  const subagentId = NodeId.make("node-deduped");
+  const reply = {
+    ...commandItem("item-reply", "", 400),
+    type: "assistant_message",
+    messageId,
+    text: "the full reply",
+    streaming: false,
+  } as unknown as OrchestrationV2TurnItem;
+  const subagent = {
+    id: subagentId,
+    threadId,
+    runId,
+    parentNodeId: NodeId.make("node-root"),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: "codex",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: null,
+    childThreadId: null,
+    nativeTaskRef: null,
+    prompt: "the task brief",
+    title: null,
+    model: null,
+    status: "running",
+    result: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  } as OrchestrationV2ThreadProjection["subagents"][number];
+  const projection = {
+    ...emptyProjection,
+    runs: [run],
+    messages: [
+      {
+        id: messageId,
+        threadId,
+        runId,
+        nodeId: null,
+        role: "assistant",
+        text: "the full reply",
+        attachments: [],
+        streaming: false,
+        createdBy: "agent",
+        creationSource: "provider",
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    subagents: [subagent],
+  } as OrchestrationV2ThreadProjection;
+  const event = (type: string, payload: unknown) =>
+    ({
+      id: `event-${type}`,
+      type,
+      threadId,
+      runId,
+      occurredAt: now,
+      payload,
+    }) as OrchestrationV2DomainEvent;
+
+  for (const options of [undefined, { partialTimeline: true, latestLocalTurnOrdinal: 300 }]) {
+    const withReply = applyOrchestrationV2ProjectionEvent(
+      projection,
+      event("turn-item.updated", { ...reply, text: "", textOmitted: true }),
+      options,
+    );
+    expect(withReply?.turnItems).toEqual([reply]);
+    expect(withReply?.visibleTurnItems.map((row) => row.item)).toEqual([reply]);
+  }
+  const progressed = applyOrchestrationV2ProjectionEvent(
+    projection,
+    event("subagent.updated", { ...subagent, prompt: "", promptOmitted: true, progress: "step 2" }),
+  );
+  expect(progressed?.subagents).toEqual([{ ...subagent, progress: "step 2" }]);
 });

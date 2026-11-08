@@ -122,8 +122,7 @@ export default Effect.gen(function* () {
     { concurrency: 1, discard: true },
   );
 
-  // Re-baseline every current row into the shared log so projection rebuilds
-  // preserve the exact pre-migration project state.
+  // Re-baseline current rows so shared-log rebuilds preserve pre-migration project state.
   const projectRows = yield* sql<ProjectProjectionRow>`
     SELECT
       project_id,

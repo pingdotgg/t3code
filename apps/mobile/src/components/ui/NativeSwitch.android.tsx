@@ -5,11 +5,7 @@ import type { ThemedSwitchProps } from "./NativeSwitch.types";
 
 import { useControlTheme } from "./useControlTheme";
 
-/**
- * Material's native switch, with the same palette and accessibility contract as our RN controls.
- * Compose only draws it. The RN Pressable owns the touch so it wins over a pressable parent row;
- * with Compose handling touches, a tap on the switch ran the row's onPress instead.
- */
+/** RN Pressable must own touch: Compose-handled switch taps can activate the parent row instead. */
 export function NativeSwitch(props: ThemedSwitchProps) {
   const { colors } = useControlTheme();
 

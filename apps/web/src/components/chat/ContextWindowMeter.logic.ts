@@ -1,17 +1,9 @@
 import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import {
-  CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-  COMPACTION_SUGGESTION_MIN_TOKENS,
-  isClaudeResumeCompactionQuestion,
-} from "@t3tools/shared/claudeCompaction";
-import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
-import { getTriggerDisplayModelName, type ModelEsque } from "./providerIconUtils";
-
-// Used when the provider did not report its cache TTL: Claude's 1h cache plus slack.
-const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
+import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
 export function providerSupportsManualCompaction(
   provider: ProviderInstanceEntry | null | undefined,
@@ -43,47 +35,6 @@ export function hasAvailableCompactionProvider(input: {
   );
 }
 
-export function hasDismissedResumeCompaction(
-  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
-): boolean {
-  return activities.some((activity) => {
-    if (activity.kind !== "user-input.resolved") return false;
-    const payload = activity.payload;
-    if (!payload || typeof payload !== "object") return false;
-    const answers = (payload as { readonly answers?: unknown }).answers;
-    if (!answers || typeof answers !== "object" || Array.isArray(answers)) return false;
-
-    return Object.entries(answers).some(
-      ([question, answer]) =>
-        isClaudeResumeCompactionQuestion(question) &&
-        answer === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
-    );
-  });
-}
-
-export function shouldOfferResumeCompaction(input: {
-  readonly provider: string | null | undefined;
-  readonly usedTokens: number | null | undefined;
-  readonly updatedAt: string | null | undefined;
-  readonly promptCacheTtlMs?: number | undefined;
-  readonly now: string;
-}): boolean {
-  if (
-    input.provider !== "claudeAgent" ||
-    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
-  ) {
-    return false;
-  }
-
-  const updatedAt = Date.parse(input.updatedAt ?? "");
-  const now = Date.parse(input.now);
-  return (
-    Number.isFinite(updatedAt) &&
-    Number.isFinite(now) &&
-    now - updatedAt >= (input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS)
-  );
-}
-
 export function resolveContextWindowModelDisplayName(
   selection: ModelSelection | null | undefined,
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>,
@@ -96,7 +47,7 @@ export function resolveContextWindowModelDisplayName(
     .get(selection.instanceId)
     ?.find((model) => model.slug === selection.model);
 
-  return selectedModel ? getTriggerDisplayModelName(selectedModel) : selection.model;
+  return selectedModel ? getDisplayModelName(selectedModel) : selection.model;
 }
 
 export function formatContextWindowCompactionMessage(
