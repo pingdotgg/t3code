@@ -291,6 +291,17 @@ export function AppearanceSettingsPanel() {
         />
         <ThreadDetailsItemsRow />
         <SettingsRow
+          {...searchableSetting("sidebar-provider-usage")}
+          description="Show provider allowances in the sidebar footer. Select a circle to open Usage."
+          control={
+            <Switch
+              aria-label="Provider usage circles"
+              checked={settings.sidebarProviderUsage}
+              onCheckedChange={(sidebarProviderUsage) => updateSettings({ sidebarProviderUsage })}
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("effort-display")}
           description="Show reasoning effort in the composer as its name, such as High, or as bars."
           resetAction={
