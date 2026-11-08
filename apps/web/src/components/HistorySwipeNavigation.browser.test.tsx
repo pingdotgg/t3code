@@ -58,4 +58,16 @@ describe("HistorySwipeNavigation", () => {
 
     expect(navigateHistory).toHaveBeenCalledTimes(navigates ? 1 : 0);
   });
+
+  it("a horizontal mouse wheel tick off macOS keeps the thread", async () => {
+    navigateHistory.mockReset();
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Win32");
+    await using screen = await render(<HistorySwipeNavigation />);
+    const content = screen.container.appendChild(document.createElement("div"));
+    content.style.cssText = "height: 20px; width: 100px";
+
+    swipe(content, -120);
+
+    expect(navigateHistory).not.toHaveBeenCalled();
+  });
 });
