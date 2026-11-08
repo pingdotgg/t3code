@@ -24,6 +24,11 @@ export interface DesktopDistroIdentity {
   readonly linuxMaintainer: string;
   readonly nsisShortcutName: string;
   readonly nsisInstallDirectoryName: string;
+  /**
+   * Windows .exe file name when it must differ from productName. Taskbar pins
+   * and shortcuts point at the exe path, so a rename would break them.
+   */
+  readonly windowsExecutableName?: string;
 }
 
 const OFFICIAL: DesktopDistroIdentity = {
@@ -47,19 +52,22 @@ const OFFICIAL: DesktopDistroIdentity = {
 const MUNIM: DesktopDistroIdentity = {
   id: "munim",
   appId: "com.munim.mtcode",
-  productName: "MT Code",
+  // Shown as T3 Code; ids, folders, schemes and the exe name stay MT so an
+  // existing install keeps its data, pins and links.
+  productName: "T3 Code",
   packageName: "mtcode",
   artifactName: "MT-Code-${version}-${arch}.${ext}",
-  description: "MT Code — Munim Technologies fork of T3 Code",
+  description: "T3 Code desktop build",
   author: "Munim, Inc.",
   updateRepository: "munimtechnologies/mtcode",
   protocolSchemes: ["mtcode", "mtcode-dev"],
-  protocolName: "MT Code",
+  protocolName: "T3 Code",
   linuxExecutableName: "mtcode",
   linuxStartupWmClass: "mtcode",
   linuxMaintainer: "Munim Technologies <support@munimtech.com>",
-  nsisShortcutName: "MT Code",
+  nsisShortcutName: "T3 Code",
   nsisInstallDirectoryName: "mtcode",
+  windowsExecutableName: "MT Code",
 };
 
 export function resolveDesktopDistroId(

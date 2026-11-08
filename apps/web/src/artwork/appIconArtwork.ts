@@ -1,5 +1,5 @@
-import mark from "../../../../assets/munim/app-icon.icon/Assets/text.svg?raw";
-import munimIcon from "../../../../assets/munim/munim-macos-1024.png";
+import mark from "../../../../assets/prod/app-icon.icon/Assets/text.svg?raw";
+import munimIcon from "../../../../assets/prod/black-macos-1024.png";
 import {
   markTone,
   skyHidesStars,
@@ -242,7 +242,8 @@ export async function renderSkyAppIcon(sky: SkyConditions): Promise<string> {
     const x = (pixel >> 2) % 1024;
     const y = (pixel >> 2) / 1024;
     let marked = 0;
-    if (x > 218 && x < 805 && y > 245 && y < 777) {
+    // Covers both the MT mark and the wider T3 mark.
+    if (x > 170 && x < 820 && y > 245 && y < 777) {
       const highest = red > green ? (red > blue ? red : blue) : green > blue ? green : blue;
       const lowest = red < green ? (red < blue ? red : blue) : green < blue ? green : blue;
       const neutral = Math.max(

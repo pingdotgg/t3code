@@ -36,24 +36,24 @@ const OTHER_THREAD_ID = "bb22cc33-dd44-4e55-9f66-001122334455";
 const PAYLOAD = { environmentId: ENVIRONMENT_ID, threadId: THREAD_ID };
 
 describe("resolveThreadDeepLinkScheme", () => {
-  it("derives the scheme from the product branding", () => {
+  it("derives the scheme from the distro, not the shown name", () => {
     assert.equal(
-      DesktopDeepLink.resolveThreadDeepLinkScheme({ baseName: "T3 Code", isDevelopment: false }),
+      DesktopDeepLink.resolveThreadDeepLinkScheme({ munimDistro: false, isDevelopment: false }),
       "t3code",
     );
     assert.equal(
-      DesktopDeepLink.resolveThreadDeepLinkScheme({ baseName: "MT Code", isDevelopment: false }),
+      DesktopDeepLink.resolveThreadDeepLinkScheme({ munimDistro: true, isDevelopment: false }),
       "mtcode",
     );
   });
 
   it("suffixes development builds so they do not claim the installed scheme", () => {
     assert.equal(
-      DesktopDeepLink.resolveThreadDeepLinkScheme({ baseName: "T3 Code", isDevelopment: true }),
+      DesktopDeepLink.resolveThreadDeepLinkScheme({ munimDistro: false, isDevelopment: true }),
       "t3code-dev",
     );
     assert.equal(
-      DesktopDeepLink.resolveThreadDeepLinkScheme({ baseName: "MT Code", isDevelopment: true }),
+      DesktopDeepLink.resolveThreadDeepLinkScheme({ munimDistro: true, isDevelopment: true }),
       "mtcode-dev",
     );
   });
@@ -264,7 +264,7 @@ const makeHarness = (): TestHarness => ({
 });
 
 interface TestEnvironmentOverrides {
-  readonly baseName?: string;
+  readonly munimDistro?: boolean;
   readonly isDevelopment?: boolean;
   readonly isPackaged?: boolean;
   readonly platform?: NodeJS.Platform;
@@ -275,7 +275,7 @@ const makeServices = (harness: TestHarness, overrides: TestEnvironmentOverrides 
     isDevelopment: overrides.isDevelopment ?? false,
     isPackaged: overrides.isPackaged ?? false,
     platform: overrides.platform ?? "darwin",
-    branding: { baseName: overrides.baseName ?? "T3 Code" },
+    branding: { baseName: "T3 Code", singleReleaseChannel: overrides.munimDistro ?? false },
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
   const electronApp = {
@@ -497,7 +497,7 @@ describe("DesktopDeepLink", () => {
 
     return Effect.gen(function* () {
       yield* configureWith(
-        makeServices(harness, { baseName: "MT Code", isPackaged: true, platform: "darwin" }),
+        makeServices(harness, { munimDistro: true, isPackaged: true, platform: "darwin" }),
         {
           processArguments: [
             "/Applications/MT Code.app",
@@ -530,7 +530,7 @@ describe("DesktopDeepLink", () => {
     const renderer = makeSender(7);
 
     return Effect.gen(function* () {
-      yield* configureWith(makeServices(harness, { baseName: "MT Code" }), {
+      yield* configureWith(makeServices(harness, { munimDistro: true }), {
         processArguments: ["mtcode", `t3code://threads/${ENVIRONMENT_ID}/${THREAD_ID}`],
       });
 

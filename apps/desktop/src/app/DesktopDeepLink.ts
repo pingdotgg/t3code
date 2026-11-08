@@ -28,8 +28,8 @@ const THREAD_ID_SEGMENT = "[^/?#]+";
 /**
  * The OS-level URL scheme other tools open thread links with. MT Code installs
  * next to T3 Code (its own bundle id and data dir), so each product owns its
- * own scheme: `mtcode://` when the build is branded "MT Code", `t3code://`
- * otherwise, with a `-dev` suffix for unpackaged runs. This is separate from
+ * own scheme: `mtcode://` for the munim distro (whatever name it shows),
+ * `t3code://` otherwise, with a `-dev` suffix for unpackaged runs. This is separate from
  * `ElectronProtocol.getDesktopScheme`, which stays `t3code://app` because it
  * is the renderer's internal origin and the OAuth callback host.
  *
@@ -37,10 +37,10 @@ const THREAD_ID_SEGMENT = "[^/?#]+";
  * which declares the same schemes in the packaged Info.plist / .desktop entry.
  */
 export function resolveThreadDeepLinkScheme(input: {
-  readonly baseName: string;
+  readonly munimDistro: boolean;
   readonly isDevelopment: boolean;
 }): string {
-  const scheme = input.baseName === "MT Code" ? "mtcode" : "t3code";
+  const scheme = input.munimDistro ? "mtcode" : "t3code";
   return input.isDevelopment ? `${scheme}-dev` : scheme;
 }
 
@@ -175,7 +175,8 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const earlyCapture = yield* EarlyOpenUrlCapture;
   const scheme = resolveThreadDeepLinkScheme({
-    baseName: environment.branding.baseName,
+    // Only the munim distro ships a single release channel.
+    munimDistro: environment.branding.singleReleaseChannel === true,
     isDevelopment: environment.isDevelopment,
   });
 

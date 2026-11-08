@@ -385,7 +385,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
-  const singleReleaseChannel = environment.branding.baseName === "MT Code";
+  const singleReleaseChannel = environment.branding.singleReleaseChannel === true;
   const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;

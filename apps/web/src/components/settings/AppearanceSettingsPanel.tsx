@@ -627,7 +627,7 @@ function AppIconRow() {
   const selection = settings.appIcon;
 
   const options = [
-    { value: "default", label: "MT Code" },
+    { value: "default", label: "T3 Code" },
     { value: "light", label: "Light (black mark)" },
     { value: "dark", label: "Dark (white mark)" },
     { value: "match-artwork", label: "Match sidebar artwork" },
@@ -692,7 +692,7 @@ function AppIconRow() {
           >
             <SelectTrigger className="w-full sm:w-60" aria-label="App icon">
               <SelectValue>
-                {options.find((option) => option.value === selection)?.label ?? "MT Code"}
+                {options.find((option) => option.value === selection)?.label ?? "T3 Code"}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>

@@ -126,6 +126,7 @@ export function resolveDesktopAppBranding(input: {
     // Munim / personal fork: show the product name in the shell with no
     // Alpha/Nightly suffix. MT Code is a single release, not a channel.
     displayName: baseName,
+    singleReleaseChannel,
   };
 }
 

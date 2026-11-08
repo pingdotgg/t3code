@@ -1131,9 +1131,9 @@ export const WSL_RUNTIME_EXTRA_RESOURCES = [
 ] as const;
 /** Icon files the App icon setting can switch the running app to. */
 export const ALTERNATE_APP_ICON_FILES = [
-  "munim-macos-1024.png",
-  "munim-icon-light-1024.png",
-  "munim-icon-dark-1024.png",
+  "assets/prod/black-macos-1024.png",
+  "assets/munim/munim-icon-light-1024.png",
+  "assets/munim/munim-icon-dark-1024.png",
 ] as const;
 
 export const DESKTOP_EXTRA_RESOURCES = [
@@ -2714,9 +2714,9 @@ export const stageAlternateAppIcons = Effect.fn("stageAlternateAppIcons")(functi
   const destination = path.join(input.stageResourcesDir, "app-icons");
   yield* fs.makeDirectory(destination, { recursive: true });
   for (const file of ALTERNATE_APP_ICON_FILES) {
-    const source = path.join(input.repoRoot, "assets/munim", file);
+    const source = path.join(input.repoRoot, file);
     if (!(yield* fs.exists(source))) continue;
-    yield* fs.copyFile(source, path.join(destination, file));
+    yield* fs.copyFile(source, path.join(destination, path.basename(file)));
   }
 });
 
@@ -2946,21 +2946,13 @@ export function isDesktopPreviewVersion(version: string): boolean {
 }
 
 export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
-  if (resolveDesktopDistroId() === "munim") {
-    return "munim";
-  }
+  // The munim distro wears the T3 Code production assets (latest channel).
   return resolveWebAssetBrandForChannel(resolveDesktopUpdateChannel(version));
 }
 
 export function resolveDesktopBuildIconAssets(version: string): DesktopBuildIconAssets {
-  if (resolveDesktopDistroId() === "munim") {
-    return {
-      macIconPng: BRAND_ASSET_PATHS.munimMacIconPng,
-      linuxIconPng: BRAND_ASSET_PATHS.munimLinuxIconPng,
-      windowsIconIco: BRAND_ASSET_PATHS.munimWindowsIconIco,
-    };
-  }
-
+  // The munim distro is always on the latest channel, so it gets T3's
+  // production icons below.
   if (resolveDesktopUpdateChannel(version) === "nightly") {
     return {
       macIconPng: BRAND_ASSET_PATHS.nightlyMacIconPng,
@@ -3219,6 +3211,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       signExts: [".node", ".dll"],
       // Resource editing sets product icons even when code signing is disabled.
       signAndEditExecutable: true,
+      ...(distro.windowsExecutableName === undefined
+        ? {}
+        : { executableName: distro.windowsExecutableName }),
     };
     if (signed && (yield* HostProcess.Platform) === "win32") {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;

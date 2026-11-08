@@ -76,6 +76,7 @@ import {
   ReleasePackageManifestError,
   releasePackageFiles,
 } from "./update-release-package-versions.ts";
+import { resolveDesktopDistroIdentity } from "./lib/desktop-distro.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -1675,6 +1676,43 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         ),
       ),
     ),
+  );
+
+  it.effect("shows the munim Windows build as T3 Code but keeps its exe and folder", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3-pr.1",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        resolveDesktopDistroIdentity("munim"),
+      );
+      const nsis = config.nsis as Record<string, unknown>;
+      const win = config.win as Record<string, unknown>;
+
+      assert.equal(config.appId, "com.munim.mtcode");
+      assert.equal(nsis.shortcutName, "T3 Code");
+      assert.equal(nsis.uninstallDisplayName, "T3 Code");
+      // Taskbar pins point at this file, so it keeps its old name.
+      assert.equal(win.executableName, "MT Code");
+
+      const official = yield* createBuildConfig(
+        "win",
+        "nsis",
+        "1.2.3-pr.1",
+        false,
+        false,
+        undefined,
+        undefined,
+        false,
+        resolveDesktopDistroIdentity("default"),
+      );
+      assert.notProperty(official.win as Record<string, unknown>, "executableName");
+    }),
   );
 
   it("parses Windows bsdtar member listings with CRLF line endings", () => {

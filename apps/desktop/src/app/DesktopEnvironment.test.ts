@@ -96,8 +96,12 @@ describe("DesktopEnvironment", () => {
         isPackaged: true,
       });
 
-      assert.equal(environment.branding.baseName, "MT Code");
-      assert.equal(environment.branding.displayName, "MT Code");
+      // Shown as T3 Code while the data dir and ids stay MT.
+      assert.equal(environment.branding.baseName, "T3 Code");
+      assert.equal(environment.branding.displayName, "T3 Code");
+      assert.equal(environment.branding.singleReleaseChannel, true);
+      assert.equal(environment.userDataDirName, "mt");
+      assert.equal(environment.appUserModelId, "com.munim.mtcode");
       assert.equal(environment.branding.stageLabel, "Beta");
       assert.equal(environment.defaultDesktopSettings.updateChannel, "latest");
     });

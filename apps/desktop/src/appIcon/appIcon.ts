@@ -17,7 +17,7 @@ import * as Electron from "electron";
 
 /** Built-in icons, resolved from the assets shipped beside the app. */
 const BUILT_IN_FILES: Readonly<Record<string, string>> = {
-  default: "munim-macos-1024.png",
+  default: "black-macos-1024.png",
   light: "munim-icon-light-1024.png",
   dark: "munim-icon-dark-1024.png",
 };
@@ -27,7 +27,9 @@ function iconSearchRoots(): readonly string[] {
     // Packaged: extraResources copies the assets to Resources/app-icons.
     NodePath.join(process.resourcesPath ?? "", "app-icons"),
     // Checkout: run straight from the repo's assets.
+    NodePath.join(Electron.app.getAppPath(), "..", "..", "assets", "prod"),
     NodePath.join(Electron.app.getAppPath(), "..", "..", "assets", "munim"),
+    NodePath.join(process.cwd(), "assets", "prod"),
     NodePath.join(process.cwd(), "assets", "munim"),
   ];
 }

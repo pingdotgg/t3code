@@ -146,12 +146,18 @@ export interface DesktopAppBranding {
   baseName: string;
   stageLabel: DesktopAppStageLabel;
   displayName: string;
+  /**
+   * True for a build with one release channel (the munim distro). Name checks
+   * cannot tell, because that build may show any product name.
+   */
+  singleReleaseChannel?: boolean;
 }
 
 export const DesktopAppBrandingSchema = Schema.Struct({
   baseName: Schema.String,
   stageLabel: DesktopAppStageLabelSchema,
   displayName: Schema.String,
+  singleReleaseChannel: Schema.optionalKey(Schema.Boolean),
 });
 
 export const DesktopSnapShotMode = Schema.Literals(["direct", "portal", "unavailable"]);

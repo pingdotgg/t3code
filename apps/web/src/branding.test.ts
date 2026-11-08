@@ -41,6 +41,28 @@ describe("branding", () => {
     expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
   });
 
+  it("keeps a single-channel desktop build off update tracks under any name", async () => {
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        desktopBridge: {
+          getAppBranding: () => ({
+            baseName: "T3 Code",
+            stageLabel: "Beta",
+            displayName: "T3 Code",
+            singleReleaseChannel: true,
+          }),
+        },
+      },
+    });
+
+    const branding = await import("./branding");
+
+    expect(branding.APP_BASE_NAME).toBe("T3 Code");
+    expect(branding.APP_HAS_UPDATE_TRACKS).toBe(false);
+    expect(branding.APP_DISPLAY_NAME).toBe("T3 Code");
+  });
+
   it("does not apply a Nightly stage to MT Code", async () => {
     vi.stubEnv("VITE_APP_BASE_NAME", "MT Code");
     vi.stubEnv("VITE_APP_STAGE_LABEL", "Nightly");
@@ -56,7 +78,7 @@ describe("branding", () => {
 
   it("normalizes hosted app channel metadata", async () => {
     // Hosted channel labels only apply to a build that HAS update tracks; the
-    // fork's default base name (MT Code) deliberately has none, so name the
+    // fork's default build deliberately has none, so name the
     // tracked build explicitly rather than leaning on the default.
     vi.stubEnv("VITE_APP_BASE_NAME", "T3 Code");
     vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");

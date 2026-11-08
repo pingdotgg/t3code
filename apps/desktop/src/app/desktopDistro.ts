@@ -49,7 +49,8 @@ export function resolveRuntimeDesktopDistro(input: {
   if (id === "munim") {
     return {
       id,
-      baseName: "MT Code",
+      // Shown as T3 Code; the data dirs and ids below stay MT.
+      baseName: "T3 Code",
       userDataDirName: input.isDevelopment ? "mt-dev" : "mt",
       legacyUserDataDirName: input.isDevelopment ? "MT Code (Dev)" : "MT Code (Alpha)",
       defaultHomeDirName: ".mt",

@@ -16,9 +16,15 @@ export const HOSTED_APP_CHANNEL =
   hostedAppChannel === "latest" || hostedAppChannel === "nightly" ? hostedAppChannel : null;
 export const HOSTED_APP_CHANNEL_LABEL =
   HOSTED_APP_CHANNEL === "nightly" ? "Nightly" : HOSTED_APP_CHANNEL === "latest" ? "Latest" : null;
-export const APP_BASE_NAME =
-  injectedDesktopAppBranding?.baseName ?? import.meta.env.VITE_APP_BASE_NAME?.trim() ?? "MT Code";
-export const APP_HAS_UPDATE_TRACKS = APP_BASE_NAME !== "MT Code";
+const configuredBaseName =
+  injectedDesktopAppBranding?.baseName ?? import.meta.env.VITE_APP_BASE_NAME?.trim();
+export const APP_BASE_NAME = configuredBaseName ?? "T3 Code";
+// The fork ships one release channel. A desktop build says so directly; for
+// anything else, only an explicitly named non-MT build has update tracks.
+export const APP_HAS_UPDATE_TRACKS =
+  injectedDesktopAppBranding?.singleReleaseChannel === undefined
+    ? (configuredBaseName ?? "MT Code") !== "MT Code"
+    : !injectedDesktopAppBranding.singleReleaseChannel;
 
 const resolvedStageLabel =
   injectedDesktopAppBranding?.stageLabel ??
