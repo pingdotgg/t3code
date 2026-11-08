@@ -309,6 +309,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  quickComposer: {
+    hide: () => ipcRenderer.invoke(IpcChannels.QUICK_COMPOSER_HIDE_CHANNEL),
+    submit: (launch) => ipcRenderer.invoke(IpcChannels.QUICK_COMPOSER_SUBMIT_CHANNEL, launch),
+    onLaunch: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, launch: unknown) => {
+        if (typeof launch !== "object" || launch === null) return;
+        listener(launch as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.QUICK_COMPOSER_LAUNCH_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(IpcChannels.QUICK_COMPOSER_LAUNCH_CHANNEL, wrappedListener);
+      };
+    },
+  },
   appActivation: {
     setReady: (ready) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),

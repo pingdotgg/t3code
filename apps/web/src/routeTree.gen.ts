@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
+import { Route as QuickComposerRouteImport } from './routes/quick-composer'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as GuestRouteImport } from './routes/guest'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
@@ -56,6 +57,11 @@ import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$e
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const QuickComposerRoute = QuickComposerRouteImport.update({
+  id: '/quick-composer',
+  path: '/quick-composer',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PairRoute = PairRouteImport.update({
@@ -280,6 +286,7 @@ export interface FileRoutesByFullPath {
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
+  '/quick-composer': typeof QuickComposerRoute
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/notes': typeof ChatNotesRoute
@@ -323,6 +330,7 @@ export interface FileRoutesByTo {
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
+  '/quick-composer': typeof QuickComposerRoute
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/notes': typeof ChatNotesRoute
@@ -369,6 +377,7 @@ export interface FileRoutesById {
   '/connect-agent': typeof ConnectAgentRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
+  '/quick-composer': typeof QuickComposerRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/notes': typeof ChatNotesRoute
@@ -416,6 +425,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/guest'
     | '/pair'
+    | '/quick-composer'
     | '/welcome'
     | '/new'
     | '/notes'
@@ -459,6 +469,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/guest'
     | '/pair'
+    | '/quick-composer'
     | '/welcome'
     | '/new'
     | '/notes'
@@ -504,6 +515,7 @@ export interface FileRouteTypes {
     | '/connect-agent'
     | '/guest'
     | '/pair'
+    | '/quick-composer'
     | '/welcome'
     | '/_chat/new'
     | '/_chat/notes'
@@ -550,6 +562,7 @@ export interface RootRouteChildren {
   ConnectAgentRoute: typeof ConnectAgentRoute
   GuestRoute: typeof GuestRoute
   PairRoute: typeof PairRoute
+  QuickComposerRoute: typeof QuickComposerRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   ThreadsEnvironmentIdThreadIdRoute: typeof ThreadsEnvironmentIdThreadIdRoute
@@ -562,6 +575,13 @@ declare module '@tanstack/react-router' {
       path: '/welcome'
       fullPath: '/welcome'
       preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/quick-composer': {
+      id: '/quick-composer'
+      path: '/quick-composer'
+      fullPath: '/quick-composer'
+      preLoaderRoute: typeof QuickComposerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/pair': {
@@ -955,6 +975,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectAgentRoute: ConnectAgentRoute,
   GuestRoute: GuestRoute,
   PairRoute: PairRoute,
+  QuickComposerRoute: QuickComposerRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   ThreadsEnvironmentIdThreadIdRoute: ThreadsEnvironmentIdThreadIdRoute,

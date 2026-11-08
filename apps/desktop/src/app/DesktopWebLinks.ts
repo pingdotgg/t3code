@@ -5,7 +5,9 @@ import * as Option from "effect/Option";
 
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
+import type { DesktopQuickComposerLaunch } from "@t3tools/contracts";
+
+import { QUICK_COMPOSER_LAUNCH_CHANNEL, WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
 export const isWebLink = (value: string) => {
   if (!URL.canParse(value)) return false;
@@ -19,6 +21,10 @@ export class DesktopWebLinks extends Context.Service<
   DesktopWebLinks,
   {
     readonly receive: (url: string) => Effect.Effect<void>;
+    /** Rides the same ready main renderer as links, so a launch during startup is not lost. */
+    readonly receiveQuickComposerLaunch: (
+      launch: DesktopQuickComposerLaunch,
+    ) => Effect.Effect<void>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopWebLinks") {}
@@ -26,7 +32,7 @@ export class DesktopWebLinks extends Context.Service<
 const make = Effect.gen(function* () {
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
-  const pending: Array<string> = [];
+  const pending: Array<readonly [channel: string, payload: unknown]> = [];
   let listening: Electron.WebContents | null = null;
   let detachListening: (() => void) | null = null;
 
@@ -44,7 +50,7 @@ const make = Effect.gen(function* () {
       stopListening();
       return;
     }
-    for (const url of pending.splice(0)) listening.send(WEB_LINK_OPEN_CHANNEL, url);
+    for (const [channel, payload] of pending.splice(0)) listening.send(channel, payload);
     yield* desktopWindow.activate.pipe(Effect.ignore);
   });
 
@@ -73,10 +79,18 @@ const make = Effect.gen(function* () {
   return DesktopWebLinks.of({
     receive: Effect.fn("DesktopWebLinks.receive")(function (url) {
       return Effect.suspend(() => {
-        pending.push(url);
+        pending.push([WEB_LINK_OPEN_CHANNEL, url]);
         return flush;
       });
     }),
+    receiveQuickComposerLaunch: Effect.fn("DesktopWebLinks.receiveQuickComposerLaunch")(
+      function (launch) {
+        return Effect.suspend(() => {
+          pending.push([QUICK_COMPOSER_LAUNCH_CHANNEL, launch]);
+          return flush;
+        });
+      },
+    ),
     setRendererReady: Effect.fn("DesktopWebLinks.setRendererReady")(function (ready) {
       return ready ? startListening : Effect.sync(stopListening);
     }, Effect.andThen(flush)),

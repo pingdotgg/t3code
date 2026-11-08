@@ -48,6 +48,7 @@ import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
+  receiveQuickComposerLaunch: () => Effect.void,
   setRendererReady: () => Effect.void,
 });
 
@@ -258,6 +259,7 @@ describe("DesktopClerk", () => {
               received.push(url);
               if (url === later) delivered.resolve();
             }),
+          receiveQuickComposerLaunch: () => Effect.void,
           setRendererReady: () => Effect.void,
         }),
       ),
@@ -477,6 +479,7 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         DesktopWebLinks.DesktopWebLinks,
         DesktopWebLinks.DesktopWebLinks.of({
           receive: (url) => Effect.sync(() => void received.push(url)),
+          receiveQuickComposerLaunch: () => Effect.void,
           setRendererReady: () => Effect.void,
         }),
       ),

@@ -353,6 +353,7 @@ import {
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
+import { useQuickComposerAutoSendStore } from "../quickComposer";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { assetEnvironment } from "../state/assets";
@@ -3104,9 +3105,7 @@ export default function ChatView(props: ChatViewProps) {
     void onComposerSendStable();
   };
   const resendAfterWorkLocallyStable = useStableCallback(resendAfterWorkLocally);
-  const workLocallyResendReady =
-    workLocallyResendDraftId !== null &&
-    workLocallyResendDraftId === draftId &&
+  const draftSendIdle =
     isLocalDraftThread &&
     !isSendBusy &&
     !isRevertingCheckpoint &&
@@ -3116,6 +3115,31 @@ export default function ChatView(props: ChatViewProps) {
     !activeEnvironmentUnavailable &&
     !activePendingProgress &&
     !feedbackUploading;
+  const workLocallyResendReady =
+    workLocallyResendDraftId !== null && workLocallyResendDraftId === draftId && draftSendIdle;
+  const quickComposerAutoSendDraftId = useQuickComposerAutoSendStore((store) => store.draftId);
+  const quickComposerAutoSendReady =
+    quickComposerAutoSendDraftId !== null &&
+    quickComposerAutoSendDraftId === draftId &&
+    draftSendIdle;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- sends a Quick Composer prompt once its new draft can send
+  useEffect(() => {
+    if (
+      !quickComposerAutoSendReady ||
+      sendInFlightRef.current ||
+      feedbackUploadsInFlightRef.current.has(routeThreadKey)
+    ) {
+      return;
+    }
+    useQuickComposerAutoSendStore.getState().clear();
+    void onComposerSendStable();
+  }, [
+    feedbackUploadsInFlightRef,
+    onComposerSendStable,
+    quickComposerAutoSendReady,
+    routeThreadKey,
+    sendInFlightRef,
+  ]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- switches the draft to local mode, then resends the waiting message once sending is idle
   useEffect(() => {
     if (

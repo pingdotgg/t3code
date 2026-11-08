@@ -2,7 +2,7 @@ import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
 import { SnapShotSource } from "./chatAttachment.ts";
-import { EnvironmentId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { EnvironmentId, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { BrowserProfileId } from "./browserProfile.ts";
 import type {
   BrowserImportResult,
@@ -20,6 +20,14 @@ import type {
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
 } from "./desktopAppActivation.ts";
+
+/** A prompt typed in the desktop Quick Composer, started as a new thread by the main window. */
+export const DesktopQuickComposerLaunch = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  prompt: TrimmedNonEmptyString.check(Schema.isMaxLength(256 * 1024)),
+});
+export type DesktopQuickComposerLaunch = typeof DesktopQuickComposerLaunch.Type;
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1146,6 +1154,11 @@ export interface DesktopBridge {
   webLinks: {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;
+  };
+  quickComposer: {
+    hide: () => Promise<void>;
+    submit: (launch: DesktopQuickComposerLaunch) => Promise<void>;
+    onLaunch: (listener: (launch: DesktopQuickComposerLaunch) => void) => () => void;
   };
   appActivation: {
     setReady: (ready: boolean) => Promise<void>;

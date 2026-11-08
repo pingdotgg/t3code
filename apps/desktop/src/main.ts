@@ -75,6 +75,8 @@ import * as BrowserSession from "./preview/BrowserSession.ts";
 import * as DesktopBrowserHost from "./preview/DesktopBrowserHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PreviewPasskeys from "./preview/Passkeys.ts";
+import * as DesktopQuickComposer from "./window/DesktopQuickComposer.ts";
+import * as DesktopTray from "./window/DesktopTray.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 import * as DesktopWslBackend from "./wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "./wsl/DesktopWslEnvironment.ts";
@@ -209,6 +211,11 @@ const layerDesktopApplication = Layer.mergeAll(
   DesktopLifecycle.layer,
   layerDesktopAppActivation,
   DesktopWebLinks.layer,
+  // The same DesktopWebLinks layer as above, so both share one renderer mailbox.
+  DesktopTray.layer.pipe(
+    Layer.provideMerge(DesktopQuickComposer.layer),
+    Layer.provide(DesktopWebLinks.layer),
+  ),
   DesktopApplicationMenu.layer,
   DesktopLinuxUrlHandler.layer,
   DesktopCliCommand.layer,
