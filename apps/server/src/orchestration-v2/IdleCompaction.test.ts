@@ -163,6 +163,22 @@ describe("idleCompactionWindow", () => {
     const compacted = records(cache);
     compacted.messages = [{ ...compacted.messages[0]!, text: "/compact" }];
     expect(idleCompactionWindow(compacted, NOW_MS)).toBeNull();
+    const steered = records(cache);
+    steered.runs = [
+      ...steered.runs,
+      {
+        ...steered.runs[0]!,
+        id: RunId.make("run-2"),
+        ordinal: 2,
+        userMessageId: MessageId.make("message-2"),
+        status: "cancelled",
+        startedAt: null,
+      },
+    ];
+    expect(idleCompactionWindow(steered, NOW_MS)?.runId).toBe(runId);
+    // A turn Claude itself reported as cancelled did run, so it stays the latest.
+    steered.runs = steered.runs.map((run) => ({ ...run, startedAt: at(-MINUTE_MS) }));
+    expect(idleCompactionWindow(steered, NOW_MS)).toBeNull();
     const archived = records(cache);
     archived.thread = { ...archived.thread, archivedAt: at() };
     expect(idleCompactionWindow(archived, NOW_MS)).toBeNull();
@@ -323,9 +339,17 @@ describe("IdleCompactionService", () => {
           ordinal: 2,
           userMessageId: laterMessageId,
         };
+        const cancelledRun = {
+          ...earlierRun,
+          id: RunId.make("run-3"),
+          ordinal: 3,
+          userMessageId: MessageId.make("message-3"),
+          status: "cancelled" as const,
+          startedAt: null,
+        };
         const data: OrchestrationV2ThreadProjection = {
           ...base,
-          runs: [earlierRun, laterRun],
+          runs: [earlierRun, laterRun, cancelledRun],
           messages: [
             ...base.messages,
             { ...base.messages[0]!, id: laterMessageId, runId: laterRunId, text: "Keep going" },

@@ -29,8 +29,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
-import * as Tracer from "effect/Tracer";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as Tracer from "effect/Tracer";
 import type * as SqlClient from "effect/sql/SqlClient";
 import { McpSchema, McpServer } from "effect/ai";
 
@@ -565,7 +565,7 @@ const makeLaptop = (
       Layer.provideMerge(Layer.merge(layerOrchestrator, ServerSettings.layerTest())),
     );
     const layerHere = McpHttpServer.layerOrchestratorToolkit.pipe(
-      Layer.provideMerge(McpServer.McpServer.layer),
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provideMerge(
         RemoteDelegation.layer.pipe(
           Layer.provideMerge(PeerForwarding.layer),
@@ -829,6 +829,42 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(retried.taskId).toBe(delegated.taskId);
       expect((yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents).toHaveLength(1);
 
+      const historyReads: Array<string> = [];
+      const historyTracer = Tracer.make({
+        span(options) {
+          const span = new Tracer.NativeSpan(options);
+          const end = span.end.bind(span);
+          span.end = (endTime, exit) => {
+            end(endTime, exit);
+            const query = span.attributes.get("db.query.text");
+            if (
+              typeof query === "string" &&
+              /\bSELECT\s+payload_json\s+FROM orchestration_v2_projection_(?:runs|context_transfers)\b/i.test(
+                query,
+              )
+            ) {
+              historyReads.push(query);
+            }
+          };
+          return span;
+        },
+      });
+      const running = yield* a
+        .call("task_status", { taskId: delegated.taskId })
+        .pipe(Effect.withTracer(historyTracer));
+      expect(running.structuredContent).toMatchObject({
+        taskId: delegated.taskId,
+        childThreadId: null,
+        remoteChild: delegated.remoteChild,
+        status: "running",
+        workState: "working",
+        summary: null,
+        hasPendingQuestion: false,
+        pendingApproval: null,
+      });
+      // A running task there needs its local row, not the parent's run or transfer history.
+      expect(historyReads).toEqual([]);
+
       yield* Ref.set(thread.reply, "All 412 tests pass on the box.");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
@@ -989,7 +1025,7 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
         });
         expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
           state: "acknowledged",
-          observedByRunId: null,
+          observedByRunId: parentRunId,
         });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),

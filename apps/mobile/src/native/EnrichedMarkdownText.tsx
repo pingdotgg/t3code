@@ -337,7 +337,8 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
             admonitions: true,
             preserveWindowsPaths: true,
           }}
-          enableTaskListItemToggle={false}
+          enableTaskListItemToggle={props.onTaskListItemPress !== undefined}
+          onTaskListItemPress={props.onTaskListItemPress}
           enableCodeBlockWrapToggle
           spoilerOverlay="solid"
           onLinkPress={

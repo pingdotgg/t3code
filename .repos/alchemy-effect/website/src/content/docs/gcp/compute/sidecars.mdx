@@ -1,0 +1,355 @@
+---
+title: Cloud Run sidecars
+description: Run more containers next to a Cloud Run service — plain images, GCP.Run.Container resources, or your own Effect programs — and control the order they start in.
+---
+
+A Cloud Run instance can run several containers. The first one takes
+requests. The rest are sidecars, and every container in the instance
+reaches the others on `localhost`.
+
+A sidecar can be a plain image you list in the template, a
+`GCP.Run.Container` that runs an image, or a `GCP.Run.Container` that
+runs your own Effect program. This page starts with a service that runs
+an image, then moves to Effect services, which bind their sidecars.
+
+## Add a sidecar
+
+List more containers after the first in `template.containers`:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: GCP.providers(), state: GCP.state() },
+  Effect.gen(function* () {
+    const proxy = yield* GCP.Run.Service("Proxy", {
+      template: {
+        containers: [
+          {
+            image: "us-docker.pkg.dev/cloudrun/container/hello",
+            ports: [{ containerPort: 8080 }],
+          },
+          { name: "cache", image: "docker.io/library/redis:7-alpine" },
+        ],
+      },
+    });
+    return { url: proxy.uri };
+  }),
+);
+```
+
+Only one container may have `ports`, and that container takes the
+requests.
+
+## Start containers in order
+
+Cloud Run starts every container at once, and the instance takes
+requests as soon as the first one passes its startup probe. The first
+requests can reach a sidecar before it listens. `dependsOn` holds a
+container back until the containers it names pass their startup
+probes:
+
+```diff lang="typescript"
+const proxy = yield* GCP.Run.Service("Proxy", {
+  template: {
+    containers: [
+      {
+        image: "us-docker.pkg.dev/cloudrun/container/hello",
+        ports: [{ containerPort: 8080 }],
++        dependsOn: ["cache"],
+      },
+-      { name: "cache", image: "docker.io/library/redis:7-alpine" },
++      {
++        name: "cache",
++        image: "docker.io/library/redis:7-alpine",
++        startupProbe: { tcpSocket: { port: 6379 } },
++      },
+    ],
+  },
+});
+```
+
+Give each dependency a startup probe that checks it can serve. A
+sidecar has no `ports`, so its probe names the port.
+
+## Chain dependencies
+
+A container that others wait on can wait too. Names chain into an
+order, and containers that don't depend on each other still start
+together:
+
+```text
+cache ✓ → app ✓ → proxy ✓ → requests
+```
+
+If a dependency never passes its startup probe, the containers waiting
+on it never start. The new revision fails and traffic stays on the
+previous one.
+
+`dependsOn` only orders startup. A dependency that crashes later
+doesn't stop the containers that wait on it. Give it a `livenessProbe`
+so Cloud Run restarts it.
+
+## Declare a sidecar as a Container
+
+`GCP.Run.Container` declares a sidecar as a resource. List it in
+`containers` like a plain spec:
+
+```diff lang="typescript"
++const cache = yield* GCP.Run.Container("Cache", {
++  image: "docker.io/library/redis:7-alpine",
++  port: 6379,
++  startupProbe: { tcpSocket: {} },
++});
+const proxy = yield* GCP.Run.Service("Proxy", {
+  template: {
+    containers: [
+      {
+        image: "us-docker.pkg.dev/cloudrun/container/hello",
+        ports: [{ containerPort: 8080 }],
+-        dependsOn: ["cache"],
++        dependsOn: [cache.name],
+      },
+-      {
+-        name: "cache",
+-        image: "docker.io/library/redis:7-alpine",
+-        startupProbe: { tcpSocket: { port: 6379 } },
+-      },
++      cache,
+    ],
+  },
+});
+```
+
+`cache.name` is an Output. Alchemy names the container from its id (or
+its `name` prop) and puts that name into `dependsOn`, so you never
+write it twice. `port` fills in the port the probe checks.
+
+## Wait for another Container
+
+A Container's own `dependsOn` takes another Container's `name` the
+same way:
+
+```diff lang="typescript"
++const web = yield* GCP.Run.Container("Web", {
++  image: "docker.io/library/nginx:1.27-alpine",
++  port: 80,
++  startupProbe: { tcpSocket: {} },
++});
+const cache = yield* GCP.Run.Container("Cache", {
+  image: "docker.io/library/redis:7-alpine",
+  port: 6379,
+  startupProbe: { tcpSocket: {} },
++  dependsOn: [web.name],
+});
+const proxy = yield* GCP.Run.Service("Proxy", {
+  template: {
+    containers: [
+      {
+        image: "us-docker.pkg.dev/cloudrun/container/hello",
+        ports: [{ containerPort: 8080 }],
+        dependsOn: [cache.name],
+      },
+      cache,
++      web,
+    ],
+  },
+});
+```
+
+```text
+web ✓ → cache ✓ → proxy ✓ → requests
+```
+
+Every name in `dependsOn` has to belong to a container in the same
+`containers` list.
+
+## Run your own program in a Container
+
+Give a Container `main` and an Effect, and Alchemy bundles your program
+into its own image. Return methods next to `fetch`:
+
+```typescript
+// src/worker.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Worker extends GCP.Run.Container<Worker>()(
+  "Worker",
+  { main: import.meta.url, port: 3000, startupProbe: { httpGet: { path: "/health" } } },
+  Effect.gen(function* () {
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }),
+) {}
+```
+
+An image service lists it like any other Container:
+
+```diff lang="typescript"
++import Worker from "./src/worker.ts";
+
++const worker = yield* Worker;
+const proxy = yield* GCP.Run.Service("Proxy", {
+  template: {
+    containers: [
+      {
+        image: "us-docker.pkg.dev/cloudrun/container/hello",
+        ports: [{ containerPort: 8080 }],
+-        dependsOn: [cache.name],
++        dependsOn: [worker.name],
+      },
+-      cache,
+-      web,
++      worker,
+    ],
+  },
+});
+```
+
+The proxy reaches it at `http://localhost:3000`.
+
+## Add sidecars to an Effect service
+
+A service with `main` runs your program in the first container. Leave
+that entry empty and list sidecars after it:
+
+```typescript
+// src/api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+
+export default class Api extends GCP.Run.Service<Api>()(
+  "Api",
+  {
+    main: import.meta.url,
+    template: {
+      containers: [
+        { dependsOn: ["cache"] },
+        {
+          name: "cache",
+          image: "docker.io/library/redis:7-alpine",
+          startupProbe: { tcpSocket: { port: 6379 } },
+        },
+      ],
+    },
+  },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+## Bind a Container
+
+An Effect service binds a Container instead of listing it.
+`GCP.Run.bindContainer` adds the Container to the revision and to the
+service's `dependsOn`, and returns a client that calls it on
+`localhost`:
+
+```typescript
+// src/api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import Worker from "./worker.ts";
+
+export default class Api extends GCP.Run.Service<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const worker = yield* GCP.Run.bindContainer(Worker);
+    return {
+      fetch: Effect.gen(function* () {
+        return HttpServerResponse.text(yield* worker.greet("sam"));
+      }),
+    };
+  }),
+) {}
+```
+
+`worker.greet` calls the method over HTTP, and `worker.fetch` sends a
+request to the Container's `fetch`. For typed clients, bind with an
+[Effect RPC](/gcp/apis/effect-rpc) schema or an
+[Effect HTTP API](/gcp/apis/effect-http-api).
+
+## Bind a sidecar's port
+
+A sidecar that doesn't speak HTTP, like Redis, is bound by port.
+Declare it in its own module:
+
+```typescript
+// src/cache.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Cache = GCP.Run.Container("Cache", {
+  image: "docker.io/library/redis:7-alpine",
+  port: 6379,
+  startupProbe: { tcpSocket: {} },
+});
+```
+
+`GCP.Run.bindPort` adds it to the revision and the `dependsOn` the
+same way, and returns its address:
+
+```diff lang="typescript"
++import { Cache } from "./cache.ts";
+
+Effect.gen(function* () {
++  const cache = yield* GCP.Run.bindPort(Cache, 6379);
++  // cache.url === "http://localhost:6379"
+  return {
+    fetch: Effect.succeed(HttpServerResponse.text("hello")),
+  };
+}),
+```
+
+## Bind a Container from a Container
+
+A Container's program binds sidecars the same way a service does.
+Here `Worker` binds `Cache`:
+
+```diff lang="typescript"
++import { Cache } from "./cache.ts";
+
+export default class Worker extends GCP.Run.Container<Worker>()(
+  "Worker",
+  { main: import.meta.url, port: 3000, startupProbe: { httpGet: { path: "/health" } } },
+  Effect.gen(function* () {
++    const cache = yield* GCP.Run.bindPort(Cache, 6379);
+    return {
+      greet: (name: string) => Effect.succeed(`hello ${name}`),
+      fetch: Effect.succeed(HttpServerResponse.text("ok")),
+    };
+  }),
+) {}
+```
+
+`Cache` joins whichever revision `Worker` runs in, and `Worker` waits
+for it. That holds whether a service binds `Worker` or lists it:
+
+```text
+cache ✓ → worker ✓ → api ✓ → requests
+```
+
+Other bindings in a Container work as they do in a service: their
+environment variables land on the Container, and their roles go to the
+service's account. A Container's own `dependsOn` is kept alongside the
+names its bindings add.
+
+## List or bind
+
+A service that runs an image lists its sidecars, and names what each
+one waits for with `dependsOn`. A service or Container that runs your
+program binds its sidecars, which gives it a client and orders startup
+for it.

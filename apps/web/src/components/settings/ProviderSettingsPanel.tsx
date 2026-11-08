@@ -11,6 +11,7 @@ import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
+  settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -47,6 +48,7 @@ import {
   useToggleEnvironmentModelFavorite,
 } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { ensureLocalApi } from "../../localApi";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { cn } from "../../lib/utils";
 import { resolveAppModelSelectionState } from "../../modelSelection";
@@ -126,6 +128,25 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
+
+function providerInstanceName(instance: ProviderInstanceConfig): string {
+  return (
+    instance.displayName?.trim() ||
+    providerClients.get(instance.driver)?.label ||
+    String(instance.driver)
+  );
+}
+
+async function confirmProviderInstanceRemoval(
+  question: string,
+  consequence = "",
+): Promise<boolean> {
+  const message = `${question}\nIts saved settings, including any custom binary path, will be removed.${consequence}`;
+  const confirmed = await settlePromise(() =>
+    ensureLocalApi().dialogs.confirm(message, { variant: "destructive" }),
+  );
+  return confirmed._tag === "Success" && confirmed.value;
+}
 
 function modelListChanges(current: ReadonlyArray<string>, next: ReadonlyArray<string>) {
   const currentSet = new Set(current);
@@ -330,25 +351,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       hasServerConfig: environment.serverConfig !== null,
     }),
   )?.environmentId;
-  const searchableCursorEnvironmentId = options.find(
-    (environment) =>
-      environment.serverConfig?.environment.platform.os === "darwin" &&
-      isProviderSettingsEnvironmentAvailable({
-        connectionPhase: environment.connection.phase,
-        hasServerConfig: true,
-      }),
-  )?.environmentId;
   let searchRedirectEnvironmentId: EnvironmentId | undefined;
   {
     if (
-      !target.scoped &&
-      searchTargetId === searchableSetting("cursor-keychain-usage").id &&
-      (!selectedEnvironmentCanRenderSettings ||
-        selectedEnvironment?.serverConfig?.environment.platform.os !== "darwin") &&
-      searchableCursorEnvironmentId !== undefined
-    ) {
-      searchRedirectEnvironmentId = searchableCursorEnvironmentId;
-    } else if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
@@ -830,6 +835,10 @@ export function EnvironmentProviderSettings({
 
   const deleteInstance = useStableCallback(
     async (instanceId: ProviderInstanceId, instance: ProviderInstanceConfig) => {
+      const confirmed = await confirmProviderInstanceRemoval(
+        `Remove the ${providerInstanceName(instance)} provider instance?`,
+      );
+      if (!confirmed) return;
       const updateResult = await persistProviderInstance({
         operation: "remove",
         instanceId,
@@ -866,10 +875,17 @@ export function EnvironmentProviderSettings({
   );
 
   const resetDefaultInstance = useStableCallback(async (driverKind: ProviderDriverKind) => {
-    const result = await persistProviderInstance({
-      operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
-    });
+    const instanceId = defaultInstanceIdForDriver(driverKind);
+    const instance = settings.providerInstances?.[instanceId] ?? { driver: driverKind };
+    const turnsOff =
+      resolveProviderInstanceEnabled(instance) &&
+      !resolveProviderInstanceEnabled({ driver: driverKind });
+    const confirmed = await confirmProviderInstanceRemoval(
+      `Reset the ${providerInstanceName(instance)} provider to its defaults?`,
+      turnsOff ? " It will also be turned off." : "",
+    );
+    if (!confirmed) return;
+    const result = await persistProviderInstance({ operation: "remove", instanceId });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -1073,7 +1089,6 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
-        cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
         readOnly={readOnly}
       />
 
