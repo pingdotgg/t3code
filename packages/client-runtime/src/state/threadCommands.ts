@@ -49,6 +49,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  requireThreadVersionGuard,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -428,6 +429,10 @@ export function createThreadEnvironmentAtoms<R, E>(
       concurrency,
     }),
   };
+  const versionGuard = createEnvironmentCommand(runtime, {
+    label: "environment-data:commands:thread:version-guard",
+    execute: () => requireThreadVersionGuard(),
+  });
   const triage = createThreadTriageOutbox({
     runtime,
     sourceSnapshotAtom: snapshotAtom,
@@ -438,6 +443,8 @@ export function createThreadEnvironmentAtoms<R, E>(
     applySettle: (thread, queuedAt) => applySettle(thread, queuedAt, false),
     applySnooze: (thread, snoozedUntil, queuedAt) =>
       applySnooze(thread, snoozedUntil, queuedAt, false),
+    checkServer: (registry, environmentId) =>
+      versionGuard.run(registry, { environmentId, input: undefined }),
     replay: (registry, { environmentId, threadId, commandId, action, snapshotSequence }) =>
       action.type === "settle"
         ? settle.run(registry, { environmentId, input: { threadId, commandId, snapshotSequence } })

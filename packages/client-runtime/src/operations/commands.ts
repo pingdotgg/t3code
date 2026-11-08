@@ -294,7 +294,7 @@ export class ThreadVersionGuardUnsupportedError extends Schema.TaggedError<Threa
 ) {}
 
 // Older servers drop snapshotSequence, so a replay there could overwrite newer changes.
-const requireThreadVersionGuard = Effect.fn("EnvironmentCommands.requireThreadVersionGuard")(
+export const requireThreadVersionGuard = Effect.fn("EnvironmentCommands.requireThreadVersionGuard")(
   function* () {
     const config = yield* getInitialServerConfig();
     if (config.environment.capabilities.threadTriageVersionGuard === true) return;

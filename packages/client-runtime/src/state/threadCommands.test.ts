@@ -999,7 +999,16 @@ describe("settle and snooze while the environment is offline", () => {
       yield* Queue.take(h.configReads);
       expect(yield* Queue.size(h.requests)).toBe(0);
       expect(h.registry.get(pending).has(THREAD_ID)).toBe(true);
-      expect(stored(h.storage)).toHaveLength(1);
+      // Never sent, so it stays unmarked and Undo still cancels it on the device.
+      expect(stored(h.storage)[0]).not.toHaveProperty("attempted");
+      yield* h.disconnect;
+      const undo = yield* Effect.promise(() =>
+        h.commands.unsettle.run(h.registry, {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, reason: "user" },
+        }),
+      );
+      expect(undo._tag === "Success" && ThreadUndo.cancelledPendingSync(undo.value)).toBe(true);
     }),
   );
 

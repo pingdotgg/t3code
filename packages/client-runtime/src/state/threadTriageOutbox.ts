@@ -107,6 +107,11 @@ export function createThreadTriageOutbox<R, E>(input: {
     snoozedUntil: string,
     queuedAt: DateTime.Utc,
   ) => OrchestrationV2ThreadShell;
+  /** Fails before anything is sent when the connected server cannot check the snapshot. */
+  readonly checkServer: (
+    registry: AtomRegistry.AtomRegistry,
+    environmentId: EnvironmentId,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
   /** Sends the queued action with its command id and snapshot sequence. */
   readonly replay: (
     registry: AtomRegistry.AtomRegistry,
@@ -292,6 +297,10 @@ export function createThreadTriageOutbox<R, E>(input: {
       const added = stored.filter((entry) => !entries.some((current) => sameEntry(current, entry)));
       return kept.length === entries.length && added.length === 0 ? entries : [...kept, ...added];
     });
+    if (stored.length === 0) return;
+    // An older server would refuse every entry, which must stay unmarked so Undo can cancel it.
+    const server = await input.checkServer(registry, environmentId);
+    if (lifetime.ended || !AsyncResult.isSuccess(server)) return;
     for (const entry of stored) {
       if (
         entry.action.type === "snooze" &&
