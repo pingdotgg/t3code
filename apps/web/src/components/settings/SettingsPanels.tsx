@@ -1566,6 +1566,19 @@ export function ThreadsSettingsPanel() {
           settingKeys={["newProjectDirectory"]}
           {...searchableSetting("new-project-directory")}
           description="Create new projects in this folder. Leave empty to use the projects folder in T3 home."
+          resetAction={
+            mixedNewProjectDirectory ||
+            settings.newProjectDirectory !== DEFAULT_UNIFIED_SETTINGS.newProjectDirectory ? (
+              <SettingResetButton
+                label="new project location"
+                onClick={() =>
+                  updateSettings({
+                    newProjectDirectory: DEFAULT_UNIFIED_SETTINGS.newProjectDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
           control={
             <DraftInput
               size="sm"

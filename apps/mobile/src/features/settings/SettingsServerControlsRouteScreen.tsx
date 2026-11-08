@@ -13,7 +13,7 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectScopedServerSettingKey,
 } from "@t3tools/contracts";
-import { useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -207,6 +207,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
     displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+  const uniformDirectory = (key: "newProjectDirectory" | "addProjectBaseDirectory") => {
+    const saved = uniform(key);
+    return typeof saved === "string" ? saved : "";
+  };
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -240,6 +244,26 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
       if (queued?.key === targetsKey) write({ ...patch, ...queued.patch });
     });
   };
+  // Save on exit too: Android Back hides the keyboard without ending editing.
+  type DirectoryKey = "newProjectDirectory" | "addProjectBaseDirectory";
+  const directoryDrafts = useRef<Partial<Record<DirectoryKey, { text: string; over: string }>>>({});
+  const takeDirectoryDraft = (key: DirectoryKey): ServerSettingsPatch => {
+    const draft = directoryDrafts.current[key];
+    delete directoryDrafts.current[key];
+    // A draft typed over an older saved value is stale: the new value already remounted its input.
+    if (draft === undefined || draft.over !== uniformDirectory(key)) return {};
+    const text = draft.text.trim();
+    return text === draft.over ? {} : { [key]: text };
+  };
+  const saveDirectoryDrafts = useEffectEvent(() => {
+    const patch = {
+      ...takeDirectoryDraft("newProjectDirectory"),
+      ...takeDirectoryDraft("addProjectBaseDirectory"),
+    };
+    if (Object.keys(patch).length > 0) write(patch);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves unsent directory drafts to server settings when the screen unmounts
+  useEffect(() => () => saveDirectoryDrafts(), []);
   const clearProjectOverrides = () => {
     if (
       writeInFlight.current ||
@@ -401,8 +425,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             {props.page === "threads" ? (
               <SettingsSection title="New projects">
                 {(["newProjectDirectory", "addProjectBaseDirectory"] as const).map((key) => {
-                  const saved = uniform(key);
-                  const value = typeof saved === "string" ? saved : "";
+                  const value = uniformDirectory(key);
                   const label =
                     key === "newProjectDirectory"
                       ? "New project location"
@@ -424,7 +447,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         autoCapitalize="none"
                         autoCorrect={false}
                         className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
+                        onChangeText={(text) => {
+                          directoryDrafts.current[key] = { text, over: value };
+                        }}
                         onEndEditing={(event) => {
+                          delete directoryDrafts.current[key];
                           const text = event.nativeEvent.text.trim();
                           if (text === value) return;
                           write({ [key]: text });
