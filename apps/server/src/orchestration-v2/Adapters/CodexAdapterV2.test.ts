@@ -737,11 +737,36 @@ function withReplayRequestId(
     : entry;
 }
 
-const expectSteerFailsOnSessionClose = Effect.fn("expectSteerFailsOnSessionClose")(function* (
+// Closing marks the scope closed at once, and the finalizer added last runs first, so the
+// session handles the held notification in a closed scope until the close resumes.
+const makeSessionCloseGate = Effect.fn("makeSessionCloseGate")(function* (
   sessionScope: Scope.Closeable,
+  label: string,
+) {
+  const reached = yield* Deferred.make<void>();
+  const released = yield* Deferred.make<void>();
+  const resumed = yield* Deferred.make<void>();
+  const beforeEmitInbound: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"] = (entry) =>
+    entry.label === label
+      ? Deferred.succeed(reached, undefined).pipe(Effect.andThen(Deferred.await(released)))
+      : Effect.void;
+  const startClose = Effect.gen(function* () {
+    yield* Deferred.await(reached);
+    yield* Scope.addFinalizer(sessionScope, Deferred.await(resumed));
+    const closing = yield* Scope.close(sessionScope, Exit.void).pipe(
+      Effect.forkScoped({ startImmediately: true }),
+    );
+    yield* Deferred.succeed(released, undefined);
+    return Deferred.succeed(resumed, undefined).pipe(Effect.andThen(Fiber.join(closing)));
+  });
+  return { beforeEmitInbound, startClose };
+});
+
+const expectSteerFailsOnSessionClose = Effect.fn("expectSteerFailsOnSessionClose")(function* (
+  closeSession: Effect.Effect<void>,
   steering: Fiber.Fiber<void, ProviderAdapter.ProviderAdapterV2Error>,
 ) {
-  yield* Scope.close(sessionScope, Exit.void);
+  yield* closeSession;
   const settling = yield* Effect.flip(Fiber.join(steering)).pipe(
     Effect.timeout("1 minute"),
     Effect.forkScoped({ startImmediately: true }),
@@ -2915,6 +2940,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     "new-run",
     "steer",
     "steer-session-closed",
+    "steer-session-closing",
     "start-fails",
   ] as const)("handles terminal Codex capacity failures when retries %s", (outcome) =>
     Effect.scoped(
@@ -2930,6 +2956,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const failureEntries = (attempt: number): Array<CodexReplay.CodexAppServerReplayEntry> => [
           {
             type: "emit_inbound",
+            label: "capacity error",
             frame: {
               method: "error",
               params: {
@@ -2963,12 +2990,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ...(outcome === "completion-only" ? failureEntries(0).slice(1) : failureEntries(0)),
         );
         if (outcome === "completion-only") entries.push(...failureEntries(0).slice(1));
-        const retries =
-          outcome === "exhaust"
-            ? 5
-            : outcome === "stop" || outcome === "steer-session-closed"
-              ? 0
-              : 1;
+        const closesSession =
+          outcome === "steer-session-closed" || outcome === "steer-session-closing";
+        const retries = outcome === "exhaust" ? 5 : outcome === "stop" || closesSession ? 0 : 1;
         const steeredText = "Use the smaller change.";
         for (let attempt = 1; attempt <= retries; attempt++) {
           const start = codexReplayPreamble({
@@ -3122,6 +3146,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const starts: Array<unknown> = [];
         const retryStarted = yield* Deferred.make<void>();
         const sessionScope = yield* Scope.fork(yield* Scope.Scope);
+        const closeGate = yield* makeSessionCloseGate(sessionScope, "capacity error");
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({ scenario, entries }),
           (event) =>
@@ -3138,6 +3163,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 if (starts.length === 2) yield* Deferred.succeed(retryStarted, undefined);
               }
             }),
+          undefined,
+          outcome === "steer-session-closing" ? closeGate.beforeEmitInbound : undefined,
         ).pipe(Scope.provide(sessionScope));
         const turnInput = makeCodexTestTurnInput({
           threadId: harness.threadId,
@@ -3147,6 +3174,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           text: prompt,
         });
         yield* harness.runtime.startTurn(turnInput);
+        const closeSession =
+          outcome === "steer-session-closing"
+            ? yield* closeGate.startClose
+            : Scope.close(sessionScope, Exit.void);
         for (let attempt = 1; attempt <= Math.max(retries, 1); attempt++) {
           const milestone = yield* Queue.take(milestones);
           assert.equal(milestone.type, "turn_item.updated");
@@ -3167,7 +3198,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             });
           }
           const steering =
-            outcome === "steer" || outcome === "steer-session-closed"
+            outcome === "steer" || closesSession
               ? yield* harness.runtime
                   .steerTurn({
                     ...turnInput,
@@ -3176,8 +3207,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   })
                   .pipe(Effect.forkScoped({ startImmediately: true }))
               : undefined;
-          if (outcome === "steer-session-closed" && steering !== undefined) {
-            return yield* expectSteerFailsOnSessionClose(sessionScope, steering);
+          if (closesSession && steering !== undefined) {
+            return yield* expectSteerFailsOnSessionClose(closeSession, steering);
           }
           yield* TestClock.adjust(Math.min(2_000 * 2 ** (attempt - 1), 30_000));
           if (outcome === "stop-starting") {
@@ -8952,68 +8983,81 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("fails a steer held for the next goal turn when the session closes", () =>
-      Effect.gen(function* () {
-        const prompt = "Keep going";
-        const transcript = makeCodexReplayTranscript({
-          scenario: "goal-hold-session-closed",
-          entries: [
-            ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt }),
-            notification("goal active", "thread/goal/updated", {
-              threadId: nativeThreadId,
-              turnId: "goal-turn",
-              goal: codexGoal("active", 10),
-            }),
-            notification("turn done", "turn/completed", {
-              threadId: nativeThreadId,
-              turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
-            }),
-            notification("goal accounted", "thread/goal/updated", {
-              threadId: nativeThreadId,
-              turnId: null,
-              goal: codexGoal("active", 11),
-            }),
-          ],
-        });
-        const sessionScope = yield* Scope.fork(yield* Scope.Scope);
-        const harness = yield* makeCodexReplayHarness(transcript).pipe(Scope.provide(sessionScope));
-        const turnInput = makeCodexTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("goal-hold-closed-attempt"),
-          text: prompt,
-        });
-        yield* harness.runtime.startTurn(turnInput);
-        yield* harness.until(() =>
-          harness.events.some(
-            (event) =>
-              event.type === "provider_thread.updated" &&
-              event.providerThread.goal?.tokensUsed === 11,
-          ),
-        );
-        const steering = yield* harness.runtime
-          .steerTurn({
-            ...turnInput,
-            providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-              nativeTurnId: "goal-turn",
-            }),
-            message: { ...turnInput.message, text: "Use the smaller change." },
-          })
-          .pipe(Effect.forkScoped({ startImmediately: true }));
-        yield* expectSteerFailsOnSessionClose(sessionScope, steering);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+    it.effect.each(["during the grace", "as the turn completes"] as const)(
+      "fails a steer held for the next goal turn when the session closes %s",
+      (closing) =>
+        Effect.gen(function* () {
+          const prompt = "Keep going";
+          const transcript = makeCodexReplayTranscript({
+            scenario: "goal-hold-session-closed",
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId: "goal-turn", prompt }),
+              notification("goal active", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: "goal-turn",
+                goal: codexGoal("active", 10),
+              }),
+              notification("turn done", "turn/completed", {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: "goal-turn", status: "completed" }),
+              }),
+              notification("goal accounted", "thread/goal/updated", {
+                threadId: nativeThreadId,
+                turnId: null,
+                goal: codexGoal("active", 11),
+              }),
+            ],
+          });
+          const sessionScope = yield* Scope.fork(yield* Scope.Scope);
+          const closeGate = yield* makeSessionCloseGate(sessionScope, "turn done");
+          const harness = yield* makeCodexReplayHarness(
+            transcript,
+            undefined,
+            undefined,
+            undefined,
+            closing === "as the turn completes" ? closeGate.beforeEmitInbound : undefined,
+          ).pipe(Scope.provide(sessionScope));
+          const turnInput = makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("goal-hold-closed-attempt"),
+            text: prompt,
+          });
+          yield* harness.runtime.startTurn(turnInput);
+          const closeSession =
+            closing === "as the turn completes"
+              ? yield* closeGate.startClose
+              : Scope.close(sessionScope, Exit.void);
+          yield* harness.until(() =>
+            harness.events.some(
+              (event) =>
+                event.type === "provider_thread.updated" &&
+                event.providerThread.goal?.tokensUsed === 11,
+            ),
+          );
+          const steering = yield* harness.runtime
+            .steerTurn({
+              ...turnInput,
+              providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+                driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                nativeTurnId: "goal-turn",
+              }),
+              message: { ...turnInput.message, text: "Use the smaller change." },
+            })
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          yield* expectSteerFailsOnSessionClose(closeSession, steering);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
-      ),
     );
 
     it.effect("stops a turn Codex starts while the expiry pause is in flight", () =>

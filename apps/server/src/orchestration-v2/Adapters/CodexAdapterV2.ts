@@ -5957,22 +5957,30 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               event.status === "completed" &&
               nativeThreadId != null
             ) {
-              const next = yield* Deferred.make<ActiveCodexTurnContext | undefined>();
-              goalHolds.set(nativeThreadId, {
-                context: input.context,
-                event,
-                completedTurn: input.goalHoldTurn,
-                next,
-              });
-              yield* Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
-                Effect.andThen(pauseUncontinuedGoal(nativeThreadId, event)),
-                Effect.andThen(
-                  turnTerminalizationPermit.withPermits(1)(releaseGoalHold(nativeThreadId, event)),
-                ),
-                Effect.onInterrupt(() => Deferred.succeed(next, undefined)),
-                // The grace window starts when the turn completes, not when the fiber is scheduled.
-                Effect.forkIn(scope, { startImmediately: true }),
-              );
+              const completedTurn = input.goalHoldTurn;
+              yield* Effect.gen(function* () {
+                const next = yield* Deferred.make<ActiveCodexTurnContext | undefined>();
+                goalHolds.set(nativeThreadId, {
+                  context: input.context,
+                  event,
+                  completedTurn,
+                  next,
+                });
+                const grace = yield* Effect.sleep(CODEX_GOAL_CONTINUATION_GRACE).pipe(
+                  Effect.andThen(pauseUncontinuedGoal(nativeThreadId, event)),
+                  Effect.andThen(
+                    turnTerminalizationPermit.withPermits(1)(
+                      releaseGoalHold(nativeThreadId, event),
+                    ),
+                  ),
+                  Effect.onInterrupt(() => Deferred.succeed(next, undefined)),
+                  // The grace window starts when the turn completes, not when the fiber is scheduled.
+                  Effect.forkIn(scope, { startImmediately: true }),
+                );
+                // A session close lands only after this uninterruptible fork, which never
+                // starts in the closed scope and so cannot run its onInterrupt.
+                if (grace.pollUnsafe() !== undefined) yield* Deferred.succeed(next, undefined);
+              }).pipe(Effect.uninterruptible);
               return;
             }
             yield* emitRootTerminal(input.context, event);
@@ -6497,7 +6505,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 driver: CODEX_PROVIDER,
                 turnItem: codexRetryTurnItem(context, state, "running", now),
               });
-              yield* Effect.sleep(retryDelayMs).pipe(
+              const backoff = yield* Effect.sleep(retryDelayMs).pipe(
                 Effect.andThen(
                   Effect.gen(function* () {
                     const nativeThreadId = yield* getNativeThreadId(context.providerThread);
@@ -6561,8 +6569,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.onInterrupt(() => Deferred.succeed(pending, undefined)),
                 Effect.forkIn(scope, { startImmediately: true }),
               );
+              // A session close lands only after this uninterruptible fork, which never
+              // starts in the closed scope and so cannot run its onInterrupt.
+              if (backoff.pollUnsafe() !== undefined) yield* Deferred.succeed(pending, undefined);
               return true;
-            }),
+            }).pipe(Effect.uninterruptible),
           );
         });
 
