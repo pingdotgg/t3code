@@ -187,9 +187,6 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
   maxDeliveryAgeMinutes: Schema.optional(Schema.NullOr(WebhookMaxDeliveryAgeMinutes)),
   dedupe: Schema.optional(ScheduledTaskWebhookDedupe),
   filters: Schema.optional(ScheduledTaskWebhookFilters),
-}).annotate({
-  description:
-    "Run per webhook request. Prompt can use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}}, {{request}}.",
 });
 
 /** Accept legacy sub-minute schedules so users can still manage them. */
