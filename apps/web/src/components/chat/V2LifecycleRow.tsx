@@ -64,6 +64,7 @@ import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
 import { T3Wordmark } from "../T3Wordmark";
+import { textDirection } from "~/textDirection";
 
 export type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
 
@@ -115,7 +116,10 @@ export function V2LifecycleRow(props: {
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/60">
             <MessageSquareIcon className="size-4 text-secondary-label" aria-hidden />
           </span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          <span
+            dir={textDirection(item.title ?? "")}
+            className="min-w-0 flex-1 truncate text-left text-sm font-medium"
+          >
             {item.title ?? "Created thread"}
           </span>
           <Button
@@ -133,7 +137,17 @@ export function V2LifecycleRow(props: {
       <WorkLogRow
         data-v2-item-type={item.type}
         icon={<T3Wordmark className="size-4 text-icon-muted" aria-hidden />}
-        label={<>Created thread{item.title ? ` · ${item.title}` : ""}</>}
+        label={
+          <>
+            Created thread
+            {item.title ? (
+              <>
+                {" · "}
+                <span dir={textDirection(item.title)}>{item.title}</span>
+              </>
+            ) : null}
+          </>
+        }
         trailing={
           <InlineButton
             aria-label={`Open ${item.title ?? "created thread"}`}
