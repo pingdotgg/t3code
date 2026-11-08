@@ -44,6 +44,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { secureCookieName } from "./utils.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
@@ -652,9 +653,13 @@ export function selectRequestCredential(
   cookieName: string,
   legacyCookieName: string | undefined,
 ) {
+  const secureCookieToken = request.cookies[secureCookieName(cookieName)];
+  if (secureCookieToken) {
+    return { token: secureCookieToken, source: "cookie", secure: true } as const;
+  }
   const cookieToken = request.cookies[cookieName];
   if (cookieToken) {
-    return { token: cookieToken, source: "cookie" } as const;
+    return { token: cookieToken, source: "cookie", secure: false } as const;
   }
 
   const bearerToken = parseBearerToken(request);
@@ -677,7 +682,7 @@ export function selectRequestCredential(
 
 type RequestCredentialSource = NonNullable<ReturnType<typeof selectRequestCredential>>["source"];
 
-export const isBrowserCookieCredential = (source: RequestCredentialSource | "dev-cookie") =>
+const isBrowserCookieCredential = (source: RequestCredentialSource | "dev-cookie") =>
   source === "cookie" || source === "legacy-cookie" || source === "dev-cookie";
 
 function firstHeaderValue(value: string | undefined): string | undefined {
@@ -755,7 +760,10 @@ export const make = Effect.gen(function* () {
       sessions.legacyCookieName,
     );
     const hasAuthorization = request.headers.authorization !== undefined;
-    const devCookieToken = devAuth ? request.cookies[devAuth.cookieName] : undefined;
+    const devCookieToken = devAuth
+      ? (request.cookies[secureCookieName(devAuth.cookieName)] ??
+        request.cookies[devAuth.cookieName])
+      : undefined;
     return (
       selectedCredential ??
       (!hasAuthorization && devCookieToken !== undefined

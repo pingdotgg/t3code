@@ -323,6 +323,29 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
     );
 
+    it.effect("prefers the __Secure- session cookie and falls back to the plain one", () =>
+      Effect.gen(function* () {
+        const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
+        const tls = yield* serverAuth.issueSession();
+        const plaintext = yield* serverAuth.issueSession();
+        const both = yield* serverAuth.authenticateHttpRequest({
+          cookies: {
+            [sessions.cookieName]: plaintext.token,
+            [`__Secure-${sessions.cookieName}`]: tls.token,
+          },
+          headers: {},
+        } as never);
+        const plainOnly = yield* serverAuth.authenticateHttpRequest({
+          cookies: { [sessions.cookieName]: plaintext.token },
+          headers: {},
+        } as never);
+
+        expect(both.sessionId).toBe(tls.sessionId);
+        expect(plainOnly.sessionId).toBe(plaintext.sessionId);
+      }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web", host: "192.168.1.50" }))),
+    );
+
     it.effect("prefers a bearer token over an empty primary cookie", () =>
       Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;

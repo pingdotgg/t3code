@@ -35,7 +35,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
+import { deriveAuthClientMetadata, secureCookieName } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { requestUrl } from "../requestUrl.ts";
 
@@ -209,15 +209,22 @@ const sessionCookieOptions = (request: HttpServerRequest.HttpServerRequest) => (
   secure: Option.exists(requestUrl(request), (url) => url.protocol === "https:"),
 });
 
+// Plain http:// can't replace a Secure cookie of the same name, so HTTPS sessions use their own name.
+const sessionCookieFor = (request: HttpServerRequest.HttpServerRequest, name: string) => {
+  const options = sessionCookieOptions(request);
+  return { name: options.secure ? secureCookieName(name) : name, options };
+};
+
 const appendSessionCookie = (
   request: HttpServerRequest.HttpServerRequest,
   cookieName: string,
   token: string,
   expiresAt: DateTime.DateTime,
-) =>
-  Effect.fromResult(
-    Cookies.set(Cookies.empty, cookieName, token, {
-      ...sessionCookieOptions(request),
+) => {
+  const cookie = sessionCookieFor(request, cookieName);
+  return Effect.fromResult(
+    Cookies.set(Cookies.empty, cookie.name, token, {
+      ...cookie.options,
       expires: DateTime.toDate(expiresAt),
     }),
   ).pipe(
@@ -228,6 +235,7 @@ const appendSessionCookie = (
       ),
     ),
   );
+};
 
 export const requireEnvironmentScope = Effect.fn("environment.auth.requireScope")(function* (
   scope: AuthEnvironmentScope,
@@ -324,28 +332,29 @@ export const layer = HttpApiBuilder.group(
               sessions.cookieName,
               sessions.legacyCookieName,
             );
+            const normalCookie = sessionCookieFor(request, sessions.cookieName);
+            // A session cookie from the other scheme belongs to a separate, still-live browser session.
+            const previousSessionToken =
+              previousCredential?.source === "legacy-cookie" ||
+              (previousCredential?.source === "cookie" &&
+                previousCredential.secure === normalCookie.options.secure)
+                ? previousCredential.token
+                : undefined;
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
               deriveAuthClientMetadata({ request }),
-              previousCredential &&
-                EnvironmentAuth.isBrowserCookieCredential(previousCredential.source)
-                ? previousCredential.token
-                : undefined,
+              previousSessionToken,
             );
-            const cookieName = result.cookieName ?? sessions.cookieName;
+            const cookie = sessionCookieFor(request, result.cookieName ?? sessions.cookieName);
             const selectedCookie = yield* Effect.fromResult(
-              Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
-                ...sessionCookieOptions(request),
+              Cookies.set(Cookies.empty, cookie.name, result.sessionToken, {
+                ...cookie.options,
                 expires: DateTime.toDate(result.response.expiresAt),
               }),
             ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
             const sessionCookies = result.expireNormalCookie
               ? yield* Effect.fromResult(
-                  Cookies.expireCookie(
-                    selectedCookie,
-                    sessions.cookieName,
-                    sessionCookieOptions(request),
-                  ),
+                  Cookies.expireCookie(selectedCookie, normalCookie.name, normalCookie.options),
                 ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")))
               : selectedCookie;
 

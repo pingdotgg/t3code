@@ -137,6 +137,11 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           const tlsCookies = tlsResponse.headers.getSetCookie();
           expect(tlsCookies).toHaveLength(2);
           for (const cookie of tlsCookies) expect(cookie).toMatch(/;\s*Secure/i);
+          // An http:// response can't replace a Secure cookie of the same name, so TLS uses its own.
+          expect(tlsCookies).toContainEqual(expect.stringMatching(/^__Secure-t3_dev_session_/));
+          expect(tlsCookies).toContainEqual(
+            expect.stringMatching(/^__Secure-t3_session_[^=]*=;.*Max-Age=0/),
+          );
           const devCookieHeader = devCookie?.split(";", 1)[0] ?? "";
           const environmentBSession = await environmentB.handler(
             new Request("http://127.0.0.1/api/auth/session", {
@@ -166,6 +171,36 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
           expect(restrictedCookies).toHaveLength(1);
           expect(restrictedCookies[0]).toMatch(/^t3_session_/);
           expect(restrictedCookies[0]).not.toContain("t3_dev_session_");
+
+          const httpSessionCookieHeader = restrictedCookies[0]?.split(";", 1)[0] ?? "";
+          const tlsPairingResponse = await environmentA.handler(
+            postJson(
+              "/api/auth/pairing-token",
+              { scopes: ["orchestration:read"] },
+              { cookie: devCookieHeader },
+            ),
+            requestContext,
+          );
+          const tlsPairing = (await tlsPairingResponse.json()) as { credential: string };
+          const tlsSessionResponse = await environmentA.handler(
+            postJson(
+              "/api/auth/browser-session",
+              { credential: tlsPairing.credential },
+              { cookie: httpSessionCookieHeader, "x-forwarded-proto": "https" },
+            ),
+            requestContext,
+          );
+          expect(tlsSessionResponse.status).toBe(200);
+          const tlsSessionCookies = tlsSessionResponse.headers.getSetCookie();
+          expect(tlsSessionCookies).toHaveLength(1);
+          expect(tlsSessionCookies[0]).toMatch(/^__Secure-t3_session_.*;\s*Secure/i);
+          const httpSessionAfterTlsPairing = await environmentA.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: httpSessionCookieHeader },
+            }),
+            requestContext,
+          );
+          expect(await httpSessionAfterTlsPairing.json()).toMatchObject({ authenticated: true });
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
