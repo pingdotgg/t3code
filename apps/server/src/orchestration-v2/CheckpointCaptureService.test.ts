@@ -928,7 +928,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         relationshipToParent: "fork",
         rootThreadId: threadId,
         sideChat: true,
-      },
+      } as const,
     },
     {
       name: "lesson",
@@ -937,7 +937,11 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         depth: "working",
         purpose: "outcome",
       } satisfies OrchestrationV2Lesson,
-      lineage: { parentThreadId: threadId, relationshipToParent: "fork", rootThreadId: threadId },
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+      } as const,
     },
     {
       name: "T3 Learn side chat",
@@ -957,9 +961,13 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         opening: { status: "ready", text: null, requestId: "request:checkpoint-capture" },
         done: null,
       } satisfies OrchestrationV2SideChat,
-      lineage: { parentThreadId: threadId, relationshipToParent: "fork", rootThreadId: threadId },
+      lineage: {
+        parentThreadId: threadId,
+        relationshipToParent: "fork",
+        rootThreadId: threadId,
+      } as const,
     },
-  ])("completes a %s run with a missing checkpoint and never touches git", (testCase) =>
+  ])("completes a $name run with a missing checkpoint and never touches git", (testCase) =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
