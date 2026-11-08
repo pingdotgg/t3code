@@ -64,7 +64,9 @@ import {
 import { isMuseUsageLimitFailure, museUsageLimitResetAt } from "./usageLimits.ts";
 import {
   createMuseSdkHostEffect,
+  MuseSdkError,
   museApprovalMode,
+  museCanonicalPath,
   musePermissionProfile,
   museWorkspaceRoot,
   type createMuseSdkHost,
@@ -247,6 +249,9 @@ const nativeRef = (nativeId: string) => ({
   nativeId,
   strength: "strong" as const,
 });
+/** The roster lists a child under its turn item's native id, so readers can pair the two. */
+const backgroundTaskId = (item: MuseItem) =>
+  item.kind === "subagent" ? item.childSessionId || item.subagentId || item.itemId : item.itemId;
 const recordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/contextUsage",
@@ -289,11 +294,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       if (input.runtimePolicy.interactionMode === "plan")
         return yield* protocolError("Muse Code does not support dedicated Plan mode");
       const scope = yield* Effect.scope;
-      // Muse requires canonical workspace roots and approval paths; resolve symlinks once.
+      // Native realpath also corrects filesystem case, which Muse validates.
       const requestedCwd = input.runtimePolicy.cwd ?? providerHost.paths.cwd;
-      const cwd = yield* fileSystem
-        .realPath(requestedCwd)
-        .pipe(Effect.orElseSucceed(() => requestedCwd));
+      const cwd = yield* museCanonicalPath(requestedCwd);
       const workspaceRoot = yield* museWorkspaceRoot(cwd);
       const now = yield* DateTime.now;
       let session: OrchestrationV2ProviderSession = {
@@ -393,7 +396,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         status: OrchestrationV2ProviderSession["status"],
         lastError: string | null = null,
       ) {
-        session = { ...session, status, lastError, updatedAt: yield* DateTime.now };
+        session = {
+          ...session,
+          status,
+          // lastError is the thread banner, so it gets the failure item's bounded, redacted text.
+          lastError:
+            lastError === null ? null : makeProviderFailure({ message: lastError }).message,
+          updatedAt: yield* DateTime.now,
+        };
         yield* emit({
           type: "provider_session.updated",
           driver: MUSE_PROVIDER,
@@ -598,9 +608,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           item.result?.summary ??
           (status === "failed" ? item.failureReason : undefined);
         const result = resultText ?? null;
-        const nativeTaskRef = item.childSessionId
-          ? nativeRef(item.childSessionId)
-          : nativeRef(item.subagentId ?? item.itemId);
+        const nativeTaskRef = nativeRef(backgroundTaskId(item));
         const subagent: OrchestrationV2Subagent = {
           id: base.nodeId,
           threadId: base.threadId,
@@ -678,7 +686,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const description = item?.objective ?? item?.entryId ?? item?.fallbackText;
             return [
               {
-                taskId: itemId,
+                taskId: item ? backgroundTaskId(item) : itemId,
                 kind:
                   item?.kind === "subagent" ? ("subagent" as const) : ("background_task" as const),
                 ...(description ? { description } : {}),
@@ -717,7 +725,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          const running = observedChildren.has(item.itemId);
+          // Muse reveals a subagent's ids over several revisions, so a running child is
+          // relisted whenever the id its turn item carries moves.
+          const listed = thread?.pendingBackgroundTasks?.some(
+            (task) => task.taskId === backgroundTaskId(item),
+          );
+          if (wasRunning !== running || (running && !listed)) yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -1056,7 +1070,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
         yield* settleObservedChildren("failed");
         if (turn) yield* Queue.fail(events, protocolError(detail, cause));
-        yield* Effect.tryPromise(() => failed.close()).pipe(Effect.ignore, Effect.forkIn(scope));
+        yield* Effect.tryPromise({
+          try: () => failed.close(),
+          catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+        }).pipe(Effect.ignore, Effect.forkIn(scope));
       });
       const owns = (turn: ActiveTurn, turnId: string) =>
         turnId === turn.nativeId || turn.joined.has(turnId);
@@ -1367,7 +1384,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               });
           }
         }
-        if (wake && active?.nativeId !== wake.nativeId) {
+        // Muse compacts the latest run, which can be the held wake; its compaction item ends this turn.
+        if (
+          wake &&
+          active?.nativeId !== wake.nativeId &&
+          !(active?.compact && itemEvent?.kind === "compaction")
+        ) {
           const turnId = typeof params.turnId === "string" ? params.turnId : itemEvent?.turnId;
           if (turnId === wake.nativeId) {
             wake.events.push([method, data]);
@@ -1711,7 +1733,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 closed = true;
                 hostEpoch++;
               }
-              const close = Effect.tryPromise(() => created.close());
+              const close = Effect.tryPromise({
+                try: () => created.close(),
+                catch: (cause) => new MuseSdkError({ operation: "close", cause }),
+              });
               // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
               // keep its close promise pending. Let the scope reap those holders.
               yield* (
@@ -1859,6 +1884,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           );
           if (result.session.sessionId !== nativeSessionId)
             return yield* protocolError("Muse returned a different session identity");
+          if (result.history?.noneReason === "projectionUnavailable")
+            return yield* protocolError(
+              "Muse cannot stream this session because its live view is unavailable",
+            );
           if (requestedId)
             yield* request("session/setApprovalMode", {
               mode: museApprovalMode(args.runtimePolicy.runtimeMode),
@@ -2033,8 +2062,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             lastRunOrdinal: turnInput.runOrdinal,
           });
           yield* updateSession("running");
-          const held = wake;
-          wake = undefined;
+          // Compaction cannot join a running wake, so the wake stays held for its continuation.
+          const held = compact ? undefined : wake;
+          if (held) wake = undefined;
           if (continuation && !held) return yield* finish(turn, "completed");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
@@ -2043,17 +2073,20 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (continuation) return;
         yield* Effect.gen(function* () {
           if (compact) {
-            const result = yield* request("session/compact", {}, true, nativeId).pipe(
+            // The turn's terminal reports a declined compaction; only a broken host fails the command.
+            const declined = yield* request("session/compact", {}, true, nativeId).pipe(
               Effect.flatMap((value) => decode(MuseCompactResult, value)),
+              Effect.map((result) =>
+                result.status === "accepted"
+                  ? undefined
+                  : result.status === "noop"
+                    ? (result.reason ?? "Muse has no context to compact.")
+                    : `Muse returned an unsupported compaction status: ${result.status}`,
+              ),
+              Effect.catch((error) => (broken ? Effect.fail(error) : Effect.succeed(error.detail))),
             );
-            if (result.status === "noop")
-              yield* eventPermit.withPermits(1)(
-                finish(turn, "failed", result.reason ?? "Muse has no context to compact."),
-              );
-            else if (result.status !== "accepted")
-              return yield* protocolError(
-                `Muse returned an unsupported compaction status: ${result.status}`,
-              );
+            if (declined !== undefined)
+              yield* eventPermit.withPermits(1)(finish(turn, "failed", declined));
           } else {
             const result = yield* request(
               "turn/start",
@@ -2233,6 +2266,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         interruptTurn: Effect.fn("MuseAdapter.interruptTurn")(
           function* (args) {
             const turn = active;
+            // Recovering an ended turn is done unless Muse still runs work Stop cannot end.
+            if (
+              !turn &&
+              args.requestRuntimeRestart === true &&
+              observedChildren.size === 0 &&
+              wake === undefined
+            )
+              return;
             if (
               !turn ||
               turn.providerTurn.id !== args.providerTurnId ||
@@ -2245,11 +2286,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (active !== turn) return;
                   hostEpoch++;
-                  yield* Effect.tryPromise(() => host.close()).pipe(
-                    Effect.mapError((cause) => protocolError("Cannot stop Muse compaction", cause)),
-                    Effect.onError(failHost),
-                  );
+                  yield* Effect.tryPromise({
+                    try: () => host.close(),
+                    catch: (cause) => protocolError("Cannot stop Muse compaction", cause),
+                  }).pipe(Effect.onError(failHost));
                   broken = true;
+                  wake = undefined;
                   yield* finish(turn, "interrupted", undefined, "broken");
                   yield* settleObservedChildren("interrupted");
                   yield* updateSession("stopped");

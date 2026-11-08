@@ -1,3 +1,4 @@
+import { usePaneRole } from "../../components/ui/Pane";
 import { Button } from "../../components/ui/Button";
 import {
   applyPullRequestDraftFilterChange,
@@ -6,20 +7,15 @@ import {
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
-import { use, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { use, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  Keyboard,
-  Platform,
-  RefreshControl,
-  ScrollView,
-  View,
-  type ScrollViewProps,
-} from "react-native";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { Keyboard, Platform, Pressable, RefreshControl, View } from "react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { useContentTopInset } from "../../components/ui/useBarInset";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
@@ -32,7 +28,6 @@ import {
   usePullRequestListFilters,
   type PullRequestFilterMenu,
 } from "./PullRequestListFilters";
-import { PullRequestCardRow } from "./PullRequestControls";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -44,39 +39,45 @@ import {
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
   withoutScratchProjectScope,
+  pullRequestProjectChoices,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
+import { useSearchScrollRestoration } from "../layout/workspace/useSearchScrollRestoration";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
-function PullRequestScrollView(props: ScrollViewProps) {
-  return (
-    <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView {...props} />
-    </ScrollViewMarker>
-  );
-}
-
-function PullRequestListErrors(props: { readonly messages: readonly string[] }) {
+function PullRequestListError(props: { readonly message: string }) {
   const [expanded, setExpanded] = useState(false);
-  const title = `${props.messages.length} ${props.messages.length === 1 ? "error" : "errors"} loading pull requests`;
   return (
-    <View>
-      <PullRequestCardRow
-        title={title}
-        icon="exclamationmark.triangle"
-        compact
-        last
-        expanded={expanded}
-        accessibilityLabel={`${title}. ${expanded ? "Hide" : "Show"} details`}
-        onPress={() => setExpanded((value) => !value)}
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={props.message}
+      accessibilityState={{ expanded }}
+      onPress={() => setExpanded((value) => !value)}
+      // A long press selects the text; collapsing under that selection crashes Android's
+      // smart-select animation, so it must not also count as a press.
+      onLongPress={() => undefined}
+      className="min-h-11 flex-row items-center gap-3 px-4 py-2.5 active:opacity-70"
+    >
+      <SymbolView
+        name="exclamationmark.triangle"
+        size={18}
+        tintColorClassName="accent-icon-muted"
       />
-      {expanded ? (
-        <Text selectable className="px-4 pb-3 text-sm text-foreground-muted">
-          {props.messages.join("\n")}
-        </Text>
-      ) : null}
-    </View>
+      <Text
+        selectable={expanded}
+        numberOfLines={expanded ? undefined : 1}
+        ellipsizeMode="tail"
+        className="min-w-0 flex-1 text-sm text-foreground-muted"
+      >
+        {props.message}
+      </Text>
+      <SymbolView
+        name={expanded ? "chevron.up" : "chevron.down"}
+        size={11}
+        tintColorClassName="accent-icon-muted"
+      />
+    </Pressable>
   );
 }
 
@@ -97,6 +98,7 @@ export function PullRequestsScreen(
   const { environments } = useWorkspaceState();
   const configs = useAtomValue(environmentServerConfigsAtom);
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   // UIKit insets the list by its column's safe area, which this context can report as 0.
   const columnSafeBottom = useNativeColumnLayoutMetrics()?.safeArea.bottom;
   const bottomSafeArea =
@@ -104,21 +106,12 @@ export function PullRequestsScreen(
   const listRef = useRef<LegendListRef>(null);
   const tab = workspace.state.tabs.pullRequests;
   const [initialScrollOffset] = useState(() => workspace.getScrollOffset("pullRequests"));
-  // Cancelling search restores the offset recorded when search opened. The
-  // toolbar that cancels has no handle on this list, so the list scrolls itself
-  // once it sees the tab come back to resting.
-  const previousSearchMode = useRef(tab.searchMode);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the offset saved when search opened once the tab returns to resting
-  useEffect(() => {
-    const restoringSearch =
-      previousSearchMode.current !== "resting" && tab.searchMode === "resting";
-    previousSearchMode.current = tab.searchMode;
-    if (restoringSearch)
-      void listRef.current?.scrollToOffset({
-        offset: tab.scrollOffset - (Platform.OS === "ios" ? insets.top : 0),
-        animated: false,
-      });
-  }, [tab.searchMode, tab.scrollOffset, insets.top]);
+  useSearchScrollRestoration(tab.searchMode, () => {
+    void listRef.current?.scrollToOffset({
+      offset: tab.scrollOffset - contentTopInset,
+      animated: false,
+    });
+  });
   const maintainVisiblePosition = {
     data: tab.searchMode === "resting",
     shouldRestorePosition: () => workspace.getScrollOffset("pullRequests") > 0,
@@ -180,7 +173,8 @@ export function PullRequestsScreen(
     connectedTargets.map((target) => target.environmentId),
     result.updateEntry,
   );
-  const sidebar = props.sidebar === true || primaryColumn !== null;
+  const paneRole = usePaneRole();
+  const sidebar = props.sidebar === true || (primaryColumn !== null && paneRole === "sidebar");
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
   const connectedKey = connectedTargets.map((target) => target.environmentId).join("\n");
   const entries = useMemo(
@@ -221,10 +215,14 @@ export function PullRequestsScreen(
   }
   const labelColors =
     knownFacets.environmentId === environmentId ? knownFacets.labelColors : facets.labelColors;
-  const projects = allProjects.filter(
-    (project) =>
-      !project.isScratch && (environmentId === null || project.environmentId === environmentId),
-  );
+  const projects = pullRequestProjectChoices(allProjects, {
+    environmentId,
+    controls,
+    environmentLabels: new Map(
+      environments.map((item) => [item.environmentId, item.environmentLabel]),
+    ),
+    servesPullRequests: (id) => configs.get(id)?.environment.capabilities.pullRequests === true,
+  });
   const filters = usePullRequestListFilters({
     environments: environments.map((item) => ({
       id: String(item.environmentId),
@@ -241,7 +239,7 @@ export function PullRequestsScreen(
       if (update.query !== typedQuery)
         workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
       void listRef.current?.scrollToOffset({
-        offset: Platform.OS === "ios" ? -insets.top : 0,
+        offset: -contentTopInset,
         animated: false,
       });
     },
@@ -296,18 +294,16 @@ export function PullRequestsScreen(
         // to this tab. The thread list shows none either.
         showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
-        renderScrollComponent={Platform.OS === "ios" ? PullRequestScrollView : undefined}
+        renderScrollComponent={NativeScrollView}
         // UIKit owns the bar's inset, so a minimizing bar and a resized column move
         // the list in the same frame as the bar.
         contentInsetAdjustmentBehavior="automatic"
         // A plain offset: LegendList adds the list header to an index-based restore, which
         // landed every return one header lower.
         initialScrollOffset={
-          initialScrollOffset > 0
-            ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
-            : undefined
+          initialScrollOffset > 0 ? initialScrollOffset - contentTopInset : undefined
         }
-        contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+        contentInsetStartAdjustment={contentTopInset}
         contentContainerStyle={{
           paddingBottom:
             Math.max(bottomSafeArea, workspace.bottomClearance) -
@@ -316,26 +312,26 @@ export function PullRequestsScreen(
         onScroll={(event) => {
           workspace.recordScrollOffset(
             "pullRequests",
-            Math.max(
-              0,
-              event.nativeEvent.contentOffset.y + (Platform.OS === "ios" ? insets.top : 0),
-            ),
+            Math.max(0, event.nativeEvent.contentOffset.y + contentTopInset),
           );
         }}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         renderItem={renderPullRequest}
+        // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
+        ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
             <PullRequestListFilters sidebar={sidebar} filters={filters} />
             {result.data?.errors.length ? (
-              <PullRequestListErrors
-                key={JSON.stringify(targets)}
-                messages={result.data.errors.map(
-                  (error) =>
-                    `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
-                )}
-              />
+              <View key={JSON.stringify(targets)}>
+                {result.data.errors.map((error) => (
+                  <PullRequestListError
+                    key={`${error.environmentId} ${error.projectTitle} ${error.message}`}
+                    message={`${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`}
+                  />
+                ))}
+              </View>
             ) : null}
           </>
         }
