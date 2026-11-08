@@ -153,6 +153,25 @@ describe("server browser element refs", () => {
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
   });
 
+  it("types after a click by coordinates into a shadow-root field, and refuses a field inside an editable frame", async () => {
+    await page.setContent(
+      `<div id="host"></div><div contenteditable="true"><iframe srcdoc="<input id=inner>"></iframe></div><script>document.getElementById("host").attachShadow({mode:"open"}).innerHTML = "<input id=field>";</script>`,
+    );
+    const field = page.locator("#host #field");
+    const box = (await field.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await ServerBrowserPage.type(page, { text: "shadow" });
+    expect(await field.inputValue()).toBe("shadow");
+
+    // Refused for now: focus inside a frame cannot be checked from the top document.
+    const inner = page.frameLocator("iframe").locator("#inner");
+    await inner.click();
+    await expect(ServerBrowserPage.type(page, { text: "frame" })).rejects.toMatchObject({
+      tag: "PreviewAutomationTargetNotEditableError",
+    });
+    expect(await inner.inputValue()).toBe("");
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
@@ -515,6 +534,55 @@ describe("server browser evaluate", () => {
         "Runtime.evaluate",
         "Runtime.terminateExecution",
       ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser type", () => {
+  // As on a desktop tab whose Playwright utility world never answers.
+  const stalledPage = (focusAnswer: () => Promise<unknown>, typed: string[]) =>
+    ({
+      locator: () => ({ last: () => ({ count: () => new Promise<number>(() => {}) }) }),
+      evaluate: focusAnswer,
+      keyboard: { insertText: async (text: string) => void typed.push(text) },
+    }) as unknown as Page;
+
+  it("types into the focused field when Playwright's utility world never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(async () => true, typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toBe("typed");
+      expect(typed).toEqual(["hello"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops at its timeout without typing when the page never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(() => new Promise(() => {}), typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(typed).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
