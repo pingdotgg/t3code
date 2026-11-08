@@ -916,6 +916,25 @@ describe("buildThreadFeed", () => {
       label: "Worked for 2s",
     });
 
+    const lessonCollapsed = deriveThreadFeedPresentation(
+      feed,
+      latestRun,
+      new Set(),
+      new Set(),
+      null,
+      false,
+      undefined,
+      undefined,
+      true,
+    );
+    expect(lessonCollapsed.map((entry) => entry.id)).toEqual([
+      "message-user",
+      "message-opening",
+      "run-fold:run-1",
+      "message-middle",
+      "message-assistant",
+    ]);
+
     // Teaching before a lesson card stays visible beside it, even with work between.
     const card: OrchestrationV2TurnItem = {
       ...base("item-card", "2026-06-20T00:00:02.700Z", 2),

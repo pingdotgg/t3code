@@ -357,6 +357,7 @@ export interface ThreadFeedProps {
   /** Null while the thread's creation is queued: reading detail then caches a not-found as deleted. */
   readonly detailRef: ScopedThreadRef | null;
   readonly threadTitle: string;
+  readonly lesson?: boolean;
   readonly workspaceRoot?: string | null;
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly pendingHandoff?: HandoffEndpoints | null;
@@ -2641,6 +2642,7 @@ function useThreadFeedPresentation(
       props.runlessWorkActive ?? false,
       feedCache,
       { toolCallVisibility: props.toolCallVisibility ?? "showAll", revealedMessageId },
+      props.lesson ?? false,
     ),
     props.feed,
     props.queuedMessages,

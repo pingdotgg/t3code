@@ -1077,6 +1077,7 @@ function deriveThreadFeedRunFolds(
   latestRun: ThreadFeedLatestRun | null,
   runlessWorkActive: boolean,
   feedFailedRunIds: ReadonlySet<RunId>,
+  lesson: boolean,
 ): ReadonlyMap<string, ThreadFeedRunFold> {
   const terminalAssistantMessageIdByRun = new Map<RunId, string>();
   const interruptedRunIds = new Set<RunId>();
@@ -1179,6 +1180,7 @@ function deriveThreadFeedRunFolds(
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             entry.type !== "quiz-card" &&
+            !(lesson && entry.type === "message" && entry.message.role === "assistant") &&
             !cardLeadIds.has(entry.id) &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
             !(
@@ -1522,6 +1524,7 @@ export function deriveThreadFeedPresentation(
   runlessWorkActive = false,
   cache?: ThreadFeedCache,
   display: ThreadFeedDisplay = DEFAULT_THREAD_FEED_DISPLAY,
+  lesson = false,
 ): ThreadFeedEntry[] {
   const previous = cache?.presentation ?? null;
   const restart = presentationRestart(
@@ -1611,7 +1614,13 @@ export function deriveThreadFeedPresentation(
   }
   const foldsByAnchorId = zen
     ? new Map<string, ThreadFeedRunFold>()
-    : deriveThreadFeedRunFolds(sourceFeed, latestRun, isWorking && runlessWorkActive, failedRunIds);
+    : deriveThreadFeedRunFolds(
+        sourceFeed,
+        latestRun,
+        isWorking && runlessWorkActive,
+        failedRunIds,
+        lesson,
+      );
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedRunIds.has(fold.runId)) {

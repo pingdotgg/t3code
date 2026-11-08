@@ -3486,6 +3486,10 @@ export default function ChatView(props: ChatViewProps) {
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
+                  lesson={
+                    serverProjection?.thread.lesson !== undefined ||
+                    activeThreadShell?.source.sideChat !== undefined
+                  }
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}

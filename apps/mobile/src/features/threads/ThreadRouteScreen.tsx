@@ -973,6 +973,9 @@ function ThreadRouteContent(
             )
           }
           canOperateThread={canOperateThread}
+          lesson={
+            selectedThreadDetail?.thread.lesson !== undefined || selectedThread.sideChat != null
+          }
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}
           contentPresentation={contentPresentation}

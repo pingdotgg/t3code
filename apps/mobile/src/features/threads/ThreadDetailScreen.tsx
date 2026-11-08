@@ -227,6 +227,7 @@ export interface ThreadDetailScreenProps {
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
   readonly selectedThread: EnvironmentThreadShell;
+  readonly lesson?: boolean;
   /** Use this for detail reads; it stays null until queued creation reaches the server. */
   readonly selectedThreadDetailRef: ScopedThreadRef | null;
   readonly contentPresentation: ThreadContentPresentation;
@@ -1495,6 +1496,7 @@ function ThreadDetailBody(
                 environmentId={props.environmentId}
                 threadId={props.selectedThread.id}
                 detailRef={props.selectedThreadDetailRef}
+                lesson={props.lesson}
                 workspaceRoot={props.threadCwd}
                 feed={props.selectedThreadFeed}
                 pendingHandoff={props.pendingHandoff}

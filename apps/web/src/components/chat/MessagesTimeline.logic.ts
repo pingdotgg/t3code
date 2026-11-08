@@ -1018,6 +1018,7 @@ function deriveTurnFolds(input: {
   latestRun: TimelineLatestRun | null;
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
+  lesson: boolean;
   liveSubagentEntryIds: ReadonlySet<string>;
   completeSupersededReplyEntryIds: ReadonlySet<string>;
 }): ReadonlyMap<string, TurnFold> {
@@ -1173,6 +1174,7 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      if (input.lesson && entry.kind === "message" && entry.message.role === "assistant") continue;
       if (cardLeadIds.has(entry.id)) continue;
       hiddenEntryIds.add(entry.id);
     }
@@ -1506,6 +1508,7 @@ function deriveTimelineTurnFolds(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "lesson"
   >,
 ) {
   if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
@@ -1523,6 +1526,7 @@ function deriveTimelineTurnFolds(
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
+    lesson: input.lesson === true,
     liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
     completeSupersededReplyEntryIds: completeSupersededReplyEntryIds(timelineEntries),
   });
@@ -1543,6 +1547,7 @@ export function deriveMessagesTimelineRows(input: {
   answeredCardIds?: ReadonlySet<string>;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
+  lesson?: boolean;
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
@@ -1631,6 +1636,7 @@ export function deriveMessagesTimelineRows(input: {
           latestRun: input.latestRun ?? null,
           unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
           runlessWorkActive,
+          lesson: input.lesson === true,
           liveSubagentEntryIds,
           completeSupersededReplyEntryIds: completeSupersededReplyIds,
         });
@@ -2459,6 +2465,7 @@ export function timelineTurnFoldRunIdsByEntryId(
     | "runningRunId"
     | "toolCallVisibility"
     | "revealedMessageId"
+    | "lesson"
   >,
 ): ReadonlyMap<string, RunId> {
   const byEntryId = new Map<string, RunId>();
