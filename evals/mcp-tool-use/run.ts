@@ -50,7 +50,13 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
+import {
+  type CardPurpose,
+  cardReplyProblem,
+  quizCardProblem,
+  readQuestionCard,
+  readQuizCard,
+} from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -868,6 +874,8 @@ type Sample = {
   readonly priorResults: Map<unknown, string>;
   /** The agent's visible text so far in this sample. */
   readonly said: Array<string>;
+  /** Real tutor text shown since the learner's last message. */
+  shownSinceLastUser: number;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -913,6 +921,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     secretRequests: 0,
     priorResults: new Map(),
     said: [],
+    shownSinceLastUser: 0,
   };
 };
 
@@ -1721,8 +1730,15 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
             ? "Invalid question card."
             : undefined;
       if (problem !== undefined) return failed(problem);
+      const replyProblem = cardReplyProblem({
+        reply,
+        purpose: CARD_PURPOSES.find((purpose) => isRecord(input) && input.purpose === purpose),
+        shownBefore: sample.shownSinceLastUser,
+      });
+      if (replyProblem !== undefined) return failed(replyProblem);
       // The app shows a card's reply as the tutor's message text.
       sample.said.push(reply);
+      sample.shownSinceLastUser += reply.length;
     }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
@@ -1749,6 +1765,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     : toolResult(call.id, output);
 });
 
+const CARD_PURPOSES: ReadonlyArray<CardPurpose> = ["opening-check", "explain-back"];
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
 /**
  * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
@@ -2246,6 +2263,10 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         : [block.thinking];
     });
     said.push(...texts);
+    sample.shownSinceLastUser += response.content.reduce(
+      (total, block) => (isText(block) ? total + block.text.length : total),
+      0,
+    );
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {

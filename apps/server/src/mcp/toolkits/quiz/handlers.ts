@@ -1,8 +1,16 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
+import {
+  type CardPurpose,
+  cardReplyProblem,
+  quizCardProblem,
+  readQuestionCard,
+  readQuizCard,
+} from "@t3tools/shared/quizCard";
 
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { readThread } from "../../threadAccess.ts";
 import { QuizToolkit } from "./tools.ts";
 
 const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now, without repeating the question or options; their pick, confidence and thinking arrive as their next message. Then:
@@ -12,6 +20,44 @@ const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now, with
 
 const QUESTION_CARD_SHOWN =
   "Shown to the learner as a card. End your turn now without repeating the question; their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
+
+// Card replies are appended after other messages and queued sends sit in delivery order, so sort by time.
+export const shownTutorText = (
+  messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: string;
+    readonly text: string;
+    readonly createdAt: DateTime.Utc;
+  }>,
+) => {
+  const ordered = messages.toSorted(
+    (a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt),
+  );
+  const lastUser = ordered.findLastIndex((message) => message.role === "user");
+  return ordered
+    .slice(lastUser + 1)
+    .filter(
+      (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
+    )
+    .reduce((total, message) => total + message.text.length, 0);
+};
+
+const readShownTutorText = readThread(undefined, ["messages"]).pipe(
+  Effect.map(({ projection }) => shownTutorText(projection.messages)),
+  Effect.orElseSucceed(() => undefined),
+);
+
+const refuseThinReply = Effect.fn("quiz.refuseThinReply")(function* (
+  reply: string,
+  purpose: CardPurpose | undefined,
+) {
+  const shownBefore = yield* readShownTutorText;
+  const problem =
+    shownBefore === undefined ? undefined : cardReplyProblem({ reply, purpose, shownBefore });
+  if (problem !== undefined) {
+    return yield* new OrchestratorMcpFailure({ code: "invalid_request", message: problem });
+  }
+});
 
 const handlers = {
   quiz_card: McpToolAccess.readsAsCaller((input) =>
@@ -27,7 +73,11 @@ const handlers = {
           message: problem ?? "Invalid quiz card.",
         });
       }
-      return { quizCard: { ...card, reply: input.reply.trim() }, message: QUIZ_CARD_SHOWN };
+      yield* refuseThinReply(input.reply, input.purpose);
+      return {
+        quizCard: { ...card, reply: input.reply.trim() },
+        message: QUIZ_CARD_SHOWN,
+      };
     }),
   ),
   question_card: McpToolAccess.readsAsCaller((input) =>
@@ -40,7 +90,11 @@ const handlers = {
             "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
         });
       }
-      return { questionCard: { ...card, reply: input.reply.trim() }, message: QUESTION_CARD_SHOWN };
+      yield* refuseThinReply(input.reply, input.purpose);
+      return {
+        questionCard: { ...card, reply: input.reply.trim() },
+        message: QUESTION_CARD_SHOWN,
+      };
     }),
   ),
 } satisfies McpToolAccess.Handlers<typeof QuizToolkit.tools>;
