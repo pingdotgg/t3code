@@ -34,6 +34,8 @@ export function AttachmentDocumentBody(props: {
   readonly name: string;
   readonly environmentId: EnvironmentId | null;
   readonly htmlRender: boolean;
+  /** Custom build: text an html_render page's `t3Compose(text)` hands to its thread's draft. */
+  readonly onHtmlRenderCompose?: (text: string) => void;
   readonly nativeViewer: "pending" | "open" | "unavailable" | null;
   readonly nativeError: string | null;
   readonly onOpenNative: () => void;
@@ -90,7 +92,13 @@ export function AttachmentDocumentBody(props: {
   }
   if (document.kind === "html") {
     return props.htmlRender ? (
-      <HtmlRenderWebView key={document.uri} uri={document.uri} title={props.name} nested={false} />
+      <HtmlRenderWebView
+        key={document.uri}
+        uri={document.uri}
+        title={props.name}
+        nested={false}
+        {...(props.onHtmlRenderCompose ? { onCompose: props.onHtmlRenderCompose } : {})}
+      />
     ) : (
       <WorkspaceFileWebPreview uri={document.uri} />
     );

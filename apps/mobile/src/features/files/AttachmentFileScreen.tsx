@@ -14,11 +14,20 @@ import { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { nativeViewerErrorMessage } from "../../lib/attachmentDownload";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { removeComposerDraftAttachment, useComposerDraft } from "../../state/use-composer-drafts";
+import {
+  getComposerDraftSnapshot,
+  removeComposerDraftAttachment,
+  setComposerDraftText,
+  useComposerDraft,
+} from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { useRefreshAssetUrl } from "../../state/assets";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import {
+  appendHtmlRenderComposeText,
+  requestHtmlRenderCompose,
+} from "../threads/htmlRenderCompose";
 import { isZipFile, ZipArchiveView } from "./ZipArchiveView";
 import { AttachmentDocumentBody, nativeViewerKind } from "./AttachmentDocumentBody";
 
@@ -98,6 +107,26 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
       setNativeViewer("unavailable");
       return;
     }
+    handleBack();
+  };
+  // Custom build: a full-screen html_render page's own button (t3Compose) appends to the draft of
+  // the thread the page belongs to, then goes back to that thread, as the desktop's expanded view
+  // composes too. The thread screen underneath takes it when it shows that thread.
+  const htmlRenderThreadKey =
+    params.htmlRender === "1" && environmentId && params.threadId
+      ? scopedThreadKey(environmentId, ThreadId.make(params.threadId))
+      : null;
+  const leftForHtmlRenderCompose = useRef(false);
+  const handleHtmlRenderCompose = (threadKey: string, text: string) => {
+    if (!requestHtmlRenderCompose({ threadKey, text })) {
+      setComposerDraftText(
+        threadKey,
+        appendHtmlRenderComposeText(getComposerDraftSnapshot(threadKey).text, text),
+      );
+    }
+    // One button may hand over several pieces of text; go back only once.
+    if (leftForHtmlRenderCompose.current) return;
+    leftForHtmlRenderCompose.current = true;
     handleBack();
   };
   const removeFromDraft = () => {
@@ -248,6 +277,12 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         name={params.name}
         environmentId={environmentId}
         htmlRender={params.htmlRender === "1"}
+        {...(htmlRenderThreadKey
+          ? {
+              onHtmlRenderCompose: (text: string) =>
+                handleHtmlRenderCompose(htmlRenderThreadKey, text),
+            }
+          : {})}
         nativeViewer={nativeViewer}
         nativeError={nativeError}
         onOpenNative={() => {
