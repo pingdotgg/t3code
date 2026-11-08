@@ -1,4 +1,9 @@
-import type { ModelSelection, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import type {
+  ContextBreakdownKind,
+  ModelSelection,
+  ProviderDriverKind,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import {
   resolveSelectableProviderInstanceEntry,
   type ProviderInstanceEntry,
@@ -6,14 +11,48 @@ import {
 import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 
-/** Cache and reasoning are subsets of input and output, respectively. Unclassified
- * context stays visible when a provider reports only part of the breakdown. */
+const CONTEXT_BREAKDOWN_LABELS: Record<ContextBreakdownKind, string> = {
+  system_prompt: "System prompt",
+  system_tools: "System tools",
+  mcp_tools: "MCP tools",
+  t3_tools: "T3 Code tools",
+  memory_files: "Memory files",
+  skills: "Skills",
+  custom_agents: "Custom agents",
+  messages: "Messages",
+  other: "Other",
+};
+
+// Rows sort largest first, so the bar steps from dark to light. The lightest stays above the track.
+const CONTEXT_BREAKDOWN_COLORS = [
+  "bg-black/80 dark:bg-white/80",
+  "bg-black/64 dark:bg-white/64",
+  "bg-black/50 dark:bg-white/50",
+  "bg-black/40 dark:bg-white/40",
+  "bg-black/32 dark:bg-white/32",
+  "bg-black/26 dark:bg-white/26",
+  "bg-black/20 dark:bg-white/20",
+] as const;
+
+/** A provider's own category breakdown wins. Otherwise cache and reasoning are subsets of
+ * input and output, and unclassified context stays visible when only part is reported. */
 export function contextWindowSegments(
   usage: Pick<
     ContextWindowSnapshot,
     "usedTokens" | "inputTokens" | "cachedInputTokens" | "outputTokens" | "reasoningOutputTokens"
-  >,
+  > &
+    Partial<Pick<ContextWindowSnapshot, "breakdown">>,
 ) {
+  const categories = (usage.breakdown ?? [])
+    .filter((category) => category.tokens > 0)
+    .toSorted((a, b) => b.tokens - a.tokens);
+  if (categories.length > 0) {
+    return categories.map((category, index) => ({
+      label: CONTEXT_BREAKDOWN_LABELS[category.kind],
+      tokens: category.tokens,
+      color: CONTEXT_BREAKDOWN_COLORS[Math.min(index, CONTEXT_BREAKDOWN_COLORS.length - 1)]!,
+    }));
+  }
   const input = usage.inputTokens ?? usage.cachedInputTokens ?? 0;
   const cached = Math.min(input, usage.cachedInputTokens ?? 0);
   const output = usage.outputTokens ?? usage.reasoningOutputTokens ?? 0;
