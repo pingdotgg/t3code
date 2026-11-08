@@ -5862,8 +5862,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // An explicit restart that Stop reached has only its start left; it starts
-    // once the stop settles and leaves the stopped queue's hold in place.
+    // An explicit restart that Stop reached has only its start left, so it
+    // queues behind the stopping run like any other start.
     if (
       dispatchMode.type === "restart_active" &&
       (yield* stopReachedRun(command, command.threadId, dispatchMode.targetRunId))
