@@ -233,6 +233,19 @@ it.live("lists projects and all threads through HTTP, with project and status fi
     assert.deepStrictEqual(yield* TestConsole.errorLines, [
       "No T3 Code project matches 'missing-project'. Pass a project id or a path inside a project.",
     ]);
+    yield* Effect.callback<void>((resume) => {
+      server.close(() => resume(Effect.void));
+      server.closeAllConnections();
+    });
+    for (const run of [runProject, runThread]) {
+      const errorsBefore = (yield* TestConsole.errorLines).length;
+      const unreachable = yield* run(["list", ...flags]).pipe(Effect.result);
+      assert(unreachable._tag === "Failure");
+      assert.isFalse(Runtime.getErrorReported(unreachable.failure));
+      assert.deepStrictEqual((yield* TestConsole.errorLines).slice(errorsBefore), [
+        `Could not read projects and threads from the T3 Code server using ${baseDir}. Check that the server is running, then retry.`,
+      ]);
+    }
     const offlineBaseDir = `${baseDir}/offline`;
     for (const run of [runProject, runThread]) {
       const errorsBefore = (yield* TestConsole.errorLines).length;

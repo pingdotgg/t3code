@@ -50,9 +50,20 @@ class DiscoveryProjectNotFoundError extends Schema.TaggedError<DiscoveryProjectN
   }
 }
 
+class DiscoverySnapshotReadError extends Schema.TaggedError<DiscoverySnapshotReadError>()(
+  "DiscoverySnapshotReadError",
+  { baseDir: Schema.String, cause: Schema.Defect() },
+) {
+  override readonly [Runtime.errorReported] = false;
+  override get message() {
+    return `Could not read projects and threads from the T3 Code server using ${this.baseDir}. Check that the server is running, then retry.`;
+  }
+}
+
 export const DiscoveryCliError = Schema.Union([
   DiscoveryServerNotRunningError,
   DiscoveryProjectNotFoundError,
+  DiscoverySnapshotReadError,
 ]);
 const isDiscoveryCliError = Schema.is(DiscoveryCliError);
 
@@ -148,6 +159,9 @@ export const withDiscoverySnapshot = Effect.fn("cli.discovery.withSnapshot")(fun
       (session) =>
         readSnapshot(state.value.origin, session.token).pipe(
           Effect.timeout("10 seconds"),
+          Effect.mapError(
+            (cause) => new DiscoverySnapshotReadError({ baseDir: config.baseDir, cause }),
+          ),
           Effect.flatMap(run),
         ),
       (session) => auth.revokeSession(session.sessionId).pipe(Effect.ignore({ log: true })),
