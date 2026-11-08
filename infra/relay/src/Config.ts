@@ -66,6 +66,8 @@ export class RelayConfiguration extends Context.Service<
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
+    readonly betaGatewayDomain?: string;
+    readonly betaGatewaySecret?: Redacted.Redacted<string>;
     readonly managedEndpointBaseDomain: string | undefined;
     readonly managedEndpointNamespace: string | undefined;
     readonly managedEndpointCleanupMode?: ManagedEndpointCleanupMode;

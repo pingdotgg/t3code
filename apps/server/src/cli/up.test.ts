@@ -83,6 +83,14 @@ it.each([
     on: true,
   },
   {
+    label: "a beta link",
+    cliDesired: true,
+    cliMode: "beta",
+    managedTunnel: false,
+    revoked: false,
+    on: true,
+  },
+  {
     label: "a publish-only link",
     cliDesired: true,
     cliMode: "publish_only",

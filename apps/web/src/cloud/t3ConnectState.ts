@@ -10,11 +10,7 @@ export function isManagedTunnelActive(
   relayProviderKind: RelayManagedEndpointProviderKind | undefined,
 ) {
   const localManagedTunnel = linkState.managedTunnelActive ?? linkState.linked;
-  return (
-    linkState.linkRevoked !== true &&
-    localManagedTunnel &&
-    (relayProviderKind === undefined || relayProviderKind === "cloudflare_tunnel")
-  );
+  return linkState.linkRevoked !== true && localManagedTunnel && relayProviderKind !== "manual";
 }
 
 // The URL ends up in commands people paste into a shell, so only plain DNS names pass.

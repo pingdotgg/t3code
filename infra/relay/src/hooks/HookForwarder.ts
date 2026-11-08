@@ -361,6 +361,10 @@ const make = Effect.gen(function* () {
         yield* outcome(error);
         return errorResponse(status, error);
       }
+      if (stored === "retired") {
+        yield* outcome("hook_not_found");
+        return hookNotFound();
+      }
       if (!stored) {
         yield* outcome("inbox_full");
         return errorResponse(503, "inbox_full");

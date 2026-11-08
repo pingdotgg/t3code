@@ -114,6 +114,7 @@ export const migrate = Effect.gen(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS held_hooks_hook ON held_hooks (hook_key)`;
+  yield* sql`CREATE TABLE IF NOT EXISTS held_hooks_retired (id INTEGER PRIMARY KEY CHECK (id = 1))`;
 
   yield* sql`
     CREATE TABLE IF NOT EXISTS held_hooks_target (
@@ -167,7 +168,7 @@ const hasPending = Effect.gen(function* () {
   return rows.length > 0;
 });
 
-/** First attempt's due time, or null if the full inbox stored nothing. */
+/** First attempt's due time, null for a full inbox, or "retired" for a permanently unlinked hostname. */
 export const hold = Effect.fn("HookInboxStore.hold")(function* (hook: HeldHook, baseUrl: string) {
   const sql = yield* SqlClient.SqlClient;
   // One statement enforces caps across concurrent requests.
@@ -176,7 +177,8 @@ export const hold = Effect.fn("HookInboxStore.hold")(function* (hook: HeldHook, 
       (id, received_at, method, raw_hook_id, raw_token, hook_key, query, headers, body)
     SELECT ${hook.id}, ${hook.receivedAt}, ${hook.method}, ${hook.rawHookId}, ${hook.rawToken},
       ${hook.hookKey}, ${hook.query}, ${encodeHeaders(hook.headers)}, ${hook.body}
-    WHERE (SELECT count(*) FROM held_hooks) < ${HOOK_INBOX_MAX_REQUESTS}
+    WHERE NOT EXISTS (SELECT 1 FROM held_hooks_retired)
+      AND (SELECT count(*) FROM held_hooks) < ${HOOK_INBOX_MAX_REQUESTS}
       AND (SELECT count(*) FROM held_hooks WHERE hook_key = ${hook.hookKey})
         < ${HOOK_INBOX_MAX_PER_HOOK}
       AND (SELECT coalesce(sum(length(body)), 0) FROM held_hooks) + ${hook.body.byteLength}
@@ -185,8 +187,9 @@ export const hold = Effect.fn("HookInboxStore.hold")(function* (hook: HeldHook, 
     RETURNING id
   `;
   if (inserted.length === 0) {
-    yield* Effect.annotateCurrentSpan({ "relay.inbox.refused": yield* refusalReason(hook) });
-    return null;
+    const reason = yield* refusalReason(hook);
+    yield* Effect.annotateCurrentSpan({ "relay.inbox.refused": reason });
+    return reason === "retired" ? ("retired" as const) : null;
   }
   yield* setTarget(baseUrl, { resetFailures: false });
   const target = yield* readTarget;
@@ -208,6 +211,7 @@ const backlogSize = Effect.gen(function* () {
 
 const refusalReason = Effect.fn("HookInboxStore.refusalReason")(function* (hook: HeldHook) {
   const sql = yield* SqlClient.SqlClient;
+  if ((yield* sql`SELECT 1 FROM held_hooks_retired`).length) return "retired";
   const existing = yield* sql<{ readonly id: string }>`
       SELECT id FROM held_hooks WHERE id = ${hook.id}
     `;
@@ -228,6 +232,12 @@ export const clear = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM held_hooks`;
   yield* sql`DELETE FROM held_hooks_target`;
+});
+
+export const retire = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`INSERT OR IGNORE INTO held_hooks_retired (id) VALUES (1)`;
+  yield* clear;
 });
 
 export const deliverDue = Effect.fn("HookInboxStore.deliverDue")(function* <R>(

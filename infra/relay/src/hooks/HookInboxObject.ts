@@ -21,9 +21,9 @@ export class HookInboxObject extends Cloudflare.DurableObject<
   HookInboxObject,
   {
     /** Holds a request for `baseUrl`; false when the inbox is full and nothing was stored. */
-    readonly hold: (hook: HookInboxStore.HeldHook, baseUrl: string) => Call<boolean>;
+    readonly hold: (hook: HookInboxStore.HeldHook, baseUrl: string) => Call<boolean | "retired">;
     readonly wake: (baseUrl: string) => Call<boolean>;
-    readonly clear: () => Call<void>;
+    readonly clear: (retire?: boolean) => Call<void>;
   }
 >()("HookInboxObject") {}
 
@@ -92,7 +92,8 @@ export const layer = HookInboxObject.make(
         hold: Effect.fnUntraced(
           function* (hook: HookInboxStore.HeldHook, baseUrl: string) {
             const dueAt = yield* run(HookInboxStore.hold(hook, baseUrl));
-            yield* Effect.annotateCurrentSpan({ "relay.inbox.stored": dueAt !== null });
+            yield* Effect.annotateCurrentSpan({ "relay.inbox.stored": typeof dueAt === "number" });
+            if (dueAt === "retired") return dueAt;
             if (dueAt === null) return false;
             yield* scheduleBy(dueAt);
             return true;
@@ -109,8 +110,8 @@ export const layer = HookInboxObject.make(
           withInboxSpan("relay.inbox.wake", inboxId),
         ),
         clear: Effect.fnUntraced(
-          function* () {
-            yield* run(HookInboxStore.clear);
+          function* (retire?: boolean) {
+            yield* run(retire ? HookInboxStore.retire : HookInboxStore.clear);
             yield* state.storage.deleteAlarm();
           },
           withInboxSpan("relay.inbox.clear", inboxId),

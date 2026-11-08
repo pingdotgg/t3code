@@ -107,8 +107,9 @@ const ENDPOINT_KEY = /^[0-9a-f]{16}$/;
 export function relayHookBaseUrl(input: {
   readonly relayUrl: string;
   readonly tunnelName: string | undefined;
+  readonly endpointKey?: string | undefined;
 }): string | null {
-  const endpointKey = input.tunnelName?.split("-").at(-1);
+  const endpointKey = input.endpointKey ?? input.tunnelName?.split("-").at(-1);
   const relayUrl = input.relayUrl.replace(/\/+$/, "");
   if (relayUrl === "" || endpointKey === undefined || !ENDPOINT_KEY.test(endpointKey)) {
     return null;

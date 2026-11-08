@@ -82,6 +82,20 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   );
   const ray = response.headers["cf-ray"];
   const requestId = ray && /^[a-zA-Z0-9-]{1,128}$/.test(ray) ? ` Cloudflare Ray ID: ${ray}.` : "";
+  if (Option.isSome(decoded) && decoded.value._tag === "RelayEnvironmentLinkUnavailableError") {
+    const { reason, traceId } = decoded.value;
+    const hint =
+      reason === "unlink_before_switching_transport"
+        ? "Run `t3 connect unlink` before switching this environment's transport."
+        : reason === "beta_gateway_not_configured"
+          ? "Choose a beta-enabled relay before enrolling this environment."
+          : undefined;
+    if (hint)
+      return yield* new RelayRequestError({
+        rejection: "rejected",
+        description: `${hint} Trace ID: ${traceId}.`,
+      });
+  }
   const description = Option.isSome(decoded)
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;

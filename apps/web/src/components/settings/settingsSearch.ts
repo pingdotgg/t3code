@@ -513,6 +513,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
   },
   {
+    id: "t3-connect-unlimited",
+    title: "T3 Connect Unlimited (beta)",
+    to: "/settings/labs",
+    scope: "environment",
+    searchTerms: ["beta t3 connect tunnel gateway unlimited free link remote cloudflare"],
+    desktopOnly: true,
+  },
+  {
     id: "simlock-hosts",
     title: "Simlock device hosts (alpha)",
     to: "/settings/labs",

@@ -69,6 +69,24 @@ it.effect("retries an expired link proof but not a revoked bearer, both 401", ()
   }),
 );
 
+it.effect.each([
+  { reason: "unlink_before_switching_transport", hint: "t3 connect unlink" },
+  { reason: "beta_gateway_not_configured", hint: "beta-enabled relay" },
+])("stops retrying when the relay reports $reason", ({ reason, hint }) =>
+  Effect.gen(function* () {
+    const error = yield* filterRelayResponse(
+      response(503, {
+        _tag: "RelayEnvironmentLinkUnavailableError",
+        code: "environment_link_unavailable",
+        reason,
+        traceId: "trace-beta",
+      }),
+    ).pipe(Effect.flip);
+    expect(shouldRetryRelayRequest(error)).toBe(false);
+    expect(error.message).toContain(hint);
+  }),
+);
+
 it.effect("reports an unrecognized access denial without printing its response body", () =>
   Effect.gen(function* () {
     const error = yield* filterRelayResponse(

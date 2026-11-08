@@ -14,6 +14,7 @@ import { useState } from "react";
 import { toastManager } from "../components/ui/toast";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
 import { relayFailureReason } from "./relayFailureReason";
+import { environmentPresentations } from "../state/presentation";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -62,10 +63,16 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
     reportFailure: false,
   });
   const cloudLinkState = useCloudLinkState(environmentId);
-  const relayEnvironments = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).environments;
+  const relayDiscovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const relayProviderKind = environmentId
-    ? relayEnvironments.get(environmentId)?.environment.endpoint.providerKind
+    ? relayDiscovery.environments.get(environmentId)?.environment.endpoint.providerKind
     : undefined;
+  const serverConfigs = useAtomValue(environmentPresentations.serverConfigsAtom);
+  // The machine's Labs choice applies only while its relay offers the beta.
+  const linkThroughBeta =
+    relayDiscovery.betaGatewayLinkLimit !== undefined &&
+    environmentId !== null &&
+    serverConfigs.get(environmentId)?.settings.connectBetaGatewayEnabled === true;
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
@@ -174,16 +181,30 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         return false;
       }
       const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
-      if (
+      const mode = !desired.managedTunnel ? "publish_only" : linkThroughBeta ? "beta" : "managed";
+      const relink =
         !currentLinkState.linked ||
         currentLinkState.linkRevoked === true ||
-        currentManagedTunnel !== desired.managedTunnel
-      ) {
-        const linkResult = await linkEnvironment({
-          target,
-          clerkToken,
-          mode: desired.managedTunnel ? "managed" : "publish_only",
-        });
+        currentManagedTunnel !== desired.managedTunnel;
+      // The relay never changes a link to or from the beta in place, so drop the old link first.
+      const replacesLink =
+        relink &&
+        currentLinkState.linked &&
+        currentLinkState.linkRevoked !== true &&
+        (relayProviderKind === "t3_relay") !== (mode === "beta");
+      if (relink) {
+        if (replacesLink) {
+          const unlinkResult = await unlinkEnvironment({ target, clerkToken });
+          if (unlinkResult._tag === "Failure") {
+            if (!isAtomCommandInterrupted(unlinkResult)) {
+              reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
+            }
+            cloudLinkState.refresh();
+            await refreshRelayEnvironments();
+            return false;
+          }
+        }
+        const linkResult = await linkEnvironment({ target, clerkToken, mode });
         // Any link attempt can change the account's tunnel count.
         refreshManagedTunnelUsage();
         if (linkResult._tag === "Failure") {
@@ -202,12 +223,14 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         cloudLinkState.refresh();
         return false;
       }
+      // Unlinking cleared the hold preference, so the replacement link keeps the old one.
+      const holdWebhooksWhileOffline =
+        desired.holdWebhooksWhileOffline ??
+        (replacesLink ? currentLinkState.holdWebhooksWhileOffline : undefined);
       const prefResult = await updateEnvironmentPreferences({
         target,
         publishAgentActivity: desired.publish,
-        ...(desired.holdWebhooksWhileOffline === undefined
-          ? {}
-          : { holdWebhooksWhileOffline: desired.holdWebhooksWhileOffline }),
+        ...(holdWebhooksWhileOffline === undefined ? {} : { holdWebhooksWhileOffline }),
       });
       if (prefResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(prefResult)) {

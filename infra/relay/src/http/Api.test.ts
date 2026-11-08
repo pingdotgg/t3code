@@ -4,6 +4,7 @@ import {
   RelayClientPrincipal,
   type RelayClientDeviceRecord,
 } from "@t3tools/contracts/relay";
+import * as BetaGatewayLinks from "../environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinker from "../environments/EnvironmentLinker.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
 import * as Devices from "../agentActivity/Devices.ts";
@@ -95,12 +96,71 @@ const relaySettings: RelayConfiguration.RelayConfiguration["Service"] = {
 const encodeLinkRequest = Schema.encodeEffect(Schema.fromJsonString(RelayEnvironmentLinkRequest));
 const decodeLinkUnavailableError = Schema.decodeUnknownEffect(RelayEnvironmentLinkUnavailableError);
 
+describe("beta gateway authorization", () => {
+  it.effect("only returns named routes for an authenticated, bounded batch", () =>
+    Effect.gen(function* () {
+      const tokenHash = "a".repeat(64);
+      const key = "test gateway credential".repeat(2);
+      const calls: Array<ReadonlyArray<string>> = [];
+      const routes = [{ tokenHash, hostname: "0123456789abcdef.beta.example.test" }];
+      const handlers = RelayHttpApi.layerGatewayApi.pipe(
+        Layer.provide(RelayHttpApi.layerGatewayAuth),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(RelayConfiguration.RelayConfiguration, {
+              ...relaySettings,
+              betaGatewaySecret: Redacted.make(key),
+            }),
+            Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {
+              authorizeBetaConnectors: (hashes) =>
+                Effect.sync(() => {
+                  calls.push(hashes);
+                  return routes;
+                }),
+            }),
+          ),
+        ),
+      );
+      const app = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          HttpRouter.toWebHandler(
+            HttpApiBuilder.layer(HttpApi.make("RelayApi").add(RelayApi.groups.gateway)).pipe(
+              Layer.provide(handlers),
+              Layer.provide(HttpServer.layerServices),
+            ),
+            { disableLogger: true },
+          ),
+        ),
+        (handler) => Effect.promise(() => handler.dispose()),
+      );
+      const post = (secret: string, tokenHashes: ReadonlyArray<string>) =>
+        Effect.promise(() =>
+          app.handler(
+            new Request("https://relay.test/v1/gateway/authorize", {
+              method: "POST",
+              headers: { "content-type": "application/json", authorization: `Bearer ${secret}` },
+              body: JSON.stringify({ tokenHashes }),
+            }),
+          ),
+        );
+      expect((yield* post("invalid", [tokenHash])).status).toBe(401);
+      expect((yield* post(key, new Array<string>(257).fill(tokenHash))).status).toBe(400);
+      const valid = yield* post(key, [tokenHash]);
+      expect(valid.status).toBe(200);
+      expect(valid.headers.get("cache-control")).toBe("no-store");
+      expect(yield* Effect.promise(() => valid.json())).toEqual({ routes });
+      expect(calls).toEqual([[tokenHash]]);
+    }),
+  );
+});
+
 describe("managed endpoint provisioning errors", () => {
   it.effect("returns the failed stage without exposing provider secrets through HTTP", () => {
     let traceId = "";
     const handlers = RelayHttpApi.layerClientApi.pipe(
       HttpRouter.provideRequest(
         Layer.mergeAll(
+          Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
           Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
@@ -220,6 +280,7 @@ describe("device listing compatibility", () => {
     const layerHandlers = RelayHttpApi.layerClientApi.pipe(
       HttpRouter.provideRequest(
         Layer.mergeAll(
+          Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
           Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
@@ -307,6 +368,7 @@ describe("Cloudflare rate-limit retry hint", () => {
     const layerHandlers = RelayHttpApi.layerClientApi.pipe(
       HttpRouter.provideRequest(
         Layer.mergeAll(
+          Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
           Layer.mock(EnvironmentCredentials.EnvironmentCredentials, {}),
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
           Layer.mock(ManagedEndpointProvider.ManagedEndpointProvider, {}),
@@ -521,6 +583,7 @@ function layerRelayUnlinkTest(input?: {
   readonly clearInbox?: HookInbox.HookInbox["Service"]["clear"];
 }) {
   return Layer.mergeAll(
+    Layer.mock(BetaGatewayLinks.BetaGatewayLinks, { finishBetaRetirement: () => Effect.void }),
     Layer.mock(HookInbox.HookInbox, {
       clear: input?.clearInbox ?? (() => Effect.void),
     }),

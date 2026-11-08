@@ -14,7 +14,11 @@ describe("EnvironmentLinks", () => {
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
-          return { onConflictDoUpdate: () => Effect.void };
+          return {
+            onConflictDoUpdate: () => ({
+              returning: () => Effect.succeed([{ environmentId: "env-1" }]),
+            }),
+          };
         },
       }),
     } as unknown as RelayDb.RelayDb["Service"];

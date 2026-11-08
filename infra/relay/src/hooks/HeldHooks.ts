@@ -9,6 +9,7 @@ import {
   managedEndpointTunnelNameForKey,
 } from "../deploymentConfig.ts";
 import { validateManagedEndpoint } from "../environments/EnvironmentConnector.ts";
+import * as BetaGatewayLinks from "../environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import * as HookInbox from "./HookInbox.ts";
@@ -20,6 +21,7 @@ export const endpointKeyForTunnelName = (namespace: string, tunnelName: string):
 };
 
 type PersistenceError =
+  | BetaGatewayLinks.BetaGatewayPersistenceError
   | EnvironmentLinks.EnvironmentLinkEnvironmentLookupPersistenceError
   | ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
 
@@ -50,6 +52,7 @@ export class HeldHooks extends Context.Service<
 
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const betaLinks = yield* BetaGatewayLinks.BetaGatewayLinks;
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
   const settings = yield* RelayConfiguration.RelayConfiguration;
   const inbox = yield* HookInbox.HookInbox;
@@ -57,6 +60,10 @@ const make = Effect.gen(function* () {
   const resolveEndpoint: HeldHooks["Service"]["resolveEndpoint"] = Effect.fn(
     "relay.hooks.resolve_endpoint",
   )(function* (endpointKey) {
+    if (settings.betaGatewayDomain) {
+      const beta = yield* betaLinks.findHookEndpoint(endpointKey);
+      if (beta !== null) return beta;
+    }
     if (!settings.managedEndpointNamespace) return null;
     const allocation = yield* allocations.getByTunnelName(
       managedEndpointTunnelNameForKey(settings.managedEndpointNamespace, endpointKey),
@@ -90,6 +97,10 @@ const make = Effect.gen(function* () {
     const ownLinks = yield* links.findActiveManagedForEnvironment(input);
     const keys: Array<string> = [];
     for (const link of ownLinks) {
+      if (link.endpoint.providerKind === "t3_relay") {
+        if (link.betaEndpointKey) keys.push(link.betaEndpointKey);
+        continue;
+      }
       const allocation = yield* allocations.get({
         userId: link.userId,
         environmentId: input.environmentId,

@@ -1,3 +1,4 @@
+import { isNotNull } from "drizzle-orm";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
@@ -72,6 +73,9 @@ export const relayEnvironmentLinks = pgTable(
     endpointHttpBaseUrl: text("endpoint_http_base_url").notNull(),
     endpointWsBaseUrl: text("endpoint_ws_base_url").notNull(),
     endpointProviderKind: varchar("endpoint_provider_kind", { length: 32 }).notNull(),
+    betaEnrollmentId: varchar("beta_enrollment_id", { length: 255 }),
+    betaEndpointKey: varchar("beta_endpoint_key", { length: 16 }),
+    betaConnectorHash: varchar("beta_connector_hash", { length: 64 }),
     notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
     liveActivitiesEnabled: boolean("live_activities_enabled").notNull().default(true),
     managedTunnelsEnabled: boolean("managed_tunnels_enabled").notNull().default(false),
@@ -84,6 +88,12 @@ export const relayEnvironmentLinks = pgTable(
   (table) => [
     primaryKey({ columns: [table.userId, table.environmentId] }),
     index("idx_relay_environment_links_environment").on(table.environmentId, table.revokedAt),
+    uniqueIndex("idx_relay_environment_links_beta_key")
+      .on(table.betaEndpointKey)
+      .where(isNotNull(table.betaEndpointKey)),
+    uniqueIndex("idx_relay_environment_links_beta_hash")
+      .on(table.betaConnectorHash)
+      .where(isNotNull(table.betaConnectorHash)),
   ],
 );
 

@@ -28,6 +28,8 @@ import * as RelayClient from "@t3tools/shared/relayClient";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as BetaGatewayTunnel from "./BetaGatewayTunnel.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINK_REVOKED } from "./config.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
@@ -62,14 +64,18 @@ const emptySecretStoreLayer = Layer.mock(ServerSecretStore.ServerSecretStore)({
   set: () => Effect.void,
 });
 
+const unusedBetaGateway = Layer.mock(BetaGatewayTunnel.BetaGatewayConnector)({});
+
 const runtimeDependencies = (
   spawner: ReturnType<typeof ChildProcessSpawner.make>,
   relayClientLayer = layerRelayClientAvailable,
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
+  betaGatewayLayer = unusedBetaGateway,
 ) =>
   Layer.mergeAll(
     ManagedPolicy.layerTest(),
+    betaGatewayLayer,
     Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Layer.succeed(HttpClient.HttpClient, httpClient),
     relayClientLayer,
@@ -83,11 +89,20 @@ const buildCloudManagedEndpointRuntime = (
   httpClient = unusedHttpClient,
   secretStoreLayer = emptySecretStoreLayer,
   env: Record<string, string> = {},
+  betaGatewayLayer = unusedBetaGateway,
 ) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(
       ManagedEndpointRuntime.layer.pipe(
-        Layer.provide(runtimeDependencies(spawner, relayClientLayer, httpClient, secretStoreLayer)),
+        Layer.provide(
+          runtimeDependencies(
+            spawner,
+            relayClientLayer,
+            httpClient,
+            secretStoreLayer,
+            betaGatewayLayer,
+          ),
+        ),
       ),
     );
     return yield* Effect.service(ManagedEndpointRuntime.CloudManagedEndpointRuntime).pipe(
@@ -407,6 +422,119 @@ describe("CloudManagedEndpointRuntime", () => {
       options.transport === undefined ? {} : { TUNNEL_TRANSPORT_PROTOCOL: options.transport };
     return { spawner, env, spawned, killed, exits, started, emit, observe };
   });
+
+  const betaConfig = {
+    providerKind: "t3_relay",
+    connectorToken: "only-for-this-route",
+    gatewayUrl: "wss://connector.beta.test/connect",
+    hostname: "0123456789abcdef.beta.test",
+  } satisfies RelayManagedEndpointRuntimeConfig;
+
+  const makeBetaGateway = Effect.fnUntraced(function* (outcome: Effect.Effect<void>) {
+    const runs = yield* Queue.unbounded<BetaGatewayTunnel.BetaGatewayConnection>();
+    const stopped = yield* Queue.unbounded<string>();
+    const layer = Layer.succeed(
+      BetaGatewayTunnel.BetaGatewayConnector,
+      BetaGatewayTunnel.BetaGatewayConnector.of({
+        run: (input) =>
+          Queue.offer(runs, input).pipe(
+            Effect.andThen(outcome),
+            Effect.onInterrupt(() => Queue.offer(stopped, input.connectorToken)),
+          ),
+      }),
+    );
+    return { layer, runs, stopped };
+  });
+
+  it.effect("runs the beta connector in process against this server's own listener", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const gateway = yield* makeBetaGateway(Effect.never);
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        Layer.mock(RelayClient.RelayClient)({
+          resolve: Effect.die("beta must not probe or install cloudflared"),
+        }),
+        unusedHttpClient,
+        emptySecretStoreLayer,
+        {},
+        gateway.layer,
+      );
+      for (const [config, origin] of [
+        [betaConfig, "http://192.0.2.2:42"],
+        [
+          { ...betaConfig, gatewayUrl: "wss://other.example.test/connect" },
+          "http://127.0.0.1:3780",
+        ],
+      ] as const) {
+        expect(yield* runtime.applyConfig(config, origin)).toMatchObject({
+          status: "failed",
+          failure: "invalid-config",
+        });
+      }
+      expect(yield* runtime.applyConfig(betaConfig, "http://[::1]:3780")).toMatchObject({
+        status: "running",
+        providerKind: "t3_relay",
+      });
+      const run = yield* Queue.take(gateway.runs);
+      expect(run).toMatchObject({
+        gatewayUrl: betaConfig.gatewayUrl,
+        connectorToken: betaConfig.connectorToken,
+        origin: { host: "::1", port: 3780 },
+      });
+      expect(yield* runtime.inspectConnector).toMatchObject({
+        readyConnections: 0,
+        hostname: null,
+      });
+      yield* run.onReadyChange(true);
+      yield* Stream.runHead(runtime.tunnelConnected);
+      expect(yield* runtime.inspectConnector).toMatchObject({
+        readyConnections: 1,
+        hostname: betaConfig.hostname,
+        protocol: "wss",
+      });
+      yield* runtime.applyConfig(betaConfig, "http://[::1]:3780");
+      expect(yield* Queue.size(gateway.runs)).toBe(0);
+      // A new listener port moves the route to it.
+      yield* runtime.applyConfig(betaConfig, "http://[::1]:3781");
+      expect(yield* Queue.take(gateway.stopped)).toBe(betaConfig.connectorToken);
+      expect((yield* Queue.take(gateway.runs)).origin.port).toBe(3781);
+      yield* runtime.applyConfig(null);
+      expect(yield* Queue.take(gateway.stopped)).toBe(betaConfig.connectorToken);
+      expect(yield* runtime.inspectConnector).toBeNull();
+      expect(fixture.spawned).toEqual([]);
+    }),
+  );
+
+  it.effect("marks the link revoked when the gateway rejects the saved beta token", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeTransportSpawner();
+      const gateway = yield* makeBetaGateway(Effect.void);
+      const marked = yield* Deferred.make<void>();
+      const runtime = yield* buildCloudManagedEndpointRuntime(
+        fixture.spawner,
+        layerRelayClientAvailable,
+        unusedHttpClient,
+        Layer.mock(ServerSecretStore.ServerSecretStore)({
+          get: (key) =>
+            Effect.succeed(
+              key === CLOUD_ENDPOINT_RUNTIME_CONFIG
+                ? Option.some(new TextEncoder().encode(JSON.stringify(betaConfig)))
+                : Option.none(),
+            ),
+          set: (key) =>
+            key === CLOUD_LINK_REVOKED
+              ? Deferred.succeed(marked, undefined).pipe(Effect.asVoid)
+              : Effect.die("unexpected secret"),
+        }),
+        {},
+        gateway.layer,
+      );
+      yield* runtime.applyConfig(betaConfig, "http://127.0.0.1:3773");
+      yield* Deferred.await(marked);
+      expect(yield* runtime.inspectConnector).toBeNull();
+    }),
+  );
 
   it.effect("restarts only the inspected connector and supervises its replacement", () =>
     Effect.gen(function* () {

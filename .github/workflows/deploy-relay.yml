@@ -40,6 +40,7 @@ jobs:
       RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
       RELAY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_TUNNEL_CLEANUP_MODE }}
       RELAY_LEGACY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_LEGACY_TUNNEL_CLEANUP_MODE }}
+      RELAY_BETA_GATEWAY_DOMAIN: ${{ vars.RELAY_BETA_GATEWAY_DOMAIN }}
       RELAY_ALERT_NOTIFIER_ID: ${{ vars.RELAY_ALERT_NOTIFIER_ID }}
       RELAY_WARNING_NOTIFIER_ID: ${{ vars.RELAY_WARNING_NOTIFIER_ID }}
       CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
@@ -81,6 +82,7 @@ jobs:
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
           T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
+          RELAY_BETA_GATEWAY_SECRET: ${{ secrets.RELAY_BETA_GATEWAY_SECRET }}
 
       - name: Publish relay deploy commit status
         uses: actions/github-script@v8

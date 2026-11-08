@@ -30,6 +30,7 @@ import {
 import * as CloudflareApiPause from "./CloudflareApiPause.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedTunnelLimits from "./ManagedTunnelLimits.ts";
+import type { BetaGatewayLinkConflict } from "./EnvironmentLinks.ts";
 
 export class ManagedEndpointProvisioningNotConfigured extends Schema.TaggedError<ManagedEndpointProvisioningNotConfigured>()(
   "ManagedEndpointProvisioningNotConfigured",
@@ -135,6 +136,7 @@ export type ManagedEndpointProviderError =
   | ManagedEndpointProvisioningNotConfigured
   | ManagedEndpointProvisioningFailed
   | ManagedEndpointOriginNotAllowed
+  | BetaGatewayLinkConflict
   | ManagedTunnelLimits.ManagedTunnelLimitExceeded;
 
 export interface ManagedEndpointProvisioningResult {

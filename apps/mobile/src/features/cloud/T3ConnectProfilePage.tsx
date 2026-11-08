@@ -31,6 +31,7 @@ function linkedAtLabel(value: string): string {
 }
 
 function endpointLabel(environment: RelayClientEnvironmentRecord): string {
+  if (environment.endpoint.providerKind === "t3_relay") return "T3 Connect Unlimited (beta)";
   return environment.endpoint.providerKind === "cloudflare_tunnel"
     ? "Managed tunnel"
     : "Activity publishing only";

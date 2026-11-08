@@ -24,6 +24,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import * as CloudMintSigner from "../auth/CloudMintSigner.ts";
 import * as RelayConfiguration from "../Config.ts";
+import * as BetaGatewayLinks from "../environments/BetaGatewayLinks.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "../environments/ManagedEndpointAllocations.ts";
 import { RELAY_HTTP_ROUTER_CONFIG, traceRelayHttpRequestWith } from "../http/Api.ts";
@@ -83,6 +84,7 @@ const managedLink = {
 };
 
 interface Harness {
+  readonly beta?: boolean;
   readonly execute?: (
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
@@ -111,7 +113,24 @@ function makeHarness(options: Harness = {}) {
     Layer.provide(CloudMintSigner.layer),
     Layer.provide(
       Layer.mergeAll(
-        Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
+        Layer.succeed(RelayConfiguration.RelayConfiguration, {
+          ...settings,
+          ...(options.beta ? { betaGatewayDomain: "beta.example.test" } : {}),
+        }),
+        Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {
+          findHookEndpoint: (key) =>
+            Effect.succeed(
+              key === endpointKey
+                ? {
+                    httpBaseUrl: `https://${key}.beta.example.test/`,
+                    wsBaseUrl: `wss://${key}.beta.example.test/ws`,
+                    providerKind: "t3_relay",
+                    environmentId,
+                    holdWhileOffline: true,
+                  }
+                : null,
+            ),
+        }),
         Layer.mock(EnvironmentLinks.EnvironmentLinks, {
           findActiveManagedForEnvironment: (input) =>
             Effect.succeed(
@@ -506,21 +525,34 @@ describe("HookForwarder", () => {
         }),
       );
 
-    it.effect("holds when cloudflared answers that the local server is down", () =>
-      Effect.gen(function* () {
-        for (const status of [502, 503, 504, 530]) {
-          const harness = makeHarness({
-            links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
-            execute: (request) =>
-              Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status }))),
-          });
-          const response = yield* harness.send(
-            new Request(hookUrl(), { method: "POST", body: "{}" }),
-          );
-          expect(response.status).toBe(202);
-          expect(harness.held).toHaveLength(1);
-        }
-      }),
+    it.effect(
+      "holds transport failures and preserves application responses on both transports",
+      () =>
+        Effect.gen(function* () {
+          for (const [status, beta] of [
+            [502, false],
+            [503, false],
+            [504, false],
+            [530, false],
+            [503, true],
+            [502, true],
+            [404, true],
+          ] as const) {
+            const harness = makeHarness({
+              beta,
+              links: [{ ...managedLink, holdWebhooksWhileOffline: true }],
+              execute: (request) =>
+                Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status }))),
+            });
+            const response = yield* harness.send(
+              new Request(hookUrl(), { method: "POST", body: "{}" }),
+            );
+            expect(response.status).toBe(status === 404 ? 404 : 202);
+            expect(harness.held).toHaveLength(status === 404 ? 0 : 1);
+            if (beta && status !== 404)
+              expect(harness.held[0]?.baseUrl).toBe(`https://${endpointKey}.beta.example.test/`);
+          }
+        }),
     );
 
     it.effect("stays a plain proxy when the environment has not opted in", () =>

@@ -137,3 +137,9 @@ sign-up. An enabled empty allowlist blocks all new sign-ups.
 
 Sign-up restrictions do not revoke an existing account's access. Ban the account in Clerk when
 its active sessions and future sign-ins must be disabled.
+
+## T3 Connect Unlimited (beta)
+
+The relay offers the beta only when `RELAY_BETA_GATEWAY_DOMAIN` (a GitHub variable for
+production) and `RELAY_BETA_GATEWAY_SECRET` (a secret) are set. Deploy the gateway first:
+clients show the Labs option as soon as the relay offers it. [Gateway setup](../../infra/connect-gateway/README.md)

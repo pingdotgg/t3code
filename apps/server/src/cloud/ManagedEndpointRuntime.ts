@@ -28,6 +28,12 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as BetaGatewayTunnel from "./BetaGatewayTunnel.ts";
+import {
+  CLOUD_ENDPOINT_RUNTIME_CONFIG,
+  CLOUD_LINK_REVOKED,
+  decodeRuntimeConfig,
+} from "./config.ts";
 
 export type CloudManagedEndpointRuntimeStatus =
   | {
@@ -36,14 +42,18 @@ export type CloudManagedEndpointRuntimeStatus =
   | {
       readonly status: "failed";
       readonly providerKind: RelayManagedEndpointRuntimeConfig["providerKind"];
-      readonly failure: "unsupported-platform" | "not-installed" | "spawn-failed";
+      readonly failure:
+        | "unsupported-platform"
+        | "not-installed"
+        | "spawn-failed"
+        | "invalid-config";
       readonly reason: string;
       readonly tunnelId?: string;
       readonly tunnelName?: string;
     }
   | {
       readonly status: "running";
-      readonly providerKind: "cloudflare_tunnel";
+      readonly providerKind: "cloudflare_tunnel" | "t3_relay";
       readonly pid: number;
       readonly tunnelId?: string;
       readonly tunnelName?: string;
@@ -65,8 +75,10 @@ export interface ConnectorFacts {
 export class CloudManagedEndpointRuntime extends Context.Service<
   CloudManagedEndpointRuntime,
   {
+    /** `localOrigin` is this server's own listener, which a beta link forwards to. */
     readonly applyConfig: (
       config: RelayManagedEndpointRuntimeConfig | null,
+      localOrigin?: string,
     ) => Effect.Effect<CloudManagedEndpointRuntimeStatus>;
     /** `null` when no connector is running. */
     readonly inspectConnector: Effect.Effect<ConnectorFacts | null>;
@@ -194,6 +206,45 @@ function runtimeConfigKey(config: RelayManagedEndpointRuntimeConfig): string {
   });
 }
 
+type BetaRuntimeConfig = Extract<
+  RelayManagedEndpointRuntimeConfig,
+  { readonly providerKind: "t3_relay" }
+>;
+
+interface BetaConnector {
+  readonly scope: Scope.Closeable;
+  readonly configKey: string;
+  readonly config: BetaRuntimeConfig;
+  readonly ready: Ref.Ref<boolean>;
+}
+
+const BETA_HOSTNAME = /^[a-f0-9]{16}(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u;
+
+/** The loopback listener a beta link may reach. The relay never chooses the target. */
+function betaOrigin(config: BetaRuntimeConfig, localOrigin: string | undefined) {
+  const origin = localOrigin ? URL.parse(localOrigin) : null;
+  const gateway = URL.parse(config.gatewayUrl);
+  if (
+    !origin ||
+    origin.protocol !== "http:" ||
+    !["127.0.0.1", "[::1]"].includes(origin.hostname) ||
+    !origin.port ||
+    localOrigin !== `http://${origin.hostname}:${origin.port}` ||
+    !gateway ||
+    gateway.protocol !== "wss:" ||
+    gateway.username ||
+    gateway.password ||
+    gateway.search ||
+    gateway.hash ||
+    gateway.pathname !== "/connect" ||
+    !BETA_HOSTNAME.test(config.hostname) ||
+    gateway.host !== `connector.${config.hostname.slice(config.hostname.indexOf(".") + 1)}`
+  ) {
+    return null;
+  }
+  return { host: origin.hostname === "[::1]" ? "::1" : origin.hostname, port: Number(origin.port) };
+}
+
 const stopConnector = (connector: ActiveConnector | null) =>
   connector
     ? Scope.close(connector.scope, Exit.void).pipe(
@@ -210,11 +261,13 @@ const stopConnector = (connector: ActiveConnector | null) =>
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const relayClient = yield* RelayClient.RelayClient;
+  const betaGateway = yield* BetaGatewayTunnel.BetaGatewayConnector;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
   // Without T3 Connect no connector ever runs, whoever asks for one.
   const connectAllowed = ManagedLimits.allowsConnect(yield* ManagedPolicy.ManagedPolicy);
   const activeRef = yield* Ref.make<ActiveConnector | null>(null);
+  const betaRef = yield* Ref.make<BetaConnector | null>(null);
   const desiredConfigRef = yield* Ref.make<RelayManagedEndpointRuntimeConfig | null>(null);
   const recoveryRequests = yield* Queue.sliding<RelayManagedEndpointRuntimeConfig>(1);
   const tunnelConnections = yield* Queue.sliding<void>(1);
@@ -329,6 +382,89 @@ export const make = Effect.gen(function* () {
   const stopActive = Effect.gen(function* () {
     const active = yield* Ref.getAndSet(activeRef, null);
     yield* stopConnector(active);
+  });
+
+  const stopBeta = Effect.gen(function* () {
+    const beta = yield* Ref.getAndSet(betaRef, null);
+    if (beta) yield* Scope.close(beta.scope, Exit.void);
+  });
+
+  // The gateway tells a revoked grant apart from an outage. A replaced connector cannot revoke its successor.
+  const markBetaRevoked = (connector: BetaConnector) =>
+    reconcileSemaphore
+      .withPermits(1)(
+        Effect.gen(function* () {
+          if ((yield* Ref.get(betaRef)) !== connector) return;
+          yield* Ref.set(betaRef, null);
+          const stored = yield* secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG);
+          const saved = Option.flatMap(stored, (bytes) =>
+            decodeRuntimeConfig(new TextDecoder().decode(bytes)),
+          );
+          if (
+            Option.isSome(saved) &&
+            saved.value.providerKind === "t3_relay" &&
+            saved.value.connectorToken === connector.config.connectorToken
+          ) {
+            yield* secrets.set(CLOUD_LINK_REVOKED, new TextEncoder().encode("true"));
+            yield* Effect.logWarning(
+              "T3 Connect no longer accepts this environment's beta link. Link it again to restore remote access.",
+            );
+          }
+          yield* Queue.offer(readinessChanges, undefined);
+        }),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not record the revoked beta link", { cause }),
+        ),
+      );
+
+  const reconcileBeta = Effect.fn("CloudManagedEndpointRuntime.reconcileBeta")(function* (
+    config: BetaRuntimeConfig,
+    localOrigin: string | undefined,
+  ) {
+    const origin = betaOrigin(config, localOrigin);
+    if (origin === null) {
+      yield* stopBeta;
+      return {
+        status: "failed",
+        providerKind: "t3_relay",
+        failure: "invalid-config",
+        reason: "Invalid beta gateway endpoint or local origin.",
+      } satisfies CloudManagedEndpointRuntimeStatus;
+    }
+    const running = {
+      status: "running",
+      providerKind: "t3_relay",
+      pid: process.pid,
+    } satisfies CloudManagedEndpointRuntimeStatus;
+    const configKey = [config.connectorToken, config.gatewayUrl, config.hostname, localOrigin].join(
+      "\n",
+    );
+    if ((yield* Ref.get(betaRef))?.configKey === configKey) return running;
+    yield* stopBeta;
+    const connector: BetaConnector = {
+      scope: yield* Scope.make(),
+      configKey,
+      config,
+      ready: yield* Ref.make(false),
+    };
+    yield* Ref.set(betaRef, connector);
+    yield* betaGateway
+      .run({
+        gatewayUrl: config.gatewayUrl,
+        connectorToken: config.connectorToken,
+        origin,
+        onReadyChange: (ready) =>
+          Ref.set(connector.ready, ready).pipe(
+            Effect.andThen(Queue.offer(readinessChanges, undefined)),
+            Effect.andThen(ready ? Queue.offer(tunnelConnections, undefined) : Effect.void),
+            Effect.asVoid,
+          ),
+      })
+      .pipe(Effect.andThen(markBetaRevoked(connector)), Effect.forkIn(connector.scope));
+    yield* Effect.logInfo("T3 Connect beta connector started", { hostname: config.hostname });
+    return running;
   });
 
   // Lives until connector exit and starts replacements; avoid nested lifetime spans.
@@ -843,7 +979,7 @@ export const make = Effect.gen(function* () {
   });
 
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
-    (requested: RelayManagedEndpointRuntimeConfig | null) =>
+    (requested: RelayManagedEndpointRuntimeConfig | null, localOrigin?: string) =>
       reconcileSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const config = connectAllowed ? requested : null;
@@ -857,6 +993,11 @@ export const make = Effect.gen(function* () {
             yield* Ref.set(restartDelayRef, 0);
           }
           yield* Ref.set(desiredConfigRef, config);
+          if (config?.providerKind === "t3_relay") {
+            yield* stopActive;
+            return yield* reconcileBeta(config, localOrigin);
+          }
+          yield* stopBeta;
           return yield* reconcileConfig(config);
         }),
       ),
@@ -891,6 +1032,16 @@ export const make = Effect.gen(function* () {
     );
 
   const inspectConnector = Effect.gen(function* () {
+    const beta = yield* Ref.get(betaRef);
+    if (beta) {
+      const ready = yield* Ref.get(beta.ready);
+      return {
+        pid: process.pid,
+        readyConnections: ready ? 1 : 0,
+        hostname: ready ? beta.config.hostname : null,
+        protocol: "wss",
+      } satisfies ConnectorFacts;
+    }
     const active = yield* Ref.get(activeRef);
     if (!active || !(yield* active.child.isRunning.pipe(Effect.orElseSucceed(() => false)))) {
       return null;

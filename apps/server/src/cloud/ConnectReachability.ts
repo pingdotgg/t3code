@@ -87,7 +87,7 @@ export function classifyReachability(
   if (connector === null) {
     return fail(
       "connector_not_running",
-      "The tunnel client (cloudflared) is not running.",
+      "The T3 Connect connector is not running.",
       "Restart T3 Code. If it stays down, check the server log for relay client errors.",
     );
   }
@@ -117,6 +117,13 @@ export function classifyReachability(
       exitNodeHint(exitNode) ?? "A VPN, proxy, or firewall may block it.",
     );
   }
+  if (connector.protocol === "wss" && (status === 503 || status === 530)) {
+    return fail(
+      "no_connector",
+      "The beta gateway has no live connection to this environment.",
+      "Check the beta connector and gateway, then retry.",
+    );
+  }
   if (status === 502) {
     return fail(
       "origin_unreachable",
@@ -127,7 +134,9 @@ export function classifyReachability(
   if (endpoint === null || connector.readyConnections === 0) {
     return fail(
       "connector_not_ready",
-      "cloudflared has not connected to Cloudflare yet.",
+      connector.protocol === "wss"
+        ? "The beta connector has not connected to the gateway yet."
+        : "cloudflared has not connected to Cloudflare yet.",
       "Wait a minute. If it stays, check the network and the server log.",
     );
   }
@@ -287,7 +296,11 @@ const make = Effect.gen(function* () {
       edgeReachable: null,
       exitNode: null,
     };
-    if (connector === null || (endpoint?.kind === "status" && endpoint.status === 200)) {
+    if (
+      connector === null ||
+      connector.protocol === "wss" ||
+      (endpoint?.kind === "status" && endpoint.status === 200)
+    ) {
       return facts;
     }
     const [edgeResults, exitNode] = yield* Effect.all(

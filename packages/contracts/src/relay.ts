@@ -175,12 +175,23 @@ export const RelayManagedEndpointOrigin = Schema.Struct({
 });
 export type RelayManagedEndpointOrigin = typeof RelayManagedEndpointOrigin.Type;
 
-export const RelayManagedEndpointRuntimeConfig = Schema.Struct({
-  providerKind: RelayManagedEndpointProviderKind,
+const connectorFields = {
   connectorToken: TrimmedNonEmptyString,
   tunnelId: Schema.optional(TrimmedNonEmptyString),
   tunnelName: Schema.optional(TrimmedNonEmptyString),
-});
+};
+export const RelayManagedEndpointRuntimeConfig = Schema.Union([
+  Schema.Struct({
+    providerKind: Schema.Literals(["manual", "cloudflare_tunnel"]),
+    ...connectorFields,
+  }),
+  Schema.Struct({
+    providerKind: Schema.Literal("t3_relay"),
+    ...connectorFields,
+    hostname: TrimmedNonEmptyString,
+    gatewayUrl: TrimmedNonEmptyString,
+  }),
+]);
 export type RelayManagedEndpointRuntimeConfig = typeof RelayManagedEndpointRuntimeConfig.Type;
 
 export const RelayManagedEndpointRecoveryRequest = Schema.Struct({
@@ -312,6 +323,7 @@ export const RelayEnvironmentLinkChallengeRequest = Schema.Struct({
 export type RelayEnvironmentLinkChallengeRequest = typeof RelayEnvironmentLinkChallengeRequest.Type;
 
 export const RelayEnvironmentLinkChallengeResponse = Schema.Struct({
+  cloudUserId: Schema.optionalKey(TrimmedNonEmptyString),
   challenge: TrimmedNonEmptyString,
   expiresAt: TrimmedNonEmptyString,
 });
@@ -367,6 +379,8 @@ export type RelayEnvironmentLinkFailedReason = typeof RelayEnvironmentLinkFailed
 export const RelayEnvironmentLinkUnavailableReason = Schema.Literals([
   "managed_endpoint_not_configured",
   "managed_endpoint_provisioning_failed",
+  "beta_gateway_not_configured",
+  "unlink_before_switching_transport",
 ]);
 export type RelayEnvironmentLinkUnavailableReason =
   typeof RelayEnvironmentLinkUnavailableReason.Type;
@@ -722,6 +736,8 @@ export type RelayClientEnvironmentRecord = typeof RelayClientEnvironmentRecord.T
 
 export const RelayListEnvironmentsResponse = Schema.Struct({
   environments: Schema.Array(RelayClientEnvironmentRecord),
+  /** Present when this relay offers T3 Connect Unlimited (beta): its free link limit. */
+  betaGatewayLinkLimit: Schema.optionalKey(Schema.Number),
 });
 export type RelayListEnvironmentsResponse = typeof RelayListEnvironmentsResponse.Type;
 
@@ -966,6 +982,7 @@ export type RelayOkResponse = typeof RelayOkResponse.Type;
 export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
 export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
 
+export const BETA_GATEWAY_LINK_LIMIT = 100;
 export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
 
 // A linked paid T3 Chat plan raises the default managed tunnel cap.
@@ -1081,6 +1098,35 @@ const RelayMobileGroup = HttpApiGroup.make("mobile")
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
 
+export class RelayGatewayAuth extends HttpApiMiddleware.Service<RelayGatewayAuth>()(
+  "RelayGatewayAuth",
+  {
+    error: RelayAuthInvalidError,
+    security: { gatewayBearer: HttpApiSecurity.http({ scheme: "bearer" }) },
+  },
+) {}
+
+const BetaConnectorHash = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+const RelayGatewayGroup = HttpApiGroup.make("gateway")
+  .add(
+    HttpApiEndpoint.post("authorizeConnectors", "/v1/gateway/authorize", {
+      headers: RelayBearerRequestHeaders,
+      payload: Schema.Struct({
+        tokenHashes: Schema.Array(BetaConnectorHash).check(
+          Schema.isMinLength(1),
+          Schema.isMaxLength(256),
+        ),
+      }),
+      success: Schema.Struct({
+        routes: Schema.Array(
+          Schema.Struct({ tokenHash: BetaConnectorHash, hostname: TrimmedNonEmptyString }),
+        ),
+      }),
+      error: RelayAuthAndInternalErrors,
+    }),
+  )
+  .middleware(RelayGatewayAuth);
+
 const RelayClientGroup = HttpApiGroup.make("client")
   .add(
     HttpApiEndpoint.get("listEnvironments", "/v1/environments", {
@@ -1104,6 +1150,12 @@ const RelayClientGroup = HttpApiGroup.make("client")
       success: RelayEnvironmentLinkResponse,
       error: RelayEnvironmentLinkErrors,
     }).annotate(OpenApi.Summary, "Link an environment"),
+    HttpApiEndpoint.post("linkBetaEnvironment", "/v1/client/environment-links/beta", {
+      headers: RelayBearerRequestHeaders,
+      payload: RelayEnvironmentLinkRequest,
+      success: RelayEnvironmentLinkResponse,
+      error: RelayEnvironmentLinkErrors,
+    }).annotate(OpenApi.Summary, "Link an environment to the T3 Connect beta gateway"),
     HttpApiEndpoint.post(
       "createEnvironmentLinkChallenge",
       "/v1/client/environment-link-challenges",
@@ -1115,7 +1167,11 @@ const RelayClientGroup = HttpApiGroup.make("client")
       },
     ).annotate(OpenApi.Summary, "Create an environment-link challenge"),
     HttpApiEndpoint.delete("unlinkEnvironment", "/v1/client/environment-links/:environmentId", {
-      headers: RelayBearerRequestHeaders,
+      headers: Schema.Struct({
+        ...RelayBearerRequestHeaders.fields,
+        "x-t3-beta-enrollment-owner": Schema.optionalKey(TrimmedNonEmptyString),
+        "x-t3-beta-enrollment-id": Schema.optionalKey(Schema.String.check(Schema.isUUID(4))),
+      }),
       params: RelayEnvironmentUnlinkParams,
       success: RelayOkResponse,
       error: RelayAuthAndInternalErrors,
@@ -1311,6 +1367,7 @@ const RelayMobileTelemetryGroup = HttpApiGroup.make("mobileTelemetry")
 export const RelayApi = HttpApi.make("RelayApi")
   .add(
     RelayHealthGroup,
+    RelayGatewayGroup,
     RelayMetadataGroup,
     RelayMobileGroup,
     RelayClientGroup,

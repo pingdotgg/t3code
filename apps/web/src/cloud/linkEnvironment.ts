@@ -159,9 +159,6 @@ function endpointOrigin(httpBaseUrl: string) {
   };
 }
 
-const MANAGED_ENDPOINT_PROVIDER_KIND =
-  "cloudflare_tunnel" satisfies RelayManagedEndpointProviderKind;
-
 function ensureLinkedEnvironmentMatches(input: {
   readonly expectedEnvironmentId: string;
   readonly expectedProviderKind: RelayManagedEndpointProviderKind;
@@ -337,9 +334,14 @@ export const unlinkEnvironmentFromCloud: (input: {
   }
 });
 
-export type CloudLinkMode = "managed" | "publish_only";
+/** `beta` links through T3 Connect Unlimited (beta) instead of a Cloudflare tunnel. */
+export type CloudLinkMode = "managed" | "publish_only" | "beta";
 
-const PUBLISH_ONLY_PROVIDER_KIND = "manual" satisfies RelayManagedEndpointProviderKind;
+const LINK_PROVIDER_KINDS = {
+  managed: "cloudflare_tunnel",
+  publish_only: "manual",
+  beta: "t3_relay",
+} satisfies Record<CloudLinkMode, RelayManagedEndpointProviderKind>;
 
 export const linkEnvironmentToCloud: (input: {
   readonly target: CloudLinkTarget;
@@ -360,14 +362,14 @@ export const linkEnvironmentToCloud: (input: {
       message: "T3CODE_RELAY_URL is not configured.",
     });
   }
-  const managedTunnelsEnabled = (input.mode ?? "managed") === "managed";
-  const providerKind = managedTunnelsEnabled
-    ? MANAGED_ENDPOINT_PROVIDER_KIND
-    : PUBLISH_ONLY_PROVIDER_KIND;
+  const mode = input.mode ?? "managed";
+  const managedTunnelsEnabled = mode !== "publish_only";
+  const providerKind = LINK_PROVIDER_KINDS[mode];
   const relayClient = yield* ManagedRelay.ManagedRelayClient;
   // The environment only signs a proof for the loopback origin this request reaches it on.
   const endpoint = yield* preparedEndpoint(input.target);
-  if (managedTunnelsEnabled) {
+  // The beta connector runs inside the server, so only a Cloudflare tunnel needs cloudflared.
+  if (mode === "managed") {
     yield* ensureRelayClientAvailable(input.target.environmentId);
   }
 
@@ -414,10 +416,13 @@ export const linkEnvironmentToCloud: (input: {
         liveActivitiesEnabled: true,
         managedTunnelsEnabled,
       },
+      beta: mode === "beta",
     })
     .pipe(
       Effect.mapError(
-        decodedRelayClientError(`${configuredRelayUrl}/v1/client/environment-links failed`),
+        decodedRelayClientError(
+          `${configuredRelayUrl}/v1/client/environment-links${mode === "beta" ? "/beta" : ""} failed`,
+        ),
       ),
     );
   yield* ensureLinkedEnvironmentMatches({

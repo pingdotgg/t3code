@@ -320,6 +320,14 @@ it("builds the relay hook URL from the managed tunnel's key, never the environme
   assert.equal(
     ScheduledTaskService.relayHookBaseUrl({
       relayUrl,
+      tunnelName: undefined,
+      endpointKey: "0123456789abcdef",
+    }),
+    "https://relay.example.com/v1/hooks/0123456789abcdef",
+  );
+  assert.equal(
+    ScheduledTaskService.relayHookBaseUrl({
+      relayUrl,
       tunnelName: "t3coderelay-managedendpoint-dev-julius-0123456789abcdef",
     }),
     "https://relay.example.com/v1/hooks/0123456789abcdef",

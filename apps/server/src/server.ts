@@ -169,6 +169,7 @@ import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
 import * as RelayTracing from "./cloud/relayTracing.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
+import * as BetaGatewayTunnel from "./cloud/BetaGatewayTunnel.ts";
 import {
   MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
   makeManagedTunnelRecovery,
@@ -538,6 +539,7 @@ const layerCloudManagedEndpointRuntime = Layer.mergeAll(
   CloudManagedEndpointRuntime.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(layerRelayClient),
+    Layer.provide(BetaGatewayTunnel.layer),
   ),
 );
 
@@ -558,6 +560,9 @@ const layerScheduledTaskWebhookOrigin = Layer.effect(
         relayHookBaseUrl: relayHookBaseUrl({
           relayUrl: new TextDecoder().decode(relayUrl.value),
           tunnelName: Option.isSome(config) ? config.value.tunnelName : undefined,
+          ...(Option.isSome(config) && config.value.providerKind === "t3_relay"
+            ? { endpointKey: config.value.hostname.split(".")[0] }
+            : {}),
         }),
       };
     });
@@ -1071,17 +1076,18 @@ const layerMakeServer = Layer.unwrap(
                   ),
                 )
               : null;
-            // Publish-only links must not expose the host through old managed configs.
-            const startedConfirmed =
-              desiredCliLinkMode === "publish_only"
-                ? false
-                : yield* cloudLink.startManagedTunnelIfOriginConfirmed(localOrigin).pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
-                        cause,
-                      }).pipe(Effect.as(false)),
-                    ),
-                  );
+            const usesCloudflare =
+              desiredCliLinkMode !== "publish_only" && desiredCliLinkMode !== "beta";
+            // Neither publish-only nor beta enrollment may start or recover an old Cloudflare tunnel.
+            const startedConfirmed = !usesCloudflare
+              ? false
+              : yield* cloudLink.startManagedTunnelIfOriginConfirmed(localOrigin).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                      cause,
+                    }).pipe(Effect.as(false)),
+                  ),
+                );
             const startStoredManagedTunnel = cloudLink
               .startManagedTunnelIfOriginConfirmed(localOrigin, {
                 requireConfirmedOrigin: false,
@@ -1122,17 +1128,16 @@ const layerMakeServer = Layer.unwrap(
               ),
             );
             // Jitter registrations so update waves do not hit the relay simultaneously.
-            if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
+            if (!startedConfirmed && usesCloudflare) {
               const jitter = yield* Random.nextIntBetween(
                 0,
                 Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
               );
               yield* Effect.sleep(Duration.millis(jitter));
             }
-            const registration =
-              desiredCliLinkMode === "publish_only"
-                ? { status: "not_linked" as const }
-                : yield* registerManagedTunnel;
+            const registration = !usesCloudflare
+              ? { status: "not_linked" as const }
+              : yield* registerManagedTunnel;
             if (registration.status === "unavailable" && !startedConfirmed) {
               yield* startStoredManagedTunnel;
             }

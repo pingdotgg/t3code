@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -26,7 +27,7 @@ import {
 } from "./serviceProtocol.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
-import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
+import { CLOUD_CLI_DESIRED_BETA_LINK, CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
 import { RelayManagedEndpointRecoveryRegistrationRequest } from "@t3tools/contracts/relay";
 import {
@@ -120,8 +121,10 @@ describe("releaseManagedTunnelOnShutdown", () => {
           values.set(name, value);
         }),
       create: (name, value) =>
-        Effect.sync(() => {
+        Effect.suspend(() => {
+          if (values.has(name)) return Effect.fail(storeFailure("AlreadyExists"));
           values.set(name, value);
+          return Effect.void;
         }),
       getOrCreateRandom: unusedSecretStoreOperation,
       remove: (name) =>
@@ -186,7 +189,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "test",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.1.0-test",
+              capabilities: { repositoryIdentity: false },
+            }),
           }),
         ),
         Effect.provideService(
@@ -274,6 +283,78 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(applyConfigCalls).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
+
+  it.effect.each([404, 502])(
+    "never repeats a beta enrollment after an HTTP %s or falls back to a classic tunnel",
+    (status) => {
+      const { store } = makeMemorySecretStore([[CLOUD_CLI_DESIRED_BETA_LINK, "true"]]);
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      const applyConfigCalls: Array<unknown> = [];
+      return Effect.gen(function* () {
+        const service = yield* CloudLink.CloudLink;
+        const error = yield* Effect.flip(
+          service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"),
+        );
+        if (status === 404) expect(error.message).toContain("beta-enabled relay");
+        const retry = yield* Effect.flip(
+          service.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773"),
+        );
+        expect(retry.message).toContain("t3 connect unlink");
+        expect(requests.map((request) => request.url)).toEqual([
+          "https://stage.example.test/v1/client/environment-link-challenges",
+          "https://stage.example.test/v1/client/environment-links/beta",
+        ]);
+        expect(applyConfigCalls).toEqual([]);
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          requests,
+          applyConfigCalls,
+          respond: () =>
+            requests.length === 1
+              ? Response.json({
+                  challenge: "link-challenge",
+                  expiresAt: "2026-11-07T12:00:00.000Z",
+                })
+              : new Response(null, { status }),
+        }),
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://stage.example.test" } }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "starts the saved beta route on boot without re-enrolling it, and keeps its slot on shutdown",
+    () => {
+      const config = {
+        providerKind: "t3_relay",
+        connectorToken: "x",
+        hostname: "0123456789abcdef.beta.test",
+        gatewayUrl: "wss://connector.beta.test/connect",
+      } as const;
+      const { store, values } = makeMemorySecretStore([
+        [CLOUD_CLI_DESIRED_BETA_LINK, "true"],
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        expect(yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773")).toBe(
+          "beta",
+        );
+        expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(false);
+        values.set(CLOUD_LINK_REVOKED, new TextEncoder().encode("true"));
+        expect(yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773")).toBeNull();
+        expect(requests).toEqual([]);
+        expect(applyConfigCalls).toEqual([config]);
+      }).pipe(provideReleaseHarness({ store, requests, applyConfigCalls }));
+    },
+  );
 
   it.effect("stops the connector, releases the relay tunnel, and drops the dead token", () => {
     const { store, values } = makeMemorySecretStore(managedLinkSecrets);

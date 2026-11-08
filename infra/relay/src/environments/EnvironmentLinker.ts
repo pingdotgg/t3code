@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+import * as BetaGatewayLinks from "./BetaGatewayLinks.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -67,6 +68,9 @@ export type EnvironmentLinkError =
   | EnvironmentLinkProofExpired
   | EnvironmentLinkProofInvalid
   | DpopProofs.DpopProofReplayPersistenceError
+  | BetaGatewayLinks.BetaGatewayUnavailable
+  | BetaGatewayLinks.BetaGatewayPersistenceError
+  | EnvironmentLinks.EnvironmentLinkLookupPersistenceError
   | EnvironmentLinks.EnvironmentLinkUpsertPersistenceError
   | EnvironmentCredentials.EnvironmentCredentialCreatePersistenceError
   | ManagedEndpointProvider.ManagedEndpointProviderError;
@@ -77,6 +81,7 @@ export class EnvironmentLinker extends Context.Service<
     readonly link: (input: {
       readonly userId: string;
       readonly request: RelayEnvironmentLinkRequest;
+      readonly beta?: boolean;
     }) => Effect.Effect<
       {
         readonly environmentId: RelayEnvironmentLinkProofPayload["environmentId"];
@@ -138,6 +143,7 @@ function isLoopbackManagedTunnelOrigin(
 
 const make = Effect.gen(function* () {
   const links = yield* EnvironmentLinks.EnvironmentLinks;
+  const beta = yield* BetaGatewayLinks.BetaGatewayLinks;
   const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
   const managedEndpointProvider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
   const proofReplay = yield* DpopProofs.DpopProofReplay;
@@ -209,6 +215,8 @@ const make = Effect.gen(function* () {
       );
       if (
         verified.sub !== verified.environmentId ||
+        (verified.endpoint.providerKind === "t3_relay") !== (input.beta === true) ||
+        (input.beta === true && !input.request.managedTunnelsEnabled) ||
         !proofAuthorizesRequestedCapabilities(verified, input.request)
       ) {
         return yield* new EnvironmentLinkProofInvalid({
@@ -288,8 +296,21 @@ const make = Effect.gen(function* () {
           stage: "validate_origin",
         });
       }
+      if (input.beta) {
+        return yield* beta.enroll({ ...input, proof: verified, challengeExpiresAt: challenge.exp });
+      }
       // Non-tunnel links must release provisioned tunnel/DNS resources; best-effort deprovision is idempotent.
       if (!input.request.managedTunnelsEnabled) {
+        const existing = yield* links.getForUser({
+          userId: input.userId,
+          environmentId: verified.environmentId,
+        });
+        if (existing?.endpoint.providerKind === "t3_relay") {
+          return yield* new EnvironmentLinks.BetaGatewayLinkConflict({
+            userId: input.userId,
+            environmentId: verified.environmentId,
+          });
+        }
         yield* managedEndpointProvider
           .deprovision({
             userId: input.userId,
@@ -322,7 +343,12 @@ const make = Effect.gen(function* () {
           stage: "validate_endpoint",
         });
       }
-      yield* links.upsert({ ...input, proof: verified, endpoint });
+      yield* links.upsert({
+        userId: input.userId,
+        request: input.request,
+        proof: verified,
+        endpoint,
+      });
       const environmentCredential = yield* credentials.create({
         environmentId: verified.environmentId,
         environmentPublicKey: verified.environmentPublicKey,

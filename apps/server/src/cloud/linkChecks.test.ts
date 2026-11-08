@@ -55,6 +55,10 @@ describe("link proof provider kinds", () => {
       "agent_activity_notifications",
       "managed_tunnels",
     ]);
+    expect(linkProofScopes(proofRequest("t3_relay"))).toEqual([
+      "agent_activity_notifications",
+      "managed_tunnels",
+    ]);
     expect(linkProofScopes(proofRequest("manual"))).toEqual(["agent_activity_notifications"]);
   });
 });

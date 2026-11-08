@@ -9,13 +9,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
   readonly environmentPublicKey: string;
+  readonly betaEndpointKey?: string | null;
 }
 
 export interface AgentAwarenessDeliveryUserRecord {
@@ -23,6 +24,11 @@ export interface AgentAwarenessDeliveryUserRecord {
   readonly notificationsEnabled: boolean;
   readonly liveActivitiesEnabled: boolean;
 }
+
+export class BetaGatewayLinkConflict extends Schema.TaggedError<BetaGatewayLinkConflict>()(
+  "BetaGatewayLinkConflict",
+  { userId: Schema.String, environmentId: Schema.String },
+) {}
 
 export class EnvironmentLinkUpsertPersistenceError extends Schema.TaggedError<EnvironmentLinkUpsertPersistenceError>()(
   "EnvironmentLinkUpsertPersistenceError",
@@ -108,7 +114,8 @@ export class EnvironmentLinks extends Context.Service<
       readonly request: RelayEnvironmentLinkRequest;
       readonly proof: RelayEnvironmentLinkProofPayload;
       readonly endpoint: RelayManagedEndpoint;
-    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError>;
+      readonly beta?: { readonly endpointKey: string; readonly connectorHash: string };
+    }) => Effect.Effect<void, EnvironmentLinkUpsertPersistenceError | BetaGatewayLinkConflict>;
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
@@ -125,6 +132,7 @@ export class EnvironmentLinks extends Context.Service<
     readonly getForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
+      readonly includeRetiringBeta?: boolean;
     }) => Effect.Effect<RelayLinkedEnvironmentRecord | null, EnvironmentLinkLookupPersistenceError>;
     /** Narrow by user or proven key: a public environment id alone does not authorize access to its links. */
     readonly findActiveManagedForEnvironment: (input: {
@@ -187,7 +195,7 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db
+      const records = yield* db
         .insert(relayEnvironmentLinks)
         .values({
           userId: input.userId,
@@ -198,6 +206,9 @@ const make = Effect.gen(function* () {
           endpointHttpBaseUrl: endpoint.httpBaseUrl,
           endpointWsBaseUrl: endpoint.wsBaseUrl,
           endpointProviderKind: endpoint.providerKind,
+          betaEndpointKey: input.beta?.endpointKey ?? null,
+          betaConnectorHash: input.beta?.connectorHash ?? null,
+          betaEnrollmentId: input.beta ? proof.jti : null,
           notificationsEnabled: request.notificationsEnabled,
           liveActivitiesEnabled: request.liveActivitiesEnabled,
           managedTunnelsEnabled: request.managedTunnelsEnabled,
@@ -214,6 +225,9 @@ const make = Effect.gen(function* () {
             endpointHttpBaseUrl: endpoint.httpBaseUrl,
             endpointWsBaseUrl: endpoint.wsBaseUrl,
             endpointProviderKind: endpoint.providerKind,
+            betaEndpointKey: input.beta?.endpointKey ?? null,
+            betaConnectorHash: input.beta?.connectorHash ?? null,
+            betaEnrollmentId: input.beta ? proof.jti : null,
             notificationsEnabled: request.notificationsEnabled,
             liveActivitiesEnabled: request.liveActivitiesEnabled,
             managedTunnelsEnabled: request.managedTunnelsEnabled,
@@ -222,7 +236,21 @@ const make = Effect.gen(function* () {
             updatedAt: now,
             holdWebhooksWhileOffline: inheritedHoldWebhooks,
           },
+          setWhere: sql`${or(
+            and(
+              isNotNull(relayEnvironmentLinks.revokedAt),
+              isNull(relayEnvironmentLinks.betaConnectorHash),
+            ),
+            input.beta
+              ? and(
+                  isNull(relayEnvironmentLinks.revokedAt),
+                  eq(relayEnvironmentLinks.endpointProviderKind, "t3_relay"),
+                  eq(relayEnvironmentLinks.environmentPublicKey, proof.environmentPublicKey),
+                )
+              : ne(relayEnvironmentLinks.endpointProviderKind, "t3_relay"),
+          )}`,
         })
+        .returning({ environmentId: relayEnvironmentLinks.environmentId })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -234,6 +262,9 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+      if (records.length === 0) {
+        return yield* new BetaGatewayLinkConflict({ userId: input.userId, environmentId });
+      }
     }),
 
     listDeliveryUsersForEnvironment: Effect.fn(
@@ -317,6 +348,7 @@ const make = Effect.gen(function* () {
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
           environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+          betaEndpointKey: relayEnvironmentLinks.betaEndpointKey,
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
@@ -327,7 +359,12 @@ const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentLinks.userId, input.userId),
             eq(relayEnvironmentLinks.environmentId, input.environmentId),
-            isNull(relayEnvironmentLinks.revokedAt),
+            or(
+              isNull(relayEnvironmentLinks.revokedAt),
+              input.includeRetiringBeta
+                ? isNotNull(relayEnvironmentLinks.betaConnectorHash)
+                : undefined,
+            ),
           ),
         )
         .limit(1)
@@ -348,6 +385,7 @@ const make = Effect.gen(function* () {
                       row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
                   },
                   environmentPublicKey: row.environmentPublicKey,
+                  betaEndpointKey: row.betaEndpointKey,
                   linkedAt: row.createdAt,
                 }
               : null;
@@ -373,6 +411,7 @@ const make = Effect.gen(function* () {
           environmentId: relayEnvironmentLinks.environmentId,
           environmentLabel: relayEnvironmentLinks.environmentLabel,
           environmentPublicKey: relayEnvironmentLinks.environmentPublicKey,
+          betaEndpointKey: relayEnvironmentLinks.betaEndpointKey,
           endpointHttpBaseUrl: relayEnvironmentLinks.endpointHttpBaseUrl,
           endpointWsBaseUrl: relayEnvironmentLinks.endpointWsBaseUrl,
           endpointProviderKind: relayEnvironmentLinks.endpointProviderKind,
@@ -384,7 +423,7 @@ const make = Effect.gen(function* () {
           and(
             eq(relayEnvironmentLinks.environmentId, input.environmentId),
             isNull(relayEnvironmentLinks.revokedAt),
-            eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
+            inArray(relayEnvironmentLinks.endpointProviderKind, ["cloudflare_tunnel", "t3_relay"]),
             eq(relayEnvironmentLinks.managedTunnelsEnabled, true),
             input.userId === undefined ? undefined : eq(relayEnvironmentLinks.userId, input.userId),
             input.environmentPublicKey === undefined
@@ -406,6 +445,7 @@ const make = Effect.gen(function* () {
                   row.endpointProviderKind as RelayClientEnvironmentRecord["endpoint"]["providerKind"],
               },
               environmentPublicKey: row.environmentPublicKey,
+              betaEndpointKey: row.betaEndpointKey,
               linkedAt: row.createdAt,
               holdWebhooksWhileOffline: row.holdWebhooksWhileOffline,
             })),
