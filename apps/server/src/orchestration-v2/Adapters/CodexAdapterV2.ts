@@ -1386,6 +1386,9 @@ export class CodexAppServerClientFactory extends Context.Service<
 export const CODEX_THREAD_CONFIG = {
   "tools.update_plan.enabled": true,
   mcp_optional_startup_grace_ms: 10_000,
+  // Tool calls stop waiting on the detailed reasoning summary. Codex applies it only to its
+  // built-in OpenAI provider and sends each summary section whole, not as token deltas.
+  "features.concurrent_reasoning_summaries": true,
 } as const;
 
 // T3 waits can block for an hour; keep Codex's MCP timeout above that.
@@ -7071,9 +7074,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             return false;
           }),
-          hasPendingBackgroundWorkForThread: Effect.fn(
-            "CodexAdapterV2.hasPendingBackgroundWorkForThread",
-          )(function* (providerThread) {
+          // Untraced: the run's event stream calls this once per provider event.
+          hasPendingBackgroundWorkForThread: Effect.fnUntraced(function* (providerThread) {
             const contexts = [
               ...(yield* Ref.get(activeTurns)).values(),
               ...(yield* Ref.get(settledTurns)).values(),
