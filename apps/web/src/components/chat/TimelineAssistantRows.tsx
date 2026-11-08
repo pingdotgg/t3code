@@ -319,16 +319,38 @@ export function HtmlRenderTimelineRow({
 
 export function QuizCardTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "quiz-card" }> }) {
   const ctx = use(TimelineRowCtx);
+  const { reply } = row.quizCard;
   return (
-    <div className="min-w-0 px-1">
-      <QuizCardTimelineCard
-        quizCard={row.quizCard}
-        seed={row.id}
-        answered={row.answered}
-        environmentId={ctx.threadRef?.environmentId}
-        onSendMessage={ctx.onSendAppMessage}
-      />
-    </div>
+    <>
+      {reply ? (
+        <div className="min-w-0 px-1 py-0.5">
+          <MessageAuthorHeading>{APP_BASE_NAME}</MessageAuthorHeading>
+          <div data-thread-find-text="true">
+            <ChatMarkdown
+              text={reply}
+              cwd={ctx.markdownCwd}
+              threadRef={ctx.threadRef ?? undefined}
+              isStreaming={false}
+              lineBreaks={shouldPreserveAssistantLineBreaks(reply)}
+              skills={ctx.skills}
+              headingLevelOffset={MESSAGE_HEADING_LEVEL}
+              onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+              onRunShellCommand={ctx.onRunShellCommand}
+              onImageExpand={ctx.onImageExpand}
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className="min-w-0 px-1">
+        <QuizCardTimelineCard
+          quizCard={row.quizCard}
+          seed={row.id}
+          answered={row.answered}
+          environmentId={ctx.threadRef?.environmentId}
+          onSendMessage={ctx.onSendAppMessage}
+        />
+      </div>
+    </>
   );
 }
 

@@ -1785,22 +1785,39 @@ function renderFeedEntry(
   }
 
   if (entry.type === "quiz-card") {
-    if (!("answer" in entry.quizCard)) {
-      return (
-        <View className="mb-3 rounded-2xl border border-border bg-card p-4">
-          <Text className="font-t3-medium text-base">{entry.quizCard.question}</Text>
-          <Text className="mt-2 text-sm text-foreground-muted">Answer in the chat</Text>
-        </View>
-      );
-    }
+    const { reply } = entry.quizCard;
     return (
-      <QuizCard
-        quizCard={entry.quizCard}
-        seed={entry.id}
-        answered={props.answeredCardIds.has(entry.id)}
-        environmentId={props.environmentId}
-        threadId={props.threadId}
-      />
+      <>
+        {reply ? (
+          <View className="mb-1 px-1">
+            <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+              <AssistantMarkdownContent
+                markdown={reply}
+                environmentId={props.environmentId}
+                markdownStyles={markdownStyles.assistant}
+                linkHandlers={props.markdownLinkHandlers}
+                onUseArtifactTemplate={props.onUseArtifactTemplate}
+                renderImage={props.renderMarkdownImage}
+                skills={props.skills}
+              />
+            </MarkdownImageAvailableWidthContext>
+          </View>
+        ) : null}
+        {"answer" in entry.quizCard ? (
+          <QuizCard
+            quizCard={entry.quizCard}
+            seed={entry.id}
+            answered={props.answeredCardIds.has(entry.id)}
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+          />
+        ) : (
+          <View className="mb-3 rounded-2xl border border-border bg-card p-4">
+            <Text className="font-t3-medium text-base">{entry.quizCard.question}</Text>
+            <Text className="mt-2 text-sm text-foreground-muted">Answer in the chat</Text>
+          </View>
+        )}
+      </>
     );
   }
 

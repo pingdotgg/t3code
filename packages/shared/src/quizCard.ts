@@ -2,6 +2,8 @@ export const QUIZ_CARD_TOOL_NAME = "quiz_card" as const;
 export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
 
 export interface QuestionCard {
+  /** The tutor's reply to the learner's last answer, shown as its message text before the card. */
+  readonly reply?: string;
   readonly question: string;
   readonly blanks?: ReadonlyArray<{ readonly answers: ReadonlyArray<string> }>;
   readonly number?: { readonly answer: number; readonly tolerance: number; readonly unit?: string };
@@ -10,6 +12,7 @@ export interface QuestionCard {
 export type QuizLevel = "remember" | "understand" | "apply" | "analyse";
 
 export interface QuizCard {
+  readonly reply?: string;
   readonly answer: string;
   readonly explanation: string;
   readonly level: QuizLevel;
@@ -21,6 +24,7 @@ export type LessonCard = QuizCard | QuestionCard;
 
 const MAX_ANSWER = 300;
 const MAX_QUESTION = 2000;
+const MAX_REPLY = 2000;
 const MAX_OPTION = 300;
 const MAX_WRONG_IDEA = 500;
 const MAX_EXPLANATION = 1500;
@@ -41,11 +45,20 @@ const boundedString = (value: unknown, max: number) =>
 const fitsCardBytes = (card: object) =>
   new TextEncoder().encode(JSON.stringify(card)).byteLength <= MAX_CARD_BYTES;
 
+// A reply the model sent but that doesn't fit is refused, not silently dropped.
+function readReply(record: Record<string, unknown>): { reply?: string } | undefined {
+  if (record.reply === undefined || (typeof record.reply === "string" && !record.reply.trim()))
+    return {};
+  const reply = boundedString(record.reply, MAX_REPLY);
+  return reply === undefined ? undefined : { reply };
+}
+
 export function readQuestionCard(value: unknown): QuestionCard | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const record = value as Record<string, unknown>;
   const question = boundedString(record.question, MAX_QUESTION);
-  if (question === undefined) return undefined;
+  const reply = readReply(record);
+  if (question === undefined || reply === undefined) return undefined;
   const hasBlanks = Object.hasOwn(record, "blanks");
   const hasNumber = Object.hasOwn(record, "number");
   if (hasBlanks && hasNumber) return undefined;
@@ -71,7 +84,7 @@ export function readQuestionCard(value: unknown): QuestionCard | undefined {
       blanks.push({ answers: parsed });
     }
     if ((question.match(/_{3,}/g) ?? []).length !== blanks.length) return undefined;
-    const card = { question, blanks };
+    const card = { ...reply, question, blanks };
     return fitsCardBytes(card) ? card : undefined;
   }
   if (hasNumber) {
@@ -95,12 +108,14 @@ export function readQuestionCard(value: unknown): QuestionCard | undefined {
       return undefined;
     }
     const card = {
+      ...reply,
       question,
       number: { answer: number.answer, tolerance: number.tolerance, ...(unit ? { unit } : {}) },
     };
     return fitsCardBytes(card) ? card : undefined;
   }
-  return { question };
+  const card = { ...reply, question };
+  return fitsCardBytes(card) ? card : undefined;
 }
 
 const normalizedAnswer = (value: string) => value.trim().replace(/\s+/g, " ");
@@ -151,10 +166,12 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   const answer = boundedString(record.answer, MAX_ANSWER);
   const explanation = boundedString(record.explanation, MAX_EXPLANATION);
   const question = boundedString(record.question, MAX_QUESTION);
+  const reply = readReply(record);
   const level = record.level;
   const wrongOptions = record.wrongOptions;
   if (
     answer === undefined ||
+    reply === undefined ||
     explanation === undefined ||
     question === undefined ||
     typeof level !== "string" ||
@@ -174,6 +191,7 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   });
   if (parsed.some((entry) => entry === undefined)) return undefined;
   return {
+    ...reply,
     answer,
     explanation,
     level: level as QuizLevel,
@@ -196,7 +214,7 @@ export function quizCardProblem(card: QuizCard): string | undefined {
     seen.add(key);
   }
   if (!fitsCardBytes(card)) {
-    return "The card is too long: shorten the question, explanation or wrong ideas.";
+    return "The card is too long: shorten the reply, question, explanation or wrong ideas.";
   }
   return undefined;
 }
@@ -295,4 +313,16 @@ export function answeredCardIds(
     if (id !== undefined) ids.add(id);
   }
   return ids;
+}
+
+/** True while the learner's latest message answers a card and no reply text has followed it. */
+export function cardAnswerAwaitsReply(
+  messages: ReadonlyArray<{ readonly role: string; readonly text: string }>,
+): boolean {
+  const last = messages.findLastIndex((message) => message.role === "user");
+  return (
+    last !== -1 &&
+    CARD_ANSWER_TAG.test(messages[last]!.text) &&
+    !messages.slice(last + 1).some((message) => message.text.trim() !== "")
+  );
 }

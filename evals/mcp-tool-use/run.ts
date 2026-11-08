@@ -50,7 +50,12 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
+import {
+  cardAnswerAwaitsReply,
+  quizCardProblem,
+  readQuestionCard,
+  readQuizCard,
+} from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -76,6 +81,7 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import {
+  CARD_REPLY_FIRST,
   QUESTION_CARD_SHOWN,
   QUIZ_CARD_SHOWN,
 } from "../../apps/server/src/mcp/toolkits/quiz/handlers.ts";
@@ -861,6 +867,8 @@ type Sample = {
   devices?: DeviceTools;
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
+  /** The agent's visible text so far in this sample. */
+  readonly said: Array<string>;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -905,6 +913,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     secretFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
+    said: [],
   };
 };
 
@@ -1697,6 +1706,16 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (name === "question_card" && readQuestionCard(input) === undefined) {
       return failed("Invalid question card.");
     }
+    const conversation = [
+      { role: "user", text: testCase.prompt },
+      ...sample.said.map((text) => ({ role: "assistant", text })),
+    ];
+    if (name === "quiz_card" || name === "question_card") {
+      const reply = typeof input.reply === "string" ? input.reply.trim() : "";
+      if (reply === "" && cardAnswerAwaitsReply(conversation)) return failed(CARD_REPLY_FIRST);
+      // The app shows a card's reply as the tutor's message text.
+      if (reply !== "") sample.said.push(reply);
+    }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
@@ -2127,7 +2146,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
   const transcript: Array<unknown> = [];
   const start = messages.length;
   const calls: Array<Call> = [];
-  const said: Array<string> = [];
+  const { said } = sample;
   const { usage } = spent;
   let stopReason = "max_steps";
   let finalText = "";
@@ -2154,7 +2173,16 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {
       stopReason = response.stop_reason ?? "unknown";
-      finalText = texts.join("\n\n");
+      // A shown card's reply is the tutor's message text for that step (APP-97).
+      const replies = calls.flatMap((call) =>
+        (call.tool === "quiz_card" || call.tool === "question_card") &&
+        call.failed !== true &&
+        isRecord(call.input) &&
+        typeof call.input.reply === "string"
+          ? [call.input.reply]
+          : [],
+      );
+      finalText = [...replies, ...texts].join("\n\n");
       break;
     }
     if (
