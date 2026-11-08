@@ -26,7 +26,7 @@ import {
   type AtomCommand,
   type AtomCommandResult,
 } from "./runtime.ts";
-import { mergeRequestTermsEnabled } from "../sourceControlClients.ts";
+import { formatChangeRequestText, mergeRequestTermsEnabled } from "../sourceControlClients.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { vcsCommandScheduler } from "./vcsCommandScheduler.ts";
 import { invalidateCachedVcsRefs } from "./vcsRefInvalidation.ts";
@@ -256,6 +256,9 @@ export function normalizeVcsActionProgressEvent(
   return {
     ...event,
     actionId,
+    ...(event.kind === "phase_started" && event.phase === "pr"
+      ? { label: formatChangeRequestText(event.label) }
+      : {}),
   };
 }
 

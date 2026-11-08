@@ -28,6 +28,7 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
+import { setMergeRequestTerms } from "../sourceControlClients.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import type { AtomCommandResult } from "./runtime.ts";
@@ -249,6 +250,25 @@ describe("vcsActionState", () => {
       ...event,
       actionId,
     });
+
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        for (const label of ["Preparing PR...", "Generating PR content..."]) {
+          const prEvent = progress({
+            ...event,
+            actionId: transportActionId,
+            phase: "pr",
+            label,
+          });
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, prEvent),
+          ).toEqual({ ...prEvent, actionId, label: enabled ? label.replace("PR", "MR") : label });
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it.effect("consumes progress through the terminal event and returns its result", () =>
