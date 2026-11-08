@@ -13,6 +13,7 @@ it("lets keyboard users read why merging is blocked without performing a merge",
       <PullRequestPrimaryAction
         pullRequestKey="owner/repo#1"
         primaryAction="blocked"
+        mergeBlockedReason={null}
         autoMergeArmed={false}
         armedAutoMergeLabel="Auto-merge enabled"
         pendingAutoMergeLabel="Enable auto-merge"
