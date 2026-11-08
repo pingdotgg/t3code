@@ -193,6 +193,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --inset-shadow-control-highlight: 0 1px rgb(255 255 255 / 16%);
   --inset-shadow-control-pressed: 0 1px rgb(0 0 0 / 8%);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  /* overshoot settles past its target and back, for an icon that pops into place. */
+  --ease-overshoot: cubic-bezier(0.34, 1.56, 0.64, 1);
   /* The composer's elevation: a soft drop pulled in under the surface, shared
      by the composer, its context strip and attached banners. */
   --shadow-composer: 0 1px 2px rgb(0 0 0 / 5%);
@@ -2428,10 +2430,6 @@ code {
 
 @utility desktop-update-check-incoming {
   animation: desktop-update-check-incoming 160ms 40ms ease-out both;
-}
-
-@utility desktop-update-restart-ease {
-  transition-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes desktop-update-check-outgoing {

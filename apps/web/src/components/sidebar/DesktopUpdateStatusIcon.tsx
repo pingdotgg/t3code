@@ -86,7 +86,7 @@ function DesktopUpdateDownloadIcon({
           strokeLinecap="round"
           strokeLinejoin="round"
           className={cn(
-            "desktop-update-restart-ease absolute inset-0 size-5 transition-[opacity,scale,rotate] duration-300 motion-reduce:transition-none",
+            "absolute inset-0 size-5 transition-[opacity,scale,rotate] duration-300 ease-overshoot motion-reduce:transition-none",
             complete ? "scale-100 rotate-0 opacity-100 delay-100" : "scale-50 -rotate-90 opacity-0",
           )}
         >
