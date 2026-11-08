@@ -311,9 +311,19 @@ function providerThreadLoadKey(input: {
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): string {
+  let modelSelection = input.modelSelection;
+  if (input.providerThread.driver === "codex" && modelSelection !== undefined) {
+    // Codex applies effort on turn/start. Resuming here discards its pinned request effort.
+    const { options, ...selection } = modelSelection;
+    const loadOptions = options?.filter((option) => option.id !== "reasoningEffort");
+    modelSelection = {
+      ...selection,
+      ...(loadOptions?.length ? { options: loadOptions } : {}),
+    };
+  }
   return JSON.stringify({
     providerThread: providerThreadRuntimeKey(input.providerThread),
-    modelSelection: input.modelSelection ?? null,
+    modelSelection: modelSelection ?? null,
     runtimePolicy: input.runtimePolicy ?? null,
   });
 }
