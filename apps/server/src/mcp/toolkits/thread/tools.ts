@@ -165,7 +165,7 @@ const ThreadConfigureTool = Tool.make("t3_thread_configure", {
 const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ...commandTool,
   description:
-    "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project; it goes with that thread's next message. cancel_merge_back: withdraw its merge_back into `targetThreadId` before that message. status: its context transfers.",
+    "Omit `threadId` for this thread. fork: copy `sourcePoint` (default latest stable run) to a new thread with the same setup; no turn starts. merge_back: attach it to a related `targetThreadId`'s next message in this project. cancel_merge_back: cancel before sending. status: transfers.",
   parameters: Schema.Struct({
     action: Schema.Literals(["fork", "merge_back", "cancel_merge_back", "status"]),
     environmentId: OrchestratorMcpEnvironmentTarget,
