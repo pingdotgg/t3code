@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 // @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 
-import { UsageReadError } from "@t3tools/contracts";
+import { UsageReadError, NonNegativeInt } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -28,14 +28,16 @@ import type { AcpRegistrySettings } from "../settings.ts";
 const Entry = Schema.Struct({
   type: Schema.Literal("mistral_vibe_usage"),
   sessionId: Schema.NonEmptyString,
-  turn: Schema.Number,
+  turn: NonNegativeInt,
   timestamp: Schema.String,
   model: Schema.NonEmptyString,
-  inputTokens: Schema.optional(Schema.Unknown),
-  cachedInputTokens: Schema.optional(Schema.Unknown),
-  cacheCreationTokens: Schema.optional(Schema.Unknown),
-  outputTokens: Schema.optional(Schema.Unknown),
-  reasoningTokens: Schema.optional(Schema.Unknown),
+  // Strict counters: a malformed exporter line must drop loudly (the record
+  // is discarded) instead of decoding as Unknown and silently coercing to 0.
+  inputTokens: Schema.optional(NonNegativeInt),
+  cachedInputTokens: Schema.optional(NonNegativeInt),
+  cacheCreationTokens: Schema.optional(NonNegativeInt),
+  outputTokens: Schema.optional(NonNegativeInt),
+  reasoningTokens: Schema.optional(NonNegativeInt),
 });
 const decodeEntry = Schema.decodeUnknownOption(Entry);
 
@@ -99,9 +101,8 @@ export const mistralVibeUsageFormat: TranscriptUsageFormat<unknown> = {
 
 /**
  * Trigger a fresh export and wait for it, so a Usage refresh always reads
- * current data instead of whatever the last timer run produced. `--wait`
- * blocks until the oneshot unit's ExecStart completes. Best-effort: a
- * missing or hung exporter never blocks a scan for more than a few seconds.
+ * current data instead of the last 10-minute timer run. The 10s child
+ * timeout (SIGKILL) bounds a hung exporter; failure never fails the scan.
  */
 const triggerExport = Effect.fn("mistralVibeUsage.triggerExport")(function* () {
   yield* Effect.tryPromise<void, UsageReadError>({
@@ -110,22 +111,16 @@ const triggerExport = Effect.fn("mistralVibeUsage.triggerExport")(function* () {
         NodeChildProcess.execFile(
           "systemctl",
           ["--user", "start", "--wait", "mistral-vibe-usage-export.service"],
-          (error) =>
-            error
-              ? reject(
-                  new UsageReadError({
-                    reason: "scanFailed",
-                    detail: "Mistral Vibe usage exporter could not start",
-                    cause: error,
-                  }),
-                )
-              : resolve(),
+          { timeout: 10_000, killSignal: "SIGKILL" },
+          (error) => (error ? reject(error) : resolve()),
         ),
       ),
     catch: (cause) =>
       new UsageReadError({
         reason: "scanFailed",
-        detail: "Mistral Vibe usage exporter could not start",
+        detail: `mistral-vibe usage exporter trigger failed: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
         cause,
       }),
   });
@@ -135,13 +130,17 @@ export const mistralVibeUsageReader: ProviderUsageReader<AcpRegistrySettings, Pa
   kind: "transcripts",
   provider: "mistral-vibe",
   format: mistralVibeUsageFormat,
-  directories: Effect.fn("mistralVibeUsageReader.directories")(function* ({ environment }) {
-    // Refresh-triggered export; a failed or missing exporter is fine (the
-    // scan just reads the last exported files) and must not fail the scan.
-    yield* Effect.ignoreCause(triggerExport());
+  directories: Effect.fn("mistralVibeUsageReader.directories")(function* (instance) {
+    // Refresh-triggered export. Only for a configured mistral-vibe instance:
+    // background scans of the unconfigured placeholder must not spawn a
+    // process every time. A failed or missing exporter is fine (the scan
+    // just reads the last exported files) and must not fail the scan.
+    if (instance.configured && instance.config?.agentId === "mistral-vibe") {
+      yield* Effect.ignoreCause(triggerExport());
+    }
     const path = yield* Path.Path;
     const home = yield* HostProcess.HomeDirectory;
-    const configured = environment["MISTRAL_VIBE_USAGE_DIR"]?.trim();
+    const configured = instance.environment["MISTRAL_VIBE_USAGE_DIR"]?.trim();
     return [
       {
         dir: path.resolve(

@@ -47,4 +47,31 @@ describe("mistralVibeUsageFormat", () => {
     ).toEqual([]);
     expect(mistralVibeUsageFormat.parseLine(line({ timestamp: "nope" }), undefined)).toEqual([]);
   });
+
+  it("discards lines whose counters are not non-negative integers", () => {
+    // A malformed export (strings or floats for token counts) must produce no
+    // record at all rather than silently decoding to 0 and being filtered as
+    // "empty usage" downstream.
+    expect(mistralVibeUsageFormat.parseLine(line({ inputTokens: "1000" }), undefined)).toEqual([]);
+    expect(mistralVibeUsageFormat.parseLine(line({ inputTokens: 1.5 }), undefined)).toEqual([]);
+    expect(mistralVibeUsageFormat.parseLine(line({ outputTokens: -1 }), undefined)).toEqual([]);
+    expect(mistralVibeUsageFormat.parseLine(line({ turn: 1.5 }), undefined)).toEqual([]);
+  });
+
+  it("parses projected entries identically to lines", () => {
+    const projected = {
+      type: "mistral_vibe_usage",
+      sessionId: "s1",
+      turn: 3,
+      timestamp: "2026-11-07T10:00:00.000Z",
+      model: "zai-glm-5-3",
+      inputTokens: 1000,
+      cachedInputTokens: 400,
+      outputTokens: 50,
+      reasoningTokens: 10,
+    };
+    expect(mistralVibeUsageFormat.parseProjected(projected, undefined)).toEqual(
+      mistralVibeUsageFormat.parseLine(JSON.stringify(projected), undefined),
+    );
+  });
 });
