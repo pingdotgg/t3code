@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
+  ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -17,6 +18,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  changeDraftProject,
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
@@ -167,6 +169,19 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+  });
+});
+
+describe("scheduled task destination", () => {
+  it("restores the saved thread when the project changes back", () => {
+    const task = {
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      threadMode: "continue" as const,
+    };
+    const moved = changeDraftProject(taskToDraft(task), "project:other", task);
+    expect(moved.threadId).toBe("");
+    expect(changeDraftProject(moved, task.projectId, task).threadId).toBe("thread:bound");
   });
 });
 

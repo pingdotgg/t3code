@@ -308,8 +308,16 @@ export function unbindDraftFromThread(draft: DraftState): DraftState {
   };
 }
 
-export function changeDraftProject(draft: DraftState, projectId: string): DraftState {
+/** Back in the task's own project, its saved thread returns; a read-only picker can't offer it. */
+export function changeDraftProject(
+  draft: DraftState,
+  projectId: string,
+  saved: Pick<ScheduledTask, "projectId" | "threadId"> | null,
+): DraftState {
   if (projectId === draft.projectId) return draft;
+  if (saved?.threadId && projectId === saved.projectId && draft.threadMode !== "new_thread") {
+    return { ...draft, projectId, threadId: saved.threadId };
+  }
   return { ...unbindDraftFromThread(draft), projectId };
 }
 

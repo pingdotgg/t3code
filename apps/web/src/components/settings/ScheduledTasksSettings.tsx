@@ -1669,7 +1669,7 @@ function ScheduledTaskEditorForm({
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>
-                  setDraft((current) => changeDraftProject(current, projectId ?? ""))
+                  setDraft((current) => changeDraftProject(current, projectId ?? "", task))
                 }
               >
                 <SelectTrigger size="sm" id="scheduled-task-project">
