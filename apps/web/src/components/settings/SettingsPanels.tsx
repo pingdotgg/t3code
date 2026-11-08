@@ -50,6 +50,7 @@ import {
   readThemePreference,
   useTheme,
 } from "../../hooks/useTheme";
+import { useBoringSidebarEnabled } from "../../hooks/useSettings";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -785,6 +786,7 @@ export function LegacyFeaturesSection() {
 export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const boringSidebarEnabled = useBoringSidebarEnabled();
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
     readLastEnabledProjectGroupingMode(),
   );
@@ -890,6 +892,7 @@ export function GeneralSettingsPanel() {
             DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled ? (
               <SettingResetButton
                 label="working section"
+                disabled={boringSidebarEnabled}
                 onClick={() =>
                   updateSettings({
                     sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
@@ -901,6 +904,7 @@ export function GeneralSettingsPanel() {
           control={
             <Switch
               checked={settings.sidebarWorkingShelfEnabled}
+              disabled={boringSidebarEnabled}
               onCheckedChange={(checked) =>
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
