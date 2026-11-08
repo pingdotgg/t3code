@@ -460,6 +460,9 @@ describe("MessagesTimeline messages", () => {
     });
 
     expect(screen.button("Next turn")).toBeDisabled();
+
+    viewport.scrollTop -= 30;
+    await vi.waitFor(() => expect(screen.button("Next turn")).not.toBeDisabled());
   });
 
   it("keeps rows in item order after a reload or thread switch, before any timer runs", async () => {
