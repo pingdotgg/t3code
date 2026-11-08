@@ -37,6 +37,57 @@ describe.runIf(
     }
   });
 
+  it.each(["owned", "outside", "symlink", "nonempty", "nested"])(
+    "validates a supplied %s staging directory",
+    (mode) => {
+      const fixture = createFixture();
+      try {
+        const stage = NodePath.join(
+          fixture.dir,
+          mode === "outside"
+            ? "external-stage"
+            : mode === "nested"
+              ? ".t3-update.external/nested"
+              : ".t3-update.external",
+        );
+        const unrelated = NodePath.join(fixture.dir, "unrelated");
+        NodeFS.mkdirSync(unrelated);
+        NodeFS.writeFileSync(NodePath.join(unrelated, "keep"), "untouched");
+        if (mode === "symlink") NodeFS.symlinkSync(unrelated, stage);
+        else NodeFS.mkdirSync(stage, { recursive: true });
+        if (mode === "nonempty") NodeFS.writeFileSync(NodePath.join(stage, "keep"), "untouched");
+        fixture.env.T3CODE_DESKTOP_UPDATE_STAGE = stage;
+        const result = fixture.attempt();
+        NodeAssert.equal(typeof result.status, "number", result.error?.message);
+        if (mode === "owned") {
+          NodeAssert.equal(result.status, 0, result.stderr);
+          NodeAssert.deepEqual(snapshot(fixture.app), fixture.expected);
+          NodeAssert.equal(
+            NodeFS.readFileSync(NodePath.join(stage, "installed-app"), "utf8").trim(),
+            fixture.app,
+          );
+        } else {
+          NodeAssert.notEqual(result.status, 0);
+          NodeAssert.equal(
+            NodeFS.readFileSync(NodePath.join(fixture.app, ".version"), "utf8"),
+            "1.0.0",
+          );
+          if (mode === "nonempty")
+            NodeAssert.equal(
+              NodeFS.readFileSync(NodePath.join(stage, "keep"), "utf8"),
+              "untouched",
+            );
+        }
+        NodeAssert.equal(
+          NodeFS.readFileSync(NodePath.join(unrelated, "keep"), "utf8"),
+          "untouched",
+        );
+      } finally {
+        fixture.clean();
+      }
+    },
+  );
+
   it("rejects invalid parent arguments before signalling readiness", () => {
     for (const parent of ["0", "1", "-1", "oops"]) {
       const result = run("/bin/sh", [

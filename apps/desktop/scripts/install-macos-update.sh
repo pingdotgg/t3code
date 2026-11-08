@@ -24,7 +24,16 @@ codesign --verify --deep --strict "$app" >&2
 signer=$(team "$app"); bundle_id=$(identifier "$app")
 [ -n "$signer" ] && [ "$signer" != 'not set' ] || fail "Installed app has no signing team."
 exec 4>&2
-stage=$(mktemp -d "$(dirname "$app")/.t3-update.XXXXXXXX")
+# The app owns this directory so it can reclaim payloads after forced termination.
+if [ -n "${T3CODE_DESKTOP_UPDATE_STAGE:-}" ]; then
+  stage=$T3CODE_DESKTOP_UPDATE_STAGE
+  case "$stage" in "$(dirname "$app")"/.t3-update.*) ;; *) fail "Invalid staging directory." ;; esac
+  [ "$(dirname "$stage")" = "$(dirname "$app")" ] || fail "Invalid staging directory."
+  [ -d "$stage" ] && [ ! -L "$stage" ] || fail "Invalid staging directory."
+  [ -z "$(ls -A "$stage")" ] || fail "Expected an unused staging directory."
+else
+  stage=$(mktemp -d "$(dirname "$app")/.t3-update.XXXXXXXX")
+fi
 candidate="$stage/candidate.app"
 moved_old=false; locked=false; ready=false
 cleanup() {

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   nativeInstall: vi.fn(),
   quit: vi.fn(),
   beforeQuit: vi.fn(),
+  makeTempDirectory: vi.fn(),
+  remove: vi.fn(),
 }));
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -39,17 +41,22 @@ vi.mock("electron-updater", async () => {
 const installer = "/opt/T3 scripts/install-macos-update.sh";
 const archive = "/cache/T3 update $(untouched).zip";
 const helperPid = 42424;
+const ownedStage = "/Applications/.t3-update.fixture";
+const makeChild = (pid: number | undefined) =>
+  Object.assign(new NodeEvents.EventEmitter(), {
+    pid,
+    unref: vi.fn(),
+    kill: vi.fn(),
+    stdout: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
+    stderr: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
+  });
 
 beforeEach(() => {
   vi.resetAllMocks();
+  mocks.makeTempDirectory.mockImplementation(() => Effect.succeed(ownedStage));
+  mocks.remove.mockImplementation(() => Effect.void);
   mocks.spawn.mockImplementation(() => {
-    const child = Object.assign(new NodeEvents.EventEmitter(), {
-      pid: helperPid,
-      unref: vi.fn(),
-      kill: vi.fn(),
-      stdout: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-      stderr: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-    });
+    const child = makeChild(helperPid);
     queueMicrotask(() => child.stdout.emit("data", Buffer.from("ready\n")));
     return child;
   });
@@ -77,6 +84,13 @@ const install = (external: boolean, downloaded = true, platform: NodeJS.Platform
     }),
   ).pipe(
     Effect.provide(NodePath.layer),
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        makeTempDirectory: (options) => mocks.makeTempDirectory(options),
+        remove: (path, options) => mocks.remove(path, options),
+      }),
+    ),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
       HostProcess.ExecutablePath,
@@ -90,12 +104,7 @@ const install = (external: boolean, downloaded = true, platform: NodeJS.Platform
 describe("ElectronUpdater install handoff", () => {
   it.effect("waits for complete helper readiness before quitting", () =>
     Effect.gen(function* () {
-      const child = Object.assign(new NodeEvents.EventEmitter(), {
-        unref: vi.fn(),
-        kill: vi.fn(),
-        stdout: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-        stderr: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-      });
+      const child = makeChild(helperPid);
       const started = new Promise<void>((resolveStarted) => {
         mocks.spawn.mockImplementation(() => {
           queueMicrotask(resolveStarted);
@@ -122,12 +131,8 @@ describe("ElectronUpdater install handoff", () => {
         const signalled = new Promise<void>((resolve) => {
           markSignalled = resolve;
         });
-        const child = Object.assign(new NodeEvents.EventEmitter(), {
-          pid: helperPid,
-          kill: vi.fn(markSignalled),
-          stdout: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-          stderr: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-        });
+        const child = makeChild(helperPid);
+        child.kill.mockImplementation(markSignalled);
         using signals = vi.spyOn(process, "kill").mockImplementation(() => {
           markSignalled();
           return true;
@@ -161,6 +166,80 @@ describe("ElectronUpdater install handoff", () => {
       }),
   );
 
+  it.effect.each(["ignores-term", "held-pipe", "spawn-error", "missing-exit"] as const)(
+    "bounds cleanup for %s without waiting indefinitely for close",
+    (mode) =>
+      Effect.gen(function* () {
+        let markTerm!: () => void;
+        const termSent = new Promise<void>((resolve) => {
+          markTerm = resolve;
+        });
+        const child = makeChild(mode === "spawn-error" ? undefined : helperPid);
+        using signals = vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+          if (signal === "SIGTERM") {
+            if (mode === "held-pipe") child.emit("exit", 1);
+            markTerm();
+          }
+          return true;
+        });
+        const started = new Promise<void>((resolve) =>
+          mocks.spawn.mockImplementation(() => {
+            queueMicrotask(() => {
+              if (mode === "spawn-error")
+                child.emit("error", Object.assign(new Error("no descriptors"), { code: "EMFILE" }));
+              resolve();
+            });
+            return child;
+          }),
+        );
+        const fiber = yield* install(true).pipe(Effect.forkChild);
+        yield* Effect.promise(() => started);
+        const stopping =
+          mode === "spawn-error" ? undefined : yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+        if (mode !== "spawn-error") yield* Effect.promise(() => termSent);
+        yield* TestClock.adjust("5 seconds");
+        try {
+          if (mode === "spawn-error") {
+            assert.isDefined(fiber.pollUnsafe(), "a failed spawn has no process to reap");
+            assert.deepEqual(signals.mock.calls, []);
+          } else {
+            assert.deepEqual(signals.mock.calls, [
+              [-helperPid, "SIGTERM"],
+              [-helperPid, "SIGKILL"],
+            ]);
+            if (mode === "ignores-term") {
+              assert.isUndefined(fiber.pollUnsafe(), "escalation still waits for helper exit");
+              child.emit("exit", null, "SIGKILL");
+            }
+            if (mode === "missing-exit") {
+              yield* TestClock.adjust("5 seconds");
+              assert.isDefined(
+                fiber.pollUnsafe(),
+                "a missing exit event cannot block cleanup forever",
+              );
+            }
+            yield* Fiber.join(stopping!);
+            assert.equal(child.stdout.destroy.mock.calls.length, 1);
+            assert.equal(child.stderr.destroy.mock.calls.length, 1);
+          }
+          assert.equal(mocks.quit.mock.calls.length, 0);
+          assert.equal(mocks.nativeInstall.mock.calls.length, 0);
+          assert.deepEqual(
+            mocks.remove.mock.calls,
+            mode === "missing-exit"
+              ? []
+              : [
+                  [`${ownedStage}/candidate.app`, { recursive: true, force: true }],
+                  [`${ownedStage}/extracted`, { recursive: true, force: true }],
+                ],
+          );
+        } finally {
+          child.emit("exit", 1);
+          child.emit("close", 1);
+        }
+      }),
+  );
+
   it.effect.each(["linux", "win32"] as const)(
     "keeps the native installer on %s even when an external macOS installer is configured",
     (platform) =>
@@ -187,11 +266,18 @@ describe("ElectronUpdater install handoff", () => {
       mocks.beforeQuit.mockImplementation(() => order.push("allow-quit"));
       mocks.quit.mockImplementation(() => order.push("quit"));
       assert.equal((yield* install(true))._tag, "Success");
-      assert.deepEqual(mocks.spawn.mock.calls[0], [
-        installer,
-        [archive, "/Applications/T3 Code (Nightly).app", "1.2.4", String(process.pid), "true"],
-        { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+      const [command, args, options] = mocks.spawn.mock.calls[0]!;
+      assert.equal(command, installer);
+      assert.deepEqual(args, [
+        archive,
+        "/Applications/T3 Code (Nightly).app",
+        "1.2.4",
+        String(process.pid),
+        "true",
       ]);
+      assert.equal(options.detached, true);
+      assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
+      assert.equal(options.env?.T3CODE_DESKTOP_UPDATE_STAGE, ownedStage);
       assert.deepEqual(order, ["allow-quit", "quit"]);
       assert.equal(mocks.nativeInstall.mock.calls.length, 0);
     }),
@@ -224,12 +310,7 @@ describe("ElectronUpdater install handoff", () => {
         failure !== "before-quit-failure"
       ) {
         mocks.spawn.mockImplementation(() => {
-          const child = Object.assign(new NodeEvents.EventEmitter(), {
-            pid: failure === "spawn-failure" ? undefined : helperPid,
-            kill: vi.fn(),
-            stdout: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-            stderr: Object.assign(new NodeEvents.EventEmitter(), { destroy: vi.fn() }),
-          });
+          const child = makeChild(failure === "spawn-failure" ? undefined : helperPid);
           queueMicrotask(() => {
             if (failure === "spawn-failure") {
               child.emit("error", new Error("cannot spawn installer"));
@@ -279,75 +360,105 @@ describe("ElectronUpdater install handoff", () => {
 });
 
 describe.runIf(HostProcess.Platform.defaultValue() !== "win32")("POSIX installer ownership", () => {
-  it.live("reaps a foreground tool and runs shell cleanup before cancellation returns", () =>
-    Effect.gen(function* () {
-      const { spawn } = yield* Effect.promise(() =>
-        vi.importActual<typeof import("node:child_process")>("node:child_process"),
-      );
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "installer-group-" });
-      yield* fs.writeFileString(`${root}/candidate`, "staged payload");
-      yield* fs.writeFileString(`${root}/untouched`, "unrelated");
-      let child: import("node:child_process").ChildProcess | undefined;
-      let closed: Promise<void> | undefined;
-      let didClose = false;
-      const started = new Promise<number>((resolve, reject) => {
-        mocks.spawn.mockImplementation(() => {
-          child = spawn(
-            "/bin/sh",
-            [
-              "-c",
-              `set -eu
-trap 'rm -f "$FIXTURE_ROOT/candidate"' EXIT
-trap 'exit 1' TERM
-/bin/sh -c 'printf "tool:%s\\n" "$$" >&2; exec /bin/sleep 60'
-exit 0`,
-            ],
-            {
-              detached: true,
-              stdio: ["ignore", "pipe", "pipe"],
-              env: { ...process.env, FIXTURE_ROOT: root },
-            },
-          );
-          closed = new Promise<void>((resolveClosed) =>
-            child!.once("close", () => {
-              didClose = true;
-              resolveClosed();
+  it.live.each(["graceful", "forced"] as const)(
+    "reaps a %s helper group and cleans its owned stage",
+    (mode) =>
+      Effect.gen(function* () {
+        const { spawn, spawnSync } = yield* Effect.promise(() =>
+          vi.importActual<typeof import("node:child_process")>("node:child_process"),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "installer-group-" });
+        yield* fs.writeFileString(`${root}/untouched`, "unrelated");
+        let stageDirectory = "";
+        mocks.makeTempDirectory.mockImplementation(() =>
+          fs.makeTempDirectory({ directory: root, prefix: ".t3-update." }).pipe(
+            Effect.map((dir) => {
+              stageDirectory = dir;
+              return dir;
             }),
-          );
-          let output = "";
-          child.stderr!.on("data", (chunk: Buffer) => {
-            output += chunk.toString();
-            const pid = /tool:(\d+)/.exec(output)?.[1];
-            if (pid) resolve(Number(pid));
+          ),
+        );
+        mocks.remove.mockImplementation((path, options) => fs.remove(path, options));
+        let child: import("node:child_process").ChildProcess | undefined;
+        let closed: Promise<void> | undefined;
+        let didClose = false;
+        const started = new Promise<number>((resolve, reject) => {
+          mocks.spawn.mockImplementation((_command, _args, options) => {
+            child = spawn(
+              "/bin/sh",
+              [
+                "-c",
+                `set -eu
+stage=$T3CODE_DESKTOP_UPDATE_STAGE
+mkdir "$stage/candidate.app" "$stage/extracted"
+printf diagnostic > "$stage/install.log"
+printf rollback > "$stage/previous.app"
+printf rejected > "$stage/failed.app"
+trap 'rm -rf "$stage/candidate.app" "$stage/extracted"' EXIT
+if [ "$FIXTURE_FORCE" = 1 ]; then trap '' TERM; else trap 'exit 1' TERM; fi
+/bin/sh -c 'if [ "$FIXTURE_FORCE" = 1 ]; then trap "" TERM; fi; printf "tool:%s\\n" "$$" >&2; exec /bin/sleep 60'
+exit 0`,
+              ],
+              {
+                detached: true,
+                stdio: ["ignore", "pipe", "pipe"],
+                env: {
+                  PATH: "/usr/bin:/bin",
+                  T3CODE_DESKTOP_UPDATE_STAGE: options.env.T3CODE_DESKTOP_UPDATE_STAGE,
+                  FIXTURE_FORCE: mode === "forced" ? "1" : "0",
+                },
+              },
+            );
+            closed = new Promise<void>((done) =>
+              child!.once("close", () => {
+                didClose = true;
+                done();
+              }),
+            );
+            let output = "";
+            child.stderr!.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+              const pid = /tool:(\d+)/.exec(output)?.[1];
+              if (pid) resolve(Number(pid));
+            });
+            child.once("error", reject);
+            return child;
           });
-          child.once("error", reject);
-          return child;
         });
-      });
-      try {
-        const fiber = yield* install(true).pipe(Effect.forkChild);
-        const toolPid = yield* Effect.promise(() => started);
-        assert.notEqual(toolPid, child!.pid, "fixture has a distinct foreground child");
-        yield* Fiber.interrupt(fiber);
-        assert.isTrue(didClose, "cancellation awaits its helper and foreground tool");
-        assert.throws(() => process.kill(toolPid, 0), /ESRCH/);
-        assert.isFalse(yield* fs.exists(`${root}/candidate`));
-        assert.equal(yield* fs.readFileString(`${root}/untouched`), "unrelated");
-        assert.equal(mocks.quit.mock.calls.length, 0);
-      } finally {
-        if (!didClose && child?.pid !== undefined) {
-          yield* Effect.sync(() => {
-            try {
-              process.kill(-child!.pid!, "SIGTERM");
-            } catch (cause) {
-              if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
-                throw cause;
-            }
+        try {
+          const fiber = yield* install(true).pipe(Effect.forkChild);
+          const toolPid = yield* Effect.promise(() => started);
+          assert.notEqual(toolPid, child!.pid, "fixture has a distinct foreground child");
+          yield* Fiber.interrupt(fiber);
+          if (closed) yield* Effect.promise(() => closed!);
+          assert.isTrue(didClose, "helper has terminated");
+          const tool = spawnSync("/bin/ps", ["-o", "stat=", "-p", String(toolPid)], {
+            encoding: "utf8",
           });
+          assert.isTrue(
+            tool.status === 1 || /^\s*Z/.test(tool.stdout),
+            "foreground child is gone or awaiting OS reaping",
+          );
+          assert.isFalse(yield* fs.exists(`${stageDirectory}/candidate.app`));
+          assert.isFalse(yield* fs.exists(`${stageDirectory}/extracted`));
+          assert.equal(yield* fs.readFileString(`${stageDirectory}/install.log`), "diagnostic");
+          assert.equal(yield* fs.readFileString(`${stageDirectory}/previous.app`), "rollback");
+          assert.equal(yield* fs.readFileString(`${stageDirectory}/failed.app`), "rejected");
+          assert.equal(yield* fs.readFileString(`${root}/untouched`), "unrelated");
+          assert.equal(mocks.quit.mock.calls.length, 0);
+        } finally {
+          if (!didClose && child?.pid !== undefined)
+            yield* Effect.sync(() => {
+              try {
+                process.kill(-child!.pid!, "SIGKILL");
+              } catch (cause) {
+                if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
+                  throw cause;
+              }
+            });
+          if (closed) yield* Effect.promise(() => closed!);
         }
-        if (closed) yield* Effect.promise(() => closed!);
-      }
-    }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
+      }).pipe(Effect.scoped, Effect.provide(NodeFileSystem.layer)),
   );
 });
