@@ -648,7 +648,7 @@ function useChatMarkdownState({
         ),
       );
     }
-    return revealInDesktopShell(filePath).then((revealed) =>
+    return revealInDesktopShell(environmentId, filePath).then((revealed) =>
       revealed
         ? AsyncResult.success<void, never>(undefined)
         : openInEditor({

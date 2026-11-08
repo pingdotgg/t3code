@@ -4,9 +4,15 @@ import {
   SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+const { readEnvironmentScope } = vi.hoisted(() => ({ readEnvironmentScope: vi.fn() }));
+vi.mock(import("./state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readEnvironmentScope,
+}));
+
+import { resolveRemoteOpenState, revealInDesktopShell } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -22,6 +28,25 @@ const TAILSCALE_TARGETS = [
   { kind: "tailscale", host: "sol.tail1234.ts.net" },
   { kind: "mdns", host: "sol.local" },
 ] as const;
+
+describe("revealInDesktopShell", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["reveals natively with the operate scope", true, true, true, 1],
+    ["leaves a connection without the operate scope to the server", false, true, false, 0],
+    ["reports a declined reveal so the server can try", true, false, false, 1],
+  ])("%s", async (_name, hasScope, bridgeResult, expected, bridgeCalls) => {
+    readEnvironmentScope.mockReturnValue(hasScope);
+    const revealItemInFolder = vi.fn(async () => bridgeResult);
+    vi.stubGlobal("window", { desktopBridge: { revealItemInFolder } });
+
+    await expect(revealInDesktopShell(environmentId, "C:\\repo\\a.ts")).resolves.toBe(expected);
+    expect(revealItemInFolder).toHaveBeenCalledTimes(bridgeCalls);
+  });
+});
 
 describe("resolveRemoteOpenState", () => {
   it("keeps exec behavior for a loopback primary target", () => {

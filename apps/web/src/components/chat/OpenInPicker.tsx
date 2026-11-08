@@ -266,7 +266,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     }
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
     const reveal = revealFileManager && editor === "file-manager";
-    if (reveal && (await revealInDesktopShell(openInCwd))) {
+    if (reveal && (await revealInDesktopShell(environmentId, openInCwd))) {
       setPreferredEditor(editor);
       return true;
     }

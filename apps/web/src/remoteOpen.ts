@@ -1,5 +1,6 @@
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
+  AuthOrchestrationOperateScope,
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
   type EnvironmentId,
@@ -14,6 +15,7 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
+import { readEnvironmentScope } from "~/state/session";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -177,8 +179,12 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   return true;
 }
 
-/** Resolves false when the desktop app declines, so the caller falls back to the server's reveal. */
-export async function revealInDesktopShell(path: string): Promise<boolean> {
+/** Resolves false when this connection or the desktop app declines, so the server decides instead. */
+export async function revealInDesktopShell(
+  environmentId: EnvironmentId,
+  path: string,
+): Promise<boolean> {
+  if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
   try {
     return (await window.desktopBridge?.revealItemInFolder?.(path)) === true;
   } catch {

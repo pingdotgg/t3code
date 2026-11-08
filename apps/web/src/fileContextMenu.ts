@@ -121,7 +121,11 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         : (action.slice("editor:".length) as EditorId);
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
-    if (reveal && remoteOpen.mode === "local-exec" && (await revealInDesktopShell(absolutePath))) {
+    if (
+      reveal &&
+      remoteOpen.mode === "local-exec" &&
+      (await revealInDesktopShell(environmentId, absolutePath))
+    ) {
       return;
     }
     const result = await openInEditor({
