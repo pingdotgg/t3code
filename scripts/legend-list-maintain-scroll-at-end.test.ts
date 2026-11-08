@@ -17,12 +17,17 @@ function createList(bundle: string) {
   const frames: Array<() => void> = [];
   let tasks: Array<{ at: number; run: () => void }> = [];
   let now = 0;
-  const scrollToEnd = vi.fn();
+  let within = true;
+  let layoutLeavesWithinThreshold = true;
+  let nativeScroll = 2000;
+  const scrollToEnd = vi.fn(() => {
+    nativeScroll = 2200;
+  });
   const state = {
     props: { maintainScrollAtEnd: { animated: true, onLayout: true, onDataChange: true } },
     didContainersLayout: true,
     pendingNativeMVCPAdjust: undefined,
-    refScroller: { current: { scrollToEnd } },
+    refScroller: { current: { scrollToEnd, getCurrentScrollOffset: () => nativeScroll } },
     scroll: 2000,
     scrollLength: 800,
     otherAxisSize: 600,
@@ -34,14 +39,20 @@ function createList(bundle: string) {
     {
       requestAnimationFrame: (callback: () => void) => frames.push(callback),
       setTimeout: (run: () => void, delay: number) => tasks.push({ at: now + delay, run }),
-      peek$: (_ctx: unknown, key: string) => key === "isWithinMaintainScrollAtEndThreshold",
+      peek$: (_ctx: unknown, key: string) =>
+        key === "isWithinMaintainScrollAtEndThreshold" && within,
       set$: vi.fn(),
       getContentSize: () => 3000,
       isHorizontalRTL: () => false,
       updateContentMetricsState: vi.fn(),
       doInitialAllocateContainers: vi.fn(),
       calculateItemsInView: vi.fn(),
-      checkThresholds: vi.fn(),
+      checkThresholds: () => {
+        within = layoutLeavesWithinThreshold;
+      },
+      updateScroll: (_ctx: unknown, offset: number) => {
+        state.scroll = offset;
+      },
       IS_DEV: false,
     },
   ) as {
@@ -55,7 +66,22 @@ function createList(bundle: string) {
   };
   return {
     scrollToEnd,
+    state,
     dataChange: () => api.doMaintainScrollAtEnd(ctx),
+    /** The shrink leaves the end further away than the new, smaller viewport. */
+    layoutLeavesEndBeyondThreshold() {
+      layoutLeavesWithinThreshold = false;
+    },
+    /** A scroll event moves the list without a pin, such as a smooth scroll in flight. */
+    scrolled(offset: number) {
+      nativeScroll = offset;
+      state.scroll = offset;
+    },
+    /** A pin that lands at the end brings the threshold back. */
+    reachEnd() {
+      within = true;
+      layoutLeavesWithinThreshold = true;
+    },
     // Browser order per frame: rAF callbacks, then ResizeObserver layout, then queued tasks.
     frame(viewportHeight?: number) {
       now += FRAME_MS;
@@ -87,5 +113,23 @@ describe.each(["react.mjs", "react.js"])("maintainScrollAtEnd while animated (%s
       [{ animated: true }],
       ...Array.from({ length: 6 }, () => [{ animated: false }]),
     ]);
+  });
+
+  it("pins a shrink that leaves the end beyond one viewport while a smooth scroll is in flight", () => {
+    const list = createList(bundle);
+    list.dataChange();
+    list.frame();
+    list.layoutLeavesEndBeyondThreshold();
+    list.frame(468);
+    list.scrolled(2030);
+    list.frame();
+    expect(list.scrollToEnd.mock.calls).toEqual([[{ animated: true }], [{ animated: false }]]);
+    // A later MVCP adjustment rebases on this offset, so it must be the pinned one.
+    expect(list.state.scroll).toBe(2200);
+    list.reachEnd();
+    for (let index = 0; index < 32; index++) list.frame();
+    list.dataChange();
+    list.frame();
+    expect(list.scrollToEnd.mock.calls.at(-1)).toEqual([{ animated: true }]);
   });
 });
