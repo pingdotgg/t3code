@@ -35,6 +35,169 @@ diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/common/
          buffer.append("| ")
          buffer.append(cells.joinToString(" | "))
          buffer.append(" |\n")
+diff --git a/ios/segments/ENRMCodeBlockContainerView.m b/ios/segments/ENRMCodeBlockContainerView.m
+--- a/ios/segments/ENRMCodeBlockContainerView.m
++++ b/ios/segments/ENRMCodeBlockContainerView.m
+@@ -162,6 +162,25 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
+   return (0.299 * r + 0.587 * g + 0.114 * b) < 0.5;
+ }
+ 
++#if !TARGET_OS_OSX
++// Edge of a code pane tile in points; tileSize itself is in pixels.
++static const CGFloat kENRMCodeBlockTileSide = 256;
++
++// Tiles show as soon as they are drawn: the default fade would flash the pane
++// on every streamed chunk and on highlighting.
++@interface ENRMCodeBlockTiledLayer : CATiledLayer
++@end
++
++@implementation ENRMCodeBlockTiledLayer
++
+++ (CFTimeInterval)fadeDuration
++{
++  return 0;
++}
++
++@end
++#endif
++
+ // Scrollable code pane content. Draws the attributed code unwrapped at a
+ // fixed origin; the hosting ENRMCodeBlockContainerView draws everything else.
+ //
+@@ -173,6 +192,11 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
+ // unbounded (lines never wrap) with zero line-fragment padding and font leading
+ // disabled, matching the NSStringDrawing origin the block used before. A
+ // positive wrapWidth bounds it instead, so lines wrap at that width.
++//
++// On iOS the pane is tiled: one backing store for the whole text can exceed
++// what iOS will render, leaving the pane blank, while tiles only exist for the
++// visible part. Tiles draw on background threads, possibly concurrently, so the
++// TextKit stack and textOrigin are only touched under @synchronized(self).
+ @interface ENRMCodeBlockContentView : RCTUIView
+ @property (nonatomic, strong, nullable) NSAttributedString *attributedCode;
+ @property (nonatomic, assign) CGPoint textOrigin;
+@@ -201,26 +225,54 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
+ {
+   return self.menuProvider ? self.menuProvider() : [super menuForEvent:event];
+ }
++#else
+++ (Class)layerClass
++{
++  return [ENRMCodeBlockTiledLayer class];
++}
++
++- (void)didMoveToWindow
++{
++  [super didMoveToWindow];
++  CGFloat scale = self.traitCollection.displayScale;
++  if (self.window && scale > 0) {
++    CGFloat side = kENRMCodeBlockTileSide * scale;
++    ((CATiledLayer *)self.layer).tileSize = CGSizeMake(side, side);
++  }
++}
+ #endif
+ 
+ - (void)setAttributedCode:(nullable NSAttributedString *)attributedCode
+ {
+   _attributedCode = attributedCode;
+-  if (attributedCode.length == 0) {
+-    _textStorage = nil;
+-    _layoutManager = nil;
+-    _textContainer = nil;
+-    return;
++  // The new stack is laid out before it is shared, so tiles drawing the old
++  // one only wait for the swap.
++  NSTextStorage *textStorage = nil;
++  NSLayoutManager *layoutManager = nil;
++  NSTextContainer *textContainer = nil;
++  if (attributedCode.length > 0) {
++    textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedCode];
++    layoutManager = [[NSLayoutManager alloc] init];
++    layoutManager.usesFontLeading = ENRMLayoutManagerUsesFontLeading;
++    textContainer = [[NSTextContainer alloc] initWithSize:[self containerSize]];
++    textContainer.lineFragmentPadding = 0;
++    textContainer.maximumNumberOfLines = 0;
++    [layoutManager addTextContainer:textContainer];
++    [textStorage addLayoutManager:layoutManager];
++    [layoutManager ensureLayoutForTextContainer:textContainer];
++  }
++  @synchronized(self) {
++    _textStorage = textStorage;
++    _layoutManager = layoutManager;
++    _textContainer = textContainer;
++  }
++}
++
++- (void)setTextOrigin:(CGPoint)textOrigin
++{
++  @synchronized(self) {
++    _textOrigin = textOrigin;
+   }
+-  _textStorage = [[NSTextStorage alloc] initWithAttributedString:attributedCode];
+-  _layoutManager = [[NSLayoutManager alloc] init];
+-  _layoutManager.usesFontLeading = ENRMLayoutManagerUsesFontLeading;
+-  _textContainer = [[NSTextContainer alloc] initWithSize:[self containerSize]];
+-  _textContainer.lineFragmentPadding = 0;
+-  _textContainer.maximumNumberOfLines = 0;
+-  [_layoutManager addTextContainer:_textContainer];
+-  [_textStorage addLayoutManager:_layoutManager];
+-  [_layoutManager ensureLayoutForTextContainer:_textContainer];
+ }
+ 
+ - (CGSize)containerSize
+@@ -234,9 +286,11 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
+     return;
+   }
+   _wrapWidth = wrapWidth;
+-  if (_textContainer) {
+-    _textContainer.size = [self containerSize];
+-    [_layoutManager ensureLayoutForTextContainer:_textContainer];
++  @synchronized(self) {
++    if (_textContainer) {
++      _textContainer.size = [self containerSize];
++      [_layoutManager ensureLayoutForTextContainer:_textContainer];
++    }
+   }
+ #if !TARGET_OS_OSX
+   [self setNeedsDisplay];
+@@ -247,22 +301,27 @@ static BOOL ENRMColorIsDark(RCTUIColor *color)
+ 
+ - (CGFloat)usedWidth
+ {
+-  if (!_layoutManager) {
+-    return 0;
++  CGFloat width = 0;
++  @synchronized(self) {
++    if (_layoutManager) {
++      width = ceil([_layoutManager usedRectForTextContainer:_textContainer].size.width);
++    }
+   }
+-  return ceil([_layoutManager usedRectForTextContainer:_textContainer].size.width);
++  return width;
+ }
+ 
+ - (void)drawRect:(CGRect)rect
+ {
+-  if (!_layoutManager) {
+-    return;
++  @synchronized(self) {
++    if (!_layoutManager) {
++      return;
++    }
++    // Only paint the glyphs intersecting the dirty rect (one tile on iOS). The
++    // rect is in view space, the layout in container space.
++    CGRect boundingRect = CGRectOffset(rect, -_textOrigin.x, -_textOrigin.y);
++    NSRange glyphRange = [_layoutManager glyphRangeForBoundingRect:boundingRect inTextContainer:_textContainer];
++    [_layoutManager drawGlyphsForGlyphRange:glyphRange atPoint:_textOrigin];
+   }
+-  // Only paint the glyphs intersecting the dirty rect; tall blocks skip their
+-  // off-screen lines. The rect is in view space, the layout in container space.
+-  CGRect boundingRect = CGRectOffset(rect, -self.textOrigin.x, -self.textOrigin.y);
+-  NSRange glyphRange = [_layoutManager glyphRangeForBoundingRect:boundingRect inTextContainer:_textContainer];
+-  [_layoutManager drawGlyphsForGlyphRange:glyphRange atPoint:self.textOrigin];
+ }
+ 
+ @end
 diff --git a/ios/segments/TableContainerView.m b/ios/segments/TableContainerView.m
 --- a/ios/segments/TableContainerView.m
 +++ b/ios/segments/TableContainerView.m
