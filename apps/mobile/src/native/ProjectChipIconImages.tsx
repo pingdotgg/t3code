@@ -12,6 +12,7 @@ import { countGlyphs, projectIconColorClassNames, type ProjectIconGlyph } from "
 const TILE_SIZE = 48;
 
 interface PendingTile {
+  readonly id: number;
   readonly key: string;
   readonly glyph: ProjectIconGlyph;
   readonly promise: Promise<string>;
@@ -20,7 +21,9 @@ interface PendingTile {
 }
 
 const tiles = new Map<string, PendingTile>();
+const images = new Map<string, string>();
 let pendingTiles: ReadonlyArray<PendingTile> = [];
+let nextTileId = 0;
 const listeners = new Set<() => void>();
 
 export function projectGlyphKey(glyph: ProjectIconGlyph): string {
@@ -43,7 +46,7 @@ function rasterize(key: string): Promise<string> {
     resolve = done;
     reject = fail;
   });
-  const tile = { key, glyph: decodeGlyphKey(key), promise, resolve, reject };
+  const tile = { id: nextTileId++, key, glyph: decodeGlyphKey(key), promise, resolve, reject };
   tiles.set(key, tile);
   pendingTiles = [...pendingTiles, tile];
   queueMicrotask(notify);
@@ -51,8 +54,11 @@ function rasterize(key: string): Promise<string> {
 }
 
 function finish(tile: PendingTile, base64: string | undefined) {
+  tiles.delete(tile.key);
   if (base64) {
-    tile.resolve(`data:image/png;base64,${base64.replace(/\s/g, "")}`);
+    const uri = `data:image/png;base64,${base64.replace(/\s/g, "")}`;
+    images.set(tile.key, uri);
+    tile.resolve(uri);
   } else {
     tile.reject();
   }
@@ -79,17 +85,20 @@ class ProjectGlyphRasterizeError extends Schema.TaggedError<ProjectGlyphRasteriz
 }
 
 export const projectGlyphImageAtom = Atom.family((key: string) =>
-  Atom.make(
-    Effect.tryPromise({
-      try: () => rasterize(key),
-      catch: (cause) => new ProjectGlyphRasterizeError({ key, cause }),
-    }),
-  ).pipe(Atom.keepAlive, Atom.withLabel(`mobile-project-glyph-image:${key}`)),
+  Atom.make(() => {
+    const image = images.get(key);
+    return image === undefined
+      ? Effect.tryPromise({
+          try: () => rasterize(key),
+          catch: (cause) => new ProjectGlyphRasterizeError({ key, cause }),
+        })
+      : Effect.succeed(image);
+  }).pipe(Atom.withLabel(`mobile-project-glyph-image:${key}`)),
 );
 
 export function ProjectChipIconRasterizer() {
   const pending = useSyncExternalStore(subscribe, () => pendingTiles);
-  return pending.map((tile) => <GlyphCapture key={tile.key} tile={tile} />);
+  return pending.map((tile) => <GlyphCapture key={tile.id} tile={tile} />);
 }
 
 function captureTile(svg: Svg, tile: PendingTile) {
