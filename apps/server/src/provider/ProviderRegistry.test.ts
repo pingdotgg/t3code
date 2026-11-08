@@ -3170,9 +3170,11 @@ it.layer(
               "Claude Code is not authenticated. Run `claude auth login` and try again.",
             );
           } else {
-            assert.match(
+            // A home path is resolved to a native path; an inherited value is kept literal.
+            const expected = homePath ? (yield* Path.Path).resolve(configDir) : configDir;
+            assert.include(
               status.message ?? "",
-              new RegExp(`CLAUDE_CONFIG_DIR.*${configDir}`),
+              `CLAUDE_CONFIG_DIR set to ${JSON.stringify(expected)}`,
               "a bare `claude auth login` signs in ~/.claude, not this instance's config dir",
             );
           }
