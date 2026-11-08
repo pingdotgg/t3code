@@ -113,11 +113,13 @@ import {
 } from "./thread-settings-options";
 import {
   canCommitPendingModel,
+  FAVORITES_PROVIDER_FILTER,
   favoritesFirst,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
+  restoredProviderFilter,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
@@ -141,7 +143,6 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly provider: ProviderInstanceId;
   readonly model: string;
 }> = [];
-const FAVORITES_PROVIDER_FILTER = "@favorites";
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 function ProviderHeader(props: {
@@ -479,12 +480,11 @@ function ThreadSettingsSessionProvider(
   const savedProviderFilter = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelPickerProviderFilter ?? null)
     : null;
-  // A saved provider can be removed or belong to another environment; show everything then.
-  const providerFilter =
-    savedProviderFilter === FAVORITES_PROVIDER_FILTER ||
-    providerGroups.some((group) => group.providerKey === savedProviderFilter)
-      ? savedProviderFilter
-      : null;
+  const providerFilter = restoredProviderFilter({
+    saved: savedProviderFilter,
+    providerGroups,
+    catalogProviderKeys: config?.providers.map((provider) => provider.instanceId) ?? [],
+  });
   const setProviderFilter = (next: string | null) => {
     savePreferences({ modelPickerProviderFilter: next });
   };
