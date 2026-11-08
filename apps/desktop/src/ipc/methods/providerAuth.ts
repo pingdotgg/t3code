@@ -6,6 +6,7 @@ import {
   cancelCodexAuthCallback,
   CodexAuthCallbackError,
 } from "../../app/CodexAuthCallback.ts";
+import { receiveSpotifyAuthCallback } from "../../app/SpotifyAuthCallback.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -46,4 +47,26 @@ export const cancelProviderAuthCallback = DesktopIpc.makeIpcMethod({
       try: () => cancelCodexAuthCallback(authorizationUrl),
       catch: () => new CodexAuthCallbackError({ detail: "Invalid ChatGPT sign-in request." }),
     }),
+});
+
+export const receiveSpotifyAuthCallbackMethod = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.RECEIVE_SPOTIFY_AUTH_CALLBACK_CHANNEL,
+  payload: Request,
+  result: Schema.String,
+  handler: Effect.fn("desktop.ipc.providerAuth.receiveSpotify")(function* (authorizationUrl) {
+    const shell = yield* ElectronShell.ElectronShell;
+    const windows = yield* ElectronWindow.ElectronWindow;
+    const runPromise = Effect.runPromiseWith(yield* Effect.context<ElectronShell.ElectronShell>());
+    const callbackUrl = yield* Effect.tryPromise({
+      try: () =>
+        receiveSpotifyAuthCallback(authorizationUrl, (url) => runPromise(shell.openExternal(url))),
+      catch: (cause) =>
+        new CodexAuthCallbackError({
+          detail: cause instanceof Error ? cause.message : "Could not connect Spotify.",
+        }),
+    });
+    const window = yield* windows.currentMainOrFirst;
+    if (Option.isSome(window)) yield* windows.reveal(window.value);
+    return callbackUrl;
+  }),
 });
