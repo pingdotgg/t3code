@@ -3433,6 +3433,48 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("Changes keeps a nested remote parent that shares the branch name suffix", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "main"]);
+        yield* git(cwd, ["checkout", "-b", "team/feature"]);
+        yield* writeTextFile(cwd, "parent.txt", "parent work\n");
+        yield* git(cwd, ["add", "parent.txt"]);
+        yield* git(cwd, ["commit", "-m", "parent work"]);
+        yield* git(cwd, ["push", "origin", "team/feature"]);
+        // Reflog records "Created from origin/team/feature"; that must not look like own-remote
+        // for local branch `feature` just because both end in `/feature`.
+        yield* git(cwd, ["checkout", "-b", "feature", "origin/team/feature"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature work\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature work"]);
+
+        const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+        assert.deepStrictEqual(status.branchChanges, {
+          baseRef: "origin/team/feature",
+          insertions: 1,
+          deletions: 0,
+        });
+        assert.strictEqual(
+          yield* git(cwd, ["config", "branch.feature.t3-review-base-ref"]),
+          "refs/remotes/origin/team/feature",
+        );
+        const preview = yield* driver.getReviewDiffPreview({ cwd });
+        const changes = preview.sources.find((source) => source.kind === "branch-range")!;
+        assert.strictEqual(changes.baseRef, "origin/team/feature");
+        assert.deepStrictEqual(changes.files, [
+          { path: "feature.txt", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.notInclude(changes.diff, "parent.txt");
+      }),
+    );
+
     it.effect("Changes prefers an open-PR base hint over nearest-parent guessing", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

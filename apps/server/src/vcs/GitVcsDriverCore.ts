@@ -1913,6 +1913,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   // explicit t3-merge-base settings.
   const reviewBaseConfigKey = (refName: string) => `branch.${refName}.t3-review-base-ref`;
 
+  // Exact remote-branch match: refs/remotes/origin/team/feature is not own-remote for `feature`.
+  const isOwnRemoteTrackingRef = (
+    comparisonRef: string,
+    refName: string,
+    remoteNames: ReadonlyArray<string>,
+  ) => {
+    if (!comparisonRef.startsWith("refs/remotes/")) return false;
+    const parsed = parseRemoteRefWithRemoteNames(
+      comparisonRef.slice("refs/remotes/".length),
+      remoteNames.toSorted((left, right) => right.length - left.length),
+    );
+    return parsed?.branchName === refName;
+  };
+
   const readInferredReviewBase = Effect.fn("readInferredReviewBase")(function* (
     cwd: string,
     refName: string,
@@ -1973,9 +1987,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
     if (createdFrom === null || createdOid === null) return null;
+    const remoteNames = yield* listRemoteNames(cwd).pipe(Effect.orElseSucceed(() => []));
     // A branch checked out from its own remote (e.g. DWIM checkout) did not fork from it.
     const isOwnRemote = (base: ResolvedReviewBase) =>
-      base.comparisonRef.startsWith("refs/remotes/") && base.comparisonRef.endsWith(`/${refName}`);
+      isOwnRemoteTrackingRef(base.comparisonRef, refName, remoteNames);
     if (createdFrom !== "HEAD" && createdFrom !== refName) {
       const named = yield* resolveNamed(createdFrom);
       if (named !== null && !isOwnRemote(named)) return named;
@@ -2000,9 +2015,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const comparisonRef = line.slice(createdOid.length + 1);
       if (comparisonRef === `refs/heads/${refName}`) continue;
       if (comparisonRef.endsWith("/HEAD")) continue;
-      if (comparisonRef.startsWith("refs/remotes/") && comparisonRef.endsWith(`/${refName}`)) {
-        continue;
-      }
+      if (isOwnRemoteTrackingRef(comparisonRef, refName, remoteNames)) continue;
       if (comparisonRef.startsWith("refs/remotes/")) {
         return {
           baseRef: comparisonRef.slice("refs/remotes/".length),
@@ -2090,17 +2103,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return isDefault ? 4 : 5;
     };
 
+    const remoteNames = yield* listRemoteNames(cwd).pipe(Effect.orElseSucceed(() => []));
     for (const name of seedNames) {
       if (name === refName) continue;
       const resolved = yield* options.resolveNamed(name);
       if (resolved === null) continue;
       if (resolved.comparisonRef === `refs/heads/${refName}`) continue;
-      if (
-        resolved.comparisonRef.startsWith("refs/remotes/") &&
-        resolved.comparisonRef.endsWith(`/${refName}`)
-      ) {
-        continue;
-      }
+      if (isOwnRemoteTrackingRef(resolved.comparisonRef, refName, remoteNames)) continue;
       const branchName = resolved.comparisonRef.startsWith("refs/heads/")
         ? resolved.comparisonRef.slice("refs/heads/".length)
         : resolved.baseRef.includes("/")
