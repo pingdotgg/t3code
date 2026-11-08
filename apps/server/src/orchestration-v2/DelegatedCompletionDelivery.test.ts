@@ -171,7 +171,7 @@ const seedParentWithTerminalTask = (input: {
   readonly deliveryState: "pending" | "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
-  readonly parentRunStatus?: "running" | "completed";
+  readonly parentRunStatus?: "running" | "completed" | "rolled_back";
   readonly siblingTasks?: ReadonlyArray<{
     readonly id: NodeId;
     readonly deliveryState: "delivered" | "claimed";
@@ -261,7 +261,7 @@ const seedParentWithTerminalTask = (input: {
             status: input.parentRunStatus ?? "running",
             requestedAt: input.now,
             startedAt: input.now,
-            completedAt: input.parentRunStatus === "completed" ? input.now : null,
+            completedAt: (input.parentRunStatus ?? "running") === "running" ? null : input.now,
             checkpointId: null,
             contextHandoffId: null,
             delegatedCompletion: {
@@ -327,9 +327,11 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
     { name: "reserved", reserved: true, held: ["subagent"] },
     // No delivery will claim it, so it must not hold the parent forever.
     { name: "unreserved", reserved: false, held: [] },
+    // A checkpoint rollback hides the run's items but keeps its cohort open, and a later run settles.
+    { name: "rolled back", reserved: true, held: [], parentRunStatus: "rolled_back" as const },
   ])(
     "holds an idle parent on a pending finished task only while $name",
-    ({ name, reserved, held }) =>
+    ({ name, reserved, held, parentRunStatus = "completed" }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
@@ -347,7 +349,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           deliveryState: "pending",
           ...(reserved ? { deliveryTaskIds: [deliveredTaskId] } : {}),
           siblingTasks: [{ id: deliveredTaskId, deliveryState: "delivered" }],
-          parentRunStatus: "completed",
+          parentRunStatus,
           completionWake: "always",
           now,
         });
@@ -361,6 +363,17 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
               status: "completed",
               now,
             }),
+            ...(parentRunStatus === "rolled_back"
+              ? [
+                  runEvent({
+                    threadId,
+                    runId: RunId.make(`${runId}-later`),
+                    ordinal: 2,
+                    status: "completed",
+                    now,
+                  }),
+                ]
+              : []),
           ],
         });
         const shell = yield* orchestrator.getThreadShell(threadId);
