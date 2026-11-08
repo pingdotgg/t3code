@@ -264,7 +264,7 @@ export function shuffledQuizOptions(card: QuizCard, seed: string) {
 
 export function quizRevealWrongIdeas(options: ReturnType<typeof shuffledQuizOptions>) {
   return options.flatMap((option) => {
-    if (option.correct || !("wrongIdea" in option)) return [];
+    if (!("wrongIdea" in option)) return [];
     return [
       {
         option: option.option,
