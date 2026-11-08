@@ -1399,13 +1399,23 @@ function ThreadDetailBody(
     feedTouchStartRef.current = null;
   };
 
+  // Pin the draft hero; live keyboard/composer insets would move or dismiss it.
+  // Keep it high enough that a short multi-line composer above the keyboard does
+  // not sit on the headline.
+  const draftHeroTop = Math.max(navigationHeaderHeight, screenAreaHeight * 0.2);
+  const draftHeroRestingOverlay =
+    COMPOSER_COLLAPSED_CHROME +
+    (!isProviderSubagent && (deviceType === "pad" || hasSidebarTabBar) ? 14 : 0) +
+    composerBottomInset;
+
   return (
     <View className="flex-1" onLayout={handleScreenLayout}>
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {props.draftMode ? (
         props.draftMode.content(
-          navigationHeaderHeight,
-          liveKeyboardHeight + estimatedOverlayHeight + 24,
+          draftHeroTop,
+          draftHeroRestingOverlay + 24,
+          // Live keyboard height still drives the short-viewport picker move.
           draftViewportHeight,
         )
       ) : showContent ? (
