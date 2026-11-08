@@ -755,6 +755,23 @@ it.effect("record reads filter notification sources without dropping matching me
       matching.messages.map((message) => [message.id, message.text]),
       [["monitor", "Complete body for monitor"]],
     );
+    const { statements, tracer } = traceSqlStatements();
+    const userMessages = yield* store
+      .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
+      .pipe(Effect.withTracer(tracer));
+    assert.lengthOf(userMessages.messages, 3);
+    const ordinalLookup = statements.find((statement) => statement.includes("MIN(ordinal)"));
+    assert.isDefined(ordinalLookup);
+    const sql = yield* SqlClient.SqlClient;
+    const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+      `EXPLAIN QUERY PLAN ${ordinalLookup}`,
+      [threadId, "[]"],
+    )).map((row) => row.detail);
+    // User-only reads must stay on the partial index instead of scanning every turn item.
+    assert.isTrue(
+      plan.some((detail) => detail.includes("turn_items_user_message_idx")),
+      plan.join("\n"),
+    );
     assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
@@ -2946,7 +2963,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           parent_item_id, ordinal, type, status, updated_at, payload_json
         ) VALUES (
           ${`turn-item:bounded-sql-history:ordinal-${suffix}`}, ${itemThreadId}, NULL, NULL, NULL,
-          NULL, NULL, ${ordinal}, 'assistant_message', 'completed', ${nowIso},
+          NULL, NULL, ${ordinal}, 'user_message', 'completed', ${nowIso},
           ${encodeUnknownJsonString({ messageId })}
         )
       `;
