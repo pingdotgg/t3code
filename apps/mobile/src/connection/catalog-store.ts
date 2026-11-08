@@ -119,8 +119,9 @@ export const make = Effect.fn("mobile.connectionStorage.makeCatalogStore")(funct
           const encoded = yield* encodeCatalog(next);
           yield* setItem(CONNECTION_CATALOG_KEY, encoded);
           yield* Ref.set(state, Option.some(next));
-          if (yield* Ref.getAndSet(legacyAwaitingSave, false)) {
+          if (yield* Ref.get(legacyAwaitingSave)) {
             yield* deleteItem(LEGACY_CONNECTIONS_KEY);
+            yield* Ref.set(legacyAwaitingSave, false);
           }
         }),
       );

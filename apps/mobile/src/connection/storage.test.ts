@@ -18,19 +18,34 @@ import * as MobileSecureStorage from "../persistence/mobile-secure-storage";
 function makeStorage(initial: Readonly<Record<string, string>>) {
   const values = new Map(Object.entries(initial));
   const deleted: Array<string> = [];
+  let removalFails = false;
   const storage = MobileSecureStorage.MobileSecureStorage.of({
     getItem: (key) => Effect.sync(() => values.get(key) ?? null),
     setItem: (key, value) =>
       Effect.sync(() => {
         values.set(key, value);
       }),
-    removeItem: (key) =>
-      Effect.sync(() => {
+    removeItem: (key) => {
+      if (removalFails) {
+        removalFails = false;
+        return Effect.fail(
+          new MobileSecureStorage.MobileSecureStorageError({
+            operation: "delete",
+            key,
+            cause: "unavailable",
+          }),
+        );
+      }
+      return Effect.sync(() => {
         deleted.push(key);
         values.delete(key);
-      }),
+      });
+    },
   });
-  return { deleted, storage, values };
+  const failNextRemoval = () => {
+    removalFails = true;
+  };
+  return { deleted, failNextRemoval, storage, values };
 }
 
 describe("mobile connection catalog storage", () => {
@@ -101,8 +116,12 @@ describe("mobile connection catalog storage", () => {
       expect(memory.deleted).toEqual([]);
       expect(memory.values.get(CONNECTION_CATALOG_KEY)).toBe("{not-json");
 
-      yield* catalog.update((document) => document);
+      memory.failNextRemoval();
+      yield* Effect.flip(catalog.update((document) => document));
       expect(memory.values.get(CONNECTION_CATALOG_KEY)).not.toBe("{not-json");
+      expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(true);
+
+      yield* catalog.update((document) => document);
       expect(memory.values.has(LEGACY_CONNECTIONS_KEY)).toBe(false);
     }),
   );
