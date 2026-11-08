@@ -10,15 +10,18 @@ import * as Schema from "effect/Schema";
  * Nothing is deleted until its data is here (spec section 7): per-thread copies
  * read back for verification, checkout pushes, per-item acks keyed by drain id.
  */
-export class FleetDrainStepError extends Schema.TaggedError<FleetDrainStepError>()(
-  "FleetDrainStepError",
-  {
-    step: Schema.Literals(["shell", "thread", "history", "write", "read", "push", "attachments"]),
-    message: Schema.String,
-  },
-) {}
+export class FleetDrainStepError extends Schema.TaggedError<
+  FleetDrainStepError,
+  { readonly brand: unique symbol }
+>()("FleetDrainStepError", {
+  step: Schema.Literals(["shell", "thread", "history", "write", "read", "push", "attachments"]),
+  message: Schema.String,
+}) {}
 
-export class FleetDrainError extends Schema.TaggedError<FleetDrainError>()("FleetDrainError", {
+export class FleetDrainError extends Schema.TaggedError<
+  FleetDrainError,
+  { readonly brand: unique symbol }
+>()("FleetDrainError", {
   environmentId: Schema.String,
   message: Schema.String,
   cause: Schema.optional(Schema.Defect()),

@@ -36,13 +36,13 @@ export interface FleetEnvironment {
   readonly updatedAt: DateTime.Utc;
 }
 
-export class OpenShellFleetStoreError extends Schema.TaggedError<OpenShellFleetStoreError>()(
-  "OpenShellFleetStoreError",
-  {
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class OpenShellFleetStoreError extends Schema.TaggedError<
+  OpenShellFleetStoreError,
+  { readonly brand: unique symbol }
+>()("OpenShellFleetStoreError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 const failStorage = (cause: unknown) =>
   Effect.logWarning("OpenShell fleet state storage failed", cause).pipe(

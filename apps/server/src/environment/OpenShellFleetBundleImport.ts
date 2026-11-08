@@ -41,15 +41,15 @@ export interface FleetDrainImportRow {
   readonly oversizeAttachmentsSkipped: boolean;
 }
 
-export class FleetDrainImportError extends Schema.TaggedError<FleetDrainImportError>()(
-  "FleetDrainImportError",
-  {
-    operation: Schema.Literals(["read-bundle", "decode", "record", "restore-attachments"]),
-    threadId: Schema.optional(ThreadId),
-    message: Schema.String,
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {}
+export class FleetDrainImportError extends Schema.TaggedError<
+  FleetDrainImportError,
+  { readonly brand: unique symbol }
+>()("FleetDrainImportError", {
+  operation: Schema.Literals(["read-bundle", "decode", "record", "restore-attachments"]),
+  threadId: Schema.optional(ThreadId),
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 /** Where import state lives; sqlite-backed in production, faked in tests. */
 export interface FleetDrainImportStore {
