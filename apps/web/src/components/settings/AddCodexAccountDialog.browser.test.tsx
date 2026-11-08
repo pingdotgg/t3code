@@ -26,6 +26,7 @@ vi.mock(import("../../state/server"), async (original) => {
       ...actual.serverEnvironment,
       providersValueAtom: (() => providersAtom.current) as never,
       updateSettings: setup.update as never,
+      mutateProviderInstance: setup.update as never,
     },
   };
 });
@@ -40,7 +41,9 @@ vi.mock(import("../../state/session"), async (original) => ({
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => ({ providerInstances: {} })) as never,
+  useEnvironmentSettings: (() => ({
+    providerInstances: { codex_work: { driver: "codex", enabled: true, displayName: "Work" } },
+  })) as never,
 }));
 
 import { AddCodexAccountDialog } from "./AddCodexAccountDialog";
@@ -69,9 +72,9 @@ function codexProvider(
 
 function createdInstanceId(): ProviderInstanceId {
   const [call] = setup.update.mock.calls as unknown as [
-    [{ input: { patch: { providerInstances: Record<string, unknown> } } }],
+    [{ input: { providerInstanceMutation: { instanceId: ProviderInstanceId } } }],
   ];
-  return ProviderInstanceId.make(Object.keys(call[0].input.patch.providerInstances)[0]!);
+  return call[0].input.providerInstanceMutation.instanceId;
 }
 
 function Owner({ onClose }: { readonly onClose: () => void }) {
@@ -107,6 +110,22 @@ describe("AddCodexAccountDialog", () => {
     );
 
     await userEvent.click(page.getByRole("button", { name: "Continue" }));
+    expect(setup.update).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        patch: {},
+        providerInstanceMutation: {
+          operation: "create",
+          instanceId: expect.stringMatching(/^codex_/),
+          instance: {
+            driver: ProviderDriverKind.make("codex"),
+            displayName: "ChatGPT - Personal",
+            enabled: true,
+            config: { enabled: true, setupMode: "managed" },
+          },
+        },
+      },
+    });
     const instanceId = createdInstanceId();
     await act(() => registry.set(atom, [codexProvider(instanceId, { status: "unauthenticated" })]));
     await expect.element(page.getByText("Sign in to ChatGPT")).toBeVisible();
