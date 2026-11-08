@@ -1129,7 +1129,8 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
       {hasVisibleBody ? (
         <div
           ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-44 overflow-hidden")}
+          // Outside list markers paint left of the body; the clip box reaches into the bubble padding.
+          className={cn("relative", isCollapsed && "-mx-2 max-h-44 overflow-hidden px-2")}
           data-user-message-body="true"
           data-thread-find-text="true"
           data-thread-find-fold={isCollapsed ? "" : undefined}

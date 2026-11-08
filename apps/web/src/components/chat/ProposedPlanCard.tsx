@@ -190,7 +190,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div
           ref={revealRef}
-          className={cn("relative", isCollapsed && "max-h-104 overflow-hidden")}
+          // Outside list markers paint left of the body; the clip box reaches into the card padding.
+          className={cn("relative", isCollapsed && "-mx-2 max-h-104 overflow-hidden px-2")}
           data-thread-find-text="true"
           data-thread-find-fold={isCollapsed ? "" : undefined}
         >
