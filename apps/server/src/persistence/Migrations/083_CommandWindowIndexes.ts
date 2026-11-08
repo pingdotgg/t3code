@@ -9,7 +9,9 @@ export default Effect.gen(function* () {
   yield* sql`
     CREATE INDEX orchestration_v2_projection_runs_fresh_context_idx
     ON orchestration_v2_projection_runs(thread_id, ordinal)
-    WHERE json_extract(payload_json, '$.freshContext') = 1
+    WHERE CASE WHEN json_valid(payload_json)
+      THEN json_extract(payload_json, '$.freshContext') = 1
+      ELSE 0 END
   `;
   yield* sql`
     CREATE INDEX orchestration_v2_projection_provider_turns_attempt_idx

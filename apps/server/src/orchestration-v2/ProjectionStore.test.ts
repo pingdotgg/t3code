@@ -811,6 +811,13 @@ it.effect("a compacted thread reads its recent runs, live runs, fresh starts and
         driver,
       },
     });
+    // Legacy rows can hold unreadable JSON; the fresh-context index must not reject them.
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      VALUES ('run:compacted:legacy', ${threadId}, 0, 'codex', 'completed', '', '{')
+    `;
     const recent = yield* read([rolledBackId]);
     assert.deepEqual(ids(recent.runs), [
       rolledBackId,

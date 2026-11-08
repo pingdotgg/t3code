@@ -3170,7 +3170,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               UNION
               SELECT run_id FROM orchestration_v2_projection_runs
                 INDEXED BY orchestration_v2_projection_runs_fresh_context_idx
-              WHERE thread_id = ${threadId} AND json_extract(payload_json, '$.freshContext') = 1
+              WHERE thread_id = ${threadId} AND CASE WHEN json_valid(payload_json)
+                THEN json_extract(payload_json, '$.freshContext') = 1 ELSE 0 END
               UNION
               SELECT value FROM json_each(${encodeIdList(keepRunIds)})
             `;
