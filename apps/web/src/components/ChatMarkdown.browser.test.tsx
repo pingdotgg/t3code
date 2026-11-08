@@ -352,6 +352,17 @@ describe("ChatMarkdown workspace file opens", () => {
     threadId: ThreadId.make("thread"),
   };
 
+  it.each(["", "\uFEFF"])(
+    "preserves file-link Markdown when copying with prefix %j",
+    async (prefix) => {
+      setup();
+      await using screen = await renderText(`${prefix}[[a](./file.md)`, { threadRef });
+      expect(
+        screen.container.querySelector("[data-markdown-copy]")?.getAttribute("data-markdown-copy"),
+      ).toBe("[a](./file.md)");
+    },
+  );
+
   it("keeps a newer absolute file open when an earlier repo-relative lookup finishes", async () => {
     setup();
     const result = AsyncResult.success({

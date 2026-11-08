@@ -1313,7 +1313,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const label = nodeToPlainText(children);
     const start = node?.position?.start.offset;
     const end = node?.position?.end.offset;
-    const source = start !== undefined && end !== undefined ? text.slice(start, end) : "";
+    const bomOffset = text.startsWith("\uFEFF") ? 1 : 0;
+    const source =
+      start !== undefined && end !== undefined
+        ? text.slice(start + bomOffset, end + bomOffset)
+        : "";
     const copyMarkdown =
       source.startsWith("[") && source.includes("](")
         ? source
