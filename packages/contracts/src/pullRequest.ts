@@ -54,7 +54,7 @@ export type PullRequestChecksState = typeof PullRequestChecksState.Type;
 export const PullRequestMergeability = Schema.Literals(["mergeable", "conflicting", "unknown"]);
 export type PullRequestMergeability = typeof PullRequestMergeability.Type;
 
-/** `fast-forward` refuses when the base has moved, where `rebase` rewrites the branch onto it. */
+/** `fast-forward` refuses unless the head contains the base, where `rebase` rewrites the branch onto it. */
 export const PullRequestMergeMethod = Schema.Literals([
   "merge",
   "squash",
