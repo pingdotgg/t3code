@@ -15,7 +15,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ServerSettingsError,
   type ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -433,7 +432,6 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-    readonly canResumeAfterRestart?: boolean;
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
@@ -513,7 +511,6 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           get providerSession() {
             return session;
           },
-          canResumeAfterRestart: options.canResumeAfterRestart ?? true,
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapter.ProviderAdapterEventStreamError({
@@ -597,7 +594,6 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  readonly canResumeAfterRestart?: boolean;
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
@@ -631,7 +627,6 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
-      canResumeAfterRestart: input.canResumeAfterRestart ?? true,
       ...(input.hasPendingBackgroundWorkForThread === undefined
         ? {}
         : { hasPendingBackgroundWorkForThread: input.hasPendingBackgroundWorkForThread }),
@@ -956,7 +951,7 @@ function makePendingRuntimeRequestEvents(input: {
         turnItem,
       },
     ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
-    return { events, providerEvents, requestId, nodeId, request };
+    return { events, providerEvents, requestId, nodeId };
   });
 }
 
@@ -3636,6 +3631,9 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -3742,6 +3740,11 @@ it.effect(
         assert.equal((yield* Ref.get(state)).resumeCount, 2);
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 3);
+        // regression: #26722 a Linked environments change reloads only the idle thread's tools.
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* resumeSecondThread;
+        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
         const subscribe = firstRuntime.subscribeEvents;
         assert.isDefined(subscribe);
         if (subscribe === undefined) return;
@@ -3773,15 +3776,18 @@ it.effect(
           runtimePolicy,
         });
         yield* resumeSecondThread;
-        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        assert.equal((yield* Ref.get(state)).resumeCount, 5);
 
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
+          "native-thread",
+        ]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
         yield* TestClock.adjust("1 second");
@@ -3789,291 +3795,11 @@ it.effect(
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
-    }),
-);
-
-const makeTestSettings = Effect.fn("ProviderSessionManagerTest.makeSettings")(function* (
-  unavailable: Ref.Ref<boolean>,
-) {
-  const settings = yield* Effect.service(ServerSettings.ServerSettingsService).pipe(
-    Effect.provide(ServerSettings.layerTest()),
-  );
-  return {
-    ...settings,
-    getSettings: Ref.get(unavailable).pipe(
-      Effect.flatMap((failed) =>
-        failed
-          ? Effect.fail(
-              new ServerSettingsError({
-                settingsPath: "test settings",
-                operation: "read-file",
-                cause: "Settings temporarily unavailable",
-              }),
-            )
-          : settings.getSettings,
-      ),
-    ),
-  };
-});
-
-// regression: #26722 live agents kept a stale tool list after Linked environments changed
-it.effect(
-  "ProviderSessionManagerV2 reloads an idle shared-runtime thread when Linked environments changes",
-  () =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const pendingWork = yield* Ref.make<Effect.Effect<boolean>>(Effect.succeed(false));
-      const beforeUnload = yield* Ref.make<Effect.Effect<void>>(Effect.void);
-      const settingsUnavailable = yield* Ref.make(false);
-      const settings = yield* makeTestSettings(settingsUnavailable);
-      yield* Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const threadA = ThreadId.make("thread-provider-session-manager-links-shared-a");
-        const threadB = ThreadId.make("thread-provider-session-manager-links-shared-b");
-        const providerSessionId = idAllocator.derive.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-        });
-        yield* eventSink.write({
-          events: [
-            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadA, now }),
-            yield* makeThreadCreatedEvent({ idAllocator, threadId: threadB, now }),
-          ],
-        });
-        const providerThreads = {
-          [threadA]: makeProviderThread({
-            idAllocator,
-            threadId: threadA,
-            providerSessionId,
-            now,
-            nativeThreadId: "native-links-a",
-          }),
-          [threadB]: makeProviderThread({
-            idAllocator,
-            threadId: threadB,
-            providerSessionId,
-            now,
-            nativeThreadId: "native-links-b",
-          }),
-        };
-        const runtime = yield* manager.open({
-          threadId: threadA,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* manager.open({
-          threadId: threadB,
-          providerSessionId,
-          modelSelection,
-          runtimePolicy,
-        });
-        const resume = (threadId: ThreadId, selection = modelSelection) =>
-          runtime.resumeThread({
-            providerThread: providerThreads[threadId]!,
-            threadId,
-            modelSelection: selection,
-            runtimePolicy,
-          });
-        const observed = Ref.get(state).pipe(
-          Effect.map(({ resumeCount, unloadedNativeThreadIds }) => ({
-            resumeCount,
-            unloaded: unloadedNativeThreadIds,
-          })),
-        );
-        // An unreadable setting at load marks the catalog unknown so it refreshes later.
-        yield* Ref.set(settingsUnavailable, true);
-        yield* resume(threadA);
-        yield* Ref.set(settingsUnavailable, false);
-        yield* resume(threadB);
-        assert.deepEqual(yield* observed, { resumeCount: 2, unloaded: [] });
-
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        // Background work, or a probe that cannot tell, keeps the stale thread loaded.
-        // A native resume meanwhile must not overwrite the recorded catalog.
-        yield* Ref.set(pendingWork, Effect.succeed(true));
-        yield* resume(threadA, { ...modelSelection, model: "gpt-5.4-mini" });
-        yield* Ref.set(pendingWork, Effect.die("probe failed"));
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, { resumeCount: 4, unloaded: [] });
-
-        yield* Ref.set(pendingWork, Effect.succeed(false));
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, { resumeCount: 5, unloaded: ["native-links-a"] });
-
-        // A thread with a live turn keeps its process until that turn ends.
-        const runId = idAllocator.derive.run({ threadId: threadB, ordinal: 1 });
-        yield* runtime.startTurn({
-          appThread: (yield* projectionStore.getThreadProjection(threadB)).thread,
-          threadId: threadB,
-          runId,
-          runOrdinal: 1,
-          providerTurnOrdinal: 1,
-          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
-          rootNodeId: idAllocator.derive.rootNode({ runId }),
-          providerThread: providerThreads[threadB]!,
-          message: {
-            createdBy: "user",
-            creationSource: "web",
-            messageId: yield* idAllocator.allocate.message({ threadId: threadB, ordinal: 1 }),
-            text: "turn",
-            attachments: [],
-          },
-          modelSelection,
-          runtimePolicy,
-        });
-        yield* resume(threadB);
-        assert.deepEqual(yield* observed, { resumeCount: 5, unloaded: ["native-links-a"] });
-
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, {
-          resumeCount: 6,
-          unloaded: ["native-links-a", "native-links-a"],
-        });
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        yield* Ref.set(beforeUnload, Effect.die("unload failed"));
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, {
-          resumeCount: 6,
-          unloaded: ["native-links-a", "native-links-a"],
-        });
-        yield* Ref.set(beforeUnload, Effect.void);
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, {
-          resumeCount: 7,
-          unloaded: ["native-links-a", "native-links-a", "native-links-a"],
-        });
-        const idleUnloadAttempted = yield* Deferred.make<void>();
-        yield* Ref.set(
-          beforeUnload,
-          Deferred.succeed(idleUnloadAttempted, undefined).pipe(
-            Effect.andThen(Effect.die("idle unload failed")),
-          ),
-        );
-        const subscription = yield* runtime.subscribeEvents!;
-        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
-        yield* Queue.offer(queue, {
-          type: "turn.terminal",
-          driver: CODEX_DRIVER,
-          providerThreadId: providerThreads[threadA]!.id,
-          providerTurnId: idAllocator.derive.providerTurn({
-            driver: CODEX_DRIVER,
-            nativeTurnId: "links-idle-turn",
-          }),
-          runOrdinal: 1,
-          status: "completed",
-          failure: null,
-          threadDisposition: "reusable",
-        });
-        yield* subscription.events.pipe(Stream.runHead);
-        yield* TestClock.adjust("1 second");
-        yield* Deferred.await(idleUnloadAttempted);
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
-        yield* Ref.set(beforeUnload, Effect.void);
-        yield* resume(threadA);
-        assert.deepEqual(yield* observed, {
-          resumeCount: 8,
-          unloaded: Array(4).fill("native-links-a"),
-        });
-        const final = yield* Ref.get(state);
-        assert.equal(final.openCount, 1);
-        assert.equal(final.closeCount, 0);
-      }).pipe(
+      yield* effect.pipe(
         Effect.provide(
           layerTest({
             state,
             idleTimeoutMs: 1000,
-            beforeUnload: Effect.flatten(Ref.get(beforeUnload)),
-            hasPendingBackgroundWorkForThread: Effect.flatten(Ref.get(pendingWork)),
-            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
-          }),
-        ),
-      );
-    }),
-);
-
-// regression: #26722 live agents kept a stale tool list after Linked environments changed
-it.effect.each([true, false])(
-  "ProviderSessionManagerV2 refreshes exclusive runtimes only when restorable: %s",
-  (canResumeAfterRestart) =>
-    Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const pendingWork = yield* Ref.make<Effect.Effect<boolean>>(Effect.succeed(false));
-      const settings = yield* makeTestSettings(yield* Ref.make(false));
-      yield* Effect.gen(function* () {
-        const eventSink = yield* EventSink.EventSinkV2;
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread-provider-session-manager-links-exclusive");
-        const providerSessionId = yield* idAllocator.allocate.providerSession({
-          providerInstanceId: modelSelection.instanceId,
-          threadId,
-        });
-        yield* eventSink.write({
-          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
-        });
-        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
-        const counts = Ref.get(state).pipe(
-          Effect.map(({ openCount, closeCount }) => ({ openCount, closeCount })),
-        );
-
-        const first = yield* open;
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        if (!canResumeAfterRestart) {
-          assert.strictEqual(yield* open, first);
-          assert.deepEqual(yield* counts, { openCount: 1, closeCount: 0 });
-          return;
-        }
-        yield* Ref.set(pendingWork, Effect.succeed(true));
-        assert.strictEqual(yield* open, first);
-        yield* Ref.set(pendingWork, Effect.die("probe failed"));
-        assert.strictEqual(yield* open, first);
-        const pending = yield* makePendingRuntimeRequestEvents({
-          idAllocator,
-          threadId,
-          providerSessionId,
-          providerThread: makeProviderThread({
-            idAllocator,
-            threadId,
-            providerSessionId,
-            now,
-            nativeThreadId: "native-links-exclusive",
-          }),
-          now,
-        });
-        yield* eventSink.write({ events: pending.events });
-        yield* Ref.set(pendingWork, Effect.succeed(false));
-        assert.strictEqual(yield* open, first);
-        assert.deepEqual(yield* counts, { openCount: 1, closeCount: 0 });
-        yield* eventSink.write({
-          events: [
-            {
-              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-              type: "runtime-request.updated",
-              threadId,
-              nodeId: pending.nodeId,
-              driver: CODEX_DRIVER,
-              occurredAt: now,
-              payload: { ...pending.request, status: "resolved", resolvedAt: now },
-            },
-          ],
-        });
-        yield* open;
-        assert.deepEqual(yield* counts, { openCount: 2, closeCount: 1 });
-      }).pipe(
-        Effect.provide(
-          layerTest({
-            state,
-            idleTimeoutMs: 1000,
-            capabilities: ExclusiveCapabilities,
-            canResumeAfterRestart,
-            hasPendingBackgroundWork: Effect.flatten(Ref.get(pendingWork)),
             serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
           }),
         ),
@@ -4233,9 +3959,6 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
-      const pendingWork = yield* Ref.make(false);
-      const settingsUnavailable = yield* Ref.make(false);
-      const settings = yield* makeTestSettings(settingsUnavailable);
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4346,34 +4069,9 @@ it.effect(
             },
           },
         );
-
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        yield* Ref.set(pendingWork, true);
-        yield* publish({
-          type: "provider_thread.updated",
-          driver: CODEX_DRIVER,
-          providerThread: { ...failed.providerThread, status: "error" },
-        });
-        assert.equal(yield* countRawResumes(failed), 1);
-        yield* settings.updateSettings({ linkedEnvironmentsEnabled: false });
-        yield* Ref.set(pendingWork, false);
-        assert.equal(yield* countRawResumes(failed), 1);
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
-          "idle-failed-runtime",
-          "idle-failed-runtime",
-        ]);
       });
 
-      yield* effect.pipe(
-        Effect.provide(
-          layerTest({
-            state,
-            idleTimeoutMs: 1000,
-            hasPendingBackgroundWorkForThread: Ref.get(pendingWork),
-            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
-          }),
-        ),
-      );
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
     }),
 );
 
@@ -4508,10 +4206,13 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive",
+  "ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive, and reopens it when Linked environments changes",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4556,11 +4257,27 @@ it.effect(
 
         assert.equal(error._tag, "ProviderSessionOpenError");
         assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        // regression: #26722 an exclusive runtime configures MCP at open, so it reopens.
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* manager.open({
+          threadId: firstThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
       yield* effect.pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 1000, capabilities: ExclusiveCapabilities }),
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            capabilities: ExclusiveCapabilities,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
         ),
       );
     }),

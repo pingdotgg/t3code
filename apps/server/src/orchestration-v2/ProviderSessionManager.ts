@@ -953,7 +953,7 @@ export const layerWithOptions = (
           if (candidate === undefined) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
-          const removed = yield* Effect.zip(
+          const remove = Effect.zip(
             Ref.modify(sessions, (current) => {
               const existing = current.get(key);
               if (existing !== candidate) {
@@ -980,16 +980,13 @@ export const layerWithOptions = (
               return ["removed", updated] as const;
             }),
             DateTime.now,
-          ).pipe(
-            (remove) =>
-              Effect.flatMap(
-                input.keepIf ?? Effect.succeed(false),
-                (kept): Effect.Effect<readonly [Effect.Success<typeof remove>[0], DateTime.Utc]> =>
-                  kept ? Effect.zip(Effect.succeed("kept" as const), DateTime.now) : remove,
-              ),
-            candidate.requestEventPermit.withPermits(1),
           );
-          const [outcome, releasedAt] = removed;
+          const [outcome, releasedAt] = yield* Effect.gen(function* () {
+            if (input.keepIf !== undefined && (yield* input.keepIf)) {
+              return ["kept" as const, yield* DateTime.now] as const;
+            }
+            return yield* remove;
+          }).pipe(candidate.requestEventPermit.withPermits(1));
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
