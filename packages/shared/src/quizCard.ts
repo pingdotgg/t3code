@@ -41,7 +41,7 @@ export type LessonCard = QuizCard | QuestionCard;
 
 const MAX_ANSWER = 300;
 const MAX_QUESTION = 2000;
-const MAX_REPLY = 2000;
+const MAX_REPLY = 2510;
 const MAX_OPTION = 300;
 const MAX_WRONG_IDEA = 500;
 const MAX_EXPLANATION = 1500;
@@ -58,6 +58,11 @@ const boundedString = (value: unknown, max: number) =>
   typeof value === "string" && value.trim().length > 0 && value.length <= max
     ? value.trim()
     : undefined;
+
+export function foldCardReply(reply: string, source: string) {
+  const trimmedSource = source.trim();
+  return trimmedSource === "" ? reply.trim() : `${reply.trim()}\n\nSource: ${trimmedSource}`;
+}
 // Tool output metadata sent to clients is capped at 8 KB (toolOutput.ts).
 const fitsCardBytes = (card: object) =>
   new TextEncoder().encode(JSON.stringify(card)).byteLength <= MAX_CARD_BYTES;

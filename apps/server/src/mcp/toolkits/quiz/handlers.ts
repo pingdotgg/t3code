@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import {
   type CardPurpose,
   cardReplyProblem,
+  foldCardReply,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -62,7 +63,8 @@ const refuseThinReply = Effect.fn("quiz.refuseThinReply")(function* (
 const handlers = {
   quiz_card: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const card = readQuizCard(input);
+      const reply = foldCardReply(input.reply, input.source);
+      const card = readQuizCard({ ...input, reply });
       const problem =
         card === undefined
           ? "Invalid quiz card: provide 2–4 wrong options and all required bounded fields."
@@ -75,24 +77,25 @@ const handlers = {
       }
       yield* refuseThinReply(input.reply, input.purpose);
       return {
-        quizCard: { ...card, reply: input.reply.trim() },
+        quizCard: { ...card, reply },
         message: QUIZ_CARD_SHOWN,
       };
     }),
   ),
   question_card: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
-      const card = readQuestionCard(input);
+      const reply = foldCardReply(input.reply, input.source);
+      const card = readQuestionCard({ ...input, reply });
       if (card === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message:
-            "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
+            "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters, source under 500, and the whole card under about 7 KB.",
         });
       }
       yield* refuseThinReply(input.reply, input.purpose);
       return {
-        questionCard: { ...card, reply: input.reply.trim() },
+        questionCard: { ...card, reply },
         message: QUESTION_CARD_SHOWN,
       };
     }),

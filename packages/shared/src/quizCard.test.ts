@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   answeredCardIds,
   cardReplyProblem,
+  foldCardReply,
   MIN_CARD_REPLY_CHARS,
   blankAnswerRight,
   blanksAnswerMessage,
@@ -99,6 +100,18 @@ describe("quiz cards", () => {
         blanks: [{ answers: ["漢", "字", "語", "文"].map((char) => char.repeat(100)) }],
       }),
     ).toBeUndefined();
+  });
+  it.each([
+    ["grader/bank/compose.py; docs/grading.md is out of date", "The teaching."],
+    ["", "The teaching."],
+  ])("folds the source into the shown reply", (source, reply) => {
+    expect(foldCardReply(reply, source)).toBe(
+      source === "" ? reply : `${reply}\n\nSource: ${source}`,
+    );
+  });
+  it("reads a card whose reply uses the full source allowance", () => {
+    const reply = foldCardReply("r".repeat(2000), "s".repeat(500));
+    expect(readQuestionCard({ reply, question: "?" })).toMatchObject({ reply });
   });
   it("grades blank and number answers", () => {
     const blank = { answers: ["Ohm's law", " ohm's   law "] };

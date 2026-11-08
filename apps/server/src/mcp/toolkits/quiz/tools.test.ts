@@ -12,6 +12,7 @@ describe("QuestionCardInput", () => {
     const decode = Schema.decodeUnknownSync(QuestionCardInput);
     const blanks = {
       reply: "Check.",
+      source: "",
       question: "v = ___ + ___ t",
       blanks: [{ answers: ["v0", "v₀", "u", "v_0"] }, { answers: ["a"] }],
     };
@@ -19,22 +20,25 @@ describe("QuestionCardInput", () => {
     expect(
       decode({
         reply: "Check.",
+        source: "",
         purpose: "opening-check",
         question: "How fast?",
         number: { answer: 10, tolerance: 0.1 },
       }),
     ).toEqual({
       reply: "Check.",
+      source: "",
       purpose: "opening-check",
       question: "How fast?",
       number: { answer: 10, tolerance: 0.1 },
     });
     expect(() =>
-      decode({ reply: "Check.", question: "x ___", blanks: [{ answers: [] }] }),
+      decode({ reply: "Check.", source: "", question: "x ___", blanks: [{ answers: [] }] }),
     ).toThrow();
     expect(() =>
       decode({
         reply: "Check.",
+        source: "",
         question: "x ___",
         blanks: [{ answers: ["a", "b", "c", "d", "e"] }],
       }),
@@ -46,6 +50,7 @@ describe("QuizCardInput", () => {
   it("requires a non-empty reply containing the card's teaching", () => {
     const card = {
       answer: "A",
+      source: "",
       explanation: "Because",
       level: "apply",
       question: "Which?",
@@ -55,6 +60,7 @@ describe("QuizCardInput", () => {
       ],
     };
     expect(() => decodeQuizCard(card)).toThrow();
+    expect(() => decodeQuizCard({ ...card, source: undefined, reply: "Teaching." })).toThrow();
     expect(() => decodeQuizCard({ ...card, reply: " " })).toThrow();
     expect(
       decodeQuizCard({ ...card, reply: "Dead checks score in the 0.01 to 0.25 band." }),
@@ -63,8 +69,11 @@ describe("QuizCardInput", () => {
 
   it("requires a reply on question cards too", () => {
     expect(() => decodeQuestionCard({ question: "Why?" })).toThrow();
-    expect(decodeQuestionCard({ reply: "Quick check first.", question: "Why?" })).toEqual({
+    expect(
+      decodeQuestionCard({ reply: "Quick check first.", source: "", question: "Why?" }),
+    ).toEqual({
       reply: "Quick check first.",
+      source: "",
       question: "Why?",
     });
   });
@@ -76,6 +85,10 @@ it("tells the model what a card's reply holds", () => {
     expect(schema.properties.reply, tool.name).toMatchObject({
       maxLength: 2000,
       description: expect.stringContaining("teach what this card tests"),
+    });
+    expect(schema.properties.source, tool.name).toMatchObject({
+      maxLength: 500,
+      description: expect.stringContaining("Shown to the learner under your reply"),
     });
     expect(schema.properties.purpose, tool.name).toMatchObject({
       description: expect.stringContaining("opening check"),
