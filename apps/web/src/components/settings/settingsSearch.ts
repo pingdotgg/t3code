@@ -342,6 +342,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "thread-minimap",
+    title: "Thread minimap",
+    to: "/settings/appearance",
+    searchTerms: ["timeline navigation ticks marks rail strip gutter hide jump messages"],
+  },
+  {
     id: "thread-details-items",
     title: "Thread details",
     to: "/settings/appearance",
