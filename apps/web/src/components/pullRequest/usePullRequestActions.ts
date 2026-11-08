@@ -497,14 +497,12 @@ export function usePullRequestHandoffs({
           threadId,
         }),
       // Rebind the opened draft: newThread would open a second empty draft once the prompt is seeded.
-      pointThread: async (prepared, opened) => {
+      pointThread: async (prepared, opened) =>
         useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
           branch: prepared.branch,
           worktreePath: prepared.worktreePath,
           envMode: prepared.worktreePath === null ? "local" : "worktree",
-        });
-        return true;
-      },
+        }),
     });
   };
 
