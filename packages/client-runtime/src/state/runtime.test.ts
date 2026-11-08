@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
   ThreadId,
+  ProjectId,
   type ReviewDiffPreviewInput,
   type PreviewEvent,
   type TerminalAttachInput,
@@ -1019,6 +1020,39 @@ describe("environment query lifecycle", () => {
         expect(executions).toBe(2);
 
         expect(yield* read).toBe(3);
+      }),
+    ),
+  );
+
+  it.effect.each([true, false])("loads thread link metadata with server support %s", (supported) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projectId = ProjectId.make("project");
+        const tag = supported
+          ? ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata
+          : ORCHESTRATION_V2_WS_METHODS.getThreadTitles;
+        const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+          rpcSession: {
+            initialConfig: Effect.succeed({ threadLinkMetadata: supported }),
+            client: {
+              [tag]: () =>
+                Effect.succeed(
+                  supported ? { fork: { title: "Fork", projectId } } : { fork: "Fork" },
+                ),
+            },
+          } as unknown as RpcSession.RpcSession,
+        });
+        const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+          EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+        >;
+        const atom = createOrchestrationEnvironmentAtoms(runtime).threadLinkMetadata({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadIds: [ThreadId.make("fork")] },
+        });
+        const registry = yield* mountEnvironmentQuery(atom);
+        expect(yield* readEnvironmentQuery(registry, atom)).toEqual({
+          fork: { title: "Fork", projectId: supported ? projectId : null },
+        });
       }),
     ),
   );
