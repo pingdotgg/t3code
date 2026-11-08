@@ -72,6 +72,7 @@ const AntigravityProviderCapabilitiesV2 = {
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
+  readonly usesCli?: boolean;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
     input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
@@ -144,6 +145,7 @@ export function makeAntigravityAcpAdapterFlavor(
           Scope.close(scope, Exit.void),
           options.makeRuntime({
             ...input,
+            runtimeMode: input.runtimePolicy.runtimeMode,
             clientFileReads: true,
             sessionSystemPromptAppend: PULL_REQUEST_LINKING_INSTRUCTIONS,
             additionalDirectories: [options.host.paths.attachmentsDir],
@@ -207,7 +209,13 @@ export function makeAntigravityAcpAdapterFlavor(
   return {
     driver: ANTIGRAVITY_PROVIDER,
     runtimeHarness: "Antigravity",
-    capabilities: AntigravityProviderCapabilitiesV2,
+    capabilities: {
+      ...AntigravityProviderCapabilitiesV2,
+      sessions: {
+        ...AntigravityProviderCapabilitiesV2.sessions,
+        supportsRuntimeModeSwitchInSession: options.usesCli !== true,
+      },
+    },
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
@@ -247,7 +255,8 @@ export function makeAntigravityAcpAdapterFlavor(
         mapError: (cause) => cause,
       });
     }),
-    sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    sessionModeForPolicy: (policy) =>
+      antigravityPermissionMode(policy.runtimeMode, options.usesCli),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
