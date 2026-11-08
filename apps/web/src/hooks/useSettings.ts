@@ -133,9 +133,11 @@ export function subscribeClientSettingsHydration(listener: () => void): () => vo
   };
 }
 
-async function readPersistedClientSettings(): Promise<ClientSettings | null> {
+async function readPersistedClientSettings(): Promise<ClientSettings> {
   const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
-  return persistedSettings ? { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings } : null;
+  return persistedSettings
+    ? { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings }
+    : DEFAULT_CLIENT_SETTINGS;
 }
 
 async function hydrateClientSettings(): Promise<void> {
@@ -158,9 +160,7 @@ async function hydrateClientSettings(): Promise<void> {
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
-      if (persistedSettings) {
-        replaceClientSettingsSnapshot(persistedSettings);
-      }
+      replaceClientSettingsSnapshot(persistedSettings);
       setClientSettingsHydrationStatus("ready");
       stopReloadingClientSettings ??= subscribeBrowserClientSettings(reloadClientSettings);
     } catch (error) {
@@ -202,7 +202,7 @@ async function ensureFreshClientSettings(): Promise<void> {
     return hydrateClientSettings();
   }
   if (clientSettingsStale) {
-    replaceClientSettingsSnapshot((await readPersistedClientSettings()) ?? DEFAULT_CLIENT_SETTINGS);
+    replaceClientSettingsSnapshot(await readPersistedClientSettings());
     clientSettingsStale = false;
   }
 }
