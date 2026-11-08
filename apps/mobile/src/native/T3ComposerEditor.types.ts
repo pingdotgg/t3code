@@ -22,6 +22,8 @@ export interface ComposerEditorHandle {
   focus: () => void;
   blur: () => void;
   setSelection: (selection: ComposerEditorSelection) => void;
+  /** iOS: resolves once a native edit still in flight has reached `onChangeText`. */
+  flushPendingInput: () => Promise<void>;
 }
 
 export interface ComposerEditorProps {
