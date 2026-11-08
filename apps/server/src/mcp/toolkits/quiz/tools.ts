@@ -12,7 +12,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 // First, so the model writes the reply before the question.
 const reply = TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
   description:
-    "Your words to the learner, shown as your message text just above the card; they never see your thinking. After an answer: your verdict, then the teaching this card tests (a one- or two-line recap if you already wrote it as text). For an opening check: one sentence of framing.",
+    "Your words to the learner, shown as your message text just above the card; they never see your thinking. After an answer: your verdict, then the teaching this card tests, with the facts it needs (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check: one sentence of framing.",
 });
 
 export const QuizCardInput = Schema.Struct({
