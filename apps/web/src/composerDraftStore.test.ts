@@ -732,7 +732,7 @@ describe("composerDraftStore context persistence", () => {
     });
     const read = () => storage.getItem(COMPOSER_DRAFT_STORAGE_KEY);
     const openTab = async () => {
-      const page = new EventTarget();
+      const page = Object.assign(new EventTarget(), { localStorage: storage });
       vi.stubGlobal("window", page);
       vi.resetModules();
       const store = (await import("./composerDraftStore")).useComposerDraftStore;
@@ -905,6 +905,51 @@ describe("composerDraftStore context persistence", () => {
     tabB.receive();
     expect((await openTab()).store.getState().getDraftThread(draftId)?.branch).toBe("feature");
     expect(tabB.store.getState().getDraftThread(draftId)?.branch).toBe("feature");
+  });
+
+  it("keeps a draft thread with unsaved changes that another tab discards", async () => {
+    const { openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+    const imageDraft = DraftId.make("cross-tab-image-draft");
+    const promptDraft = DraftId.make("cross-tab-prompt-draft");
+    for (const draftId of [imageDraft, promptDraft]) {
+      tabA.store
+        .getState()
+        .setProjectDraftThreadId(
+          scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make(`${draftId}-project`)),
+          draftId,
+          { environmentSelection: "auto", loadBalancedEnvironmentId: TEST_ENVIRONMENT_ID },
+        );
+    }
+    tabA.write();
+    tabB.receive();
+    // The image is unsaved until its serialization finishes, the prompt until the next write.
+    const image = makeImage({ id: "cross-tab-image", previewUrl: "blob:cross-tab" });
+    tabA.store.getState().addImage(imageDraft, image);
+    tabA.store.getState().setPrompt(promptDraft, "unwritten");
+    tabB.store.getState().clearDraftThread(imageDraft);
+    tabB.store.getState().clearDraftThread(promptDraft);
+    tabB.write();
+    tabA.receive();
+    expect(tabA.store.getState().getDraftSession(imageDraft)).not.toBeNull();
+    expect(tabA.store.getState().getDraftSession(promptDraft)).not.toBeNull();
+
+    await tabA.store.getState().syncPersistedAttachments(imageDraft, [
+      {
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        dataUrl: "data:image/png;base64,AQEBAQ==",
+      },
+    ]);
+    tabA.write();
+    const reopened = (await openTab()).store.getState();
+    expect(reopened.getDraftSession(imageDraft)).not.toBeNull();
+    expect(reopened.getComposerDraft(imageDraft)?.images.map(({ id }) => id)).toEqual([image.id]);
+    expect(reopened.getDraftSession(promptDraft)).not.toBeNull();
+    expect(reopened.getComposerDraft(promptDraft)?.prompt).toBe("unwritten");
   });
 });
 

@@ -374,6 +374,20 @@ function adoptStoredComposerDrafts(): void {
   );
   if (!stored || !seen || ids.size === 0) return;
   const keep = <T>(stored: T | undefined) => stored;
+  const draftsByThreadKey = adoptStoredRecord(
+    ids,
+    "draftsByThreadKey",
+    stored.draftsByThreadKey,
+    state.draftsByThreadKey,
+    adoptStoredDraft,
+  );
+  // A draft this tab keeps (an unwritten edit or an unsaved image) keeps its draft thread, and
+  // the thread leaves the baseline so the next write puts it back.
+  const keptThreadIds = Object.keys(draftsByThreadKey)
+    .filter((key) => stored.draftThreadsByThreadKey[key] === undefined)
+    .map((key) => entryId("draftThreadsByThreadKey", key))
+    .filter((id) => ids.has(id));
+  for (const id of keptThreadIds) ids.delete(id);
   composerDraftStore.setState({
     draftThreadsByThreadKey: adoptStoredRecord(
       ids,
@@ -406,20 +420,13 @@ function adoptStoredComposerDrafts(): void {
     ...(ids.has(entryId("stickyActiveProvider")) && {
       stickyActiveProvider: stored.stickyActiveProvider ?? null,
     }),
-    // Last: adopting a draft revokes the preview URLs it replaces.
-    draftsByThreadKey: adoptStoredRecord(
-      ids,
-      "draftsByThreadKey",
-      stored.draftsByThreadKey,
-      state.draftsByThreadKey,
-      adoptStoredDraft,
-    ),
+    draftsByThreadKey,
   });
   const adoptedLocal = entriesOf(partializeComposerDraftStoreState(composerDraftStore.getState()));
   sync = {
     ...sync,
-    local: withEntries(sync.local, ids, adoptedLocal),
-    stored: withEntries(sync.stored, ids, seen),
+    local: withEntries(withEntries(sync.local, ids, adoptedLocal), keptThreadIds, seen),
+    stored: withEntries(sync.stored, [...ids, ...keptThreadIds], seen),
   };
 }
 
