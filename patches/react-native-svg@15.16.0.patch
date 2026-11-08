@@ -1,0 +1,18 @@
+diff --git a/android/src/main/java/com/horcrux/svg/MarkerView.java b/android/src/main/java/com/horcrux/svg/MarkerView.java
+--- a/android/src/main/java/com/horcrux/svg/MarkerView.java
++++ b/android/src/main/java/com/horcrux/svg/MarkerView.java
+@@ -122,8 +122,13 @@ class MarkerView extends GroupView {
+     Point origin = position.origin;
+     markerTransform.setTranslate((float) origin.x, (float) origin.y);
+ 
+-    double markerAngle = "auto".equals(mOrient) ? -1 : Double.parseDouble(mOrient);
++    boolean autoStartReverse = "auto-start-reverse".equals(mOrient);
++    double markerAngle =
++        "auto".equals(mOrient) || autoStartReverse ? -1 : Double.parseDouble(mOrient);
+     float degrees = 180 + (float) (markerAngle == -1 ? position.angle : markerAngle);
++    if (autoStartReverse && position.type == RNSVGMarkerType.kStartMarker) {
++      degrees += 180;
++    }
+     markerTransform.preRotate(degrees);
+ 
+     boolean useStrokeWidth = "strokeWidth".equals(mMarkerUnits);
