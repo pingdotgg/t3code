@@ -2502,6 +2502,15 @@ describe("AcpRegistryAdapterV2", () => {
         if (child?.type !== "subagent.updated") throw new Error("Missing child update");
         assert.equal(child.subagent.status, "failed");
         assert.isNotNull(child.subagent.result, "the child shows why it stopped");
+        assert.isFalse(
+          events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.threadId === child.subagent.childThreadId &&
+              event.message.role === "assistant",
+          ),
+          "the child's conversation has no reply it didn't send",
+        );
         const tool = events.findLast(
           (event) =>
             event.type === "turn_item.updated" && event.turnItem.type === "command_execution",

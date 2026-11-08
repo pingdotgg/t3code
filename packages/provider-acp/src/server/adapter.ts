@@ -3329,8 +3329,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
           }
 
+          // A failed child's result explains the failure; it is not the child's reply.
           if (
             taskStatus !== "running" &&
+            reported.status !== "failed" &&
             subagent.assistantText.length === 0 &&
             update.result !== null
           ) {
