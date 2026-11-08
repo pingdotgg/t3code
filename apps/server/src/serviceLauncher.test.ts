@@ -499,7 +499,7 @@ if (context.update?.status === "pending") {
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   process.exit(1);
 } else if (context.update === undefined) {
-  const db = new DatabaseSync(paths.databasePath);
+  const db = new DatabaseSync(paths.databasePath, { timeout: 5000 });
   db.exec("PRAGMA journal_mode = " + paths.journalMode + ";");
   const insert = db.prepare("INSERT INTO events (payload) VALUES (?)");
   const writer = setInterval(() => insert.run("written while serving"), 1);
