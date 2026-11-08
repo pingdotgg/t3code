@@ -40,7 +40,6 @@ import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
-import * as DeviceThreadActivity from "./DeviceThreadActivity.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import { agentDeviceSession, releaseAgentDeviceSession } from "./AgentDeviceTarget.ts";
 
@@ -1789,80 +1788,6 @@ describe("agent session release on close", () => {
       const state = yield* service.state;
       expect(state.sessions.map((entry) => entry.threadId)).toEqual([other]);
       expect(state.devices.find((entry) => entry.id === session.deviceId)?.booted).toBe(true);
-      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
-    }),
-  );
-
-  const withActivity = (active: ReadonlySet<string>) =>
-    Effect.provideService(
-      DeviceThreadActivity.DeviceThreadActivity,
-      DeviceThreadActivity.DeviceThreadActivity.of({
-        isActive: (threadId) => Effect.succeed(active.has(threadId)),
-      }),
-    );
-
-  it.effect("a takeover leaves a busy, unconfirmed, or replaced session claimed", () =>
-    Effect.gen(function* () {
-      const holder = ThreadId.make("holder");
-      const takeOver = (
-        service: DeviceService.DeviceService["Service"],
-        session: { readonly deviceId: string; readonly openedAt: string },
-      ) =>
-        service.close({
-          threadId: holder,
-          deviceId: session.deviceId,
-          shutdown: true,
-          takeOver: { openedAt: session.openedAt },
-        });
-
-      const busy = yield* fixture().pipe(withActivity(new Set([holder])));
-      yield* busy.service.configure({ enabled: true, agentAccessEnabled: true });
-      const busySession = yield* openClaim(busy.service, holder);
-      expect(yield* takeOver(busy.service, busySession).pipe(Effect.flip)).toMatchObject({
-        _tag: "DeviceTakeoverRefusedError",
-        reason: "thread_active",
-      });
-      yield* takeOver(busy.service, { ...busySession, openedAt: "2000-01-01T00:00:00.000Z" });
-
-      // Without a thread activity source the server cannot vouch that the holder is idle.
-      const unknown = yield* fixture();
-      yield* unknown.service.configure({ enabled: true, agentAccessEnabled: true });
-      const unknownSession = yield* openClaim(unknown.service, holder);
-      expect(yield* takeOver(unknown.service, unknownSession).pipe(Effect.flip)).toMatchObject({
-        _tag: "DeviceTakeoverRefusedError",
-        reason: "activity_unknown",
-      });
-
-      for (const { service, closedSessions, requests } of [busy, unknown]) {
-        expect(closedSessions).toEqual([]);
-        expect((yield* service.state).sessions.map((entry) => entry.threadId)).toEqual([holder]);
-        expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
-      }
-    }),
-  );
-
-  it.effect("a takeover releases an idle holder's exact session without powering off", () =>
-    Effect.gen(function* () {
-      const { service, closedSessions, requests } = yield* fixture().pipe(withActivity(new Set()));
-      yield* service.configure({ enabled: true, agentAccessEnabled: true });
-      const holder = ThreadId.make("holder");
-      const taker = ThreadId.make("taker");
-      const session = yield* openClaim(service, holder);
-      yield* openClaim(service, taker, session.deviceId);
-
-      yield* service.close({
-        threadId: holder,
-        deviceId: session.deviceId,
-        shutdown: true,
-        takeOver: { openedAt: session.openedAt },
-      });
-
-      const name = yield* agentDeviceSession(holder, session.hostId, session.deviceId).pipe(
-        Effect.provide(NodeCrypto.layer),
-      );
-      expect(closedSessions).toMatchObject([{ params: { command: "close", session: name } }]);
-      const state = yield* service.state;
-      expect(state.sessions.map((entry) => entry.threadId)).toEqual([taker]);
       expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
     }),
   );

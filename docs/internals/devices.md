@@ -122,8 +122,6 @@ checks that connection first: agent-device reports a sandboxed shell and a
 dropped tunnel alike as an unreachable daemon, so the launcher names which one it
 is. Ending a session (`device_close`, the Device panel, a shutdown) also closes
 its agent-device session, which quits the app that session opened and releases the CLI's claim on the device.
-Taking a device over from another thread is a close with `takeOver`; the server, not the client, checks that
-the holder has no active run or background task, because clients omit older settled threads from their shells.
 
 Agents choose between these tools and ssh before they open anything, so
 sessions that hold `device` get a short block from

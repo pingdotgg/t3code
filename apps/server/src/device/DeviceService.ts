@@ -23,7 +23,6 @@ import {
   type DeviceSimlockIdentity,
   DeviceSimlockIdentityError,
   type DeviceSimlockIdentityInput,
-  DeviceTakeoverRefusedError,
   type DeviceHostConfig,
   type EasDeviceHostConfig,
   type SimlockDeviceHostConfig,
@@ -73,7 +72,6 @@ import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretReso
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as DeviceHost from "./DeviceHost.ts";
-import * as DeviceThreadActivity from "./DeviceThreadActivity.ts";
 import * as SshDeviceHost from "./SshDeviceHost.ts";
 import * as EasDeviceHost from "./EasDeviceHost.ts";
 import * as SimlockDeviceHost from "./SimlockDeviceHost.ts";
@@ -281,7 +279,6 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
 ) {
   const settings = yield* ServerSettings.ServerSettingsService;
   const digest = yield* Digest.Digest;
-  const threadActivity = yield* Effect.serviceOption(DeviceThreadActivity.DeviceThreadActivity);
   const lifecycleLock = yield* Semaphore.make(1);
   const readDeviceSettings = settings.getSettings.pipe(
     Effect.map((value) => ({
@@ -899,22 +896,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     }));
   });
 
-  const requireIdleHolder = (threadId: ThreadId) => {
-    const refuse = (reason: DeviceTakeoverRefusedError["reason"]) =>
-      new DeviceTakeoverRefusedError({ threadId, reason });
-    return Option.match(threadActivity, {
-      onNone: () => Effect.fail(refuse("activity_unknown")),
-      onSome: (activity) =>
-        activity.isActive(threadId).pipe(
-          Effect.mapError(() => refuse("activity_unknown")),
-          Effect.flatMap((active) => (active ? Effect.fail(refuse("thread_active")) : Effect.void)),
-        ),
-    });
-  };
-
   const close: DeviceService["Service"]["close"] = Effect.fn("DeviceService.close")(
     function* (input) {
-      const poweringOff = input.shutdown === true && input.takeOver === undefined;
       // Open publishes under the same lock; an old close must not release a reopened claim.
       const closing = yield* lifecycleLock.withPermit(
         Effect.gen(function* () {
@@ -923,13 +906,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             (session) =>
               session.threadId === input.threadId &&
               (input.hostId === undefined || session.hostId === input.hostId) &&
-              (input.deviceId === undefined || session.deviceId === input.deviceId) &&
-              (input.takeOver === undefined || session.openedAt === input.takeOver.openedAt),
+              (input.deviceId === undefined || session.deviceId === input.deviceId),
           );
-          if (input.takeOver !== undefined && closing.length > 0) {
-            yield* requireIdleHolder(input.threadId);
-          }
-          const ending = poweringOff
+          const ending = input.shutdown
             ? state.sessions.filter((session) =>
                 closing.some(
                   (closed) =>
@@ -956,8 +935,8 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
               yield* ready.releaseAgentSession(name, session.deviceId);
             }
           }
-          if (poweringOff) yield* releaseLaunchers(ending);
-          if (poweringOff) {
+          if (input.shutdown) yield* releaseLaunchers(ending);
+          if (input.shutdown) {
             for (const session of closing) {
               const ready = yield* currentReadiness(session.hostId);
               if (!ready)
@@ -975,7 +954,7 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           return closing;
         }),
       );
-      if (poweringOff)
+      if (input.shutdown)
         yield* Effect.forEach(
           closing,
           (session) =>
