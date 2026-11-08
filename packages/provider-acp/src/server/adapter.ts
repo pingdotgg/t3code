@@ -4938,10 +4938,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (work.stopReason === "cancelled" && pendingStopCloseTurn === context) {
             context.interrupted = true;
           }
-          const failure = stopReasonFailure(work.stopReason, work.error);
-          if (failure !== undefined && !context.interrupted) {
-            yield* terminalizeOpenForegroundTools(context, "failed");
-          }
+          const failure = context.interrupted
+            ? undefined
+            : stopReasonFailure(work.stopReason, work.error);
+          if (failure !== undefined) yield* terminalizeOpenForegroundTools(context, "failed");
           yield* finalizeTurn(
             context,
             failure !== undefined

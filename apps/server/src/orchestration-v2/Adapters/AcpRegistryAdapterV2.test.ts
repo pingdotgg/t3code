@@ -2465,7 +2465,7 @@ describe("AcpRegistryAdapterV2", () => {
     { stopReason: "max_tokens", childUpdate: "state_update" },
     { stopReason: "max_turn_requests", childUpdate: "subagent_update" },
   ])(
-    "fails Claude's turn, child and running tool when they stop with $stopReason via $childUpdate",
+    "fails Claude's turn and child and closes its running tool when they stop with $stopReason via $childUpdate",
     ({ stopReason, childUpdate }) =>
       Effect.gen(function* () {
         const { update, idle, prompt } = claudeFrames;
