@@ -108,7 +108,7 @@ const make = Effect.fn("LinkPreview.make")(function* () {
         .pipe(Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT));
       const location = response.headers["location"];
       if (response.status >= 300 && response.status < 400) {
-        if (!location || !URL.canParse(location, url)) return null;
+        if (!location || !URL.canParse(location, url.href)) return null;
         url = new URL(location, url);
         continue;
       }
