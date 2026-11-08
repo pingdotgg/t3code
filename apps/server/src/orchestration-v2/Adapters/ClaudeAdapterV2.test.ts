@@ -10758,13 +10758,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
     name: string,
   ) {
-    const changes = yield* makeChangeSignal;
     const fileSystem = yield* FileSystem.FileSystem;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: `t3-claude-v2-${name}-`,
     });
-    const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
     const deadStreamEnded = yield* Deferred.make<void>();
     let opened = 0;
     const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
@@ -10830,14 +10828,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
       runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
     });
-    yield* runtime.events.pipe(
-      Stream.runForEach((event) =>
-        Effect.sync(() => {
-          events.push(event);
-        }).pipe(Effect.andThen(changes.notify)),
-      ),
-      Effect.forkScoped,
-    );
     const now = yield* DateTime.now;
     const turnInput = (attempt: string, providerTurnOrdinal: number) =>
       makeClaudeTestTurnInput({
@@ -10849,14 +10839,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         attachments: [],
         providerTurnOrdinal,
       });
-    const providerTurnId = (attempt: string) =>
-      idAllocator.derive.providerTurn({
-        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-        nativeTurnId: `turn:attempt-${name}-${attempt}`,
-      });
-    const terminalOf = (turnId: ProviderTurnId) =>
-      events.find((event) => event.type === "turn.terminal" && event.providerTurnId === turnId);
-    return { changes, runtime, providerThread, turnInput, providerTurnId, terminalOf };
+    return { runtime, turnInput };
   });
 
   it.effect("fails a turn whose Claude query ends before its first frame", () =>
@@ -10865,11 +10848,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
           "claude-query-dies-before-frame",
         );
-        const turnId = harness.providerTurnId("a");
-
         const started = yield* harness.runtime
           .startTurn(harness.turnInput("a", 1))
           .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isFailure(started),
+          "a turn whose Claude query ended before its first frame started running on the dead query",
+        );
         const followUp = yield* harness.runtime
           .startTurn(harness.turnInput("b", 2))
           .pipe(Effect.exit);
@@ -10878,51 +10863,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           `the turn whose query ended before its first frame is still active: ${
             Exit.isFailure(followUp) ? Cause.pretty(followUp.cause) : ""
           }`,
-        );
-        if (Exit.isSuccess(started)) {
-          yield* harness.changes.until(() => harness.terminalOf(turnId) !== undefined);
-          const terminal = harness.terminalOf(turnId);
-          assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
-        }
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
-        ),
-      ),
-    ),
-  );
-
-  it.effect("Stop ends a turn whose Claude query ended before its first frame", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
-          "claude-query-dies-before-frame-stop",
-        );
-        const turnId = harness.providerTurnId("a");
-
-        const started = yield* harness.runtime
-          .startTurn(harness.turnInput("a", 1))
-          .pipe(Effect.exit);
-        if (Exit.isFailure(started)) return;
-        const stop = yield* harness.runtime
-          .interruptTurn({ providerThread: harness.providerThread, providerTurnId: turnId })
-          .pipe(Effect.exit);
-        assert.isTrue(
-          Exit.isSuccess(stop),
-          `Stop on the turn whose query ended before its first frame failed: ${
-            Exit.isFailure(stop) ? Cause.pretty(stop.cause) : ""
-          }`,
-        );
-        yield* harness.changes.until(() => harness.terminalOf(turnId) !== undefined);
-        const terminal = harness.terminalOf(turnId);
-        assert.include(
-          ["interrupted", "failed"],
-          terminal?.type === "turn.terminal" ? terminal.status : undefined,
         );
       }).pipe(
         Effect.provide(
