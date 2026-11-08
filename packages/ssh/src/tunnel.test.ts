@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { SshServerHomeKey } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -108,17 +109,68 @@ describe("ssh tunnel scripts", () => {
     );
   });
 
+  it.effect("preserves an API-provided endpoint and pinned identity through tunnel setup", () =>
+    Effect.gen(function* () {
+      const target = {
+        alias: "boat-bx_23456789",
+        hostname: "gateway.boat.dev",
+        username: "user",
+        port: 22001,
+        identityFile: "/keys/id_ed25519",
+        knownHostsFile: "/keys/known_hosts",
+        hostKeyAlias: "sandbox-host",
+      };
+      const commands: ReadonlyArray<string>[] = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          commands.push(args);
+          if (args.includes("-G"))
+            return makeSuccessfulProcess("hostname boat-bx_23456789\nuser ignored\nport 22\n");
+          if (args.includes("-N")) return makeRunningProcess(() => {});
+          return makeSuccessfulProcess('{"remotePort":3773}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const result = yield* manager.ensureEnvironment(target);
+        assert.deepEqual(result.target, target);
+        const tunnel = commands.find((args) => args.includes("-N"));
+        assert.isDefined(tunnel);
+        assert.include(tunnel, "HostName=gateway.boat.dev");
+        assert.include(tunnel, "/keys/id_ed25519");
+        assert.include(tunnel, "StrictHostKeyChecking=yes");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
   it.effect("accepts launch JSON after remote shell startup noise", () => {
     const target = {
       alias: "devbox",
       hostname: "devbox.example.com",
       username: "julius",
       port: 2222,
+      serverHomeKey: SshServerHomeKey.make("a".repeat(64)),
     } as const;
     const spawnedCommands: Array<ReadonlyArray<string>> = [];
+    const scripts: string[] = [];
     const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         spawnedCommands.push(commandArgs(command));
+        const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+        if (typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)) {
+          const chunks = yield* Stream.runCollect(stdin.stream);
+          scripts.push(chunks.map((chunk) => new TextDecoder().decode(chunk)).join(""));
+        }
         return makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n');
       }),
     );
@@ -132,6 +184,10 @@ describe("ssh tunnel scripts", () => {
       const result = yield* SshTunnel.launchOrReuseRemoteServer(target, undefined, ARCHIVE);
       assert.equal(result.remotePort, 3774);
       assert.deepEqual(spawnedCommands[0]?.slice(-5, -1), ["sh", "-l", "-s", "--"]);
+      assert.include(
+        scripts[0],
+        `DEFAULT_SERVER_HOME="$HOME/.t3/environments/${target.serverHomeKey}"`,
+      );
     }).pipe(Effect.provide(layerProcess));
   });
 
@@ -453,6 +509,55 @@ describe("ssh tunnel scripts", () => {
           Effect.scoped,
         );
       }),
+  );
+
+  it.effect("release closes the local tunnel without stopping the remote server", () =>
+    Effect.gen(function* () {
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      let launches = 0;
+      let tunnels = 0;
+      let tunnelKills = 0;
+      const remoteStops: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.sync(() => {
+          const args = commandArgs(command);
+          if (args.includes("-G")) return makeSuccessfulProcess("");
+          if (args.includes("-N")) {
+            tunnels += 1;
+            return makeRunningProcess(() => {
+              tunnelKills += 1;
+            });
+          }
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            launches += 1;
+            return makeSuccessfulProcess('{"remotePort":3773}\n');
+          }
+          remoteStops.push(args);
+          return makeSuccessfulProcess('{"stopped":true}\n');
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, testHttpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        yield* manager.ensureEnvironment(target);
+        yield* manager.releaseEnvironment(target);
+        assert.equal(tunnelKills, 1);
+        assert.deepEqual(remoteStops, []);
+
+        yield* manager.ensureEnvironment(target);
+        assert.equal(tunnels, 2);
+        assert.equal(launches, 2);
+        assert.deepEqual(remoteStops, []);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
   );
 });
 

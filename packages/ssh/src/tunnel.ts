@@ -31,6 +31,7 @@ import {
   resolveSshCommand,
   resolveSshTarget,
   runSshCommand,
+  shellSingleQuote,
   sshTargetLogFields,
   targetConnectionKey,
 } from "./command.ts";
@@ -129,6 +130,19 @@ interface SshAuthAttemptInput<T> extends SshAuthOperationInput<T> {
   readonly authSecret: string | null;
 }
 
+const resolveEnvironmentTarget = Effect.fn("ssh/tunnel.resolveEnvironmentTarget")(function* (
+  target: DesktopSshEnvironmentTarget,
+) {
+  const resolved = yield* resolveSshTarget(target.alias || target.hostname);
+  return {
+    ...target,
+    ...resolved,
+    ...(target.hostKeyAlias ? { hostname: target.hostname } : {}),
+    ...(target.username !== null ? { username: target.username } : {}),
+    ...(target.port !== null ? { port: target.port } : {}),
+  };
+});
+
 export interface SshEnvironmentManagerShape {
   readonly ensureEnvironment: (
     target: DesktopSshEnvironmentTarget,
@@ -141,6 +155,13 @@ export interface SshEnvironmentManagerShape {
   readonly disconnectEnvironment: (
     target: DesktopSshEnvironmentTarget,
   ) => Effect.Effect<void, SshEnvironmentEffectError, SshEnvironmentEffectContext>;
+  readonly releaseEnvironment: (
+    target: DesktopSshEnvironmentTarget,
+  ) => Effect.Effect<
+    void,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  >;
 }
 
 const RemoteLaunchResult = Schema.Struct({
@@ -206,10 +227,6 @@ function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): stri
 
 function stripTrailingNewlines(value: string): string {
   return value.replace(/\n+$/u, "");
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function applyScriptPlaceholders(
@@ -527,7 +544,7 @@ const REMOTE_LAUNCH_SCRIPT = `set -eu
 @@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_SERVER_HOME="@@T3_SERVER_HOME@@"
 DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
@@ -724,7 +741,7 @@ printf '{"remotePort":%s,"serverKind":"%s"}\\n' "$REMOTE_PORT" "\${REMOTE_MANAGE
 
 const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
-DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_SERVER_HOME="@@T3_SERVER_HOME@@"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR"
 cat >"$RUNNER_FILE" <<'SH'
@@ -825,8 +842,12 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+function buildRemoteLaunchScript(
+  input?: RemoteT3RunnerOptions,
+  serverHomeKey?: DesktopSshEnvironmentTarget["serverHomeKey"],
+): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_SERVER_HOME: serverHomeKey ? `$HOME/.t3/environments/${serverHomeKey}` : "$HOME/.t3",
     T3_ARCHIVE_MODE: isNodeScriptRunner(input) ? "0" : "1",
     T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
@@ -840,8 +861,13 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   });
 }
 
-function buildRemotePairingScript(stateKey: string, input?: RemoteT3RunnerOptions): string {
+function buildRemotePairingScript(
+  stateKey: string,
+  input?: RemoteT3RunnerOptions,
+  serverHomeKey?: DesktopSshEnvironmentTarget["serverHomeKey"],
+): string {
   return applyScriptPlaceholders(REMOTE_PAIRING_SCRIPT, {
+    T3_SERVER_HOME: serverHomeKey ? `$HOME/.t3/environments/${serverHomeKey}` : "$HOME/.t3",
     T3_STATE_KEY: stateKey,
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
   });
@@ -877,7 +903,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     });
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-l", "-s", "--", stateKey],
-      stdin: buildRemoteLaunchScript(runner),
+      stdin: buildRemoteLaunchScript(runner, target.serverHomeKey),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
         : REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS,
@@ -938,7 +964,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
-    stdin: buildRemotePairingScript(stateKey, runner),
+    stdin: buildRemotePairingScript(stateKey, runner, target.serverHomeKey),
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
@@ -1681,12 +1707,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...sshTargetLogFields(target),
       issuePairingToken: requestOptions?.issuePairingToken === true,
     });
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveEnvironmentTarget(target);
     const key = targetConnectionKey(resolvedTarget);
     yield* Effect.logDebug("ssh.environment.target.resolved", {
       ...sshTargetLogFields(resolvedTarget),
@@ -1738,12 +1759,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
     yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
-    const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
-    const resolvedTarget: DesktopSshEnvironmentTarget = {
-      ...baseResolved,
-      ...(target.username !== null ? { username: target.username } : {}),
-      ...(target.port !== null ? { port: target.port } : {}),
-    };
+    const resolvedTarget = yield* resolveEnvironmentTarget(target);
     const key = targetConnectionKey(resolvedTarget);
     yield* withTargetLock(
       key,
@@ -1774,7 +1790,38 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     );
   });
 
-  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
+  // Closes only the local forward. The remote server and its agents keep running.
+  const releaseEnvironment = Effect.fn("ssh/tunnel.releaseEnvironment")(function* (
+    target: DesktopSshEnvironmentTarget,
+  ): Effect.fn.Return<
+    void,
+    never,
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
+  > {
+    const resolvedTarget = yield* resolveEnvironmentTarget(target).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("ssh.environment.release.targetUnresolved", {
+          ...sshTargetLogFields(target),
+          cause,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (resolvedTarget === null) return;
+    const key = targetConnectionKey(resolvedTarget);
+    yield* withTargetLock(
+      key,
+      Effect.gen(function* () {
+        const entry = tunnels.get(key) ?? null;
+        if (entry === null) return;
+        yield* Effect.gen(function* () {
+          tunnels.delete(key);
+          yield* closeTunnelEntry(entry);
+        }).pipe(Effect.uninterruptible);
+      }),
+    );
+  });
+
+  return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment, releaseEnvironment });
 });
 
 /**

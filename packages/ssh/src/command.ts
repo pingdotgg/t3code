@@ -104,6 +104,10 @@ export const buildSshHostSpecEffect = (
       }),
   });
 
+export function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export function baseSshArgs(
   target: DesktopSshEnvironmentTarget,
   input?: { readonly batchMode?: "yes" | "no" },
@@ -114,6 +118,24 @@ export function baseSshArgs(
     "-o",
     "ConnectTimeout=10",
     ...(target.port !== null ? ["-p", String(target.port)] : []),
+    ...(target.identityFile ? ["-i", target.identityFile, "-o", "IdentitiesOnly=yes"] : []),
+    ...(target.knownHostsFile
+      ? [
+          "-F",
+          "none",
+          "-o",
+          "GlobalKnownHostsFile=none",
+          "-o",
+          "ForwardAgent=no",
+          "-o",
+          `UserKnownHostsFile="${target.knownHostsFile.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`,
+          "-o",
+          "StrictHostKeyChecking=yes",
+        ]
+      : []),
+    ...(target.hostKeyAlias
+      ? ["-o", `HostKeyAlias=${target.hostKeyAlias}`, "-o", `HostName=${target.hostname}`]
+      : []),
   ];
 }
 

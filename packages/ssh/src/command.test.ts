@@ -184,4 +184,27 @@ describe("ssh command", () => {
       }
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.live(
+    "isolates pinned host-key targets from user ssh config, global known_hosts, and agent forwarding",
+    () =>
+      Effect.gen(function* () {
+        const { stdout } = yield* runSshCommand(
+          {
+            alias: "t3-cloud-fixture",
+            hostname: "192.0.2.10",
+            username: "root",
+            port: 2222,
+            identityFile: "/tmp/id_ed25519",
+            knownHostsFile: "/tmp/pinned_known_hosts",
+            hostKeyAlias: "t3-cloud-fixture",
+          },
+          { batchMode: "yes", preHostArgs: ["-G"] },
+        );
+        assert.match(stdout, /^batchmode yes\r?$/mu);
+        assert.match(stdout, /^forwardagent no\r?$/mu);
+        assert.match(stdout, /^globalknownhostsfile none\r?$/mu);
+        assert.match(stdout, /^stricthostkeychecking (?:yes|true)\r?$/mu);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
