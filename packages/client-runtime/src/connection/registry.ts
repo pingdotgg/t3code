@@ -297,6 +297,10 @@ export const make = Effect.gen(function* () {
   const gatewayReconcileClients = yield* Ref.make<ReadonlyMap<EnvironmentId, WsRpcProtocolClient>>(
     new Map(),
   );
+  /** Last desired peer ids this client registered per gateway; scopes auto-remove. */
+  const gatewayPreviousDesired = yield* Ref.make<
+    ReadonlyMap<EnvironmentId, ReadonlySet<EnvironmentId>>
+  >(new Map());
   const gatewayReconcileGeneration = yield* Ref.make(0);
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
@@ -384,7 +388,15 @@ export const make = Effect.gen(function* () {
       ),
     );
     if (listed === null) return;
-    const plan = planGatewayPeerReconcile({ desired, listed: listed.peers, retain });
+    const previousDesired =
+      (yield* Ref.get(gatewayPreviousDesired)).get(gatewayEnvironmentId) ??
+      new Set<EnvironmentId>();
+    const plan = planGatewayPeerReconcile({
+      desired,
+      listed: listed.peers,
+      retain,
+      previousDesired,
+    });
     for (const peer of plan.add) {
       yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
         Effect.catch((error) =>
@@ -407,6 +419,11 @@ export const make = Effect.gen(function* () {
         ),
       );
     }
+    yield* Ref.update(gatewayPreviousDesired, (current) => {
+      const next = new Map(current);
+      next.set(gatewayEnvironmentId, new Set(desired.map((peer) => peer.environmentId)));
+      return next;
+    });
   });
 
   const reconcileAllGatewayPeers = Effect.fn("EnvironmentRegistry.reconcileAllGatewayPeers")(
@@ -442,6 +459,14 @@ export const make = Effect.gen(function* () {
         else next.delete(input.gatewayEnvironmentId);
         return next;
       });
+      if (!input.enabled) {
+        yield* Ref.update(gatewayPreviousDesired, (current) => {
+          if (!current.has(input.gatewayEnvironmentId)) return current;
+          const next = new Map(current);
+          next.delete(input.gatewayEnvironmentId);
+          return next;
+        });
+      }
       yield* enqueueGatewayPeerReconcile();
     },
   );
@@ -460,6 +485,12 @@ export const make = Effect.gen(function* () {
     yield* Ref.update(gatewayReconcileClients, (hosts) => {
       if (!hosts.has(environmentId)) return hosts;
       const without = new Map(hosts);
+      without.delete(environmentId);
+      return without;
+    });
+    yield* Ref.update(gatewayPreviousDesired, (current) => {
+      if (!current.has(environmentId)) return current;
+      const without = new Map(current);
       without.delete(environmentId);
       return without;
     });
