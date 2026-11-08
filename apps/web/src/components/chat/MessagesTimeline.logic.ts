@@ -66,7 +66,7 @@ import {
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/shell";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { resolveT3McpToolDefinition } from "@t3tools/shared/t3McpToolPresentation";
-import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
+import { compactDynamicToolOutput, lessonCardReplyMessageId } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
 import type { LessonCard } from "@t3tools/shared/quizCard";
 import { mcpAppReferencesEqual, type McpAppReference } from "@t3tools/shared/mcpApp";
@@ -1120,8 +1120,15 @@ function deriveTurnFolds(input: {
   // The text that sets up a card is what the card tests, so it stays beside it, visuals between.
   const cardLeadIds = new Set<string>();
   let lead: string | null = null;
+  // A card's reply also stays beside it, without displacing the teaching before it.
+  const cardReplyIds = new Set(
+    input.timelineEntries.flatMap((entry) =>
+      entry.kind === "quiz-card" ? [lessonCardReplyMessageId(entry.id)] : [],
+    ),
+  );
   for (const entry of input.timelineEntries) {
-    if (entry.kind === "message") lead = entry.message.role === "assistant" ? entry.id : null;
+    if (entry.kind === "message" && cardReplyIds.has(entry.message.id)) cardLeadIds.add(entry.id);
+    else if (entry.kind === "message") lead = entry.message.role === "assistant" ? entry.id : null;
     else if (entry.kind === "quiz-card" && lead !== null) {
       cardLeadIds.add(lead);
       lead = null;

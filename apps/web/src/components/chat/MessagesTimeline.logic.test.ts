@@ -24,6 +24,7 @@ import { answeredCardIds, cardAnswerMessage } from "@t3tools/shared/quizCard";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import { lessonCardReplyMessageId } from "@t3tools/shared/toolOutput";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRows,
@@ -1090,8 +1091,29 @@ describe("deriveMessagesTimelineRows", () => {
       runId: RunId.make("turn-1"),
       quizCard: { question: "Explain it." },
     };
+    // A card's reply sits right before it and stays visible without displacing the teaching.
+    const reply = {
+      kind: "message" as const,
+      id: "card-entry:reply",
+      createdAt: "2026-01-01T00:00:07Z",
+      message: {
+        id: lessonCardReplyMessageId("card-entry"),
+        role: "assistant" as const,
+        text: "Right.",
+        runId: RunId.make("turn-1"),
+        createdAt: "2026-01-01T00:00:07Z",
+        updatedAt: "2026-01-01T00:00:07Z",
+        streaming: false,
+      },
+    };
     const withCard = deriveMessagesTimelineRows({
-      timelineEntries: [...timelineEntries.slice(0, 2), diagram, card, ...timelineEntries.slice(2)],
+      timelineEntries: [
+        ...timelineEntries.slice(0, 2),
+        diagram,
+        reply,
+        card,
+        ...timelineEntries.slice(2),
+      ],
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
@@ -1102,6 +1124,7 @@ describe("deriveMessagesTimelineRows", () => {
       "turn-fold:turn-1",
       "assistant-first-entry",
       "diagram-entry",
+      "card-entry:reply",
       "card-entry",
       "assistant-final-entry",
     ]);
