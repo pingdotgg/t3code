@@ -163,6 +163,8 @@ export async function recordPromptSent(environmentId: EnvironmentId): Promise<vo
   try {
     // Another tab can dismiss while the check or the idle wait runs.
     if (getLocalStorageItem(DISMISSED_KEY, Schema.Boolean)) return;
+    // Never cover a lesson card; ask again next session.
+    if (document.querySelector("[data-quiz-card-seed]") !== null) return;
   } catch {
     return;
   }
