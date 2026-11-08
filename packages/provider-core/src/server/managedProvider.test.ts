@@ -366,6 +366,47 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
+  it.effect("re-probes healthy usage limits on the interval so they stay current", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const usageWindow = (usedPercent: number) =>
+          ({ id: "go_rolling", kind: "session", label: "Session", usedPercent }) as const;
+        const probes = yield* Ref.make(0);
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+          refreshOnInterval: false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Effect.succeed({
+            ...refreshedSnapshot,
+            usageLimits: { checkedAt: "2026-04-10T00:00:01.000Z", windows: [usageWindow(6)] },
+          }),
+          checkUsageLimits: Ref.updateAndGet(probes, (count) => count + 1).pipe(
+            Effect.map((count) => ({
+              checkedAt: "2026-04-10T00:00:02.000Z",
+              windows: [usageWindow(6 + count)],
+            })),
+          ),
+          refreshInterval: "1 second",
+        });
+        yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+        const probed = yield* provider.streamChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("1 second");
+
+        const [snapshot] = Array.from(yield* Fiber.join(probed));
+        assert.deepStrictEqual(snapshot?.usageLimits?.windows, [usageWindow(7)]);
+        assert.strictEqual(yield* Ref.get(probes), 1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
   it.effect("reruns the provider check when streamed settings change", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -251,12 +251,14 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     );
   });
 
-  const needsUsageRecovery = (snapshot: ServerProvider) =>
+  // Limits drift as the account is used anywhere, so healthy readings are re-probed too.
+  const needsUsageProbe = (snapshot: ServerProvider) =>
     input.checkUsageLimits !== undefined &&
     snapshot.installed &&
     snapshot.status === "ready" &&
     snapshot.auth.status === "authenticated" &&
-    snapshot.usageLimits?.unavailable?.reason === "probeFailed";
+    snapshot.usageLimits !== undefined &&
+    snapshot.usageLimits.unavailable?.reason !== "unsupported";
 
   const needsProviderRefresh = (snapshot: ServerProvider) =>
     input.refreshOnInterval !== false &&
@@ -265,7 +267,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const refreshOnInterval = Effect.fn("ManagedServerProvider.refreshOnInterval")(function* () {
     const { snapshot } = yield* Ref.get(snapshotStateRef);
     if (!snapshot.enabled) return;
-    if (!needsUsageRecovery(snapshot) || !input.checkUsageLimits) {
+    if (!needsUsageProbe(snapshot) || !input.checkUsageLimits) {
       if (needsProviderRefresh(snapshot)) {
         yield* applySnapshotBase(yield* input.getSettings, { forceRefresh: true });
       }
@@ -289,7 +291,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     // republish a snapshot that differs in checkedAt.
     if (
       !state.snapshot.enabled ||
-      (!needsUsageRecovery(state.snapshot) && !needsProviderRefresh(state.snapshot))
+      (!needsUsageProbe(state.snapshot) && !needsProviderRefresh(state.snapshot))
     ) {
       return false;
     }

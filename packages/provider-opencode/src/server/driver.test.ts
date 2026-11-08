@@ -515,8 +515,10 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       );
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
+      // Healthy limits keep being re-read on the interval, still without catalog work.
       yield* TestClock.adjust("15 minutes");
-      assert.strictEqual(usageReads, expectedReads);
+      if (shouldRecover) assert.isAbove(usageReads, expectedReads);
+      else assert.strictEqual(usageReads, expectedReads);
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
