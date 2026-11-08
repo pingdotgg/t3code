@@ -1,3 +1,4 @@
+import { playVoiceInputCue } from "./voiceInputCue";
 import {
   cancelEnvironmentSpeechModelDownload,
   downloadEnvironmentSpeechModel,
@@ -342,6 +343,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       getTranscriber: () => platform.transcriber,
       requestPermission: async () => ({ granted: true, canAskAgain: true }),
       configureRecording: async () => undefined,
+      playRecordingCue: playVoiceInputCue,
       releaseRecording: async () => platform.cancelRecording(),
       deleteRecording: platform.deleteRecording,
       postProcess,

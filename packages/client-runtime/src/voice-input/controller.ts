@@ -76,6 +76,7 @@ export type VoiceInputControllerDependencies = {
   }>;
   readonly configureRecording: () => Promise<void>;
   readonly releaseRecording: () => Promise<void>;
+  readonly playRecordingCue?: (cue: "start" | "stop") => Promise<void>;
   readonly deleteRecording: (uri: string) => void;
   /** Keep a recording whose transcription failed so the next start retries it without recording again. */
   readonly retryFailedRecording?: boolean;
@@ -245,6 +246,7 @@ export class VoiceInputController {
   private readonly ownedRecordingUris = new Set<string>();
   private recordingConfigured = false;
   private finishing = false;
+  private recordingStarted = false;
   private retryRecording: {
     uri: string;
     ownerKey: string;
@@ -340,6 +342,9 @@ export class VoiceInputController {
         return;
       }
       this.capturedDraft = capturedDraft;
+      // Finish the cue before capture so it cannot become part of the transcript.
+      await this.playRecordingCue("start");
+      if (!this.isCurrent(operationToken)) return;
       if (this.transcription.start && this.recordingUri) {
         const start = this.transcription.start;
         const uri = this.recordingUri;
@@ -356,6 +361,7 @@ export class VoiceInputController {
         );
       }
       this.dependencies.recorder.record({ forDuration: VOICE_RECORDING_LIMIT_SECONDS });
+      this.recordingStarted = true;
       this.setState({ phase: "recording", error: null, errorAction: null });
     } catch (error) {
       if (this.isCurrent(operationToken))
@@ -484,6 +490,7 @@ export class VoiceInputController {
 
     try {
       if (!alreadyStopped) await this.dependencies.recorder.stop();
+      await this.playStopCue();
       await this.releaseAudioSession();
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
       this.rememberRecordingUri(this.recordingUri);
@@ -607,6 +614,20 @@ export class VoiceInputController {
     await this.releaseResources();
   }
 
+  private async playStopCue(): Promise<void> {
+    if (!this.recordingStarted) return;
+    this.recordingStarted = false;
+    await this.playRecordingCue("stop");
+  }
+
+  private async playRecordingCue(cue: "start" | "stop"): Promise<void> {
+    try {
+      await this.dependencies.playRecordingCue?.(cue);
+    } catch {
+      // Audio feedback must not prevent recording or transcription.
+    }
+  }
+
   private async releaseResources(): Promise<void> {
     this.transcriptionAbortController?.abort();
     this.postProcessingAbortController?.abort();
@@ -619,6 +640,7 @@ export class VoiceInputController {
         await this.dependencies.recorder.stop();
       } catch {}
     }
+    await this.playStopCue();
     await this.liveTranscription;
     this.liveTranscription = null;
     this.recordingUri = null;

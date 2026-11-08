@@ -299,6 +299,94 @@ describe("resolveTranscriptCommit", () => {
 describe("VoiceInputController", () => {
   beforeEach(() => resetVoiceInputGlobalsForTests());
 
+  it("keeps both cues outside microphone capture", async () => {
+    const events: string[] = [];
+    const harness = createHarness({
+      playRecordingCue: async (cue) => {
+        events.push(cue);
+      },
+      releaseRecording: async () => {
+        events.push("release");
+      },
+    });
+    harness.recorder.record.mockImplementation(() => {
+      events.push("record");
+    });
+    harness.recorder.stop.mockImplementation(async () => {
+      events.push("stop-recording");
+    });
+
+    await harness.controller.start();
+    await harness.controller.stop();
+
+    expect(events).toEqual(["start", "record", "stop-recording", "stop", "release"]);
+    expect(harness.commits).toHaveLength(1);
+  });
+
+  it("does not start capture after cancellation during the start cue", async () => {
+    const cue = deferred<void>();
+    const entered = deferred<void>();
+    const harness = createHarness({
+      playRecordingCue: () => {
+        entered.resolve();
+        return cue.promise;
+      },
+    });
+    const starting = harness.controller.start();
+    await entered.promise;
+    harness.controller.cancel();
+    cue.resolve();
+    await starting;
+
+    expect(harness.recorder.record).not.toHaveBeenCalled();
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it.each(["stop", "cancel", "limit"] as const)("plays one stop cue on %s", async (action) => {
+    const playRecordingCue = vi.fn(async (_cue: "start" | "stop") => undefined);
+    const stopped = deferred<void>();
+    const harness = createHarness({
+      playRecordingCue,
+      releaseRecording: async () => {
+        stopped.resolve();
+      },
+    });
+    await harness.controller.start();
+    if (action === "stop") await harness.controller.stop();
+    else if (action === "cancel") harness.controller.cancel();
+    else
+      await harness.controller.handleRecorderStatus({
+        isFinished: true,
+        hasError: false,
+        error: null,
+        url: "file:///voice.m4a",
+      });
+    await stopped.promise;
+    expect(playRecordingCue.mock.calls).toEqual([["start"], ["stop"]]);
+  });
+
+  it("continues dictation when audio feedback fails", async () => {
+    const harness = createHarness({
+      playRecordingCue: async () => {
+        throw new Error("audio unavailable");
+      },
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    expect(harness.commits).toHaveLength(1);
+    expect(harness.controller.currentState.phase).toBe("idle");
+  });
+
+  it("does not chime when microphone permission is denied", async () => {
+    const playRecordingCue = vi.fn(async () => undefined);
+    const harness = createHarness({
+      playRecordingCue,
+      requestPermission: async () => ({ granted: false, canAskAgain: true }),
+    });
+    await harness.controller.start();
+    expect(playRecordingCue).not.toHaveBeenCalled();
+  });
+
   it("checks support and permission before recording", async () => {
     const unsupported = createHarness({ getTranscriber: () => null });
     await unsupported.controller.start();
