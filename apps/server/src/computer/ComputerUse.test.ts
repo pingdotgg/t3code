@@ -40,8 +40,12 @@ const harness = (options: {
   readonly enabled?: boolean;
   readonly firstOpen?: "cancelled" | "pending" | "answered later";
   readonly holdCapture?: boolean;
-  readonly failKeyPress?: number;
-  readonly failKeyRelease?: number;
+  /** The availability lookup that waits for `releaseLookup`, counting from 1. */
+  readonly holdLookup?: number;
+  /** An input event, as recorded in `events`, that never finishes. */
+  readonly holdInput?: string;
+  /** An input event the portal rejects. */
+  readonly failInput?: string;
   readonly failCaptures?: number;
 }) =>
   Effect.gen(function* () {
@@ -52,11 +56,21 @@ const harness = (options: {
     const captureStarted = yield* Deferred.make<void>();
     const captureReleased = yield* Deferred.make<void>();
     if (!options.holdCapture) Deferred.doneUnsafe(captureReleased, Effect.void);
+    const lookupStarted = yield* Deferred.make<void>();
+    const lookupReleased = yield* Deferred.make<void>();
+    const inputHeld = yield* Deferred.make<void>();
+    let lookups = 0;
     let failCaptures = options.failCaptures ?? 0;
     const opens: Array<string | null> = [];
     const closes = yield* Queue.unbounded<number>();
     const ends: Array<Deferred.Deferred<void>> = [];
     const record = (event: string) => Effect.sync(() => void events.push(event));
+    const input = (event: string) =>
+      event === options.failInput
+        ? Effect.fail(new PortalCallError({ member: "Notify", cause: "rejected" }))
+        : event === options.holdInput
+          ? Deferred.succeed(inputHeld, undefined).pipe(Effect.andThen(Effect.never))
+          : record(event);
     const makeSession = (index: number): RemoteDesktopSession => {
       const ended = Deferred.makeUnsafe<void>();
       ends.push(ended);
@@ -67,16 +81,12 @@ const harness = (options: {
         restoreToken: `token-${index}`,
         closed: Deferred.await(ended),
         isClosed: Deferred.isDone(ended),
-        pointerMotionAbsolute: (stream, x, y) => record(`move ${stream.nodeId} ${x} ${y}`),
+        pointerMotionAbsolute: (stream, x, y) => input(`move ${stream.nodeId} ${x} ${y}`),
         pointerButton: (button, pressed) =>
-          record(`button ${button.toString(16)} ${pressed ? "down" : "up"}`),
-        pointerAxis: (dx, dy) => record(`axis ${dx} ${dy}`),
+          input(`button ${button.toString(16)} ${pressed ? "down" : "up"}`),
+        pointerAxis: (dx, dy) => input(`axis ${dx} ${dy}`),
         keyboardKeysym: (keysym, pressed) =>
-          keysym === (pressed ? options.failKeyPress : options.failKeyRelease)
-            ? Effect.fail(
-                new PortalCallError({ member: "NotifyKeyboardKeysym", cause: "rejected" }),
-              )
-            : record(`key ${keysym.toString(16)} ${pressed ? "down" : "up"}`),
+          input(`key ${keysym.toString(16)} ${pressed ? "down" : "up"}`),
         // Idempotent, like the portal's.
         close: Effect.suspend(() => {
           Deferred.doneUnsafe(ended, Effect.void);
@@ -89,7 +99,14 @@ const harness = (options: {
     const desktop = Layer.succeed(
       KdeDesktop,
       KdeDesktop.of({
-        unavailableReason: Effect.succeed(null),
+        unavailableReason: Effect.suspend(() =>
+          ++lookups === options.holdLookup
+            ? Deferred.succeed(lookupStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(lookupReleased)),
+                Effect.as(null),
+              )
+            : Effect.succeed(null),
+        ),
         openSession: (restoreToken) =>
           Effect.suspend(() => {
             opens.push(restoreToken);
@@ -163,6 +180,9 @@ const harness = (options: {
         Effect.andThen(Deferred.await(sessionOpened)),
       ),
       captureStarted: Deferred.await(captureStarted),
+      lookupStarted: Deferred.await(lookupStarted),
+      releaseLookup: Deferred.succeed(lookupReleased, undefined),
+      inputHeld: Deferred.await(inputHeld),
       releaseCapture: Deferred.succeed(captureReleased, undefined),
       takeClose: Queue.take(closes),
       endFromDesktop: (session: number) => Deferred.doneUnsafe(ends[session - 1]!, Effect.void),
@@ -237,7 +257,7 @@ describe("ComputerUse", () => {
 
   it.effect("releases held modifiers when a key press fails", () =>
     Effect.gen(function* () {
-      const test = yield* harness({ failKeyPress: 0x74 });
+      const test = yield* harness({ failInput: "key 74 down" });
       yield* Effect.gen(function* () {
         const computer = yield* ComputerUse;
         yield* computer.screenshot({ threadId: threadA });
@@ -275,7 +295,7 @@ describe("ComputerUse", () => {
 
   it.effect("releases held modifiers and ends control when a key release fails", () =>
     Effect.gen(function* () {
-      const test = yield* harness({ failKeyRelease: 0x74 });
+      const test = yield* harness({ failInput: "key 74 up" });
       yield* Effect.gen(function* () {
         const computer = yield* ComputerUse;
         yield* computer.screenshot({ threadId: threadA });
@@ -288,6 +308,26 @@ describe("ComputerUse", () => {
         expect(yield* test.takeClose).toBe(1);
         const next = yield* Effect.flip(click(threadA, 1, 1));
         expect(next.message).toContain("Call `computer_screenshot` first");
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
+  it.effect("ends control when a drag is interrupted and its button may still be held", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({ holdInput: "move 2 5.5 10.5", failInput: "button 110 up" });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        yield* computer.screenshot({ threadId: threadA, display: 1 });
+        const drag = yield* Effect.forkChild(
+          computer.act({ threadId: threadA, action: "drag", x: 0, y: 0, toX: 10, toY: 20 }),
+        );
+        yield* test.inputHeld;
+        yield* Fiber.interrupt(drag);
+        expect(test.events).toEqual(["move 2 0.5 0.5", "button 110 down"]);
+        // Ending the session makes the desktop drop the button, so input starts over from here.
+        const next = yield* Effect.flip(click(threadA, 1, 1));
+        expect(next.message).toContain("Call `computer_screenshot` first");
+        expect(yield* test.takeClose).toBe(1);
       }).pipe(Effect.provide(test.services));
     }),
   );
@@ -419,6 +459,42 @@ describe("ComputerUse", () => {
             });
           }
           yield* computer.screenshot({ threadId: threadA });
+          expect(test.opens).toEqual([null, null]);
+        }).pipe(Effect.provide(test.services));
+      }),
+  );
+
+  it.effect.each(["stopping with forget", "the setting turns off"] as const)(
+    "never opens with a forgotten grant when %s while availability is checked",
+    (revocation) =>
+      Effect.gen(function* () {
+        const test = yield* harness({ holdLookup: 2 });
+        yield* Effect.gen(function* () {
+          const computer = yield* ComputerUse;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* computer.screenshot({ threadId: threadA });
+          yield* computer.stop({ threadId: threadA, forget: false });
+          expect(yield* test.takeClose).toBe(1);
+          const pending = yield* Effect.forkChild(
+            Effect.exit(computer.screenshot({ threadId: threadA })),
+          );
+          yield* test.lookupStarted;
+          if (revocation === "the setting turns off") {
+            yield* settings.updateSettings({ enableAgentComputerAccess: false });
+          } else {
+            expect(yield* computer.stop({ threadId: threadA, forget: true })).toEqual({
+              stopped: true,
+            });
+          }
+          expect(failureOf(yield* Fiber.join(pending))).toMatchObject({
+            message: expect.stringMatching(
+              revocation === "the setting turns off" ? /Settings > Devices/ : /stopped/,
+            ),
+          });
+          // A lookup that finishes late must not start control with the grant it read before.
+          yield* test.releaseLookup;
+          yield* settings.updateSettings({ enableAgentComputerAccess: true });
+          yield* computer.screenshot({ threadId: threadB });
           expect(test.opens).toEqual([null, null]);
         }).pipe(Effect.provide(test.services));
       }),

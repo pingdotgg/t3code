@@ -356,15 +356,29 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * Opens a session and starts control with it, unless `cancelOpening` took the dialog first.
-   * Runs uninterruptibly but for the session's arrival, so the hand-off always settles.
+   * Checks the desktop, then opens a session and starts control with it, unless `cancelOpening`
+   * took the ticket first. Runs uninterruptibly but for those steps, so the hand-off always settles.
    */
   const openControl = Effect.fn("ComputerUse.openControl")(function* (
     threadId: ThreadId,
     ticket: object,
-    restoreToken: string | null,
   ) {
-    const exit = yield* Effect.exit(Effect.interruptible(desktop.openSession(restoreToken)));
+    let asked = false;
+    const exit = yield* Effect.exit(
+      Effect.interruptible(
+        Effect.gen(function* () {
+          const reason = yield* desktop.unavailableReason;
+          if (reason !== null) return yield* new ComputerUseUnavailableError({ reason });
+          // Checked again after the lookup above, so a setting turned off meanwhile shows no dialog.
+          yield* requireEnabled;
+          // Read only now, so a grant that `stop` forgot during the checks is never offered.
+          const current = yield* Ref.get(state);
+          if (current.opening?.ticket !== ticket) return yield* Effect.interrupt;
+          asked = true;
+          return yield* desktop.openSession(current.restoreToken);
+        }),
+      ),
+    );
     const failed = Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause);
     const active: ActiveControl | null = Exit.isSuccess(exit)
       ? {
@@ -385,7 +399,7 @@ const make = Effect.gen(function* () {
               restoreToken:
                 active !== null
                   ? active.session.restoreToken
-                  : failed
+                  : failed && asked
                     ? null
                     : current.restoreToken,
             },
@@ -412,19 +426,14 @@ const make = Effect.gen(function* () {
     if (current.active !== null) {
       return current.active.owner === threadId ? current.active : yield* busy;
     }
-    const reason = yield* desktop.unavailableReason;
-    if (reason !== null) return yield* new ComputerUseUnavailableError({ reason });
-    // Checked again after the lookup above, so a setting turned off meanwhile shows no dialog.
-    yield* requireEnabled;
-    // A fiber of its own, so turning the setting off or `stop` can close the dialog. It waits
-    // for its ticket to be in state, and nothing interrupts the registration, so it finds it.
+    // A fiber of its own, in state before any check that waits, so turning the setting off or
+    // `stop` can cancel the checks or close the dialog. It waits for its ticket to be in state,
+    // and nothing interrupts the registration, so it finds it.
     const ticket = {};
     const registered = yield* Deferred.make<void>();
     const fiber = yield* Effect.uninterruptible(
       Effect.forkIn(
-        Deferred.await(registered).pipe(
-          Effect.andThen(openControl(threadId, ticket, current.restoreToken)),
-        ),
+        Deferred.await(registered).pipe(Effect.andThen(openControl(threadId, ticket))),
         scope,
         { uninterruptible: true },
       ).pipe(
@@ -479,15 +488,13 @@ const make = Effect.gen(function* () {
       Effect.asSome(effect),
       Effect.as(active.session.closed, Option.none<A>()),
     );
+    if (Option.isNone(result)) return yield* controlEnded(active);
+    yield* requireEnabledFor(active.session);
+    // Last, with nothing that waits after it, so control that ended during the read above counts.
     const current = yield* Ref.get(state);
-    if (
-      Option.isNone(result) ||
-      current.active?.session !== active.session ||
-      (yield* active.session.isClosed)
-    ) {
+    if (current.active?.session !== active.session || (yield* active.session.isClosed)) {
       return yield* controlEnded(active);
     }
-    yield* requireEnabledFor(active.session);
     return result.value;
   });
 
@@ -569,7 +576,10 @@ const make = Effect.gen(function* () {
         yield* whileControlled(
           active,
           runPlan(active.session, plan).pipe(
-            Effect.tapError(() => closeIfActive(active.session)),
+            // Interrupted too, since a release cut short or failed may have left input held.
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) ? Effect.void : closeIfActive(active.session),
+            ),
             Effect.mapError(
               (cause) => new ComputerUseOperationError({ operation: "input", cause }),
             ),
