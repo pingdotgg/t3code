@@ -11,6 +11,10 @@ module.exports = async ({ appOutDir, electronPlatformName, arch, packager }) => 
     return;
   }
   const targetArch = ["ia32", "x64", "armv7l", "arm64", "universal"][arch];
+  if (electronPlatformName === "linux" && targetArch !== "x64") {
+    console.log(`[server-compile-cache] Skipping unsupported Linux architecture ${targetArch}`);
+    return;
+  }
   const runsWithRosetta =
     electronPlatformName === "darwin" &&
     process.platform === "darwin" &&

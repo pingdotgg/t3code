@@ -270,8 +270,8 @@ options.
 
 ### Prepared server bytecode
 
-Native macOS, Windows and Linux desktop artifact builds generate server bytecode with the packaged
-Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
+Native macOS and Windows desktop artifact builds, and native Linux x64 builds, generate server
+bytecode with the packaged Electron executable, after ASAR creation and before signing. Generation imports the CLI and server
 module declarations without launching server services; worker-only modules compile normally.
 AppImage backends use temporary links for each mount and remove them on normal exit. Later launches
 reclaim abandoned cache directories whose links point to gone mounts; AppImage main-process caching
@@ -287,7 +287,7 @@ differ or resource permissions prevent linking. Protected installations therefor
 prepared bytecode. No cache bytes are copied during startup.
 
 The key calculation follows Node's internal portable ESM format. Generation checks that the
-packaged engine produced the expected CLI entry and fails the build if that format changes.
+packaged engine produced the expected CLI and server entries and fails the build if that format changes.
 The manifest also checks Electron, Node, OS, architecture and V8's flags-sensitive version tag.
 Missing or rejected entries compile from the shipped JavaScript. Prepared backends skip the
 explicit startup flush; Node can persist missing entries on normal exit. The writable fallback
