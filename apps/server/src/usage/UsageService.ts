@@ -28,7 +28,7 @@ import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
-import { formatMalformedUsageWarning } from "@t3tools/shared/usageFormat";
+import { formatMalformedUsageWarning, USAGE_HISTORY_DAYS } from "@t3tools/shared/usageFormat";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { BUILT_IN_USAGE_DRIVERS, type BuiltInUsageReadersEnv } from "../provider/builtInDrivers.ts";
@@ -70,7 +70,7 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const CACHE_RETENTION_DAYS = 92;
+const CACHE_RETENTION_DAYS = USAGE_HISTORY_DAYS;
 
 const TRANSCRIPT_READ_CONCURRENCY = 4;
 

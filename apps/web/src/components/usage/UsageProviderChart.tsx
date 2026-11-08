@@ -201,12 +201,15 @@ function buildChart(
   const stepX = periods.length < 2 ? 0 : VIEW_WIDTH / (periods.length - 1);
   const paths = providers.map((provider) => {
     const slot = PROVIDER_ORDER.indexOf(provider);
+    const points = columns.map((column, periodIndex) => ({
+      x: periodIndex * stepX,
+      y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
+    }));
+    const [only] = points;
+    // smoothCurve needs two points, so a single period draws as a flat line across the width.
     const line = curvePath(
       smoothCurve(
-        columns.map((column, periodIndex) => ({
-          x: periodIndex * stepX,
-          y: valueToY(column.bands[slot]?.value ?? 0, scale.max),
-        })),
+        points.length === 1 && only !== undefined ? [only, { x: VIEW_WIDTH, y: only.y }] : points,
       ),
     );
     return {
@@ -512,12 +515,12 @@ export function UsageProviderChart({
       <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
         <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
         <span>
-          {periods[Math.floor(periods.length / 2)] === undefined
+          {periods.length === 1 || periods[Math.floor(periods.length / 2)] === undefined
             ? ""
             : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
         </span>
         <span>
-          {periods[periods.length - 1] === undefined
+          {periods.length === 1 || periods[periods.length - 1] === undefined
             ? ""
             : formatPeriod(periods[periods.length - 1] ?? "")}
         </span>

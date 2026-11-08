@@ -45,14 +45,19 @@ import {
   enumerateHourStarts,
   formatCount,
   formatDateTimeShort,
+  formatDayRange,
   formatDayShort,
   formatHourShort,
   formatPercent,
   formatTokens,
   formatUsageContractMismatch,
+  formatUsageMonth,
   formatUsd,
-  makeWindow,
+  makePeriodWindow,
+  parseUsagePeriod,
+  selectableUsageMonths,
   usageSourceMessages,
+  type UsagePeriod,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
@@ -60,12 +65,24 @@ import {
   Menu,
   MenuCheckboxItem,
   MenuItem,
+  MenuItemDetail,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRadioItemIndicator,
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { AppRouteModal, AppRouteModalClose } from "../AppRouteModal";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -91,6 +108,7 @@ import {
 } from "./usageBreakdown";
 import {
   METRIC_OPTIONS,
+  THIS_MONTH_OPTION,
   WINDOW_OPTIONS,
   resolveUsageShortcut,
   type UsageMetric,
@@ -109,10 +127,6 @@ import {
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
-}
-
-function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
-  return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
@@ -179,20 +193,22 @@ export function UsagePage() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const hour12 = usePrimarySettings((settings) => resolveHour12(settings.timestampFormat));
   const shortcutTitle = (
-    option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
+    option:
+      | (typeof METRIC_OPTIONS)[number]
+      | (typeof WINDOW_OPTIONS)[number]
+      | typeof THIS_MONTH_OPTION,
   ) => {
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
     return shortcut ? `${option.label} (${shortcut})` : option.label;
   };
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: preferences.windowDays,
-    window: makeWindow(
-      preferences.windowDays,
-      undefined,
-      preferences.windowDays === 1 ? "hour" : "day",
-    ),
+  const [windowSelection, setWindowSelection] = useState<{
+    readonly period: UsagePeriod;
+    readonly window: UsageSummaryInput;
+  }>(() => ({
+    period: preferences.windowDays,
+    window: makePeriodWindow(preferences.windowDays),
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
@@ -203,8 +219,7 @@ export function UsagePage() {
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const hiddenProviders = new Set(preferences.hiddenProviders);
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { period, window } = windowSelection;
   const {
     merged: answeredUsage,
     environments,
@@ -235,13 +250,12 @@ export function UsagePage() {
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
   };
-  const selectWindow = (days: number) => {
-    if (!isUsageWindowDays(days)) return;
-    updatePreferences({ windowDays: days });
-    setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
+  const selectPeriod = (nextPeriod: UsagePeriod) => {
+    // A past month is not persisted; reloading falls back to the current month.
+    updatePreferences({
+      windowDays: typeof nextPeriod === "string" && nextPeriod !== "month" ? "month" : nextPeriod,
     });
+    setWindowSelection({ period: nextPeriod, window: makePeriodWindow(nextPeriod) });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
@@ -279,12 +293,14 @@ export function UsagePage() {
     const command = resolveUsageShortcut(event, keybindings);
     const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
     const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
-    if (!metricOption && !periodOption) return;
+    const isThisMonth = command === THIS_MONTH_OPTION.command;
+    if (!metricOption && !periodOption && !isThisMonth) return;
 
     event.preventDefault();
     event.stopPropagation();
     if (metricOption) selectMetric(metricOption.value);
-    if (periodOption && !showingLimits) selectWindow(periodOption.days);
+    if (isThisMonth && !showingLimits) selectPeriod("month");
+    if (periodOption && !showingLimits) selectPeriod(periodOption.period);
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window capture keydown listener for usage metric and period shortcuts
@@ -305,14 +321,14 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makePeriodWindow(period);
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ period, window: nextWindow });
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
@@ -351,6 +367,22 @@ export function UsagePage() {
         (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
         (presentation.serverConfig?.providers ?? []).some(usesChatGptSharing),
     );
+
+  const isMonthPeriod = typeof period === "string";
+  const months = selectableUsageMonths();
+  const currentYear = months[0]?.slice(0, 4);
+  const monthWindow = makePeriodWindow("month");
+  const thisMonthRange = formatDayRange(monthWindow.sinceDay, monthWindow.untilDay);
+  const isPastMonth = isMonthPeriod && period !== "month";
+  const monthSegmentLabel = isPastMonth
+    ? formatUsageMonth(period, period.slice(0, 4) !== currentYear)
+    : THIS_MONTH_OPTION.label;
+  const monthToggleTitle = isPastMonth
+    ? formatUsageMonth(period)
+    : shortcutTitle(THIS_MONTH_OPTION);
+  const rangeLabel = isMonthPeriod
+    ? `${formatDayRange(shownWindow.sinceDay, shownWindow.untilDay)} · `
+    : undefined;
 
   const windowLabel =
     shownHourly && shownWindow.sinceTime !== undefined && shownWindow.untilTime !== undefined
@@ -397,17 +429,54 @@ export function UsagePage() {
           <ToggleGroup
             aria-label="Usage period"
             variant="segmented"
-            value={[String(windowDays)]}
+            value={[isMonthPeriod ? "month" : String(period)]}
             onValueChange={(next) => {
               const value = next[0];
-              if (value) selectWindow(Number(value));
+              if (value === undefined || value === "month") return;
+              const nextPeriod = parseUsagePeriod(value);
+              if (nextPeriod !== undefined) selectPeriod(nextPeriod);
             }}
           >
             {WINDOW_OPTIONS.map((option) => (
-              <Toggle key={option.days} value={String(option.days)} title={shortcutTitle(option)}>
+              <Toggle
+                key={option.period}
+                value={String(option.period)}
+                title={shortcutTitle(option)}
+              >
                 {option.label}
               </Toggle>
             ))}
+            <Menu>
+              <MenuTrigger render={<Toggle value="month" title={monthToggleTitle} />}>
+                {monthSegmentLabel}
+                <ChevronDownIcon className="size-3.5 opacity-60" aria-hidden />
+              </MenuTrigger>
+              <MenuPopup align="end">
+                <MenuRadioGroup
+                  value={isMonthPeriod ? String(period) : ""}
+                  onValueChange={(value) => {
+                    const nextPeriod = parseUsagePeriod(value);
+                    if (nextPeriod !== undefined) selectPeriod(nextPeriod);
+                  }}
+                >
+                  <MenuRadioItem value="month">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1">This month</span>
+                      <MenuItemDetail>{thisMonthRange}</MenuItemDetail>
+                      <MenuRadioItemIndicator />
+                    </span>
+                  </MenuRadioItem>
+                  {months.slice(1).map((month) => (
+                    <MenuRadioItem key={month} value={month}>
+                      <span className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1">{formatUsageMonth(month)}</span>
+                        <MenuRadioItemIndicator />
+                      </span>
+                    </MenuRadioItem>
+                  ))}
+                </MenuRadioGroup>
+              </MenuPopup>
+            </Menu>
           </ToggleGroup>
         )}
         <ToggleGroup
@@ -438,7 +507,13 @@ export function UsagePage() {
       </div>
       <div className="ms-auto flex shrink-0 items-center justify-end gap-1 @4xl/usage-header:hidden">
         {showingLimits ? null : (
-          <Select value={String(windowDays)} onValueChange={(value) => selectWindow(Number(value))}>
+          <Select
+            value={String(period)}
+            onValueChange={(value) => {
+              const nextPeriod = value === null ? undefined : parseUsagePeriod(value);
+              if (nextPeriod !== undefined) selectPeriod(nextPeriod);
+            }}
+          >
             <SelectTrigger
               aria-label="Usage period"
               size="compact"
@@ -446,19 +521,34 @@ export function UsagePage() {
               className="w-auto min-w-0"
             >
               <SelectValue>
-                {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+                {typeof period === "number"
+                  ? WINDOW_OPTIONS.find((option) => option.period === period)?.label
+                  : period === "month"
+                    ? THIS_MONTH_OPTION.label
+                    : formatUsageMonth(period, period.slice(0, 4) !== currentYear)}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {WINDOW_OPTIONS.map((option) => (
                 <SelectItem
-                  key={option.days}
-                  value={String(option.days)}
+                  key={option.period}
+                  value={String(option.period)}
                   title={shortcutTitle(option)}
                 >
                   {option.label}
                 </SelectItem>
               ))}
+              <SelectGroup>
+                <SelectGroupLabel>Months</SelectGroupLabel>
+                <SelectItem value="month" title={shortcutTitle(THIS_MONTH_OPTION)}>
+                  This month
+                </SelectItem>
+                {months.slice(1).map((month) => (
+                  <SelectItem key={month} value={month}>
+                    {formatUsageMonth(month)}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
             </SelectPopup>
           </Select>
         )}
@@ -542,6 +632,7 @@ export function UsagePage() {
                 hours={hours}
                 showingKept={showingKept}
                 metric={metric === "tokens" ? "tokens" : "cost"}
+                rangeLabel={rangeLabel}
                 selectedEnvironments={selectedEnvironments}
                 hiddenProviders={hiddenProviders}
                 refreshingUsage={refreshingUsage}
@@ -590,6 +681,7 @@ function UsageOverview({
   hours,
   showingKept,
   metric,
+  rangeLabel,
   selectedEnvironments,
   hiddenProviders,
   refreshingUsage,
@@ -603,6 +695,7 @@ function UsageOverview({
   readonly hours: readonly string[];
   readonly showingKept: boolean;
   readonly metric: "tokens" | "cost";
+  readonly rangeLabel: string | undefined;
   readonly selectedEnvironments: readonly EnvironmentUsageStatus[];
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly refreshingUsage: boolean;
@@ -668,6 +761,7 @@ function UsageOverview({
             </span>
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <span>
+                {rangeLabel}
                 <span className={figureClass(loadingPartial)}>
                   {formatCount(merged.sessions)} sessions
                 </span>

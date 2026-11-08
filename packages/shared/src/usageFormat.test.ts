@@ -2,7 +2,17 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { UsageSource } from "@t3tools/contracts";
 
-import { formatHourShort, makeWindow, usageSourceMessages } from "./usageFormat.ts";
+import {
+  formatDayRange,
+  formatHourShort,
+  formatUsageMonth,
+  makePeriodWindow,
+  makeWindow,
+  parseUsagePeriod,
+  selectableUsageMonths,
+  type UsagePeriod,
+  usageSourceMessages,
+} from "./usageFormat.ts";
 
 function malformedSource(count: number, overrides: Partial<UsageSource> = {}): UsageSource {
   return {
@@ -174,5 +184,111 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("usage periods", () => {
+  function withResolvedZone<T>(timeZone: string, run: () => T): T {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone });
+    try {
+      return run();
+    } finally {
+      resolvedOptions.mockRestore();
+    }
+  }
+
+  const periodCases: {
+    zone: string;
+    now: string;
+    period: UsagePeriod;
+    sinceDay: string;
+    untilDay: string;
+  }[] = [
+    {
+      zone: "America/Los_Angeles",
+      now: "2026-11-01T03:00:00Z",
+      period: "month",
+      sinceDay: "2026-10-01",
+      untilDay: "2026-10-31",
+    },
+    {
+      zone: "UTC",
+      now: "2026-11-08T12:00:00Z",
+      period: "month",
+      sinceDay: "2026-11-01",
+      untilDay: "2026-11-08",
+    },
+    {
+      zone: "UTC",
+      now: "2026-11-01T12:00:00Z",
+      period: "month",
+      sinceDay: "2026-11-01",
+      untilDay: "2026-11-01",
+    },
+    {
+      zone: "UTC",
+      now: "2026-11-08T12:00:00Z",
+      period: "2026-10",
+      sinceDay: "2026-10-01",
+      untilDay: "2026-10-31",
+    },
+    {
+      zone: "UTC",
+      now: "2026-11-08T12:00:00Z",
+      period: "2028-02",
+      sinceDay: "2026-11-01",
+      untilDay: "2026-11-08",
+    },
+    {
+      zone: "UTC",
+      now: "2028-03-10T12:00:00Z",
+      period: "2028-02",
+      sinceDay: "2028-02-01",
+      untilDay: "2028-02-29",
+    },
+  ];
+
+  it.each(periodCases)(
+    "makePeriodWindow($period) at $now spans $sinceDay to $untilDay",
+    ({ zone, now, period, sinceDay, untilDay }) => {
+      const window = withResolvedZone(zone, () => makePeriodWindow(period, new Date(now)));
+      expect(window.sinceDay).toBe(sinceDay);
+      expect(window.untilDay).toBe(untilDay);
+      expect(window.resolution).toBe("day");
+    },
+  );
+
+  it.each([
+    { now: "2026-11-08T12:00:00Z", months: ["2026-11", "2026-10", "2026-09"] },
+    { now: "2027-03-01T12:00:00Z", months: ["2027-03", "2027-02", "2027-01", "2026-12"] },
+  ])("selectableUsageMonths at $now offers $months", ({ now, months }) => {
+    expect(withResolvedZone("UTC", () => selectableUsageMonths(new Date(now)))).toEqual(months);
+  });
+
+  it.each([
+    { sinceDay: "2026-11-01", untilDay: "2026-11-08", label: "Nov 1 – 8" },
+    { sinceDay: "2026-11-08", untilDay: "2026-11-08", label: "Nov 8" },
+    { sinceDay: "2026-10-10", untilDay: "2026-11-08", label: "Oct 10 – Nov 8" },
+    { sinceDay: "2025-12-12", untilDay: "2026-01-08", label: "Dec 12, 2025 – Jan 8, 2026" },
+  ])("formatDayRange($sinceDay, $untilDay) -> $label", ({ sinceDay, untilDay, label }) => {
+    expect(formatDayRange(sinceDay, untilDay)).toBe(label);
+  });
+
+  it("formatUsageMonth uses full month names with and without the year", () => {
+    expect(formatUsageMonth("2026-10")).toBe("October 2026");
+    expect(formatUsageMonth("2026-10", false)).toBe("October");
+  });
+
+  it.each([
+    { value: "7", parsed: 7 },
+    { value: "month", parsed: "month" },
+    { value: "2026-10", parsed: "2026-10" },
+    { value: "2026-13", parsed: undefined },
+    { value: "abc", parsed: undefined },
+  ])("parseUsagePeriod($value) -> $parsed", ({ value, parsed }) => {
+    expect(parseUsagePeriod(value)).toBe(parsed);
   });
 });
