@@ -1549,7 +1549,8 @@ export function useComposerSend(input: ComposerSendInput) {
             type: "error",
             title: "Message not sent",
             description: "Your new draft was kept.",
-            ...(copyFailedMessage ? { timeout: 0, actionProps: copyFailedMessage } : {}),
+            timeout: 0,
+            ...(copyFailedMessage ? { actionProps: copyFailedMessage } : {}),
           }),
         );
       }
