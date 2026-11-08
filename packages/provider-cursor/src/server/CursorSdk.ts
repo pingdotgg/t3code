@@ -3,12 +3,9 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { Agent, createAgentPlatform, SqliteLocalAgentStore } from "./sdk.ts";
+import { loadCursorSdk, loadCursorSqlite } from "./sdk.ts";
 
-/**
- * The SDK listens for that error, then rejects an internal promise nothing awaits.
- * Node exits on that unhandled rejection and takes the server with it.
- */
+// The SDK leaves a shell-error promise unhandled, which would exit the server.
 const CURSOR_SHELL_SPAWN_MARKERS = [
   "dump_zsh_state",
   "dump_bash_state",
@@ -35,12 +32,23 @@ function isCursorShellSpawnFailure(reason: unknown): boolean {
 }
 
 /**
- * After a local exec fails, the SDK writes a final frame to the exec's stream from
- * a promise nothing awaits. If that stream has already closed, the write rejects.
- * The SDK's class is minified, so only its `name` identifies it.
+ * The SDK writes final frames from promises nothing awaits. A closed stream rejects them
+ * with WriteIterableClosedError; an ended request body rejects them with the Aborted
+ * ConnectError its connect-node pump wraps around ERR_STREAM_WRITE_AFTER_END. The classes
+ * are minified, so only `name` identifies them.
  */
 function isCursorClosedStreamWrite(reason: unknown): boolean {
-  return reason instanceof Error && reason.name === "WriteIterableClosedError";
+  if (!(reason instanceof Error)) {
+    return false;
+  }
+  if (reason.name === "WriteIterableClosedError") {
+    return true;
+  }
+  return (
+    reason.name === "ConnectError" &&
+    reason.cause instanceof Error &&
+    Reflect.get(reason.cause, "code") === "ERR_STREAM_WRITE_AFTER_END"
+  );
 }
 
 function onUnhandledRejection(reason: unknown): void {
@@ -49,7 +57,7 @@ function onUnhandledRejection(reason: unknown): void {
     return;
   }
   if (isCursorClosedStreamWrite(reason)) {
-    console.error("Cursor SDK wrote to a closed exec stream. The server will keep running.");
+    console.error("Cursor SDK wrote to a closed stream. The server will keep running.");
     return;
   }
   if (process.listenerCount("unhandledRejection") > 1) {
@@ -59,16 +67,12 @@ function onUnhandledRejection(reason: unknown): void {
   process.exit(1);
 }
 
-/**
- * The SDK entry points that run agents in this process. Reaching them through
- * this service keeps the shell spawn guard armed while they are in use.
- */
+/** Keeps the shell spawn guard armed while in-process agents run. */
 export class CursorSdk extends Context.Service<
   CursorSdk,
   {
-    readonly Agent: typeof Agent;
-    readonly createAgentPlatform: typeof createAgentPlatform;
-    readonly SqliteLocalAgentStore: typeof SqliteLocalAgentStore;
+    readonly load: typeof loadCursorSdk;
+    readonly loadSqlite: typeof loadCursorSqlite;
   }
 >()("@t3tools/provider-cursor/server/CursorSdk") {}
 
@@ -83,5 +87,5 @@ export const layer = Layer.effect(
       Effect.sync(() => {
         process.off("unhandledRejection", onUnhandledRejection);
       }),
-  ).pipe(Effect.as(CursorSdk.of({ Agent, createAgentPlatform, SqliteLocalAgentStore }))),
+  ).pipe(Effect.as(CursorSdk.of({ load: loadCursorSdk, loadSqlite: loadCursorSqlite }))),
 );

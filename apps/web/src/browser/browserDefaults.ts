@@ -51,12 +51,7 @@ export function getBrowserDefaults(): BrowserDefaults {
   return toBrowserDefaults(getClientSettings());
 }
 
-/**
- * Opening a preview is asynchronous anyway, and before hydration the snapshot
- * is the schema defaults rather than the user's — a tab opened in that window
- * would be born at the wrong viewport, zoom and appearance and never corrected.
- * Read failures reject so a new tab cannot use the wrong profile or viewport.
- */
+/** New tabs retain their initial defaults, so wait for settings hydration. Read failures reject. */
 export async function resolveBrowserDefaults(): Promise<BrowserDefaults> {
   await ensureClientSettingsHydrated();
   return getBrowserDefaults();
@@ -66,25 +61,11 @@ export function useBrowserDefaults(): BrowserDefaults {
   return useClientSettings(toBrowserDefaults);
 }
 
-export function browserDefaultTabState(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): DesktopPreviewTabDefaults {
+export function browserDefaultTabState(defaults: BrowserDefaults): DesktopPreviewTabDefaults {
   return { zoomFactor: defaults.zoomFactor, colorScheme: defaults.appearance };
 }
 
-export function browserDefaultOpenViewport(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): PreviewViewportSetting {
-  return defaults.viewport;
-}
-
-export function browserDefaultOpenProfileId(
-  defaults: BrowserDefaults = getBrowserDefaults(),
-): string {
-  return defaults.profileId;
-}
-
-export const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
+const FALLBACK_RESPONSIVE_VIEWPORT_SIZE = { width: 1024, height: 768 } as const;
 
 export function browserResponsiveViewportForToggle(input: {
   readonly defaults?: BrowserDefaults;

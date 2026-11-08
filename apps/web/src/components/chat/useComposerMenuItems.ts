@@ -1,4 +1,9 @@
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import {
+  matchComposerEnvironmentItems,
+  matchComposerThreadItems,
+} from "@t3tools/client-runtime/composerThreadItems";
+import { useAtomValue } from "@effect/atom-react";
+import { useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
@@ -11,24 +16,28 @@ import type {
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
+import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
-import { useThreadShells } from "~/state/entities";
+import { useVisibleThreadShells } from "~/state/entities";
+import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
+import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
   pullRequestEnvironment,
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
-import { useComposerPathSearch, useDebouncedValue } from "~/state/queries";
+import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
 import {
   matchesPullRequestQuery,
   rankPullRequestMatches,
@@ -48,32 +57,46 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
 export function useComposerMenuItems({
   composerTrigger,
   environmentId,
+  linkedEnvironments,
   gitCwd,
   activeThreadId,
   pullRequestProjectId,
   pullRequestRepository,
   threadPullRequests,
   planModeUiEnabled,
+  sideChatAvailable,
+  sideChatDisabledReason,
+  freshSessionAvailable,
   compactSlashCommandAvailable,
   selectedProvider,
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  workspaceSkillsScanning,
+  questionAttachmentTarget,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
   readonly environmentId: EnvironmentId;
+  readonly linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
   readonly gitCwd: string | null;
   readonly activeThreadId: ThreadId | null;
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly planModeUiEnabled: boolean;
+  readonly sideChatAvailable: boolean;
+  readonly sideChatDisabledReason: string | null;
+  readonly freshSessionAvailable: boolean;
   readonly compactSlashCommandAvailable: boolean;
   readonly selectedProvider: ProviderDriverKind;
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly workspaceSkillsScanning: boolean;
+  readonly questionAttachmentTarget: DraftId | null;
 }) {
+  // Thread mentions rank by recency as of when the composer mounted.
+  const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
   const pullRequestTriggerQuery =
@@ -88,7 +111,17 @@ export function useComposerMenuItems({
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
   const isPathTrigger = composerTriggerKind === "path";
-  const environmentThreadShells = useThreadShells(isPathTrigger);
+  const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
+  // Mounts older settled threads matching the mention, which shells may leave out.
+  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
+  // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
+  const environmentIdentities = useEnvironmentIdentities();
+  const environmentMachines = useEnvironmentMachines();
+  const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
+  const mentionableEnvironments = environmentIdentities.map((identity) => ({
+    ...identity,
+    machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
+  }));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
     cwd: isPathTrigger ? gitCwd : null,
@@ -160,9 +193,19 @@ export function useComposerMenuItems({
         ...matchComposerThreadItems({
           shells: environmentThreadShells,
           environmentId,
+          linkedEnvironments,
           excludeThreadId: activeThreadId,
           query: composerTrigger.query,
+          now,
         }),
+        // An answer to an agent's question carries thread links, not machines.
+        ...(questionAttachmentTarget === null && offersMachines
+          ? matchComposerEnvironmentItems({
+              environments: mentionableEnvironments,
+              environmentId,
+              query: composerTrigger.query,
+            })
+          : []),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,
@@ -201,6 +244,35 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...(sideChatAvailable
+          ? ([
+              {
+                id: "slash:side",
+                type: "slash-command",
+                command: "side",
+                label: "/side",
+                description: sideChatDisabledReason ?? "Ask a side question in a new side chat",
+              },
+              {
+                id: "slash:btw",
+                type: "slash-command",
+                command: "btw",
+                label: "/btw",
+                description: sideChatDisabledReason ?? "Same as /side",
+              },
+            ] as const)
+          : []),
+        ...(freshSessionAvailable
+          ? ([
+              {
+                id: "slash:clear",
+                type: "slash-command",
+                command: "clear",
+                label: "/clear",
+                description: "Start a fresh session; earlier messages stay visible",
+              },
+            ] as const)
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,
@@ -229,8 +301,11 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? `${skill.scope} skill` : ""),
       }));
+      // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
-        (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
+        (item) =>
+          (item.command.name !== "compact" || compactSlashCommandAvailable) &&
+          (item.command.name !== "clear" || !freshSessionAvailable),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
         [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
@@ -269,24 +344,30 @@ export function useComposerMenuItems({
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           })
-        : rankPullRequestMatches(
-            (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-              if (
-                entry.projectId !== pullRequestProjectId ||
-                entry.repository.trim().toLowerCase() !== pullRequestRepository.trim().toLowerCase()
-              ) {
-                return false;
-              }
-              const provider = pullRequestLookup.data?.providers.find(
-                (candidate) => candidate.host === entry.host,
-              );
-              return (
-                provider?.searchesOnHost === true ||
-                matchesPullRequestQuery(entry, composerTrigger.query)
-              );
-            }),
-            composerTrigger.query,
-          ).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
+        : withLinkedComposerPullRequestsFirst({
+            matches: rankPullRequestMatches(
+              (pullRequestLookup.data?.entries ?? []).filter((entry) => {
+                if (
+                  entry.projectId !== pullRequestProjectId ||
+                  entry.repository.trim().toLowerCase() !==
+                    pullRequestRepository.trim().toLowerCase()
+                ) {
+                  return false;
+                }
+                const provider = pullRequestLookup.data?.providers.find(
+                  (candidate) => candidate.host === entry.host,
+                );
+                return (
+                  provider?.searchesOnHost === true ||
+                  matchesPullRequestQuery(entry, composerTrigger.query)
+                );
+              }),
+              composerTrigger.query,
+            ),
+            linked: linkedPullRequests,
+            query: composerTrigger.query,
+            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+          });
       return matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
         type: "pull-request",
@@ -310,6 +391,8 @@ export function useComposerMenuItems({
   })();
   const isLoading =
     (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
+      workspaceSkillsScanning) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&

@@ -1,3 +1,17 @@
+import * as NodeCrypto from "node:crypto";
+import { createRequire } from "node:module";
+import nodePath from "node:path";
+import { pathToFileURL } from "node:url";
+import type {
+  BindingHook,
+  BindingServices,
+  HyperdriveOrigin,
+  Assets as RuntimeAssets,
+  DurableObjectNamespace as RuntimeDurableObject,
+  QueueConsumer as RuntimeQueueConsumer,
+  RuntimeServices,
+  RuntimeWorker,
+} from "@alchemy.run/cloudflare-runtime/core";
 /**
  * `@alchemy.run/frontend-frameworks/vinext/source` — alchemy Worker
  * source provider for vinext. Implements the `WorkerSourceModule`
@@ -11,15 +25,6 @@
  * the same plugin stack.
  */
 import cloudflare from "@alchemy.run/cloudflare-runtime/vite";
-import type {
-  BindingHook,
-  BindingServices,
-  HyperdriveOrigin,
-  Assets as RuntimeAssets,
-  DurableObjectNamespace as RuntimeDurableObject,
-  QueueConsumer as RuntimeQueueConsumer,
-  RuntimeServices,
-} from "@alchemy.run/cloudflare-runtime/core";
 import type * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -28,37 +33,25 @@ import * as Path from "effect/Path";
 import type { PlatformError } from "effect/PlatformError";
 import * as Redacted from "effect/Redacted";
 import type * as Scope from "effect/Scope";
-import * as NodeCrypto from "node:crypto";
-import { createRequire } from "node:module";
-import nodePath from "node:path";
-import { pathToFileURL } from "node:url";
-import { resolveViteDevPort } from "../core/DevPort.ts";
-import { runBuildChild } from "../core/BuildChild.ts";
+import { resolveBuildEnv, runBuildChild } from "../core/BuildChild.ts";
 import { toOutputFile, type BuildOutput } from "../core/BuildOutput.ts";
+import { WORKER_ENTRY_PREFIX } from "../core/Collector.ts";
+import { resolveViteDevPort } from "../core/DevPort.ts";
 import { ModuleLoadError } from "../core/Loader.ts";
+import { kvHttpNamespaceFromEnv, kvHttpSink } from "./cache/kv-http.ts";
+import { makeVinextCachePlugin } from "./cache/plugin.ts";
+import { seedPrerenderTo } from "./cache/seed.ts";
 import {
   ALCHEMY_CLOUDFLARE_VITE_INJECTED,
   DEFAULT_WORKER_ENTRY,
   makeVinextPluginOptions,
 } from "./cloudflare.ts";
-import {
-  VINEXT_CACHE_BINDING,
-  VINEXT_KV_CACHE_BINDING,
-} from "./PrerenderCache.ts";
-import {
-  resolveVinextRoot,
-  runVinextPrerenderIfConfigured,
-} from "./Prerender.ts";
-import { kvHttpNamespaceFromEnv, kvHttpSink } from "./cache/kv-http.ts";
-import { makeVinextCachePlugin } from "./cache/plugin.ts";
-import { seedPrerenderTo } from "./cache/seed.ts";
+import { runVinextPrerenderIfConfigured } from "./Prerender.ts";
+import { VINEXT_CACHE_BINDING, VINEXT_KV_CACHE_BINDING } from "./PrerenderCache.ts";
 
 const PROVIDER = "@alchemy.run/frontend-frameworks/vinext/source";
 
-const VINEXT_SERVER_ENTRIES = [
-  "dist/server/index.js",
-  "dist/server/ssr/index.js",
-] as const;
+const VINEXT_SERVER_ENTRIES = ["dist/server/index.js", "dist/server/ssr/index.js"] as const;
 
 const RSC_MANIFEST = {
   "virtual:vite-rsc/assets-manifest": "__vite_rsc_assets_manifest.js",
@@ -125,12 +118,19 @@ export interface SourceContext {
 export interface DevContext extends SourceContext {
   readonly worker: {
     readonly bindings: Array<BindingHook<BindingServices>>;
-    readonly durableObjectNamespaces: Array<
-      RuntimeDurableObject & { uniqueKey: string }
-    >;
+    readonly durableObjectNamespaces: Array<RuntimeDurableObject & { uniqueKey: string }>;
     readonly hyperdrives: Record<string, Required<HyperdriveOrigin>>;
     readonly queueConsumers: Effect.Effect<Array<RuntimeQueueConsumer>>;
     readonly assets: RuntimeAssets | undefined;
+    /**
+     * The Worker's other runtime settings (crons, Workflows, tail consumers,
+     * Cache API, `request.cf`, zone, Access), spread whole into the runtime
+     * Worker.
+     */
+    readonly options: Pick<
+      RuntimeWorker,
+      "workflows" | "crons" | "tails" | "streamingTails" | "cache" | "cf" | "zone" | "access"
+    >;
   };
   readonly runtimeContext: Context.Context<RuntimeServices>;
 }
@@ -148,32 +148,22 @@ export class SourceProviderError extends Data.TaggedError(
   readonly cause?: unknown;
 }> {}
 
-export type VinextSourceError =
-  | SourceProviderError
-  | PlatformError
-  | ModuleLoadError;
+export type VinextSourceError = SourceProviderError | PlatformError | ModuleLoadError;
 export type SourceRequirements = FileSystem.FileSystem | Path.Path;
 
 export interface SourceProvider {
   readonly ownsAssets: boolean;
+  readonly devAssetsBinding?: boolean;
   readonly build: (
     ctx: SourceContext,
   ) => Effect.Effect<SourceBuildOutput, VinextSourceError, SourceRequirements>;
   readonly hash: (
     ctx: SourceContext,
     previous: SourceHash | undefined,
-  ) => Effect.Effect<
-    Partial<SourceHash>,
-    VinextSourceError,
-    SourceRequirements
-  >;
+  ) => Effect.Effect<Partial<SourceHash>, VinextSourceError, SourceRequirements>;
   readonly dev: (
     ctx: DevContext,
-  ) => Effect.Effect<
-    ServerDevHandle,
-    VinextSourceError,
-    SourceRequirements | Scope.Scope
-  >;
+  ) => Effect.Effect<ServerDevHandle, VinextSourceError, SourceRequirements | Scope.Scope>;
 }
 
 export interface VinextMemoOptions {
@@ -197,9 +187,7 @@ export interface VinextBuildChildConfig {
   readonly main: string | undefined;
   readonly compatibilityDate: string;
   readonly compatibilityFlags: Array<string>;
-  readonly viteEnvironments:
-    | { entry?: string; children?: ReadonlyArray<string> }
-    | undefined;
+  readonly viteEnvironments: { entry?: string; children?: ReadonlyArray<string> } | undefined;
 }
 
 const sha256 = (input: string | Uint8Array): string =>
@@ -207,11 +195,7 @@ const sha256 = (input: string | Uint8Array): string =>
 
 const stableValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(stableValue);
-  if (
-    value !== null &&
-    typeof value === "object" &&
-    value.constructor === Object
-  ) {
+  if (value !== null && typeof value === "object" && value.constructor === Object) {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -221,8 +205,7 @@ const stableValue = (value: unknown): unknown => {
   return value;
 };
 
-const sha256Object = (value: unknown): string =>
-  sha256(JSON.stringify(stableValue(value)));
+const sha256Object = (value: unknown): string => sha256(JSON.stringify(stableValue(value)));
 
 const isBindingMarker = (value: unknown): boolean =>
   typeof value === "object" && value !== null && "~alchemy/Kind" in value;
@@ -286,9 +269,7 @@ const compileIgnoreRule = (raw: string): RegExp | undefined => {
 };
 
 const compileIgnoreRules = (rules: ReadonlyArray<string>): Array<RegExp> =>
-  rules
-    .map(compileIgnoreRule)
-    .filter((regex): regex is RegExp => regex !== undefined);
+  rules.map(compileIgnoreRule).filter((regex): regex is RegExp => regex !== undefined);
 
 const compileIncludeGlobs = (globs: ReadonlyArray<string>): Array<RegExp> =>
   globs.map((glob) => new RegExp(`^${globBodyToRegExpSource(glob)}$`));
@@ -296,10 +277,7 @@ const compileIncludeGlobs = (globs: ReadonlyArray<string>): Array<RegExp> =>
 const matchesAny = (regexes: ReadonlyArray<RegExp>, path: string): boolean =>
   regexes.some((regex) => regex.test(path));
 
-const findUp = Effect.fn(function* (
-  startDir: string,
-  filenames: ReadonlyArray<string>,
-) {
+const findUp = Effect.fn(function* (startDir: string, filenames: ReadonlyArray<string>) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   let dir = startDir;
@@ -348,27 +326,18 @@ const resolveMemo = Effect.fn(function* (
       ? compileIgnoreRules(memo.exclude)
       : compileIgnoreRules(yield* readGitIgnoreRules(rootDir));
   return {
-    include:
-      memo?.include !== undefined
-        ? compileIncludeGlobs(memo.include)
-        : undefined,
-    exclude: [
-      ...compileIgnoreRules(["node_modules", ".git", `/${distDir}`]),
-      ...exclude,
-    ],
+    include: memo?.include !== undefined ? compileIncludeGlobs(memo.include) : undefined,
+    exclude: [...compileIgnoreRules(["node_modules", ".git", `/${distDir}`]), ...exclude],
     lockfile: memo?.lockfile ?? !(memo?.include || memo?.exclude),
   } satisfies ResolvedMemo;
 });
 
-const hashDirectory = Effect.fn(function* (
-  rootDir: string,
-  memo: ResolvedMemo,
-) {
+const hashDirectory = Effect.fn(function* (rootDir: string, memo: ResolvedMemo) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const files: Array<string> = [];
-  const walk: (dir: string, rel: string) => Effect.Effect<void, PlatformError> =
-    Effect.fn(function* (dir: string, rel: string) {
+  const walk: (dir: string, rel: string) => Effect.Effect<void, PlatformError> = Effect.fn(
+    function* (dir: string, rel: string) {
       const entries = (yield* fs.readDirectory(dir)).sort();
       for (const entry of entries) {
         const relPath = rel === "" ? entry : `${rel}/${entry}`;
@@ -378,16 +347,14 @@ const hashDirectory = Effect.fn(function* (
         if (stat.type === "Directory") {
           yield* walk(absPath, relPath);
         } else if (stat.type === "File") {
-          if (
-            memo.include !== undefined &&
-            !matchesAny(memo.include, relPath)
-          ) {
+          if (memo.include !== undefined && !matchesAny(memo.include, relPath)) {
             continue;
           }
           files.push(relPath);
         }
       }
-    });
+    },
+  );
   yield* walk(rootDir, "");
   if (memo.lockfile) {
     const lockfile = yield* findUp(rootDir, LOCKFILE_NAMES);
@@ -443,9 +410,7 @@ const hashVinextInput = Effect.fn(function* (params: {
       },
     }),
     workspaces: Array.from(params.workspaces).map((workspace) =>
-      path
-        .relative(params.rootDir, path.resolve(params.rootDir, workspace))
-        .replaceAll("\\", "/"),
+      path.relative(params.rootDir, path.resolve(params.rootDir, workspace)).replaceAll("\\", "/"),
     ),
   };
 });
@@ -456,9 +421,8 @@ const maybeReadString = Effect.fn(function* (file: string) {
   const fs = yield* FileSystem.FileSystem;
   return yield* fs.readFileString(file).pipe(
     Effect.catchIf(
-      (error) =>
-        error._tag === "PlatformError" && error.reason._tag === "NotFound",
-      () => Effect.succeed(undefined),
+      (error) => error._tag === "PlatformError" && error.reason._tag === "NotFound",
+      () => Effect.undefined,
     ),
   );
 });
@@ -475,10 +439,7 @@ const readClientAssets = Effect.fn(function* (
     maybeReadString(path.join(directory, "_headers")),
     maybeReadString(path.join(directory, "_redirects")),
   ]);
-  const ignores = compileIgnoreRules([
-    ...SPECIAL_ASSET_FILES,
-    ...(ignoreFile?.split("\n") ?? []),
-  ]);
+  const ignores = compileIgnoreRules([...SPECIAL_ASSET_FILES, ...(ignoreFile?.split("\n") ?? [])]);
   const manifest = new Map<string, { hash: string; size: number }>();
   yield* Effect.forEach(
     entries,
@@ -514,17 +475,11 @@ const readClientAssets = Effect.fn(function* (
   } satisfies AssetReadResult;
 });
 
-const assetsConfigOf = (
-  assets: unknown,
-): Record<string, unknown> | undefined => {
+const assetsConfigOf = (assets: unknown): Record<string, unknown> | undefined => {
   if (assets === undefined || assets === null || typeof assets !== "object") {
     return undefined;
   }
-  const {
-    directory: _d,
-    hash: _h,
-    ...config
-  } = assets as Record<string, unknown>;
+  const { directory: _d, hash: _h, ...config } = assets as Record<string, unknown>;
   return Object.keys(config).length > 0 ? config : undefined;
 };
 
@@ -537,9 +492,7 @@ type ViteModule = typeof import("vite");
 const loadVite = async (projectRoot: string): Promise<ViteModule> => {
   try {
     const require = createRequire(nodePath.join(projectRoot, "package.json"));
-    return await import(
-      /* @vite-ignore */ pathToFileURL(require.resolve("vite")).href
-    );
+    return await import(/* @vite-ignore */ pathToFileURL(require.resolve("vite")).href);
   } catch {
     return await import("vite");
   }
@@ -556,9 +509,7 @@ const getDefine = (env: Record<string, unknown>) =>
 
 const relativeJsImports = (code: string): readonly string[] => {
   const specs = new Set<string>();
-  for (const match of code.matchAll(
-    /(?:from|import)\s*["'](\.\.?\/[^"']+\.js)["']/g,
-  )) {
+  for (const match of code.matchAll(/(?:from|import)\s*["'](\.\.?\/[^"']+\.js)["']/g)) {
     specs.add(match[1]!);
   }
   return [...specs];
@@ -602,6 +553,7 @@ const makeOutputCollector = (entryEnvironment: string) => {
           type: string;
           fileName: string;
           isEntry?: boolean;
+          facadeModuleId?: string | null;
           code?: string;
           source?: string | Uint8Array;
           imports?: Array<string>;
@@ -610,27 +562,26 @@ const makeOutputCollector = (entryEnvironment: string) => {
     ) {
       const root = nodePath.resolve(this.environment.config.root);
       for (const id of this.getModuleIds()) {
-        if (
-          !nodePath.isAbsolute(id) ||
-          id.includes("node_modules") ||
-          id.startsWith(root)
-        ) {
+        if (!nodePath.isAbsolute(id) || id.includes("node_modules") || id.startsWith(root)) {
           continue;
         }
         maybeExternalWorkspaces.add(nodePath.dirname(id));
       }
       if (this.environment.name === "client") {
-        clientDirectory = nodePath.resolve(
-          root,
-          this.environment.config.build.outDir,
-        );
+        clientDirectory = nodePath.resolve(root, this.environment.config.build.outDir);
         return;
       }
       const files = Object.values(bundle);
       if (this.environment.name === entryEnvironment) {
-        const entryChunk = files.find(
-          (file) => file.type === "chunk" && file.isEntry,
-        );
+        // Vinext's rsc environment can emit its own app entry alongside the
+        // wrapped Worker main; only the latter is a valid Worker module.
+        const entryChunk =
+          files.find(
+            (file) =>
+              file.type === "chunk" &&
+              file.isEntry &&
+              file.facadeModuleId?.startsWith(WORKER_ENTRY_PREFIX),
+          ) ?? files.find((file) => file.type === "chunk" && file.isEntry);
         if (entryChunk) {
           serverEntry = fileName(entryChunk.fileName, this.environment);
         }
@@ -646,9 +597,10 @@ const makeOutputCollector = (entryEnvironment: string) => {
             }
           }
         }
+        // Vite's build metadata (`.vite/manifest.json`), not a Worker module.
+        if (file.fileName.startsWith(".vite/")) continue;
         const name = fileName(file.fileName, this.environment);
-        const content =
-          file.type === "chunk" ? (file.code ?? "") : (file.source ?? "");
+        const content = file.type === "chunk" ? (file.code ?? "") : (file.source ?? "");
         serverChunks.set(name, { content });
       }
     },
@@ -682,13 +634,22 @@ const readRscManifestsFromDisk = Effect.fn(function* (
   }
 });
 
+/**
+ * Vinext rewrites server chunks and writes sidecar modules (the action-owner
+ * manifest, `vinext-client-assets.js`) after `writeBundle`, so re-read every
+ * captured JS chunk from disk and follow its relative imports to pick up
+ * modules that were never part of a bundle.
+ */
 const syncVinextServerModules = Effect.fn(function* (
   root: string,
   chunks: Map<string, { content: string | Uint8Array }>,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const pending: string[] = [...VINEXT_SERVER_ENTRIES];
+  const pending: string[] = [
+    ...VINEXT_SERVER_ENTRIES,
+    ...[...chunks.keys()].filter((name) => /\.[mc]?js$/.test(name)),
+  ];
   const seen = new Set<string>();
   while (pending.length > 0) {
     const bundlePath = pending.pop()!;
@@ -713,9 +674,7 @@ const collectExternalWorkspaces = Effect.fn(function* (dirs: Iterable<string>) {
     dirs,
     (directory) =>
       findUp(directory, ["package.json"]).pipe(
-        Effect.map((file) =>
-          file !== undefined ? path.dirname(file) : undefined,
-        ),
+        Effect.map((file) => (file !== undefined ? path.dirname(file) : undefined)),
       ),
     { concurrency: "unbounded" },
   );
@@ -739,19 +698,13 @@ export const buildInChild = (config: VinextBuildChildConfig) =>
       compatibilityFlags: config.compatibilityFlags,
       viteEnvironments: config.viteEnvironments,
     });
-    const collector = makeOutputCollector(
-      pluginOptions.viteEnvironments?.entry ?? "rsc",
-    );
+    const collector = makeOutputCollector(pluginOptions.viteEnvironments?.entry ?? "rsc");
     const vite = yield* Effect.promise(() => loadVite(root));
     yield* Effect.promise(async () => {
       const builder = await vite.createBuilder(
         {
           root,
-          plugins: [
-            cachePlugin,
-            cloudflare(pluginOptions),
-            collector.plugin as never,
-          ],
+          plugins: [cachePlugin, cloudflare(pluginOptions), collector.plugin as never],
           logLevel: "warn",
         },
         null,
@@ -767,9 +720,7 @@ export const buildInChild = (config: VinextBuildChildConfig) =>
         distDirectory: path.join(root, "dist"),
         clientDirectory: snap.clientDirectory,
         serverModules: undefined,
-        externalWorkspaces: yield* collectExternalWorkspaces(
-          snap.externalWorkspaces,
-        ),
+        externalWorkspaces: yield* collectExternalWorkspaces(snap.externalWorkspaces),
       } satisfies BuildOutput;
     }
     const names = Array.from(snap.serverChunks.keys()).sort((a, b) => {
@@ -785,9 +736,7 @@ export const buildInChild = (config: VinextBuildChildConfig) =>
       distDirectory: path.join(root, "dist"),
       clientDirectory: snap.clientDirectory,
       serverModules,
-      externalWorkspaces: yield* collectExternalWorkspaces(
-        snap.externalWorkspaces,
-      ),
+      externalWorkspaces: yield* collectExternalWorkspaces(snap.externalWorkspaces),
     } satisfies BuildOutput;
   });
 
@@ -797,9 +746,8 @@ const resolveVinextCacheEnv = (env: Record<string, unknown>) =>
     for (const key of [VINEXT_KV_CACHE_BINDING, VINEXT_CACHE_BINDING]) {
       const value = env[key];
       if (value == null || isBindingMarker(value)) continue;
-      resolved[key] = Effect.isEffect(value)
-        ? yield* value as Effect.Effect<unknown>
-        : value;
+      // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- cache bindings are pre-resolved resource Effects
+      resolved[key] = Effect.isEffect(value) ? yield* value as Effect.Effect<unknown> : value;
     }
     return resolved;
   });
@@ -813,6 +761,7 @@ const seedVinextPrerenderCache = (
   rootDir: string,
   env: Record<string, unknown>,
 ): Effect.Effect<void> =>
+  // oxlint-disable-next-line effecttsgo/unsafe-effect-type-assertion -- closed so the source contract stays SourceRequirements, see JSDoc
   Effect.gen(function* () {
     const namespace = kvHttpNamespaceFromEnv(env);
     if (namespace === undefined) return;
@@ -832,16 +781,14 @@ const seedVinextPrerenderCache = (
     );
   }) as Effect.Effect<void>;
 
-export const makeVinextSourceProvider = (
-  options: VinextSourceOptions,
-): SourceProvider => {
+export const makeVinextSourceProvider = (options: VinextSourceOptions): SourceProvider => {
   const rootDirOf = (path: Path.Path): string =>
-    options.rootDir !== undefined
-      ? path.resolve(options.rootDir)
-      : process.cwd();
+    options.rootDir !== undefined ? path.resolve(options.rootDir) : process.cwd();
 
   return {
     ownsAssets: true,
+    // Dev runs the Worker in workerd with the Vite plugin's assets service.
+    devAssetsBinding: true,
     build: Effect.fn(function* (ctx) {
       const path = yield* Path.Path;
       const rootDir = rootDirOf(path);
@@ -850,6 +797,7 @@ export const makeVinextSourceProvider = (
         module: import.meta.url,
         rootDir,
         framework: "vinext",
+        env: resolveBuildEnv(ctx.env),
         config: {
           rootDir,
           main: options.main,
@@ -867,16 +815,11 @@ export const makeVinextSourceProvider = (
             }),
         ),
       );
-      if (
-        output.serverModules === undefined ||
-        output.serverModules.length === 0
-      ) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: PROVIDER,
-            message: "vinext build produced no server modules",
-          }),
-        );
+      if (output.serverModules === undefined || output.serverModules.length === 0) {
+        return yield* new SourceProviderError({
+          provider: PROVIDER,
+          message: "vinext build produced no server modules",
+        });
       }
       const files = output.serverModules.map((file) => ({
         path: file.name.replaceAll("\\", "/"),
@@ -890,11 +833,8 @@ export const makeVinextSourceProvider = (
       const [assets, input] = yield* Effect.all(
         [
           output.clientDirectory !== undefined
-            ? readClientAssets(
-                output.clientDirectory,
-                assetsConfigOf(ctx.assets),
-              )
-            : Effect.succeed(undefined),
+            ? readClientAssets(output.clientDirectory, assetsConfigOf(ctx.assets))
+            : Effect.undefined,
           hashVinextInput({
             rootDir,
             memo: options.memo,
@@ -904,10 +844,7 @@ export const makeVinextSourceProvider = (
         ],
         { concurrency: "unbounded" },
       );
-      yield* seedVinextPrerenderCache(
-        rootDir,
-        yield* resolveVinextCacheEnv(ctx.env ?? {}),
-      );
+      yield* seedVinextPrerenderCache(rootDir, yield* resolveVinextCacheEnv(ctx.env ?? {}));
       return {
         bundle,
         assets,
@@ -952,6 +889,7 @@ export const makeVinextSourceProvider = (
         compatibilityFlags: ctx.compatibility.flags,
         viteEnvironments: options.viteEnvironments,
         worker: {
+          ...ctx.worker.options,
           name: ctx.workerName,
           bindings: ctx.worker.bindings,
           durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
@@ -976,12 +914,10 @@ export const makeVinextSourceProvider = (
       );
       const local = server.resolvedUrls?.local[0];
       if (!local) {
-        return yield* Effect.fail(
-          new SourceProviderError({
-            provider: PROVIDER,
-            message: "vinext dev server started without a local URL",
-          }),
-        );
+        return yield* new SourceProviderError({
+          provider: PROVIDER,
+          message: "vinext dev server started without a local URL",
+        });
       }
       return { mode: "server", url: new URL(local) } satisfies ServerDevHandle;
     }),
@@ -989,13 +925,8 @@ export const makeVinextSourceProvider = (
 };
 
 const sourceModule = {
-  make: (
-    options: unknown,
-  ): Effect.Effect<SourceProvider, SourceProviderError> => {
-    if (
-      options !== undefined &&
-      (typeof options !== "object" || options === null)
-    ) {
+  make: (options: unknown): Effect.Effect<SourceProvider, SourceProviderError> => {
+    if (options !== undefined && (typeof options !== "object" || options === null)) {
       return Effect.fail(
         new SourceProviderError({
           provider: PROVIDER,
@@ -1003,9 +934,7 @@ const sourceModule = {
         }),
       );
     }
-    return Effect.succeed(
-      makeVinextSourceProvider((options ?? {}) as VinextSourceOptions),
-    );
+    return Effect.succeed(makeVinextSourceProvider((options ?? {}) as VinextSourceOptions));
   },
 };
 

@@ -36,11 +36,7 @@ const DMI_CHASSIS_KINDS: Readonly<Record<string, EnvironmentMachineKind>> = {
   "35": "desktop",
 };
 
-// Hypervisors and cloud providers write themselves into the DMI vendor or
-// product strings; any hit means the box is a VM, and a VM reads as "cloud"
-// regardless of the chassis type the hypervisor fakes. Hyper-V is matched on
-// its "Virtual Machine" product, not the "Microsoft Corporation" vendor that
-// physical Surface devices share.
+// VMs read as cloud regardless of chassis. Match Hyper-V's product, since Surface shares its vendor.
 const VIRTUALIZATION_MARKERS = [
   "qemu",
   "kvm",
@@ -119,9 +115,7 @@ const runProbe = Effect.fn("runMachineProbe")(function* (input: {
     );
 });
 
-// IOKit's `product` node carries the marketing name ("Mac mini (2024)") on
-// Apple silicon; Intel Macs lack it, so `hw.model` ("Macmini8,1") is the
-// fallback.
+// Apple silicon exposes IOKit's marketing name; Intel needs the hw.model fallback.
 const detectDarwinMachineKind = Effect.fn("detectDarwinMachineKind")(function* () {
   const ioreg = yield* runProbe({ command: "ioreg", args: ["-rd1", "-n", "product"] });
   const productName = ioreg?.match(/"product-name"\s*=\s*<"([^"]+)">/)?.[1] ?? null;
@@ -141,8 +135,7 @@ const detectLinuxMachineKind = Effect.fn("detectLinuxMachineKind")(function* () 
     readOptionalFile(`${DMI_ROOT}/sys_vendor`),
     readOptionalFile(`${DMI_ROOT}/product_name`),
   ]);
-  // WSL exposes Microsoft in its kernel release on both WSL 1 and WSL 2.
-  // Check it before DMI because WSL 2 presents as a Hyper-V VM.
+  // Check WSL first; WSL 2 presents as a Hyper-V VM in DMI.
   if (kernelRelease?.toLowerCase().includes("microsoft")) {
     return "linux";
   }

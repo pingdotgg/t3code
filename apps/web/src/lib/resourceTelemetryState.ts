@@ -52,6 +52,7 @@ export function useResourceTelemetry(
     if (result._tag === "Failure") {
       throw Cause.squash(result.cause);
     }
+    query.refresh();
     return result.value.snapshot;
   };
 

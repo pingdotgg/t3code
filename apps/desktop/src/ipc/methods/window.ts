@@ -2,6 +2,7 @@ import {
   ContextMenuItemSchema,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopMediaReadSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -27,6 +28,7 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../../backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopWslBackend from "../../wsl/DesktopWslBackend.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
@@ -72,13 +74,28 @@ export const getAppBranding = DesktopIpc.makeSyncIpcMethod({
   }),
 });
 
-export const getRelayTelemetryEnabled = DesktopIpc.makeSyncIpcMethod({
-  channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
-  result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.getRelayTelemetryEnabled")(function* () {
-    return isRelayTracingEnabled(yield* HostProcess.Environment);
-  }),
-});
+/**
+ * Relay traces leave the machine, so a policy with `telemetry: false`, or one that cannot be read,
+ * stops them. Read once here: a sync IPC handler cannot wait on the filesystem.
+ */
+export const installRelayTelemetryEnabled = Effect.fn("desktop.ipc.window.installRelayTelemetry")(
+  function* () {
+    const ipc = yield* DesktopIpc.DesktopIpc;
+    const enabled =
+      isRelayTracingEnabled(yield* HostProcess.Environment) &&
+      (yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
+        Effect.map((found) => found?.document.limits?.telemetry !== false),
+        Effect.orElseSucceed(() => false),
+      ));
+    yield* ipc.handleSync(
+      DesktopIpc.makeSyncIpcMethod({
+        channel: IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL,
+        result: Schema.Boolean,
+        handler: () => Effect.succeed(enabled),
+      }),
+    );
+  },
+);
 
 export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_SYSTEM_LOCALE_CHANNEL,
@@ -86,6 +103,15 @@ export const getSystemLocale = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getSystemLocale")(function* () {
     const electronApp = yield* ElectronApp.ElectronApp;
     return yield* electronApp.systemLocale;
+  }),
+});
+
+export const getPreferredSystemLanguages = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_PREFERRED_SYSTEM_LANGUAGES_CHANNEL,
+  result: Schema.Array(Schema.String),
+  handler: Effect.fn("desktop.ipc.window.getPreferredSystemLanguages")(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
+    return yield* electronApp.preferredSystemLanguages;
   }),
 });
 
@@ -138,9 +164,7 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
         runningDistro,
         httpBaseUrl: httpBaseUrl.href,
         wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-        // A backend launched with the desktop secret accepts whichever token the secret derives
-        // for the current window, so hand out that one rather than the token frozen into its
-        // launch config.
+        // Use the current window's derived token; the launch config's token may be stale.
         ...(bootstrap.desktopBootstrapSecret
           ? { bootstrapToken: yield* configuration.currentBootstrapToken }
           : bootstrap.desktopBootstrapToken
@@ -194,9 +218,7 @@ export const pickFolder = DesktopIpc.makeIpcMethod({
       targetId !== undefined &&
       targetId !== PRIMARY_LOCAL_ENVIRONMENT_ID &&
       targetId.startsWith(DesktopWslBackend.WSL_INSTANCE_ID_PREFIX);
-    // Fall back to the persisted wslDistro when the id is the
-    // "wsl:default" sentinel; the orchestrator uses the same fallback
-    // for the actual backend.
+    // Match the orchestrator's persisted distro fallback for wsl:default.
     const wslDistro = useWsl ? (wslDistroFromTarget ?? settings.wslDistro) : null;
     const defaultPath = useWsl
       ? Option.fromNullishOr(
@@ -296,6 +318,56 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+const READ_MEDIA_MAX_BYTES = 256 * 1024 * 1024;
+
+// No URL field: media URLs can carry signed query tokens.
+class MediaReadError extends Schema.TaggedError<MediaReadError>()("MediaReadError", {
+  message: Schema.String,
+  cause: Schema.Defect(),
+}) {}
+
+// The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
+export const readMedia = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.READ_MEDIA_CHANNEL,
+  payload: Schema.String,
+  result: Schema.NullOr(DesktopMediaReadSchema),
+  handler: Effect.fn("desktop.ipc.window.readMedia")(function* (url, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id ||
+      !/^https?:$/.test(URL.parse(url)?.protocol ?? "")
+    ) {
+      return null;
+    }
+    const session = window.value.webContents.session;
+    return yield* Effect.tryPromise({
+      try: async () => {
+        // Like an <img>, send the session's cookies.
+        const response = await session.fetch(url, { credentials: "include" });
+        const mimeType = response.headers.get("content-type") ?? "";
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          return { status: response.status, mimeType, data: new Uint8Array() };
+        }
+        // The whole body crosses IPC, so stop before a huge file can exhaust main-process memory.
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.byteLength;
+          if (size > READ_MEDIA_MAX_BYTES) {
+            return { status: 413, mimeType, data: new Uint8Array() };
+          }
+          chunks.push(chunk);
+        }
+        return { status: response.status, mimeType, data: Buffer.concat(chunks) };
+      },
+      catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
+    }).pipe(Effect.orElseSucceed(() => null));
   }),
 });
 

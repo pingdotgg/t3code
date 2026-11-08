@@ -1,10 +1,6 @@
 const { withMainActivity } = require("expo/config-plugins");
 
-// react-native 0.85 registers its own always-enabled callback, but only on Android 16 with
-// targetSdk 36 (ReactActivity's enforced-predictive-back workaround) — on Android 13-15
-// nothing is registered, the system consumes every back gesture itself, and JS back handling
-// (React Navigation pops, BackHandler listeners) silently dies: each gesture just backgrounds
-// the app.
+// RN 0.85 registers back dispatch only on Android 16 with targetSdk 36; Android 13-15 otherwise bypass JS.
 
 const CALLBACK_PROPERTY = `
   // Routes predictive-back gestures to JS on Android 13-15, where react-native
@@ -24,10 +20,7 @@ const CALLBACK_REGISTRATION = `
       onBackPressedDispatcher.addCallback(this, predictiveBackCompatCallback)
     }`;
 
-// Wraps the template's invokeDefaultOnBackPressed: the default action ends in
-// ComponentActivity.onBackPressed(), which re-enters the dispatcher — with the
-// compat callback still enabled that would bounce back into JS forever instead
-// of backgrounding the app.
+// Disable the compat callback during default back handling to prevent dispatcher recursion.
 const INVOKE_DEFAULT_WRAPPER = `override fun invokeDefaultOnBackPressed() {
     predictiveBackCompatCallback.isEnabled = false
     try {

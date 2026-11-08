@@ -2,6 +2,11 @@
   "name": "prisma-website-tanstack-start",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/prisma-website-tanstack-start"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -11,6 +16,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@alchemy.run/prisma": "workspace:*",
     "@tanstack/react-router": "catalog:",
     "@tanstack/react-start": "catalog:",
     "alchemy": "workspace:*",
@@ -20,22 +26,18 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@tailwindcss/vite": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vercel/nft": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "@vercel/nft": "catalog:"
+    "vite": "catalog:"
   },
   "engines": {
     "node": ">=22"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/prisma-website-tanstack-start"
   }
 }

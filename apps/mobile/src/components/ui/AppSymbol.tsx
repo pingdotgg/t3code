@@ -1,8 +1,5 @@
 import type { Icon } from "@tabler/icons-react-native/types";
-/*
- * Keep these as per-icon exports. Importing the package root eagerly registers
- * the entire Tabler icon set in Metro.
- */
+/* Package-root imports eagerly register the entire Tabler icon set in Metro. */
 import IconAdjustmentsHorizontal from "@tabler/icons-react-native/IconAdjustmentsHorizontal";
 import IconAlignLeft from "@tabler/icons-react-native/IconAlignLeft";
 import IconAlertCircle from "@tabler/icons-react-native/IconAlertCircle";
@@ -39,10 +36,13 @@ import IconChevronLeft from "@tabler/icons-react-native/IconChevronLeft";
 import IconChevronRight from "@tabler/icons-react-native/IconChevronRight";
 import IconChevronUp from "@tabler/icons-react-native/IconChevronUp";
 import IconCircle from "@tabler/icons-react-native/IconCircle";
+import IconCircleFilled from "@tabler/icons-react-native/IconCircleFilled";
 import IconCircleCheck from "@tabler/icons-react-native/IconCircleCheck";
 import IconCircleDashed from "@tabler/icons-react-native/IconCircleDashed";
 import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
+import IconMoodPlus from "@tabler/icons-react-native/IconMoodPlus";
+import IconTag from "@tabler/icons-react-native/IconTag";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
@@ -99,6 +99,7 @@ import IconPlug from "@tabler/icons-react-native/IconPlug";
 import IconPhoto from "@tabler/icons-react-native/IconPhoto";
 import IconPin from "@tabler/icons-react-native/IconPin";
 import IconPinnedOff from "@tabler/icons-react-native/IconPinnedOff";
+import IconPlayerPause from "@tabler/icons-react-native/IconPlayerPause";
 import IconPlayerPlay from "@tabler/icons-react-native/IconPlayerPlay";
 import IconPlayerStopFilled from "@tabler/icons-react-native/IconPlayerStopFilled";
 import IconPlus from "@tabler/icons-react-native/IconPlus";
@@ -122,6 +123,7 @@ import IconTextIncrease from "@tabler/icons-react-native/IconTextIncrease";
 import IconTool from "@tabler/icons-react-native/IconTool";
 import IconTrash from "@tabler/icons-react-native/IconTrash";
 import IconTypography from "@tabler/icons-react-native/IconTypography";
+import IconDownload from "@tabler/icons-react-native/IconDownload";
 import IconUpload from "@tabler/icons-react-native/IconUpload";
 import IconUserCircle from "@tabler/icons-react-native/IconUserCircle";
 import IconUserCheck from "@tabler/icons-react-native/IconUserCheck";
@@ -176,12 +178,15 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "checkmark.circle": IconCircleCheck,
   "checkmark.circle.fill": IconCircleCheck,
   circle: IconCircle,
+  "circle.fill": IconCircleFilled,
   "circle.dashed": IconCircleDashed,
   "circle.inset.filled": IconCircleDot,
   "circle.dashed.inset.filled": IconCircleDot,
   "calendar.badge.clock": IconCalendarClock,
   clock: IconClock,
   timer: IconClock,
+  "face.smiling": IconMoodPlus,
+  tag: IconTag,
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,
@@ -237,6 +242,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   pin: IconPin,
   "pin.slash": IconPinnedOff,
   play: IconPlayerPlay,
+  pause: IconPlayerPause,
   plus: IconPlus,
   minus: IconMinus,
   "slash.circle": IconBan,
@@ -272,6 +278,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "textformat.size": IconTypography,
   "textformat.size.larger": IconTextIncrease,
   "textformat.size.smaller": IconTextDecrease,
+  "tray.and.arrow.down": IconDownload,
   "tray.and.arrow.up": IconUpload,
   trash: IconTrash,
   wifi: IconWifi,

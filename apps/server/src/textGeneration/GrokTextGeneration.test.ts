@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodeURL from "node:url";
 import * as NodeFS from "node:fs";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -25,7 +26,7 @@ const mockAgentPath = NodePath.join(__dirname, "../provider/testFixtures/grok-te
 
 const layerGrokTextGenerationTest = ServerConfig.ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-grok-text-generation-test-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+}).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 function makeAcpGrokWrapper(dir: string, env: Record<string, string>): string {
   return writeFakeCli({
