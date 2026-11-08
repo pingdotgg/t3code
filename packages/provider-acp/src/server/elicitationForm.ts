@@ -176,6 +176,11 @@ function typedAnswer(
   }
 }
 
+// Some agents offer a free-text "Other" answer beside a choice list by emitting a sibling
+// `<id>__other` property. Fold it into the choice question so the composer's custom-answer
+// row writes that property instead of the UI asking a separate, easily skipped question.
+const OTHER_FIELD_SUFFIX = "__other";
+
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 export function parseElicitationForm(
   requestedSchema: unknown,
@@ -187,9 +192,34 @@ export function parseElicitationForm(
       ? schema.required.filter((key): key is string => typeof key === "string")
       : [],
   );
+  const propertiesById = unknownRecord(schema?.properties) ?? {};
+  const properties = Object.entries(propertiesById);
   const fields = new Map<string, Field>();
   const questions: OrchestrationV2UserInputQuestion[] = [];
-  for (const [id, value] of Object.entries(unknownRecord(schema?.properties) ?? {})) {
+  const customAnswerFieldIds = new Map<string, string>();
+  const companionIds = new Set<string>();
+  // Resolve the pairing before building questions so a companion is never shown on its own.
+  for (const [id, value] of properties) {
+    if (!id.endsWith(OTHER_FIELD_SUFFIX) || required.has(id)) continue;
+    const baseId = id.slice(0, -OTHER_FIELD_SUFFIX.length);
+    const baseProperty = unknownRecord(propertiesById[baseId]);
+    const otherProperty = unknownRecord(value);
+    if (baseProperty === undefined || otherProperty === undefined) continue;
+    const baseField = parseField(baseProperty);
+    const otherField = parseField(otherProperty);
+    if (
+      baseField === undefined ||
+      otherField === undefined ||
+      (baseField.field.kind !== "choice" && baseField.field.kind !== "multiChoice") ||
+      otherField.field.kind !== "text"
+    ) {
+      continue;
+    }
+    customAnswerFieldIds.set(baseId, id);
+    companionIds.add(id);
+  }
+  for (const [id, value] of properties) {
+    if (companionIds.has(id)) continue;
     const property = unknownRecord(value);
     const parsed = property === undefined ? undefined : parseField(property);
     // Question ids must survive the contract's trim to round-trip answers.
@@ -200,9 +230,11 @@ export function parseElicitationForm(
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
       options: parsed.options,
-      ...(parsed.field.kind === "text" || parsed.field.kind === "number"
-        ? {}
-        : { allowCustomAnswer: false }),
+      ...(customAnswerFieldIds.has(id)
+        ? { allowCustomAnswer: true }
+        : parsed.field.kind === "text" || parsed.field.kind === "number"
+          ? {}
+          : { allowCustomAnswer: false }),
       ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
     });
   }
@@ -211,9 +243,20 @@ export function parseElicitationForm(
     content: (answers) => {
       const entries: Array<[string, EffectAcpSchema.ElicitationContentValue]> = [];
       for (const [id, field] of fields) {
-        const typed = Object.hasOwn(answers, id) ? typedAnswer(field, answers[id]) : undefined;
-        if (typed !== undefined) entries.push([id, typed]);
-        else if (required.has(id)) return undefined;
+        const answer = Object.hasOwn(answers, id) ? answers[id] : undefined;
+        const typed = typedAnswer(field, answer);
+        if (typed !== undefined) {
+          entries.push([id, typed]);
+          continue;
+        }
+        const customAnswerFieldId = customAnswerFieldIds.get(id);
+        const customAnswer =
+          typeof answer === "string" && answer.trim().length > 0 ? answer : undefined;
+        if (customAnswerFieldId !== undefined && customAnswer !== undefined) {
+          entries.push([customAnswerFieldId, customAnswer]);
+        } else if (required.has(id)) {
+          return undefined;
+        }
       }
       // Own properties for every field, `__proto__` included; assigning to
       // `{}` would hit its inherited setter instead.
