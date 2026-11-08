@@ -6,6 +6,7 @@ import { use, useState, type ReactNode } from "react";
 import { Pressable, View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
+import { AppText } from "./AppText";
 import { NativeAppBar } from "./NativeAppBar.android";
 import { IconButton } from "./IconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
@@ -120,6 +121,7 @@ export function AndroidScreenHeader(props: {
       <View collapsable={false}>{props.titleContent}</View>
     </RNHostView>
   ) : props.titleMenu ? (
+    // Pressable is a React Native boundary — Compose NativeText inside it has no Compose parent.
     <RNHostView matchContents={{ vertical: true }}>
       <Menu
         shouldOpenOnLongPress
@@ -132,7 +134,33 @@ export function AndroidScreenHeader(props: {
           accessibilityLabel={props.title}
           accessibilityHint="Shows more actions"
         >
-          {titleLabel}
+          {props.subtitle && props.compact ? (
+            <View className="flex-row items-center gap-2">
+              <AppText numberOfLines={1} textRole="title" className="text-header-foreground">
+                {props.title}
+              </AppText>
+              <AppText
+                numberOfLines={1}
+                textRole="label"
+                className="min-w-0 flex-1 text-foreground-muted"
+              >
+                {props.subtitle}
+              </AppText>
+            </View>
+          ) : props.subtitle ? (
+            <View>
+              <AppText numberOfLines={1} textRole="title" className="text-header-foreground">
+                {props.title}
+              </AppText>
+              <AppText numberOfLines={1} textRole="label" className="text-foreground-muted">
+                {props.subtitle}
+              </AppText>
+            </View>
+          ) : (
+            <AppText numberOfLines={1} textRole="title" className="text-header-foreground">
+              {props.title}
+            </AppText>
+          )}
         </Pressable>
       </Menu>
     </RNHostView>

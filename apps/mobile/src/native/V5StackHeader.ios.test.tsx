@@ -61,11 +61,13 @@ it("attaches a title long-press menu to the native header config", () => {
         />,
       ),
     );
-    expect(bridge.ios?.titleMenu).toMatchObject({
+    // Cast: bridge starts as undefined and TS does not see the mock mutation.
+    const ios = bridge.ios as StackHeaderConfigProps["ios"];
+    expect(ios?.titleMenu).toMatchObject({
       type: "menu",
       title: "Thread actions",
     });
-    expect(bridge.ios?.titleMenu?.children).toEqual([
+    expect(ios?.titleMenu?.children).toEqual([
       expect.objectContaining({
         type: "menuItem",
         title: "Settle thread",
@@ -77,7 +79,7 @@ it("attaches a title long-press menu to the native header config", () => {
         icon: { type: "sfSymbol", name: "clock" },
       }),
     ]);
-    expect(bridge.ios?.trailingItems ?? []).toEqual([]);
+    expect(ios?.trailingItems ?? []).toEqual([]);
   } finally {
     act(() => root.unmount());
     vi.unstubAllGlobals();

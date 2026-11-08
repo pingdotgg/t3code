@@ -58,10 +58,11 @@ function AppBarTitleMenu(props: {
   const { width: windowWidth } = useWindowDimensions();
   const columnWidth = useNativeColumnLayoutMetrics()?.width;
   const screenWidth = columnWidth ?? windowWidth;
-  // UIKit centers the title view in the full bar. Reserve the heavier side on both sides.
+  // Leading and trailing already sit on opposite sides; subtracting both keeps a
+  // long-press target even when one side is heavy (doubling the heavier side can hit 0).
   const leadingWidth = TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON;
   const trailingWidth = TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON;
-  const width = Math.max(0, screenWidth - 2 * Math.max(leadingWidth, trailingWidth));
+  const width = Math.max(TITLE_BAR_BUTTON, screenWidth - leadingWidth - trailingWidth);
   return (
     <View style={{ width, overflow: "hidden" }}>
       <Menu
@@ -173,6 +174,7 @@ export function AppBar(props: AppBarProps) {
           title: props.title,
           // Long-press MenuView instead of UIKit titleMenu — the latter adds a disclosure
           // chevron that squeezes trailing git/terminal/files into the system More overflow.
+          // Always set headerTitle so a prior long-press callback is cleared when the menu goes away.
           ...(titleMenu
             ? {
                 // React Navigation treats headerTitle as a render callback, not a child component type.
@@ -187,7 +189,7 @@ export function AppBar(props: AppBarProps) {
                   />
                 ),
               }
-            : undefined),
+            : { headerTitle: undefined }),
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
