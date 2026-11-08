@@ -27,6 +27,25 @@ export function isToolLifecycleItemType(value: string): value is ToolLifecycleIt
   return TOOL_LIFECYCLE_ITEM_TYPES.includes(value as ToolLifecycleItemType);
 }
 
+// What occupies the context window, by category. Clients own the labels.
+export const ContextBreakdownKind = Schema.Literals([
+  "system_prompt",
+  "system_tools",
+  "mcp_tools",
+  "t3_tools",
+  "memory_files",
+  "skills",
+  "custom_agents",
+  "messages",
+  "other",
+]);
+export type ContextBreakdownKind = typeof ContextBreakdownKind.Type;
+
+export const ContextBreakdown = Schema.Array(
+  Schema.Struct({ kind: ContextBreakdownKind, tokens: NonNegativeInt }),
+).check(Schema.isMaxLength(16));
+export type ContextBreakdown = typeof ContextBreakdown.Type;
+
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
@@ -44,6 +63,7 @@ export const ThreadTokenUsageSnapshot = Schema.Struct({
   durationMs: Schema.optional(NonNegativeInt),
   compactsAutomatically: Schema.optional(Schema.Boolean),
   autoCompactThreshold: Schema.optional(PositiveInt),
+  breakdown: Schema.optional(ContextBreakdown),
   cost: Schema.optional(
     Schema.Struct({
       amount: Schema.Number.check(Schema.isFinite()),
