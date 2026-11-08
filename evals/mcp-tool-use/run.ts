@@ -50,12 +50,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
-import {
-  cardAnswerAwaitsReply,
-  quizCardProblem,
-  readQuestionCard,
-  readQuizCard,
-} from "@t3tools/shared/quizCard";
+import { quizCardProblem, readQuestionCard, readQuizCard } from "@t3tools/shared/quizCard";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -81,7 +76,6 @@ import {
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
 import {
-  CARD_REPLY_FIRST,
   QUESTION_CARD_SHOWN,
   QUIZ_CARD_SHOWN,
 } from "../../apps/server/src/mcp/toolkits/quiz/handlers.ts";
@@ -388,6 +382,9 @@ const ToolUse = Schema.Struct({
 });
 const isToolUse = Schema.is(ToolUse);
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }));
+const isThinking = Schema.is(
+  Schema.Struct({ type: Schema.Literal("thinking"), thinking: Schema.String }),
+);
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const Count = Schema.optional(Schema.NullOr(Schema.Number));
@@ -1698,23 +1695,22 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   }
   if (isT3Name(call.name)) {
     // T3 refuses a card it cannot show.
-    if (name === "quiz_card") {
-      const card = readQuizCard(input);
-      const problem = card === undefined ? "Invalid quiz card." : quizCardProblem(card);
-      if (problem !== undefined) return failed(problem);
-    }
-    if (name === "question_card" && readQuestionCard(input) === undefined) {
-      return failed("Invalid question card.");
-    }
-    const conversation = [
-      { role: "user", text: testCase.prompt },
-      ...sample.said.map((text) => ({ role: "assistant", text })),
-    ];
     if (name === "quiz_card" || name === "question_card") {
       const reply = typeof input.reply === "string" ? input.reply.trim() : "";
-      if (reply === "" && cardAnswerAwaitsReply(conversation)) return failed(CARD_REPLY_FIRST);
+      if (reply === "")
+        return failed(`Invalid parameters for tool '${name}': Missing key at ["reply"]`);
+      const quiz = name === "quiz_card" ? readQuizCard(input) : undefined;
+      const problem =
+        name === "quiz_card"
+          ? quiz === undefined
+            ? "Invalid quiz card."
+            : quizCardProblem(quiz)
+          : readQuestionCard(input) === undefined
+            ? "Invalid question card."
+            : undefined;
+      if (problem !== undefined) return failed(problem);
       // The app shows a card's reply as the tutor's message text.
-      if (reply !== "") sample.said.push(reply);
+      sample.said.push(reply);
     }
     // T3 refuses a watch from a delegated child.
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
@@ -2167,7 +2163,19 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       transcript.push(...response.raw);
     }
     messages.push({ role: "assistant", content: response.content });
-    const texts = response.content.filter(isText).map((block) => block.text);
+    // T3's Claude adapter shows a second consecutive thinking block before a tool call as text,
+    // unless it is a card whose reply already says it.
+    const texts = response.content.flatMap((block, index) => {
+      if (isText(block)) return [block.text];
+      const next = response.content[index + 1];
+      if (!isThinking(block) || !isThinking(response.content[index - 1]) || !isToolUse(next))
+        return [];
+      const reply = isRecord(next.input) ? next.input.reply : undefined;
+      const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+      return typeof reply === "string" && words(reply).includes(words(block.thinking))
+        ? []
+        : [block.thinking];
+    });
     said.push(...texts);
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));

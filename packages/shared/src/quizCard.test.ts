@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   answeredCardIds,
-  cardAnswerAwaitsReply,
   blankAnswerRight,
   blanksAnswerMessage,
   cardAnswerMessage,
@@ -18,6 +17,7 @@ import {
 } from "./quizCard.ts";
 
 const card: QuizCard = {
+  reply: "The teaching this card tests.",
   answer: "High",
   explanation: "Because",
   level: "apply",
@@ -39,12 +39,6 @@ describe("quiz cards", () => {
         { role: "assistant", text: cardAnswerMessage("echo", "item-3") },
       ]),
     ]).toEqual(["item-2"]);
-    const answered = { role: "user", text: answer };
-    expect(cardAnswerAwaitsReply([answered])).toBe(true);
-    expect(cardAnswerAwaitsReply([answered, { role: "assistant", text: " " }])).toBe(true);
-    expect(cardAnswerAwaitsReply([answered, { role: "assistant", text: "Right." }])).toBe(false);
-    expect(cardAnswerAwaitsReply([{ role: "user", text: "Teach me." }])).toBe(false);
-    expect(cardAnswerAwaitsReply([])).toBe(false);
   });
 
   it("reads bounded question cards", () => {
@@ -114,6 +108,8 @@ describe("quiz cards", () => {
     expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {
+    // Cards saved before APP-102 have no reply and must still render.
+    expect(readQuizCard({ ...card, reply: undefined })).toMatchObject({ answer: "High" });
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
     expect(quizCardProblem({ ...card, answer: "(Recommended) High" })).toBeDefined();
     expect(

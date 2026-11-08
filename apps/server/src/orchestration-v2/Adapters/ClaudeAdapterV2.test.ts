@@ -3585,71 +3585,92 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  // Lessons: a progress update right before a card isn't the tutor's reply, so it stays reasoning.
+  // Lessons: text Claude writes right before a card is often the teaching it tests, so it shows,
+  // unless the card's reply already says it.
   it.effect.each([
-    { tool: "Bash", expected: ["reasoning", "assistant_message"] },
-    { tool: "mcp__t3-code__quiz_card", expected: ["reasoning", "reasoning"] },
-    { tool: "mcp__t3-code__question_card", expected: ["reasoning", "reasoning"] },
-  ] as const)("shows a second thinking block before $tool as $expected", ({ tool, expected }) =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("thinking-before-tool-attempt"),
-          text: "Teach me",
-          attachments: [],
-        }),
-      );
-      const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
-        claudeSdkFrame({
-          type: "assistant",
-          uuid,
-          session_id: WAKE_NATIVE_SESSION,
-          parent_tool_use_id: null,
-          message: { id: "reply-message", model: "claude-sonnet-5-5", content },
-        });
-      for (const frame of [
-        snapshot("00000000-0000-4000-8000-000000000901", [
-          { type: "thinking", thinking: "Planning the check", signature: "sig" },
-        ]),
-        snapshot("00000000-0000-4000-8000-000000000902", [
-          {
-            type: "thinking",
-            thinking: "The repo review found three task families.",
-            signature: "sig",
-          },
-        ]),
-        snapshot("00000000-0000-4000-8000-000000000903", [
-          { type: "tool_use", id: "tool-1", name: tool, input: {} },
-        ]),
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "" }),
-      ]) {
-        yield* Queue.offer(harness.sdkMessages, frame);
-      }
-      yield* Queue.take(harness.terminalReceipts);
-      const latest = new Map(
-        harness.events.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
-            ? [[event.turnItem.id, event.turnItem.type] as const]
-            : [],
-        ),
-      );
-      assert.deepEqual([...latest.values()], [...expected]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+    { tool: "Bash", reply: undefined, expected: ["reasoning", "assistant_message"] },
+    {
+      tool: "mcp__t3-code__quiz_card",
+      reply: "Try it.",
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "Try it.",
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      tool: "mcp__t3-code__question_card",
+      reply: "The repo review  found three task families. Try it.",
+      expected: ["reasoning", "reasoning"],
+    },
+  ] as const)(
+    "shows a second thinking block before $tool (reply $reply) as $expected",
+    ({ tool, reply, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("thinking-before-tool-attempt"),
+            text: "Teach me",
+            attachments: [],
+          }),
+        );
+        const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: { id: "reply-message", model: "claude-sonnet-5-5", content },
+          });
+        for (const frame of [
+          snapshot("00000000-0000-4000-8000-000000000901", [
+            { type: "thinking", thinking: "Planning the check", signature: "sig" },
+          ]),
+          snapshot("00000000-0000-4000-8000-000000000902", [
+            {
+              type: "thinking",
+              thinking: "The repo review found three task families.",
+              signature: "sig",
+            },
+          ]),
+          snapshot("00000000-0000-4000-8000-000000000903", [
+            {
+              type: "tool_use",
+              id: "tool-1",
+              name: tool,
+              input: reply === undefined ? {} : { reply },
+            },
+          ]),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000904", result: "" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* Queue.take(harness.terminalReceipts);
+        const latest = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+              ? [[event.turnItem.id, event.turnItem.type] as const]
+              : [],
+          ),
+        );
+        assert.deepEqual([...latest.values()], [...expected]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   const attachmentBudgetOutcomes = [

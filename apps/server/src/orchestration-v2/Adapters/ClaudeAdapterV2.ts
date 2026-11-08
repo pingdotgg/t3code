@@ -2073,10 +2073,13 @@ function claudeWritesUpdatesAsThinking(model: string): boolean {
   return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 1);
 }
 
-// A status line right before a card would sit beside it as the tutor's reply; the card's `reply` is that (APP-99).
-function isLessonCardTool(name: string): boolean {
-  const tool = resolveT3McpToolId(name);
-  return tool === QUIZ_CARD_TOOL_NAME || tool === QUESTION_CARD_TOOL_NAME;
+// A lesson card whose reply already says this text shows it once, as the reply (APP-102).
+function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
+  const tool = resolveT3McpToolId(block.name);
+  if (tool !== QUIZ_CARD_TOOL_NAME && tool !== QUESTION_CARD_TOOL_NAME) return false;
+  const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
+  const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+  return typeof reply === "string" && words(reply).includes(words(text));
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -9080,7 +9083,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update.messageId === message.message.id &&
                   update.followsThinking &&
                   claudeWritesUpdatesAsThinking(message.message.model) &&
-                  !isLessonCardTool(block.name)
+                  !cardReplyRepeats(block, update.text)
                 ) {
                   yield* emitAssistantTextArtifacts({
                     context,

@@ -84,7 +84,6 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
-import { cardAnswerMessage } from "@t3tools/shared/quizCard";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
@@ -316,53 +315,6 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     ),
   ),
 );
-
-it.effect("a card after a card answer carries the tutor's reply unless text came first", () => {
-  const messages = [
-    { id: "answer-1", role: "user", text: cardAnswerMessage("It breaks the circuit.", "item-q1") },
-  ];
-  return Effect.gen(function* () {
-    const server = yield* McpServer.McpServer;
-    const ask = (reply?: string) =>
-      server
-        .callTool({
-          name: "question_card",
-          arguments: { ...(reply ? { reply } : {}), question: "Why a resistor?" },
-        })
-        .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-          Effect.provideService(McpSchema.McpServerClient, client),
-        );
-    expect(declaredFailure(yield* ask())).toMatchObject({
-      code: "invalid_request",
-      message: expect.stringContaining("`reply`"),
-    });
-    expect((yield* ask("Right: a resistor limits the current.")).structuredContent).toMatchObject({
-      questionCard: { reply: "Right: a resistor limits the current." },
-    });
-    // A second card answering the same message needs no reply of its own.
-    expect((yield* ask()).isError).not.toBe(true);
-    messages.push({
-      id: "answer-2",
-      role: "user",
-      text: cardAnswerMessage("Less current.", "item-q2"),
-    });
-    expect((yield* ask()).isError).toBe(true);
-    messages.push({ id: "reply-2", role: "assistant", text: "Right: ..." });
-    expect((yield* ask()).isError).not.toBe(true);
-  }).pipe(
-    Effect.provide(
-      McpHttpServer.layerQuizToolkit.pipe(
-        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(
-          Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadRecords: () => Effect.sync(() => ({ messages: [...messages] }) as never),
-          }),
-        ),
-      ),
-    ),
-  );
-});
 
 it.effect("records only failed calls of tools that hand off no work", () => {
   // Recording runs detached from the tool response, so the first event is awaited.
