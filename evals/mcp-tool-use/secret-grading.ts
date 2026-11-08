@@ -1372,8 +1372,11 @@ const noteHeredoc = (part: string, scripts: Map<string, string>) => {
       write.append ? `${scripts.get(write.path) ?? ""}\n${write.source}` : write.source,
     );
 };
-/** Applies a Codex apply_patch to the scripts: added files, and updated files hunk by hunk. */
-const applyPatch = (patch: string, scripts: Map<string, string>) => {
+/**
+ * Applies a Codex apply_patch to the scripts: added files, and updated files hunk by hunk. `exact`
+ * forgets a file whose update cannot be applied in full, instead of guessing at its contents.
+ */
+const applyPatch = (patch: string, scripts: Map<string, string>, exact: boolean) => {
   for (const [, op, path = "", body = ""] of patch.matchAll(
     /^\*\*\* (Add|Update|Delete) File: (.+)\n([\s\S]*?)(?=^\*\*\* (?:Add|Update|Delete) File: |^\*\*\* End Patch|(?![\s\S]))/gm,
   )) {
@@ -1384,9 +1387,11 @@ const applyPatch = (patch: string, scripts: Map<string, string>) => {
         path,
         lines.flatMap((line) => (line.startsWith("+") ? [line.slice(1)] : [])).join("\n"),
       );
+    else if (exact && !scripts.has(path)) continue;
     else {
       // Each hunk's old lines become its new ones; a hunk that doesn't apply is appended.
       let source = scripts.get(path) ?? "";
+      let unknown = false;
       for (const hunk of body.split(/^@@.*$/m)) {
         const side = (keep: string) =>
           hunk
@@ -1396,15 +1401,22 @@ const applyPatch = (patch: string, scripts: Map<string, string>) => {
             .join("\n");
         const [before, after] = [side("-"), side("+")];
         if (!before && !after) continue;
-        source =
-          before && source.includes(before) ? source.replace(before, after) : `${source}\n${after}`;
+        const applies = before !== "" && source.includes(before);
+        unknown = exact && !applies;
+        if (unknown) break;
+        source = applies ? source.replace(before, after) : `${source}\n${after}`;
       }
-      scripts.set(path, source);
+      if (unknown) scripts.delete(path);
+      else scripts.set(path, source);
     }
   }
 };
 /** Records the scripts a call writes: Write, Edit, Codex apply_patch, and heredocs into files. */
-const noteWrites = (call: SecretRun["calls"][number], scripts: Map<string, string>) => {
+const noteWrites = (
+  call: SecretRun["calls"][number],
+  scripts: Map<string, string>,
+  exact: boolean,
+) => {
   // A failed Write or Edit left the file as it was.
   if (call.failed && (call.tool === "Write" || call.tool === "Edit")) return;
   const path = inputString(call.input, "file_path");
@@ -1415,19 +1427,19 @@ const noteWrites = (call: SecretRun["calls"][number], scripts: Map<string, strin
       inputString(call.input, "old_string"),
       inputString(call.input, "new_string"),
     ];
-    if (patch) applyPatch(patch, scripts);
+    if (patch) applyPatch(patch, scripts, exact);
     else if (scripts.has(path) && old) scripts.set(path, scripts.get(path)!.replace(old, next));
   }
   if (SHELL.has(call.tool) && call.tool !== "exec")
     for (const { text } of liveParts(inputString(call.input, "command")))
       noteHeredoc(text, scripts);
 };
-/** The scripts the agent had written before each call. */
-export const scriptsBefore = (calls: SecretRun["calls"]): Array<Scripts> => {
+/** The scripts the agent had written before each call. `exact` keeps only files known in full. */
+export const scriptsBefore = (calls: SecretRun["calls"], exact = false): Array<Scripts> => {
   const scripts = new Map<string, string>();
   return calls.map((call) => {
     const before = new Map(scripts);
-    noteWrites(call, scripts);
+    noteWrites(call, scripts, exact);
     return before;
   });
 };

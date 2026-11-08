@@ -1572,7 +1572,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     return loadTools(tools, call.id, found);
   }
   // T3 refuses a page call without exactly one source before any mocked result.
-  if (isPageTool(name) && (typeof input.html === "string") === (typeof input.path === "string")) {
+  const sources = [input.html, input.path].filter(
+    (source) => source !== undefined && source !== null,
+  );
+  if (isPageTool(name) && (sources.length !== 1 || typeof sources[0] !== "string")) {
     return failed("Pass exactly one of html or path.");
   }
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
@@ -1719,14 +1722,15 @@ const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, strin
       : new Set(written.map(([, page]) => page)).size === 1
         ? written[0]![1]
         : undefined;
-  return page === undefined ? input : { ...input, page };
+  // The grader derives `page`; a call cannot supply its own.
+  return { ...input, page };
 };
 
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
 export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
-  const written = scriptsBefore(run.calls);
+  const written = scriptsBefore(run.calls, true);
   // A refused page call showed nothing, so it neither previews nor renders, and no file stands in
   // for its page. Inline HTML it sent still counts against callsMustNot.
   const attempted = run.calls.map((call, index) => ({
