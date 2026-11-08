@@ -50,7 +50,7 @@ const make = Effect.gen(function* () {
   const tasks = yield* ScheduledTaskService.ScheduledTaskService;
   const scope = yield* Effect.scope;
 
-  const settle = Effect.fnUntraced(function* (
+  const settle = Effect.fn("ScheduledTaskRunReactor.settle")(function* (
     threadId: ThreadId,
     messageId: MessageId,
   ): Effect.fn.Return<void, ProjectionStore.ProjectionStoreV2Error | ScheduledTaskError> {
