@@ -783,10 +783,15 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --radius-card: 12px;
   /* Rows painted inside a bordered card: the card radius inside its 1px border. */
   --radius-card-inner: calc(var(--radius-card) - 1px);
+  /* Nested fills stay concentric: the container's radius minus the inset. */
+  --radius-card-list-row: calc(var(--radius-card) - 8px);
+  --radius-card-thumbnail: calc(var(--radius-card) - 9px);
   --radius-row-card: 10px;
   --radius-pane: 14px;
-  /* The composer's top corners, 1px inside the rounded-2xl tray so they stay concentric. */
+  /* The composer, 1px inside the rounded-2xl tray, and the send pill 8px inside it. */
   --radius-composer: calc(var(--radius-2xl) - 1px);
+  --radius-composer-pill: calc(var(--radius-composer) - 8px);
+  --radius-composer-pill-button: calc(var(--radius-composer-pill) - 1px);
   --radius-thread-details: 20px;
   --radius-project-icon: 9px;
   @keyframes skeleton {
