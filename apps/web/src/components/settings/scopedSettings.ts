@@ -11,6 +11,7 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   ServerSettings,
+  SECRET_REDACTED,
   type T3ProjectFile,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -413,6 +414,8 @@ export function planProjectOverridesClear(
 }
 
 function writeWasDropped(value: unknown, before: unknown, saved: unknown): boolean {
+  // Replacing a stored key returns the same mask as before, never the new credential.
+  if (saved === SECRET_REDACTED) return false;
   if (value === null) return before != null && Equal.equals(saved, before);
   if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {
     const field = (source: unknown, key: string) =>

@@ -2,6 +2,7 @@ import {
   AntigravitySettings,
   ClaudeSettings,
   CloudSpeechCredentials,
+  VoiceApiCredentials,
   CodexSettings,
   EasDeviceHostConfig,
   type ProviderInstanceConfig,
@@ -11,6 +12,7 @@ import {
   UsageLimitSourceConfig,
   isSecretReference,
   secretSettingsFields,
+  SECRET_REDACTED,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
 import { cursorClient } from "@t3tools/provider-cursor/client";
@@ -25,8 +27,6 @@ import {
   sourceControlHostSecretName,
   writeSecretFieldValues,
 } from "./sourceControl/sourceControlHostSecrets.ts";
-
-export const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
 
 const providerSecretFields = new Map([
   ["codex", secretSettingsFields(CodexSettings)],
@@ -47,6 +47,7 @@ const providerSecretFields = new Map([
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
 const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
+const voiceApiSecretFields = secretSettingsFields(VoiceApiCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -239,6 +240,11 @@ function mapSecretFieldGroups(
       voiceSecretFields,
       (provider) => `voice-cloud-${provider}`,
     ) as ServerSettings["cloudSpeechCredentials"],
+    voiceApiCredentials: mapFields(
+      settings.voiceApiCredentials,
+      voiceApiSecretFields,
+      (field) => `voice-api-${field}`,
+    ) as ServerSettings["voiceApiCredentials"],
     providerInstances,
     sourceControlHosts,
     usageLimitSources,

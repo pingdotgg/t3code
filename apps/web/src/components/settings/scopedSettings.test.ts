@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   type ServerSettings,
+  SECRET_REDACTED,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
@@ -282,6 +283,34 @@ describe("scoped settings writes", () => {
         await outcome(
           planScopedSettingsPatch(all, environments, { reviewGuideInstructions: " Read tests " }),
           upgradedLaptop({ reviewGuideInstructions: "Read tests" }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("accepts a replaced secret returned as a mask while still reporting a dropped credential", async () => {
+      const masked = SECRET_REDACTED;
+      const targets = [
+        environment("Laptop", {
+          settings: {
+            voiceApiCredentials: {
+              ...DEFAULT_SERVER_SETTINGS.voiceApiCredentials,
+              openaiPostProcessing: masked,
+            },
+          },
+        }),
+        server,
+      ];
+      expect(
+        await outcome(
+          planScopedSettingsPatch(resolveSettingsScope({}, [], targets), targets, {
+            voiceApiCredentials: { openaiPostProcessing: "replacement-key" },
+          }),
+          upgradedLaptop({
+            voiceApiCredentials: {
+              ...DEFAULT_SERVER_SETTINGS.voiceApiCredentials,
+              openaiPostProcessing: masked,
+            },
+          }),
         ),
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });

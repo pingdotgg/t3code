@@ -13,6 +13,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { buildTranscriptionPostProcessingPrompt } from "../textGeneration/TranscriptionPostProcessing.ts";
 import { applySpeechAliases } from "./customWords.ts";
 import { SpeechOperationError } from "./SpeechService.ts";
+import * as SpeechCleanupApi from "./SpeechCleanupApi.ts";
 
 export class SpeechPostProcessing extends Context.Service<
   SpeechPostProcessing,
@@ -27,6 +28,7 @@ const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const api = yield* SpeechCleanupApi.SpeechCleanupApi;
   return SpeechPostProcessing.of({
     process: Effect.fn("SpeechPostProcessing.process")(
       function* (input) {
@@ -36,19 +38,26 @@ const make = Effect.gen(function* () {
         const instructions =
           (mode === "custom" ? customInstructions.trim() : "") ||
           DEFAULT_SPEECH_POST_PROCESSING_PROMPT;
-        // Providers run in a working directory; cleanup must not read a checkout.
-        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-voice-cleanup-" });
-        const generated = yield* textGeneration.generateTranscriptionPostProcessing({
-          cwd,
-          prompt: buildTranscriptionPostProcessingPrompt(
-            instructions,
-            input.transcript,
-            input.draft,
-            input.options.speechCorrectionWord,
-          ),
-          modelSelection: resolveSpeechPostProcessingModelSelection(settings),
-        });
-        const text = generated.transcription.trim();
+        const prompt = buildTranscriptionPostProcessingPrompt(
+          instructions,
+          input.transcript,
+          input.draft,
+          input.options.speechCorrectionWord,
+        );
+        const text = (yield* settings.speechPostProcessingProvider !== "agent"
+          ? api.postProcess(prompt)
+          : Effect.gen(function* () {
+              // Providers run in a working directory; cleanup must not read a checkout.
+              const cwd = yield* fileSystem.makeTempDirectoryScoped({
+                prefix: "t3-voice-cleanup-",
+              });
+              const generated = yield* textGeneration.generateTranscriptionPostProcessing({
+                cwd,
+                prompt,
+                modelSelection: resolveSpeechPostProcessingModelSelection(settings),
+              });
+              return generated.transcription;
+            })).trim();
         return {
           text:
             text.length > 0

@@ -13,6 +13,7 @@ import {
   SecretProviderId,
   ServerSettings,
   ServerSettingsPatch,
+  SECRET_REDACTED,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -35,7 +36,6 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
-import { SECRET_REDACTED } from "./settingsSecrets.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
@@ -1643,6 +1643,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         const hub = UsageLimitSourceId.make("hub");
         const withUsage = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          voiceApiCredentials: {
+            openaiPostProcessing: "openai-fixture",
+            compatiblePostProcessing: usageReference,
+            anthropicPostProcessing: "anthropic-fixture",
+            openrouterPostProcessing: usageReference,
+          },
           usageLimitSources: {
             [hub]: {
               kind: "cliproxy",
@@ -1694,6 +1700,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           openrouter: "",
         });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
+        assert.deepEqual(legacy.voiceApiCredentials, {
+          openaiPostProcessing: SECRET_REDACTED,
+          compatiblePostProcessing: SECRET_REDACTED,
+          anthropicPostProcessing: SECRET_REDACTED,
+          openrouterPostProcessing: SECRET_REDACTED,
+        });
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
@@ -1703,6 +1715,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
         const echoed = yield* serverSettings.updateSettings({
           cloudSpeechCredentials: legacy.cloudSpeechCredentials,
+          voiceApiCredentials: legacy.voiceApiCredentials,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
           easDeviceHosts: legacy.easDeviceHosts,
@@ -1721,6 +1734,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           openrouter: "",
         });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
+        assert.deepEqual(echoed.voiceApiCredentials, {
+          openaiPostProcessing: "openai-fixture",
+          compatiblePostProcessing: usageReference,
+          anthropicPostProcessing: "anthropic-fixture",
+          openrouterPostProcessing: usageReference,
+        });
         assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
         assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
         assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
@@ -1760,6 +1779,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
         },
         cloudSpeechCredentials: { openai: personal("Voice/key"), xai: work },
+        voiceApiCredentials: {
+          openaiPostProcessing: work,
+          compatiblePostProcessing: personal("Voice/compatible"),
+          anthropicPostProcessing: work,
+          openrouterPostProcessing: personal("Voice/openrouter"),
+        },
         usageLimitSources: {
           [hub]: {
             kind: "cliproxy",
@@ -1805,8 +1830,40 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       });
       assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
       assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.deepEqual(removed.voiceApiCredentials, {
+        openaiPostProcessing: work,
+        compatiblePostProcessing: "",
+        anthropicPostProcessing: work,
+        openrouterPostProcessing: "",
+      });
       assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
       assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("keeps cleanup endpoint configuration independent when switching API providers", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      yield* service.updateSettings({
+        speechPostProcessingProvider: "compatible",
+        speechPostProcessingApiEndpoints: {
+          compatible: { endpoint: "http://127.0.0.1:1234/v1", model: "local-cleanup" },
+        },
+        voiceApiCredentials: { compatiblePostProcessing: "local-key" },
+      });
+      yield* service.updateSettings({
+        speechPostProcessingProvider: "openrouter",
+        speechPostProcessingApiEndpoints: { openrouter: { model: "acme/cleanup" } },
+        voiceApiCredentials: { openrouterPostProcessing: "router-key" },
+      });
+      const saved = yield* service.updateSettings({ speechPostProcessingProvider: "compatible" });
+      assert.deepEqual(saved.speechPostProcessingApiEndpoints, {
+        compatible: { endpoint: "http://127.0.0.1:1234/v1", model: "local-cleanup" },
+        anthropic: { endpoint: "https://api.anthropic.com/v1", model: "" },
+        openrouter: { endpoint: "https://openrouter.ai/api/v1", model: "acme/cleanup" },
+      });
+      assert.equal(saved.voiceApiCredentials.compatiblePostProcessing, "local-key");
+      assert.equal(saved.voiceApiCredentials.openrouterPostProcessing, "router-key");
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
@@ -1817,6 +1874,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "cloudSpeechCredentials.openai",
         "cloudSpeechCredentials.xai",
         "cloudSpeechCredentials.openrouter",
+        "voiceApiCredentials.openaiPostProcessing",
+        "voiceApiCredentials.compatiblePostProcessing",
+        "voiceApiCredentials.anthropicPostProcessing",
+        "voiceApiCredentials.openrouterPostProcessing",
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",

@@ -576,6 +576,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "speech-cleanup-provider",
+    title: "Transcript cleanup provider and API keys",
+    to: "/settings/voice",
+    searchTerms: [
+      "postprocessing post-processing cleanup byok openai compatible anthropic claude openrouter direct api key model agent endpoint",
+    ],
+  },
+  {
     id: "speech-hardware",
     title: "Transcription hardware and model unloading",
     to: "/settings/voice",

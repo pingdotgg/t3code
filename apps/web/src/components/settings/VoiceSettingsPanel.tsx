@@ -104,6 +104,7 @@ import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
 import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
+import { CleanupApiSettings } from "./CleanupApiSettings";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
@@ -1185,8 +1186,14 @@ export function VoiceSettingsPanel() {
           : !model || model.state === "missing-model"
             ? "speech-models"
             : undefined,
+        "speech-cleanup-provider":
+          cleanupEnabled && settingsScope !== null ? undefined : "speech-post-processing",
         "speech-post-processing-model":
-          cleanupEnabled && settingsScope ? undefined : "speech-post-processing",
+          cleanupEnabled && settingsScope
+            ? settingsScope.target?.settings.speechPostProcessingProvider !== "agent"
+              ? "speech-cleanup-provider"
+              : undefined
+            : "speech-post-processing",
         "speech-correction-word": cleanupEnabled ? undefined : "speech-post-processing",
       }}
     >
@@ -1527,7 +1534,7 @@ export function VoiceSettingsPanel() {
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
           title="Clean up transcripts with a provider"
-          description="Sends the transcript and nearby draft text to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Sends text only; off by default."
+          description="Sends the transcript and nearby draft text to the cleanup provider configured on the draft’s environment to fix punctuation, numbers, and spoken corrections. Sends text only; off by default."
           control={
             <Switch
               aria-label="Clean up transcripts with a provider"
@@ -1586,7 +1593,12 @@ export function VoiceSettingsPanel() {
             />
           </SettingsRow>
         ) : null}
-        {cleanupEnabled && settingsScope !== null ? <CleanupModelRow /> : null}
+        {cleanupEnabled && settingsScope !== null ? <CleanupApiSettings /> : null}
+        {cleanupEnabled &&
+        settingsScope !== null &&
+        settingsScope.target?.settings.speechPostProcessingProvider === "agent" ? (
+          <CleanupModelRow />
+        ) : null}
         {cleanupEnabled ? (
           <SettingsRow
             {...searchableSetting("speech-correction-word")}

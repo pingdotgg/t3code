@@ -21,6 +21,7 @@ import {
   isSecretReference,
   type SecretReference,
   withIdleCompaction,
+  SECRET_REDACTED,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
@@ -66,7 +67,6 @@ import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
   withoutRemovedSecretProviderReferences,
-  SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
 

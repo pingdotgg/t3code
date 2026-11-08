@@ -114,7 +114,7 @@ environment; nothing else about the project is sent.
 **Transcript cleanup** is a separate choice and is off by default. When on, the
 finished transcript and up to 1,024 characters each from before, inside, and
 after your selection are sent to the
-text generation provider configured on the draft's environment, which fixes
+cleanup provider configured on the draft's environment, which fixes
 punctuation, numbers, and spoken corrections such as "make it 42, sorry, 24".
 Depending on the provider, that can involve an external service. Audio is never
 sent to it. Use the built-in instructions or write your own, press **Skip**
@@ -123,6 +123,15 @@ transcript is inserted.
 
 Cleanup uses the environment's text generation model unless you pick a
 **Cleanup model** for that environment, for example a cheaper or faster one.
+For a direct API call, choose **OpenAI API (BYOK)**, **Anthropic API**,
+**OpenRouter**, or **OpenAI-compatible endpoint** under **Cleanup provider**.
+Save that provider's API key and model ID. Anthropic and OpenRouter start with
+their API base URLs filled in; a custom endpoint uses Chat Completions and needs
+its base URL, including `/v1` when required. Leave the key empty for a custom
+server that needs no authentication. Each provider keeps its own model, endpoint,
+and key when you switch. These paths send text directly without starting a coding
+agent, and keys are stored on the environment. Switch back to **Agent provider**
+to use your existing text generation provider.
 
 If cleanup misses the way you correct yourself, set a **Correction cue**: the
 word or phrase you say to flag a correction, such as "scratch that". Cleanup

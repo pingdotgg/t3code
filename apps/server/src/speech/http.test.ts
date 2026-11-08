@@ -27,6 +27,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import type * as NetAddress from "effect/net/NetAddress";
 import * as SpeechService from "./SpeechService.ts";
+import * as SpeechCleanupApi from "./SpeechCleanupApi.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -48,6 +49,7 @@ const principal = (...scopes: AuthEnvironmentScope[]) =>
   );
 
 const dependencies = Layer.mergeAll(
+  Layer.mock(SpeechCleanupApi.SpeechCleanupApi)({}),
   Layer.mock(CloudSpeech.CloudSpeech)({}),
   Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
   Layer.mock(ServerSettings.ServerSettingsService)({

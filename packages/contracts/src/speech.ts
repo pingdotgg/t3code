@@ -9,6 +9,15 @@ export const CloudSpeechApiKey = TrimmedNonEmptyString.check(
 
 export const CloudSpeechProvider = Schema.Literals(["openai", "xai", "openrouter"]);
 export type CloudSpeechProvider = typeof CloudSpeechProvider.Type;
+
+export const SpeechPostProcessingProvider = Schema.Literals([
+  "agent",
+  "openai",
+  "compatible",
+  "anthropic",
+  "openrouter",
+]);
+export type SpeechPostProcessingProvider = typeof SpeechPostProcessingProvider.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",

@@ -5,6 +5,8 @@ import * as SchemaAST from "effect/SchemaAST";
 import { TrimmedString } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
+export const SECRET_REDACTED = "\u2022\u2022\u2022\u2022\u2022\u2022";
+
 /**
  * A credential setting: the literal, which is kept in the secret store and redacted for
  * clients, or the secret reference to read it from, which is not itself a secret and is

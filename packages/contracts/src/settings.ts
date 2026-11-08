@@ -60,6 +60,7 @@ import {
   SpeechLanguage,
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
+  SpeechPostProcessingProvider,
 } from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -1247,6 +1248,49 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+export const VoiceApiCredentials = Schema.Struct({
+  openaiPostProcessing: CloudSpeechCredential,
+  compatiblePostProcessing: CloudSpeechCredential,
+  anthropicPostProcessing: CloudSpeechCredential,
+  openrouterPostProcessing: CloudSpeechCredential,
+});
+
+const SpeechApiEndpoint = TrimmedString.check(
+  Schema.isMaxLength(2048),
+  Schema.makeFilter((value) => {
+    if (!value) return true;
+    try {
+      const url = new URL(value);
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        !url.username &&
+        !url.password &&
+        !url.search &&
+        !url.hash
+      );
+    } catch {
+      return false;
+    }
+  }),
+);
+
+const cleanupApiEndpoint = (endpoint: string) =>
+  Schema.Struct({
+    endpoint: SpeechApiEndpoint.pipe(Schema.withDecodingDefault(Effect.succeed(endpoint))),
+    model: TrimmedString.check(Schema.isMaxLength(200)).pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({ endpoint, model: "" })));
+const SpeechPostProcessingApiEndpoints = Schema.Struct({
+  compatible: cleanupApiEndpoint(""),
+  anthropic: cleanupApiEndpoint("https://api.anthropic.com/v1"),
+  openrouter: cleanupApiEndpoint("https://openrouter.ai/api/v1"),
+});
+const SpeechPostProcessingApiEndpointPatch = Schema.Struct({
+  endpoint: Schema.optionalKey(SpeechApiEndpoint),
+  model: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(200))),
+});
+
 export const ServerSettings = Schema.Struct({
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -1277,6 +1321,20 @@ export const ServerSettings = Schema.Struct({
   ),
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
+  ),
+  voiceApiCredentials: VoiceApiCredentials.pipe(
+    Schema.withDecodingDefault(Effect.succeed(Schema.decodeSync(VoiceApiCredentials)({}))),
+  ),
+  speechPostProcessingProvider: SpeechPostProcessingProvider.pipe(
+    Schema.withDecodingDefault(Effect.succeed("agent")),
+  ),
+  speechPostProcessingApiEndpoints: SpeechPostProcessingApiEndpoints.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Schema.decodeSync(SpeechPostProcessingApiEndpoints)({})),
+    ),
+  ),
+  speechPostProcessingOpenAIModel: TrimmedNonEmptyString.check(Schema.isMaxLength(200)).pipe(
+    Schema.withDecodingDefault(Effect.succeed("gpt-4.1-mini")),
   ),
   speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechModelUnloadTimeout: SpeechModelUnloadTimeout.pipe(
@@ -1699,6 +1757,25 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   speechModelId: Schema.optionalKey(Schema.String),
+  voiceApiCredentials: Schema.optionalKey(
+    Schema.Struct({
+      openaiPostProcessing: Schema.optionalKey(SettingsSecretValue),
+      compatiblePostProcessing: Schema.optionalKey(SettingsSecretValue),
+      anthropicPostProcessing: Schema.optionalKey(SettingsSecretValue),
+      openrouterPostProcessing: Schema.optionalKey(SettingsSecretValue),
+    }),
+  ),
+  speechPostProcessingProvider: Schema.optionalKey(SpeechPostProcessingProvider),
+  speechPostProcessingApiEndpoints: Schema.optionalKey(
+    Schema.Struct({
+      compatible: Schema.optionalKey(SpeechPostProcessingApiEndpointPatch),
+      anthropic: Schema.optionalKey(SpeechPostProcessingApiEndpointPatch),
+      openrouter: Schema.optionalKey(SpeechPostProcessingApiEndpointPatch),
+    }),
+  ),
+  speechPostProcessingOpenAIModel: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(200)),
+  ),
   speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechModelUnloadTimeout: Schema.optionalKey(SpeechModelUnloadTimeout),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
