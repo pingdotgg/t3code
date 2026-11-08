@@ -1,4 +1,4 @@
-import * as Hetzner from "alchemy/Hetzner";
+import * as Hetzner from "@alchemy.run/hetzner";
 import * as Effect from "effect/Effect";
 
 export const VOLUME_PATH = "/data";

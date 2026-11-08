@@ -5,7 +5,7 @@ import {
   RelayAgentAwarenessPreferences,
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import type * as PlatformError from "effect/PlatformError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -139,7 +139,7 @@ export class FcmDeliveries extends Context.Service<
 
 const make = Effect.gen(function* () {
   const config = yield* RelayConfiguration.RelayConfiguration;
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const sender = yield* FcmDeliveryQueueSender.FcmDeliveryQueueSender;
   const client = yield* FcmClient.FcmClient;
   const devices = yield* LiveActivities.LiveActivities;
@@ -297,7 +297,10 @@ const make = Effect.gen(function* () {
       };
       if (alert) {
         // Hash the full stable group identity to stay within the payload budget.
-        const digest = yield* crypto.digest("SHA-256", new TextEncoder().encode(alert.alert_id));
+        const digest = yield* crypto.digest(
+          Digest.sha256,
+          new TextEncoder().encode(alert.alert_id),
+        );
         data.alert_id = Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
       const result = yield* client.send({
