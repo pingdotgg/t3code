@@ -1,5 +1,5 @@
 const LEADING_FRONTMATTER =
-  /^\uFEFF?---[ \t]*(?:\r\n|\r|\n)(?:[\s\S]*?(?:\r\n|\r|\n))?(?:---|\.\.\.)[ \t]*(?=\r\n|\r|\n|$)/;
+  /^\uFEFF?---[ \t]*(?:\r\n|\r|\n)(?:([\s\S]*?)(?:\r\n|\r|\n))?(?:---|\.\.\.)[ \t]*(?=\r\n|\r|\n|$)/;
 
 /**
  * Blanks a leading YAML frontmatter block so rendered previews skip it instead
@@ -8,4 +8,10 @@ const LEADING_FRONTMATTER =
  */
 export function maskMarkdownFrontmatter(markdown: string): string {
   return markdown.replace(LEADING_FRONTMATTER, (block) => block.replace(/[^\r\n]/g, " "));
+}
+
+/** The YAML between the fences of the block `maskMarkdownFrontmatter` blanks, if any. */
+export function markdownFrontmatterSource(markdown: string): string | null {
+  const match = LEADING_FRONTMATTER.exec(markdown);
+  return match ? (match[1] ?? "") : null;
 }

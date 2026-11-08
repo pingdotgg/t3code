@@ -4,6 +4,8 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 
+import { MarkdownFrontmatterTable } from "./MarkdownFrontmatterTable";
+
 export function FileMarkdownPreview(props: {
   readonly cwd: string;
   readonly relativePath: string;
@@ -24,14 +26,16 @@ export function FileMarkdownPreview(props: {
       : props.cwd;
 
   return (
-    <ChatMarkdown
-      text={maskMarkdownFrontmatter(props.text)}
-      cwd={props.cwd}
-      imageBaseDir={imageBaseDir}
-      threadRef={props.threadRef}
-      workspaceMutationId={props.workspaceMutationId}
-      className="mx-auto max-w-4xl px-6 py-5"
-      onTaskListChange={props.onTaskListChange}
-    />
+    <div className="mx-auto max-w-4xl px-6 py-5">
+      <MarkdownFrontmatterTable markdown={props.text} />
+      <ChatMarkdown
+        text={maskMarkdownFrontmatter(props.text)}
+        cwd={props.cwd}
+        imageBaseDir={imageBaseDir}
+        threadRef={props.threadRef}
+        workspaceMutationId={props.workspaceMutationId}
+        onTaskListChange={props.onTaskListChange}
+      />
+    </div>
   );
 }

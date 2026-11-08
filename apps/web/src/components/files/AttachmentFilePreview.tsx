@@ -62,6 +62,12 @@ const MermaidFilePreview = lazy(() =>
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
 
+const MarkdownFrontmatterTable = lazy(() =>
+  import("./MarkdownFrontmatterTable").then((module) => ({
+    default: module.MarkdownFrontmatterTable,
+  })),
+);
+
 const STALE_URL_MS = 5 * 60_000;
 
 const blobKeys = new WeakMap<Blob, string>();
@@ -306,11 +312,12 @@ export function AttachmentFilePreview(props: {
       </Suspense>
     ) : kind === "markdown" && rendered ? (
       <ScrollArea className="min-h-0 flex-1">
-        <ChatMarkdown
-          text={maskMarkdownFrontmatter(content.text)}
-          cwd={undefined}
-          className="mx-auto max-w-4xl px-6 py-5"
-        />
+        <div className="mx-auto max-w-4xl px-6 py-5">
+          <Suspense fallback={null}>
+            <MarkdownFrontmatterTable markdown={content.text} />
+          </Suspense>
+          <ChatMarkdown text={maskMarkdownFrontmatter(content.text)} cwd={undefined} />
+        </div>
       </ScrollArea>
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} wordWrap={wordWrap} />
