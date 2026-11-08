@@ -1658,11 +1658,39 @@ it.effect("queues a plain send behind the stopped queue and releases its hold", 
   ),
 );
 
-const goalHarness = Effect.fn("goalHarness")(function* (name: string) {
-  const harness = yield* nextTurnSelectionHarness(name);
-  const send = (id: string, text: string, delivery: "queue" | "auto", freshContext = false) =>
+const goalHarness = Effect.fn("goalHarness")(function* (
+  name: string,
+  activeSteeringInterruptsTools = false,
+) {
+  const harness = yield* nextTurnSelectionHarness(
+    name,
+    false,
+    true,
+    Effect.void,
+    true,
+    activeSteeringInterruptsTools,
+  );
+  const send = (
+    id: string,
+    text: string,
+    delivery: "queue" | "auto" | "agent_auto" | "agent_steer",
+    freshContext = false,
+  ) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      if (delivery === "agent_auto" || delivery === "agent_steer") {
+        return yield* (yield* ThreadManagement.ThreadManagementService).sendToThread({
+          projectId: ProjectId.make(`project:${name}`),
+          commandId: CommandId.make(id),
+          threadId: ThreadId.make(`thread:${name}`),
+          messageId: MessageId.make(`message:${id}`),
+          text,
+          attachments: [],
+          mode: delivery === "agent_auto" ? "auto" : "steer",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+      }
       yield* orchestrator.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(id),
@@ -1721,26 +1749,38 @@ it.effect("stops the running turn and starts a goal sent into it next", () =>
   ),
 );
 
-it.effect("queues a goal clear without stopping work when no goal drives it", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { steered, layer, startFirstTurn, send, read } = yield* goalHarness("goal-clear");
-      yield* Effect.gen(function* () {
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const threadId = yield* startFirstTurn;
-        yield* send("queued", "queued", "queue");
-        yield* send("clear", "/goal clear", "auto");
-        yield* worker.drain();
+it.effect.each(["auto", "agent_auto", "agent_steer"] as const)(
+  "queues a goal clear from %s without stopping work when no goal drives it",
+  (delivery) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { steered, layer, startFirstTurn, send, read } = yield* goalHarness(
+          "goal-clear",
+          true,
+        );
+        yield* Effect.gen(function* () {
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = yield* startFirstTurn;
+          yield* send("queued", "queued", "queue");
+          yield* send("clear", "/goal clear", delivery);
+          yield* worker.drain();
 
-        assert.deepEqual(steered, []);
-        assert.deepEqual(yield* read(threadId), {
-          queue: ["queued", "/goal clear"],
-          started: ["first"],
-          stopRequested: false,
-        });
-      }).pipe(Effect.provide(layer));
-    }),
-  ),
+          const projection = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(
+            threadId,
+          );
+          assert.isNotTrue(
+            projection.messages.find((message) => message.id === MessageId.make("message:clear"))
+              ?.atToolBoundary,
+          );
+          assert.deepEqual(steered, []);
+          assert.deepEqual(yield* read(threadId), {
+            queue: ["queued", "/goal clear"],
+            started: ["first"],
+            stopRequested: false,
+          });
+        }).pipe(Effect.provide(layer));
+      }),
+    ),
 );
 
 it.effect("promotes a queued goal by stopping the running turn", () =>
@@ -1922,11 +1962,17 @@ it.effect("stops a turn that is still starting when a goal is sent into it", () 
   ),
 );
 
-it.effect("stops the running turn when a goal clear ends the goal driving it", () =>
+it.effect.each(
+  (["auto", "agent_auto", "agent_steer"] as const).flatMap((delivery) =>
+    ["/goal clear", "/goal ship the fix"].map((text) => ({ delivery, text })),
+  ),
+)("stops the running turn when $delivery sends $text to an active goal", ({ delivery, text }) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const { events, layer, startFirstTurn, send, read, steered } =
-        yield* goalHarness("goal-clear-active");
+      const { events, layer, startFirstTurn, send, read, steered } = yield* goalHarness(
+        "goal-clear-active",
+        true,
+      );
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1951,13 +1997,13 @@ it.effect("stops the running turn when a goal clear ends the goal driving it", (
           },
         });
         yield* Fiber.join(goalSeen);
-        yield* send("clear", "/goal clear", "auto");
+        yield* send("clear", text, delivery);
         yield* worker.drain();
 
         assert.deepEqual(steered, []);
         assert.deepEqual(yield* read(threadId), {
           queue: [],
-          started: ["first", "/goal clear"],
+          started: ["first", text],
           stopRequested: true,
         });
       }).pipe(Effect.provide(layer));

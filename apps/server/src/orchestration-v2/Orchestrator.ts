@@ -5860,6 +5860,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command.dispatchMode,
       command.deliveryIntent,
     );
+    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
+    const parsedGoalCommand = parseGoalCommand(command);
+    const goalCommand =
+      parsedGoalCommand === null ||
+      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
+        ? null
+        : parsedGoalCommand;
     let atToolBoundary = false;
     if (dispatchMode.type === "steer_active") {
       const targetRunId = dispatchMode.targetRunId;
@@ -5881,6 +5888,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } else if (
         // After Stop the steer must still fail below; queueing it instead would
         // start the update on its own once the provider stops.
+        goalCommand === null &&
         !(yield* stopReachedRun(command, command.threadId, targetRunId))
       ) {
         const providerThread = projection.providerThreads.find(
@@ -5918,13 +5926,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // Codex and Claude own /goal; elsewhere it is ordinary text that cannot steer.
-    const parsedGoalCommand = parseGoalCommand(command);
-    const goalCommand =
-      parsedGoalCommand === null ||
-      (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
-        ? null
-        : parsedGoalCommand;
     let goalStopRunId: RunId | undefined;
     if (goalCommand !== null) {
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
@@ -9812,7 +9813,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2Command, { readonly type: "queued-message.promote-to-steer" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
-  ) {
+  ): Effect.fn.Return<
+    | Pick<
+        Parameters<typeof eventSink.commitCommand>[0],
+        "cancelUnsettledEffects" | "updateDelegatedCompletionOnlyRunId"
+      >
+    | undefined,
+    OrchestratorV2Error
+  > {
     const projection = yield* loadProjectionForCommand(
       command,
       [
@@ -9944,7 +9952,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return;
     }
     if (receipt !== undefined) {
-      yield* joinQueuedRunToTurn({
+      const updateDelegatedCompletionOnlyRunId = yield* joinQueuedRunToTurn({
         command,
         events,
         effects,
@@ -9956,7 +9964,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         receipt,
         now,
       });
-      return;
+      return updateDelegatedCompletionOnlyRunId === undefined
+        ? undefined
+        : { updateDelegatedCompletionOnlyRunId };
     }
     const targetRun = projection.runs.find((run) => run.id === command.targetRunId);
     if (command.boundaryOffer?.step === "offer") {
@@ -10034,7 +10044,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       const stops =
         isLiveRun(target) && !(yield* stopReachedRun(command, command.threadId, target.id));
-      return yield* stopRunForQueuedCommand({
+      const cancelUnsettledEffects = yield* stopRunForQueuedCommand({
         command,
         events,
         effects,
@@ -10044,6 +10054,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         reason: "Skipped compaction to send a queued message",
         now,
       });
+      return cancelUnsettledEffects === undefined ? undefined : { cancelUnsettledEffects };
     }
     if (queuedRun.freshContext === true) {
       return yield* new OrchestratorDispatchError({
@@ -10072,7 +10083,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         goalCommandStopsActiveRun(goalCommand, goal?.status ?? null) &&
         (targetMessage === undefined || !isNativeMaintenanceCommand(targetMessage)) &&
         !(yield* stopReachedRun(command, command.threadId, target.id));
-      return yield* stopRunForQueuedCommand({
+      const cancelUnsettledEffects = yield* stopRunForQueuedCommand({
         command,
         events,
         effects,
@@ -10082,6 +10093,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         reason: "Stopped to apply /goal",
         now,
       });
+      return cancelUnsettledEffects === undefined ? undefined : { cancelUnsettledEffects };
     }
     if (targetRun?.status === "running" || targetRun?.status === "waiting") {
       const targetProviderThread = projection.providerThreads.find(
@@ -10249,7 +10261,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (receipt !== undefined && queuedMessage.delegatedCompletion !== undefined) {
       // Accept in the same commit: the cancelled queued run would otherwise
       // read as a failed delivery and reserve a duplicate notification.
-      yield* dispatchNotificationAccepted(
+      return yield* dispatchNotificationAccepted(
         {
           type: "notification.delivery.accept",
           commandId: command.commandId,
@@ -13927,13 +13939,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.stop":
         cancelUnsettledEffects = yield* dispatchThreadStop(command, events, effects);
         break;
-      case "queued-message.promote-to-steer":
-        cancelUnsettledEffects = yield* dispatchQueuedMessagePromoteToSteer(
-          command,
-          events,
-          effects,
-        );
+      case "queued-message.promote-to-steer": {
+        const promotion = yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
+        cancelUnsettledEffects = promotion?.cancelUnsettledEffects;
+        updateDelegatedCompletionOnlyRunId = promotion?.updateDelegatedCompletionOnlyRunId;
         break;
+      }
       case "queued-run.start":
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
@@ -14357,7 +14368,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
-    if (command.type === "notification.delivery.accept") {
+    if (
+      command.type === "notification.delivery.accept" ||
+      (command.type === "queued-message.promote-to-steer" &&
+        plan.updateDelegatedCompletionOnlyRunId !== undefined)
+    ) {
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.threadId));
     }
     if (

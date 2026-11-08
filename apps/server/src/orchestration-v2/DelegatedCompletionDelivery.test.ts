@@ -2672,11 +2672,13 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
   },
 );
 
-it.layer(layerTest)("delegated tasks across a server restart", (it) => {
+const layerRestartTest = Layer.merge(layerTest, ProviderContinuationRequests.layer);
+it.layer(layerRestartTest)("delegated tasks across a server restart", (it) => {
   it.effect("queues a child result without creating a provider history handoff", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
+      const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:result-message-parent");
       const projectId = ProjectId.make("project:result-message");
@@ -2843,14 +2845,75 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         afterLater.subagents.find((row) => row.id === later.taskId)?.completionDelivery?.state,
         "pending",
       );
-      yield* orchestrator.dispatch({
-        type: "queued-message.promote-to-steer",
-        commandId: CommandId.make("receipt-first-completion"),
-        threadId,
-        queuedRunId: offeredRun.id,
-        targetRunId: runId,
-        boundaryOffer: { id: "offered-completion", step: "receipt" },
+      const beforeReceipt = afterLater.runs.find((run) => run.id === runId)!;
+      const checkpointId = CheckpointId.make("checkpoint:receipt-first-completion");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make("event:receipt-first-completion-waiting"),
+            type: "run.updated",
+            threadId,
+            runId,
+            occurredAt: now,
+            payload: { ...beforeReceipt, status: "waiting" },
+          },
+        ],
       });
+      const commit = eventSink.commitCommand;
+      const receiptCommandId = CommandId.make("receipt-first-completion");
+      const offeredSuccessors: MessageId[] = [];
+      const offer = requests.offer;
+      yield* Effect.acquireUseRelease(
+        Effect.sync(() => [
+          vi.spyOn(requests, "offer").mockImplementation((request) => {
+            if (request.delegatedCompletion !== undefined)
+              offeredSuccessors.push(request.delegatedCompletion.messageId);
+            return offer(request);
+          }),
+          vi.spyOn(eventSink, "commitCommand").mockImplementation((input) =>
+            Effect.gen(function* () {
+              if (input.commandId === receiptCommandId) {
+                yield* commit({
+                  commandId: CommandId.make("command:receipt-first-completion-checkpoint"),
+                  threadId,
+                  commandType: "checkpoint.capture",
+                  acceptedAt: now,
+                  effects: [],
+                  events: [
+                    {
+                      id: EventId.make("event:receipt-first-completion-checkpoint"),
+                      type: "run.updated",
+                      threadId,
+                      runId,
+                      occurredAt: now,
+                      payload: {
+                        ...beforeReceipt,
+                        status: "completed",
+                        completedAt: now,
+                        checkpointId,
+                      },
+                    },
+                  ],
+                });
+              }
+              return yield* commit(input);
+            }),
+          ),
+        ]),
+        () =>
+          orchestrator.dispatch({
+            type: "queued-message.promote-to-steer",
+            commandId: receiptCommandId,
+            threadId,
+            queuedRunId: offeredRun.id,
+            targetRunId: runId,
+            boundaryOffer: { id: "offered-completion", step: "receipt" },
+          }),
+        (spies) =>
+          Effect.sync(() => {
+            for (const spy of spies) spy.mockRestore();
+          }),
+      );
       const received = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(
         received.subagents.find((row) => row.id === child.taskId)?.completionDelivery?.state,
@@ -2863,6 +2926,14 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.deepEqual(
         received.runs.find((run) => run.id === runId)?.delegatedCompletion?.delivery?.taskIds,
         [later.taskId],
+      );
+      const receivedParent = received.runs.find((run) => run.id === runId)!;
+      assert.deepEqual(offeredSuccessors, [
+        receivedParent.delegatedCompletion!.delivery!.messageId,
+      ]);
+      assert.deepEqual(
+        [receivedParent.status, receivedParent.completedAt, receivedParent.checkpointId],
+        ["completed", now, checkpointId],
       );
     }),
   );
@@ -3756,7 +3827,13 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
                   ...providerThread,
                   pendingBackgroundTasks: [
                     ...(open
-                      ? [{ taskId: "sleep-900", kind: "command" as const, awaited: true as const }]
+                      ? [
+                          {
+                            taskId: "sleep-900",
+                            kind: "command" as const,
+                            awaited: true as const,
+                          },
+                        ]
                       : []),
                     { taskId: "log-watcher", kind: "monitor" as const },
                   ],
@@ -3783,7 +3860,12 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
             status: "completed",
             now,
           }),
-          payload: { ...child.run, status: "completed" as const, startedAt: now, completedAt: now },
+          payload: {
+            ...child.run,
+            status: "completed" as const,
+            startedAt: now,
+            completedAt: now,
+          },
         });
 
         const beforeEnd = yield* sink.latestSequence();
