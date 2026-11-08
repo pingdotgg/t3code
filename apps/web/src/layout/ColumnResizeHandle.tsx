@@ -62,7 +62,7 @@ export function snapToPreset(
 const MIN_KEYBOARD_STEP_PX = 12;
 
 /** The first preset in `direction` that moves the edge visibly once clamped, for keyboard resizing. */
-export function stepPreset(
+function stepPreset(
   value: number,
   direction: 1 | -1,
   bounds: { min: number; max: number },

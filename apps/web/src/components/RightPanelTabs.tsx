@@ -50,7 +50,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
@@ -606,7 +606,11 @@ function RightPanelTab(
                     "cursor-pointer flex min-w-0 items-center",
                     active && surface.kind === "diff" && "shrink-0",
                   )}
-                  aria-label={surface.kind === "terminal" && threadTitle ? `${title}, ${threadTitle}` : undefined}
+                  aria-label={
+                    surface.kind === "terminal" && threadTitle
+                      ? `${title}, ${threadTitle}`
+                      : undefined
+                  }
                   onClick={() => onActivate(surface)}
                 >
                   <span

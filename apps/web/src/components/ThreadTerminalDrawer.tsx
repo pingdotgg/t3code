@@ -1996,13 +1996,14 @@ export default function ThreadTerminalDrawer({
       {resizeHandle}
 
       {isPanel ? (
-        inPanelTabBar ? <PanelTabActions>{terminalActions}</PanelTabActions> : (
-
-        <div className="flex h-8 shrink-0 items-center justify-end border-b border-border surface-card px-1.5">
-          {terminalActions}
-        </div>
-
-        )      ) : (
+        inPanelTabBar ? (
+          <PanelTabActions>{terminalActions}</PanelTabActions>
+        ) : (
+          <div className="flex h-8 shrink-0 items-center justify-end border-b border-border surface-card px-1.5">
+            {terminalActions}
+          </div>
+        )
+      ) : (
         // The terminal pane's header (pen bKxd4): one tab per terminal, "+"
         // after the last tab.
         <div
@@ -2112,7 +2113,9 @@ export default function ThreadTerminalDrawer({
                                 type="button"
                                 role="tab"
                                 aria-selected={isActive}
-                                aria-label={[tabTitle, threadTitle, statusLabel].filter(Boolean).join(", ")}
+                                aria-label={[tabTitle, threadTitle, statusLabel]
+                                  .filter(Boolean)
+                                  .join(", ")}
                                 className="flex min-w-0 cursor-pointer items-center rounded-kbd outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring"
                                 onClick={() => onActiveTerminalChange(terminalId)}
                               />

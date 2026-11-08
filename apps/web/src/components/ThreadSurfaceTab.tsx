@@ -22,7 +22,6 @@ import {
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import { FolderX, Unlink2Icon } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
@@ -83,7 +82,8 @@ import {
   useEnvironmentSessionStatus,
 } from "../state/session";
 import { terminalEnvironment } from "../state/terminal";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
+import { knownTerminalSessionsAtom, useKnownTerminalSessions } from "../state/terminalSessions";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
 import type { TerminalContextSelection } from "../lib/terminalContext";
@@ -1001,6 +1001,24 @@ let surfaceServices: {
   endTerminals: (threadRef: ScopedThreadRef, terminalIds: readonly string[]) => void;
 } | null = null;
 
+function readTerminalTabTitles(
+  threadRef: ScopedThreadRef,
+  terminalIds: readonly string[],
+): string[] {
+  const sessions = readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
+    ? appAtomRegistry.get(knownTerminalSessionsAtom(threadRef.environmentId, threadRef.threadId))
+    : null;
+  return terminalIds.map((terminalId) =>
+    terminalTabTitle(
+      terminalId,
+      resolveTerminalSessionLabel(
+        terminalId,
+        sessions?.find((session) => session.target.terminalId === terminalId)?.state.summary,
+      ),
+    ),
+  );
+}
+
 /** Closing a surface ends its resources; cmd+J preserves the thread terminal's shells. */
 export async function closeThreadSurface(
   threadRef: ScopedThreadRef,
@@ -1013,9 +1031,7 @@ export async function closeThreadSurface(
         useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
         threadRef,
       );
-      const [first, ...rest] = terminalIds.map((terminalId) =>
-        terminalTabTitle(terminalId, getTerminalLabel(terminalId)),
-      );
+      const [first, ...rest] = readTerminalTabTitles(threadRef, terminalIds);
       if (first !== undefined) {
         if (!options.bulk && !(await confirmTerminalClose([first, ...rest]))) return;
         surfaceServices?.endTerminals(threadRef, terminalIds);
@@ -1052,9 +1068,7 @@ export async function closeThreadSurface(
     !options.bulk &&
     readEnvironmentScope(threadRef.environmentId, AuthTerminalOperateScope)
   ) {
-    const [first = "Terminal", ...rest] = surface.terminalIds.map((terminalId) =>
-      terminalTabTitle(terminalId, getTerminalLabel(terminalId)),
-    );
+    const [first = "Terminal", ...rest] = readTerminalTabTitles(threadRef, surface.terminalIds);
     if (!(await confirmTerminalClose([first, ...rest]))) return;
   }
   finish();
