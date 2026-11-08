@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import { markdownToSpeechText, splitSpeechText } from "./speechText";
+import { markdownToSpeechText, splitSpeechText } from "@t3tools/shared/speechText";
 
 /**
  * Plays one reply at a time. On the desktop app each piece is synthesized by

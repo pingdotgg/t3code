@@ -167,6 +167,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
+import { ReadAloudButton } from "../read-aloud/ReadAloudButton";
 import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
@@ -2268,6 +2269,14 @@ function renderFeedEntry(
             <CopyTextButton
               accessibilityLabel="Copy message"
               text={renderedText}
+              tintColor={iconSubtleColor}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
+            <ReadAloudButton
+              messageId={message.id}
+              markdown={renderedText}
+              environmentId={props.environmentId}
               tintColor={iconSubtleColor}
               buttonSize={props.replyActionSize.button}
               iconSize={props.replyActionSize.icon}

@@ -503,6 +503,10 @@
       "types": "./src/markdownFrontmatterProperties.ts",
       "import": "./src/markdownFrontmatterProperties.ts"
     },
+    "./speechText": {
+      "types": "./src/speechText.ts",
+      "import": "./src/speechText.ts"
+    },
     "./markdownListIndentation": {
       "types": "./src/markdownListIndentation.ts",
       "import": "./src/markdownListIndentation.ts"

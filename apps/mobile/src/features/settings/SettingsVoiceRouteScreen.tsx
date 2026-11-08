@@ -31,6 +31,7 @@ import {
 } from "../voice-input/voiceDestination";
 import { LocalModelChoice } from "./VoiceModelSection";
 import { CloudVoiceChoice } from "./CloudVoiceSection";
+import { ReadAloudVoiceSection } from "../read-aloud/ReadAloudVoiceSection";
 import type { VoiceGrant } from "../voice-input/voiceGrantStorage";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ThreadSwipeable } from "../home/thread-swipe-actions";
@@ -383,6 +384,14 @@ export function SettingsVoiceRouteScreen() {
             ? " Android may still use a different microphone if the preferred one can’t be routed."
             : null}
         </Text>
+        <ReadAloudVoiceSection
+          environmentId={
+            (
+              environments.find((environment) => environment.connection.phase === "connected") ??
+              environments[0]
+            )?.environmentId ?? null
+          }
+        />
       </ScrollView>
     </SettingsScreen>
   );

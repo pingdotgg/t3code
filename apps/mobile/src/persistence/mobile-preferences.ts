@@ -19,6 +19,7 @@ import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
+import { READ_ALOUD_VOICE_NAME } from "../lib/readAloudVoiceName";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -132,6 +133,8 @@ export interface Preferences {
   readonly workspaceSelections?: WorkspaceSelections;
   // New thread button: "No project" starts a No project thread without the picker.
   readonly newThreadButtonTarget?: NewThreadButtonTarget;
+  // Read aloud: the Edge natural voice the PC's read-aloud server speaks with.
+  readonly readAloudVoice?: string;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -215,6 +218,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     workspaceSelections?: WorkspaceSelections;
     newThreadButtonTarget?: NewThreadButtonTarget;
+    readAloudVoice?: string;
   } = {};
 
   if (Array.isArray(parsed.hiddenNavigationTabs)) {
@@ -372,6 +376,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   // New thread button.
   if (isNewThreadButtonTarget(parsed.newThreadButtonTarget)) {
     preferences.newThreadButtonTarget = parsed.newThreadButtonTarget;
+  }
+  // Read aloud.
+  if (
+    typeof parsed.readAloudVoice === "string" &&
+    READ_ALOUD_VOICE_NAME.test(parsed.readAloudVoice)
+  ) {
+    preferences.readAloudVoice = parsed.readAloudVoice;
   }
   return preferences;
 }

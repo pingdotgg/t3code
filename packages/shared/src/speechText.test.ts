@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { markdownToSpeechText, splitSpeechText } from "./speechText";
+import { markdownToSpeechText, splitSpeechText } from "./speechText.ts";
 
 describe("markdownToSpeechText", () => {
   it("says 'Code block.' instead of reading code", () => {
