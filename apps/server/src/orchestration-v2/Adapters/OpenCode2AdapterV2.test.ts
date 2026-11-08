@@ -903,6 +903,111 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  const SHELL_COMMAND = "sleep 300; echo done";
+  const backgroundShell = (shellID: string): ReadonlyArray<ProviderReplayEntry> => {
+    const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: `call-${shellID}` };
+    return [
+      out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+      promptAccepted,
+      event("session.execution.started", { sessionID: SESSION }),
+      event("session.tool.input.started", { ...tool, name: "shell" }),
+      event("session.tool.called", {
+        ...tool,
+        name: "shell",
+        input: { command: SHELL_COMMAND, background: true },
+        executed: false,
+      }),
+      {
+        type: "emit_inbound",
+        frame: {
+          type: "sdk.event",
+          event: {
+            id: `evt_toolsuccess_${tool.id}`,
+            created: 1,
+            type: "session.tool.success",
+            data: {
+              ...tool,
+              content: [
+                { type: "text", text: `Command moved to the background (shell ID: ${shellID}).` },
+              ],
+              metadata: { status: "running", truncated: false, shellID },
+              executed: false,
+            },
+            durable: { aggregateID: SESSION, seq: 1, version: 2 },
+          },
+        },
+      },
+    ];
+  };
+
+  it.effect("lists a background shell still running after the turn as pending work", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const roster = (yield* Fiber.join(events))
+        .flatMap((event) =>
+          event.type === "provider_thread.updated" && event.providerThread.id === thread.id
+            ? [event.providerThread.pendingBackgroundTasks]
+            : [],
+        )
+        .at(-1);
+      assert.deepEqual(roster ?? [], [
+        { taskId: "sh_1", kind: "command", description: SHELL_COMMAND },
+      ]);
+      assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a running background shell on a user Stop", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...backgroundShell("sh_1"),
+        out("shell.remove", { id: "sh_1" }),
+        reply("shell.remove", null),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        event("session.execution.interrupted", { sessionID: SESSION }),
+      ]);
+      const launched = yield* Deferred.make<void>();
+      const terminal = yield* runtime.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId?.endsWith("call-sh_1") === true &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.output !== undefined
+            ? Deferred.succeed(launched, undefined)
+            : Effect.void,
+        ),
+        Stream.filter(
+          (
+            event,
+          ): event is Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn.terminal" }> =>
+            event.type === "turn.terminal",
+        ),
+        Stream.runHead,
+        Effect.map(Option.getOrUndefined),
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      yield* Deferred.await(launched);
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal((yield* Fiber.join(terminal))?.status, "interrupted");
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("gives a background subagent the rules of a mode changed while it runs", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
