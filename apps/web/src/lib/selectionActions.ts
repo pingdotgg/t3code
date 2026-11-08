@@ -186,6 +186,12 @@ export function observeSelectionActions({
         schedule(0);
       }
     },
+    /** A framed document reports its own finished selection; focus moving into it blurred this window. */
+    selectionReported() {
+      dismissed = false;
+      pointer = null;
+      schedule(0);
+    },
     dispose() {
       cancel();
       document.removeEventListener("pointerdown", onPointerDown, true);

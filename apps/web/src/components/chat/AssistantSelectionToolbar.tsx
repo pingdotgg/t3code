@@ -4,11 +4,13 @@ import {
   type AssistantCitation,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import type { HtmlRenderBox, HtmlRenderSelection } from "@t3tools/shared/htmlRender";
 import { QuoteIcon } from "lucide-react";
 import { use, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   captureAssistantTextSelection,
+  createAssistantTextSelector,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
@@ -17,6 +19,7 @@ import {
   resolveSelectionActionPosition,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
+import { HTML_RENDER_SELECTION_EVENT } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { BackgroundThreadContext } from "./backgroundThread";
 
@@ -27,14 +30,21 @@ export function AssistantSelectionToolbar({
 }: {
   viewport: HTMLElement | null;
   threadRef: ScopedThreadRef;
-  onCite: (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => boolean;
+  onCite: (
+    citation: AssistantCitation,
+    sourceAnchor: AssistantCitationSourceAnchor | undefined,
+  ) => boolean;
 }) {
   const [selection, setSelection] = useState<{
     citation: AssistantCitation;
     position: SelectionActionPoint;
-    sourceAnchor: AssistantCitationSourceAnchor;
+    sourceAnchor: AssistantCitationSourceAnchor | undefined;
   } | null>(null);
   const toolbarRef = useRef<HTMLButtonElement>(null);
+  const frameSelectionRef = useRef<{
+    frame: HTMLIFrameElement;
+    selection: HtmlRenderSelection;
+  } | null>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
   const backgroundThread = use(BackgroundThreadContext);
 
@@ -51,7 +61,53 @@ export function AssistantSelectionToolbar({
   useEffect(() => {
     if (!viewport) return;
     const clear = () => setSelection(null);
+    // A sandboxed frame reports its own selection. The focused document owns the selection,
+    // so that report yields to the host's once focus leaves the frame.
+    const updateFromFrame = () => {
+      const reported = frameSelectionRef.current;
+      if (!reported) return false;
+      const { frame, selection: frameSelection } = reported;
+      const source = frame.closest<HTMLElement>("[data-assistant-citation-source]");
+      const messageId = source?.dataset.assistantCitationSource;
+      if (document.activeElement !== frame || !source || !viewport.contains(source) || !messageId) {
+        frameSelectionRef.current = null;
+        return false;
+      }
+      const frameRect = frame.getBoundingClientRect();
+      const inHost = (box: HtmlRenderBox) => ({
+        left: frameRect.left + box.left,
+        top: frameRect.top + box.top,
+        right: frameRect.left + box.right,
+        bottom: frameRect.top + box.bottom,
+      });
+      const selectionRect = inHost(frameSelection.rect);
+      const viewportRect = viewport.getBoundingClientRect();
+      const selector = createAssistantTextSelector(
+        frameSelection.text,
+        0,
+        frameSelection.text.length,
+      );
+      if (
+        !selector ||
+        !isSelectionRectVisible(inHost(frameSelection.bounds), [frameRect, viewportRect])
+      ) {
+        clear();
+        return true;
+      }
+      setSelection({
+        sourceAnchor: undefined,
+        citation: { version: 1, ...threadRef, messageId: MessageId.make(messageId), ...selector },
+        position: resolveSelectionActionPosition({
+          bounds: viewportRect,
+          selectionRect,
+          pointer: null,
+          viewport: { width: window.innerWidth, height: window.innerHeight },
+        }),
+      });
+      return true;
+    };
     const update = (pointer: SelectionActionPoint | null) => {
+      if (updateFromFrame()) return;
       const nativeSelection = window.getSelection();
       const captured = captureAssistantTextSelection(viewport, nativeSelection);
       const messageId = captured?.source.dataset.assistantCitationSource;
@@ -145,6 +201,19 @@ export function AssistantSelectionToolbar({
       onDismiss: clear,
     });
     actionsRef.current = actions;
+    const onFrameSelection = (event: Event) => {
+      const frame = event.target;
+      if (!(frame instanceof HTMLIFrameElement)) return;
+      const reported = (event as CustomEvent<HtmlRenderSelection | null>).detail;
+      if (reported) {
+        frameSelectionRef.current = { frame, selection: reported };
+        actions.selectionReported();
+      } else if (frameSelectionRef.current?.frame === frame) {
+        frameSelectionRef.current = null;
+        clear();
+      }
+    };
+    viewport.addEventListener(HTML_RENDER_SELECTION_EVENT, onFrameSelection);
     const focusActions = (event: KeyboardEvent) => {
       const toolbar = toolbarRef.current;
       if (
@@ -169,10 +238,12 @@ export function AssistantSelectionToolbar({
     if (!backgroundThread) document.addEventListener("keydown", focusActions, true);
     document.addEventListener("selectionchange", actions.selectionChanged);
     return () => {
+      viewport.removeEventListener(HTML_RENDER_SELECTION_EVENT, onFrameSelection);
       document.removeEventListener("keydown", focusActions, true);
       document.removeEventListener("selectionchange", actions.selectionChanged);
       actions.dispose();
       actionsRef.current = null;
+      frameSelectionRef.current = null;
     };
   }, [backgroundThread, threadRef, viewport]);
 
@@ -180,6 +251,7 @@ export function AssistantSelectionToolbar({
   const tooLong = selection.citation.text.length > ASSISTANT_CITATION_MAX_TEXT_LENGTH;
   const dismiss = () => {
     actionsRef.current?.cancel();
+    frameSelectionRef.current = null;
     setSelection(null);
   };
   const cite = () => {

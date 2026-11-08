@@ -104,11 +104,13 @@ function observeAssistantCitationSource({
   itemKey,
   request,
   list,
+  opaque,
 }: {
   root: HTMLElement;
   itemKey: string;
   request: AssistantCitationTarget;
   list: LegendListRef;
+  opaque: boolean;
 }) {
   const activation = request.activationRef.current;
   if (activation.dismissed) return;
@@ -163,7 +165,7 @@ function observeAssistantCitationSource({
     const state = list.getState();
     const index = state.indexByKey(itemKey);
     if (index === undefined || !(state.sizeAtIndex(index) > 0)) return;
-    const range = resolveAssistantCitationRange(root, request.citation);
+    const range = opaque ? null : resolveAssistantCitationRange(root, request.citation);
     const rect = (range ?? root).getBoundingClientRect();
     if (rect.height <= 0 || scrollNode.clientHeight <= 0) {
       clear();
@@ -212,7 +214,7 @@ function observeAssistantCitationSource({
       ) {
         root.focus({ preventScroll: true });
       }
-      if (!range) {
+      if (!range && !opaque) {
         toastManager.add({
           type: "warning",
           title: "The quoted text has changed",
@@ -346,6 +348,7 @@ export function AssistantCitationSource({
   itemKey,
   request,
   listRef,
+  opaque = false,
   children,
 }: {
   messageId: MessageId;
@@ -353,6 +356,8 @@ export function AssistantCitationSource({
   itemKey: string;
   request: AssistantCitationTarget | null;
   listRef: RefObject<LegendListRef | null>;
+  /** The source's text sits in a sandboxed frame, so navigation reveals the row without a range. */
+  opaque?: boolean;
   children: ReactNode;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -361,8 +366,8 @@ export function AssistantCitationSource({
     const root = rootRef.current;
     const list = listRef.current;
     if (!root || !list || !request || request.citation.messageId !== messageId) return;
-    return observeAssistantCitationSource({ root, itemKey, request, list });
-  }, [itemKey, listRef, messageId, request]);
+    return observeAssistantCitationSource({ root, itemKey, request, list, opaque });
+  }, [itemKey, listRef, messageId, opaque, request]);
 
   return (
     <div

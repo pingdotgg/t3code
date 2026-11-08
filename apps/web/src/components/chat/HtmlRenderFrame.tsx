@@ -117,7 +117,7 @@ export function HtmlRenderFrame(props: {
           ) : null}
         </>
       ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
+        <p className="flex size-full select-none items-center justify-center text-muted-foreground text-xs">
           Unable to load {title}
         </p>
       ) : null}
