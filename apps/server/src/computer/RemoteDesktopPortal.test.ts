@@ -20,7 +20,7 @@ const streams = [
 ];
 
 /** Answers like xdg-desktop-portal, including a Response that beats its method reply. */
-const makeFakeBus = (start: StartAnswer) =>
+const makeFakeBus = (start: StartAnswer, startStreams: ReadonlyArray<unknown> = streams) =>
   Effect.gen(function* () {
     const startCalled = yield* Deferred.make<void>();
     const calls: Array<Message> = [];
@@ -80,7 +80,7 @@ const makeFakeBus = (start: StartAnswer) =>
               if (start === "cancel") return respond(handle, 1, {});
               respond(handle, 0, {
                 devices: new Variant("u", start === "keyboard-only" ? 1 : 3),
-                streams: new Variant("a(ua{sv})", streams),
+                streams: new Variant("a(ua{sv})", startStreams),
                 restore_token: new Variant("s", "restore-2"),
               });
             });
@@ -172,6 +172,23 @@ describe("RemoteDesktopPortal", () => {
       const fake = yield* makeFakeBus("keyboard-only");
       const error = yield* Effect.flip(openRemoteDesktop(fake.bus, options));
       expect(error).toMatchObject({ _tag: "PortalConsentError", outcome: "denied" });
+      expect(fake.isDisconnected()).toBe(true);
+    }),
+  );
+
+  it.effect.each([
+    ["no position", { size: new Variant("(ii)", [2560, 1440]) }],
+    [
+      "a malformed position",
+      { position: new Variant("(i)", [2560]), size: new Variant("(ii)", [2560, 1440]) },
+    ],
+  ])("refuses a shared screen with %s rather than guessing where it is", ([, geometry]) =>
+    Effect.gen(function* () {
+      // Guessing the origin would line this stream up with the unshared screen there.
+      const fake = yield* makeFakeBus("allow", [[51, geometry], streams[1]]);
+      const error = yield* Effect.flip(openRemoteDesktop(fake.bus, options));
+      expect(error).toMatchObject({ _tag: "PortalUnsupportedError" });
+      expect(fake.sent.map(member)).toEqual(["org.freedesktop.portal.Session.Close"]);
       expect(fake.isDisconnected()).toBe(true);
     }),
   );

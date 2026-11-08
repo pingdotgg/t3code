@@ -129,17 +129,24 @@ const parsePair = (value: unknown): readonly [number, number] | undefined => {
   return first === undefined || second === undefined ? undefined : [first, second];
 };
 
-/** `streams` from a Start response: `a(ua{sv})` with logical `position` and `size`. */
-const parseStreams = (value: unknown): ReadonlyArray<PortalStream> => {
+/**
+ * `streams` from a Start response: `a(ua{sv})` with logical `position` and `size`, or null when
+ * any stream lacks either. The spec makes both optional, and a guessed position could line a
+ * stream up with a screen the user did not share.
+ */
+const parseStreams = (value: unknown): ReadonlyArray<PortalStream> | null => {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((entry: unknown) => {
-    if (!Array.isArray(entry) || entry.length !== 2) return [];
+  const streams: Array<PortalStream> = [];
+  for (const entry of value) {
+    if (!Array.isArray(entry) || entry.length !== 2) return null;
     const nodeId = asNumber(entry[0]);
+    const position = parsePair(variantValue(entry[1], "position"));
     const size = parsePair(variantValue(entry[1], "size"));
-    if (nodeId === undefined || size === undefined || size[0] <= 0 || size[1] <= 0) return [];
-    const position = parsePair(variantValue(entry[1], "position")) ?? [0, 0];
-    return [{ nodeId, x: position[0], y: position[1], width: size[0], height: size[1] }];
-  });
+    if (nodeId === undefined || position === undefined || size === undefined) return null;
+    if (size[0] <= 0 || size[1] <= 0) return null;
+    streams.push({ nodeId, x: position[0], y: position[1], width: size[0], height: size[1] });
+  }
+  return streams;
 };
 
 type MessageInit = ConstructorParameters<typeof Message>[0];
@@ -412,6 +419,12 @@ export const openRemoteDesktop = Effect.fn("RemoteDesktopPortal.open")(function*
     );
     const devices = asNumber(variantValue(started, "devices")) ?? 0;
     const streams = parseStreams(variantValue(started, "streams"));
+    if (streams === null) {
+      return yield* new PortalUnsupportedError({
+        reason:
+          "The desktop portal shared a screen without saying where it is, so clicks could not be placed on it.",
+      });
+    }
     if ((devices & KEYBOARD_AND_POINTER) !== KEYBOARD_AND_POINTER || streams.length === 0) {
       // The user turned off keyboard or pointer control, or shared no screen.
       return yield* new PortalConsentError({ outcome: "denied" });
