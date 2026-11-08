@@ -163,6 +163,46 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("preserves send failures and still reaches later windows", () =>
+    Effect.gen(function* () {
+      const cause = new Error("Render frame was disposed");
+      const window = {
+        id: 45,
+        isDestroyed: () => false,
+        webContents: {
+          send: vi.fn(() => {
+            throw cause;
+          }),
+        },
+      } as unknown as Electron.BrowserWindow;
+      const laterWindow = {
+        id: 46,
+        isDestroyed: () => false,
+        webContents: { send: vi.fn() },
+      } as unknown as Electron.BrowserWindow;
+      getAllWindowsMock.mockReturnValue([window, laterWindow]);
+
+      const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const exit = yield* Effect.exit(electronWindow.sendAll("desktop:system-wake"));
+
+      assert.equal(exit._tag, "Failure");
+      if (exit._tag === "Failure") {
+        const error = Cause.squash(exit.cause);
+        assert.instanceOf(error, ElectronWindow.ElectronWindowOperationError);
+        assert.equal(error.operation, "send-window-message");
+        assert.equal(error.windowId, 45);
+        assert.equal(error.channel, "desktop:system-wake");
+        assert.strictEqual(error.cause, cause);
+      }
+      assert.deepEqual(vi.mocked(laterWindow.webContents.send).mock.calls, [
+        ["desktop:system-wake"],
+      ]);
+
+      yield* Effect.exit(electronWindow.sendAll("desktop:system-wake"));
+      assert.equal(vi.mocked(laterWindow.webContents.send).mock.calls.length, 2);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("never falls back to an auxiliary window as the main window", () =>
     Effect.gen(function* () {
       const electronWindow = yield* ElectronWindow.ElectronWindow;

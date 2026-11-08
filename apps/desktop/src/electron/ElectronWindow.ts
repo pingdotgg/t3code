@@ -340,6 +340,7 @@ export const make = Effect.gen(function* () {
     sendAll:
       /* Window broadcasts run for streamed updates; avoid a span per broadcast. */
       Effect.fnUntraced(function* (channel, ...args) {
+        let firstFailure: ElectronWindowOperationError | undefined;
         for (const window of yield* listWindows) {
           if (yield* isWindowDestroyed(window)) {
             continue;
@@ -354,7 +355,16 @@ export const make = Effect.gen(function* () {
                 channel,
                 cause,
               }),
-          }).pipe(Effect.orDie);
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.sync(() => {
+                firstFailure ??= error;
+              }),
+            ),
+          );
+        }
+        if (firstFailure !== undefined) {
+          return yield* Effect.die(firstFailure);
         }
       }),
     destroyAll: Effect.gen(function* () {
