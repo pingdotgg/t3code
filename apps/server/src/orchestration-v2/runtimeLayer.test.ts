@@ -7635,6 +7635,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             },
           ],
         });
+        if (!retryReportsReset) {
+          const snoozedUntil = (yield* orchestrator.getThreadProjection(threadId)).thread
+            .snoozedUntil;
+          assert.equal(DateTime.toEpochMillis(snoozedUntil!), Date.parse(resetAt));
+        }
         yield* sweep(reading(checkedNow, 0));
         const resumed = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(resumed.runs, 2);

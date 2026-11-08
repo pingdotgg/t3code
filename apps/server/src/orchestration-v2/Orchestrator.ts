@@ -821,7 +821,7 @@ function limitRecoveryOwnsSnooze(thread: LimitRecoverySnooze): boolean {
   );
 }
 
-// The recovery's own snooze ends when the thread resumes early; one the user set stays.
+// The recovery's own snooze ends when the thread resumes early; a snooze the user set stays.
 export function snoozeHoldsLimitRecovery(thread: LimitRecoverySnooze, nowMs: number): boolean {
   return (
     thread.snoozedUntil != null &&
