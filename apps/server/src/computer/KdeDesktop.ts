@@ -53,7 +53,6 @@ const KscreenOutputs = Schema.fromJsonString(
         pos: Schema.Struct({ x: Schema.Number, y: Schema.Number }),
         size: Schema.Struct({ width: Schema.Number, height: Schema.Number }),
         scale: Schema.Number,
-        rotation: Schema.Number,
       }),
     ),
   }),
@@ -61,23 +60,20 @@ const KscreenOutputs = Schema.fromJsonString(
 
 const decodeKscreenOutputs = Schema.decodeUnknownOption(KscreenOutputs);
 
-/** Logical screen layout from `kscreen-doctor -j`, whose sizes are mode pixels. */
+/**
+ * Logical screen layout from `kscreen-doctor -j`. Its `size` is mode pixels that libkscreen has
+ * already turned for the output's rotation, so dividing by the scale gives the logical size.
+ */
 export const desktopLayoutFromKscreen = (json: string): DesktopLayout | null => {
   const outputs = decodeKscreenOutputs(json);
   if (outputs._tag === "None") return null;
   const enabled = outputs.value.outputs.filter((output) => output.enabled && output.scale > 0);
-  const screens = enabled.map((output) => {
-    // libkscreen rotations: 2 is left and 8 is right, which swap the sides.
-    const turned = output.rotation === 2 || output.rotation === 8;
-    const width = turned ? output.size.height : output.size.width;
-    const height = turned ? output.size.width : output.size.height;
-    return {
-      x: output.pos.x,
-      y: output.pos.y,
-      width: Math.round(width / output.scale),
-      height: Math.round(height / output.scale),
-    };
-  });
+  const screens = enabled.map((output) => ({
+    x: output.pos.x,
+    y: output.pos.y,
+    width: Math.round(output.size.width / output.scale),
+    height: Math.round(output.size.height / output.scale),
+  }));
   if (screens.length === 0) return null;
   const left = Math.min(...screens.map((screen) => screen.x));
   const top = Math.min(...screens.map((screen) => screen.y));

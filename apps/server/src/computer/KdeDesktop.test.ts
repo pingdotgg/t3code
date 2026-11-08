@@ -57,10 +57,10 @@ describe("desktopLayoutFromKscreen", () => {
         ],
       },
     ],
-    // A 4K panel at 2x is 1920x1080 logical; turned right it stands 1080 wide.
+    // libkscreen reports `size` already turned, so a 4K panel turned right at 2x is 2160x3840.
     [
       "a scaled, rotated screen",
-      [output(0, 0, 2560, 1440), output(2560, 0, 3840, 2160, { scale: 2, rotation: 8 })],
+      [output(0, 0, 2560, 1440), output(2560, 0, 2160, 3840, { scale: 2, rotation: 8 })],
       {
         bounds: { x: 0, y: 0, width: 3640, height: 1920 },
         scale: 2,
