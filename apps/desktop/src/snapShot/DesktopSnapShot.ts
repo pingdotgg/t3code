@@ -124,7 +124,6 @@ const MAC_PERMISSION_MESSAGES = new Set([
 const decodePendingCapture = Schema.decodeUnknownEffect(DesktopPendingSnapShot);
 const decodeSnapShotContext = Schema.decodeUnknownEffect(DesktopSnapShotContext);
 const CONTEXT_PENDING = Symbol("context-pending");
-const MAX_PENDING_CONTEXTS = 8;
 
 const PendingCaptureJson = Schema.fromJsonString(DesktopPendingSnapShot);
 const decodePendingCaptureJson = Schema.decodeEffect(PendingCaptureJson);
@@ -1035,14 +1034,11 @@ export const make = Effect.gen(function* () {
       );
       yield* fileSystem.rename(metadataPath + ".tmp", metadataPath);
       if (contextPending) {
+        // Held until the renderer reads it or the capture is discarded.
         pendingContexts.set(
           id,
           contextPromise.catch(() => undefined),
         );
-        for (const staleId of pendingContexts.keys()) {
-          if (pendingContexts.size <= MAX_PENDING_CONTEXTS) break;
-          pendingContexts.delete(staleId);
-        }
       }
     }).pipe(Effect.mapError((cause) => captureFailure(cause, id)));
   });

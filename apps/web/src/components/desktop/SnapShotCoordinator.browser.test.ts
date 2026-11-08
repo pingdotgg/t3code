@@ -265,6 +265,7 @@ describe("durable snapshot delivery", () => {
   it("lands a capture before its window text and holds sends until the text fills in", async () => {
     using _env = setup();
     const target = scopeThreadRef(environmentId, ThreadId.make("pending-text-thread"));
+    let current = target;
     const capture = {
       id: "12345678-1234-1234-1234-123456789abc",
       name: "window.png",
@@ -289,7 +290,8 @@ describe("durable snapshot delivery", () => {
       acknowledgeSnapShot: vi.fn(async () => undefined),
     } as unknown as DesktopBridge;
 
-    await deliverSnapShot(bridge, capture, () => target);
+    await deliverSnapShot(bridge, capture, () => current);
+    current = scopeThreadRef(environmentId, ThreadId.make("opened-after-landing"));
     const landed = useComposerDraftStore.getState().getComposerDraft(target);
     expect(landed?.images.map(({ id, source }) => [id, source?.accessibleText])).toEqual([
       [capture.id, undefined],
