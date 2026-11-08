@@ -193,6 +193,7 @@ function PairingForm({
       <ScrollView
         nestedScrollEnabled
         contentInsetAdjustmentBehavior="automatic"
+        automaticallyAdjustKeyboardInsets
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className="flex-1"
