@@ -79,6 +79,7 @@ import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
+import * as AcpRegistrySessions from "./provider/AcpRegistrySessions.ts";
 import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
@@ -549,6 +550,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ProjectEnrichment.ProjectEnrichmentService)({}),
   Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({}),
   Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({}),
+  Layer.mock(AcpRegistrySessions.AcpRegistrySessions)({}),
   Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
   Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
   Layer.mock(AnalyticsService.AnalyticsService)({}),
@@ -1195,7 +1197,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           }),
       },
     } as unknown as ProviderInstance;
-    const services = Layer.mergeAll(
+    const dependencies = Layer.mergeAll(
       layerUnusedConfigRpcServices,
       Layer.fresh(layerConfigSources),
       Layer.mock(ExternalLauncher.ExternalLauncher)({}),
@@ -1247,6 +1249,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
               : Effect.sync(() => repaired.push(threadId)).pipe(Effect.as(1)),
       }),
     );
+    const services = AcpRegistrySessions.layer.pipe(Layer.provideMerge(dependencies));
     const client = yield* RpcTest.makeClient(acpSessionRpcs).pipe(
       Effect.provide(
         layerWsRpc(
