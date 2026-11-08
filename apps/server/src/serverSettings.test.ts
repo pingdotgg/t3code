@@ -1,6 +1,9 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
+  type ManagedPolicyDocument,
   ModelSelection,
   ProjectId,
   ProjectScript,
@@ -24,6 +27,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SchemaAST from "effect/SchemaAST";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import { sourceControlHostSecretName } from "./sourceControl/sourceControlHostSecrets.ts";
@@ -31,15 +35,18 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { SECRET_REDACTED } from "./settingsSecrets.ts";
+import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
 
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 const decodeServerSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 
-const layerServerSettings = () =>
+const layerServerSettings = (policy?: ManagedPolicyDocument) =>
   ServerSettingsModule.layer.pipe(
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest(policy)),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -53,6 +60,7 @@ const layerServerSettings = () =>
 const layerServerSettingsWithSecrets = () =>
   ServerSettingsModule.layer.pipe(
     Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provide(ManagedPolicy.layerTest()),
     Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
     Layer.provideMerge(
       Layer.fresh(
@@ -96,7 +104,37 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
     `;
   });
 
-it.layer(NodeServices.layer)("server settings", (it) => {
+/** Paths of fields typed `SettingsSecretValue` that clients decode with the settings schema itself. */
+function strictSecretReferencePaths(
+  ast: SchemaAST.AST,
+  path = "",
+  seen = new Set<SchemaAST.AST>(),
+): ReadonlyArray<string> {
+  if (seen.has(ast)) return [];
+  seen.add(ast);
+  const walk = (type: SchemaAST.AST, at: string): ReadonlyArray<string> =>
+    type.context?.annotations?.settingsSecretReference === true
+      ? [at]
+      : strictSecretReferencePaths(type, `${at}.`, seen);
+  if (SchemaAST.isObjects(ast)) {
+    return [
+      ...ast.propertySignatures.flatMap((property) =>
+        walk(property.type, `${path}${String(property.name)}`),
+      ),
+      ...ast.indexSignatures.flatMap((signature) => walk(signature.type, `${path}*`)),
+    ];
+  }
+  if (SchemaAST.isArrays(ast)) {
+    return [...ast.elements, ...ast.rest].flatMap((element) => walk(element, `${path}[]`));
+  }
+  if (SchemaAST.isUnion(ast)) {
+    return ast.types.flatMap((member) => strictSecretReferencePaths(member, path, seen));
+  }
+  if (SchemaAST.isSuspend(ast)) return strictSecretReferencePaths(ast.thunk(), path, seen);
+  return [];
+}
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings", (it) => {
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;
@@ -272,7 +310,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         },
       });
       assert.deepStrictEqual<unknown>(
-        ServerSettingsModule.redactServerSettingsForClient(settings).secretProviders,
+        ServerSettingsModule.redactServerSettingsForClient(settings, { secretReferences: true })
+          .secretProviders,
         {
           personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
           vault: { kind: "openbao", label: "Vault" },
@@ -1084,6 +1123,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Layer.provide(ServerSecretStore.layer));
     const layerSettings = ServerSettingsModule.layer.pipe(
       Layer.provide(layerSecret),
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
         Layer.fresh(
@@ -1130,6 +1170,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       })),
     ).pipe(Layer.provide(ServerSecretStore.layer));
     const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provide(layerSecret),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
@@ -1232,7 +1273,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         return yield* fresh.getSettings;
       }).pipe(
         Effect.provide(
-          Layer.fresh(ServerSettingsModule.layer).pipe(Layer.provide(ServerSecretStore.layer)),
+          Layer.fresh(ServerSettingsModule.layer).pipe(
+            Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
+          ),
         ),
       );
       assert.equal(reloaded.providerInstances[instanceId]?.environment?.[0]?.value, expected);
@@ -1321,7 +1364,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           "quota-secret",
           "expo-secret",
         ];
-        const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+        const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
+          secretReferences: true,
+        });
         const disk = yield* fs.readFileString(config.settingsPath);
         for (const value of values) {
           assert.include(JSON.stringify(saved), value);
@@ -1355,7 +1400,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             instance: { ...client.providerInstances[instanceId]!, config: { apiKey } },
           });
           assert.propertyVal(changed.providerInstances[instanceId]?.config, "apiKey", apiKey);
-          const redacted = ServerSettingsModule.redactServerSettingsForClient(changed);
+          const redacted = ServerSettingsModule.redactServerSettingsForClient(changed, {
+            secretReferences: true,
+          });
           assert.propertyVal(
             redacted.providerInstances[instanceId]?.config,
             "apiKey",
@@ -1404,9 +1451,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         });
         assert.isTrue(Option.isNone(yield* store.get(secretNames[1]!)));
         assert.deepEqual(
-          ServerSettingsModule.redactServerSettingsForClient(referenced).providerInstances[
-            instanceId
-          ]?.environment,
+          ServerSettingsModule.redactServerSettingsForClient(referenced, { secretReferences: true })
+            .providerInstances[instanceId]?.environment,
           [{ name: "API_TOKEN", value: secret, sensitive: true }],
         );
         yield* service.updateSettings({
@@ -1453,7 +1499,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         "serverPassword",
         "legacy-password",
       );
-      const client = ServerSettingsModule.redactServerSettingsForClient(saved);
+      const client = ServerSettingsModule.redactServerSettingsForClient(saved, {
+        secretReferences: true,
+      });
       for (const value of ["legacy-api-key", "legacy-password"]) {
         assert.notInclude(yield* fs.readFileString(config.settingsPath), value);
         assert.notInclude(JSON.stringify(client), value);
@@ -1497,8 +1545,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         for (const secret of ["bb-access", "ghp_dotcom", "ghp_ghe"]) assert.notInclude(raw, secret);
         assert.include(raw, "me@example.com");
 
-        const forClient =
-          ServerSettingsModule.redactServerSettingsForClient(saved).sourceControlHosts;
+        const forClient = ServerSettingsModule.redactServerSettingsForClient(saved, {
+          secretReferences: true,
+        }).sourceControlHosts;
         assert.equal(forClient.bitbucket?.email, "me@example.com");
         assert.notInclude(String(forClient.bitbucket?.accessToken), "bb-access");
         assert.isAbove(String(forClient.bitbucket?.accessToken).length, 0);
@@ -1538,21 +1587,241 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Bitbucket/token",
         };
+        const gitHubReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/GitHub/token",
+        };
         yield* serverSettings.updateSettings({
-          sourceControlHosts: { bitbucket: { accessToken: "bb-access" } },
+          sourceControlHosts: {
+            bitbucket: { accessToken: "bb-access" },
+            github: { tokens: { "github.com": "ghp_dotcom", "ghe.acme.test": "ghp_ghe" } },
+          },
         });
         assert.isTrue(Option.isSome(yield* stored("bitbucket", "accessToken", null)));
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "github.com")));
         const referenced = yield* serverSettings.updateSettings({
-          sourceControlHosts: { bitbucket: { accessToken: reference } },
+          sourceControlHosts: {
+            bitbucket: { accessToken: reference },
+            github: { tokens: { "github.com": gitHubReference, "ghe.acme.test": "ghp_ghe" } },
+          },
         });
         assert.deepEqual(referenced.sourceControlHosts.bitbucket?.accessToken, reference);
         assert.isTrue(Option.isNone(yield* stored("bitbucket", "accessToken", null)));
-        assert.deepEqual(
-          ServerSettingsModule.redactServerSettingsForClient(referenced).sourceControlHosts
-            .bitbucket?.accessToken,
-          reference,
-        );
+        assert.isTrue(Option.isNone(yield* stored("github", "tokens", "github.com")));
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
+        const redacted = ServerSettingsModule.redactServerSettingsForClient(referenced, {
+          secretReferences: true,
+        }).sourceControlHosts;
+        assert.deepEqual(redacted.bitbucket?.accessToken, reference);
+        const tokens = redacted.github?.tokens as Record<string, unknown>;
+        assert.deepEqual(tokens["github.com"], gitHubReference);
+        assert.notEqual(tokens["ghe.acme.test"], "ghp_ghe");
+
+        // A client that cannot decode references sees saved secrets and can send them back.
+        const usageReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Hub/key",
+        };
+        const easReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Expo/token",
+        };
+        const simlockReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Simlock/token",
+        };
+        const antigravityReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Gemini/key",
+        };
+        const openCodeReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/OpenCode/password",
+        };
+        const antigravity = ProviderInstanceId.make("antigravity");
+        const openCode = ProviderInstanceId.make("opencode");
+        const hub = UsageLimitSourceId.make("hub");
+        const withUsage = yield* serverSettings.updateSettings({
+          cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
+          usageLimitSources: {
+            [hub]: {
+              kind: "cliproxy",
+              url: "https://hub.test",
+              managementKey: usageReference,
+              enabled: true,
+            },
+          },
+          easDeviceHosts: [
+            {
+              kind: "eas",
+              id: "eas",
+              label: "EAS Simulator",
+              accessToken: easReference,
+              maxSessionMinutes: 30,
+              idleMinutes: 10,
+              maxConcurrentSessions: 2,
+            },
+          ],
+          simlockDeviceHosts: [
+            {
+              kind: "simlock",
+              id: "pool",
+              label: "Device pool",
+              gatewayUrl: "https://simlock.test:4700",
+              agentToken: simlockReference,
+              maxLeases: 2,
+              maxLeaseMinutes: 60,
+            },
+          ],
+          providerInstances: {
+            [antigravity]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { authMethod: "gemini-api-key", apiKey: antigravityReference },
+            },
+            [openCode]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverUrl: "http://127.0.0.1:4096", serverPassword: openCodeReference },
+            },
+          },
+        });
+        const legacy = ServerSettingsModule.redactServerSettingsForClient(withUsage, {
+          secretReferences: false,
+        });
+        assert.notInclude(JSON.stringify(legacy), "op://");
+        assert.deepEqual(legacy.cloudSpeechCredentials, {
+          openai: SECRET_REDACTED,
+          xai: SECRET_REDACTED,
+          openrouter: "",
+        });
+        assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
+        assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
+        assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
+        assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
+          settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
+        assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
+        assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
+        const echoed = yield* serverSettings.updateSettings({
+          cloudSpeechCredentials: legacy.cloudSpeechCredentials,
+          sourceControlHosts: legacy.sourceControlHosts,
+          usageLimitSources: legacy.usageLimitSources,
+          easDeviceHosts: legacy.easDeviceHosts,
+          simlockDeviceHosts: legacy.simlockDeviceHosts,
+          providerInstances: legacy.providerInstances,
+        });
+        assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
+        assert.deepEqual(echoed.sourceControlHosts.github?.tokens, {
+          "github.com": gitHubReference,
+          "ghe.acme.test": "ghp_ghe",
+        });
+        assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.deepEqual(echoed.cloudSpeechCredentials, {
+          openai: usageReference,
+          xai: "literal-fixture",
+          openrouter: "",
+        });
+        assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
+        assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
+        assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
+        assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("removing a secret provider unsets every field that read from it", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const personal = (reference: string) => ({
+        provider: SecretProviderId.make("personal"),
+        reference: `op://Private/${reference}`,
+      });
+      const work = { provider: SecretProviderId.make("work"), reference: "op://Work/token" };
+      const instanceId = ProviderInstanceId.make("antigravity_refs");
+      const hub = UsageLimitSourceId.make("hub");
+      yield* decodeServerSettingsPatch({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          work: { kind: "one_password", label: "Work", config: { account: "work" } },
+        },
+      }).pipe(Effect.flatMap(service.updateSettings));
+      yield* service.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            environment: [
+              { name: "API_TOKEN", value: personal("Antigravity/env"), sensitive: true },
+              { name: "WORK_TOKEN", value: work, sensitive: true },
+              { name: "PLAIN", value: "kept", sensitive: false },
+            ],
+          },
+        },
+        sourceControlHosts: {
+          bitbucket: { accessToken: personal("Bitbucket/token") },
+          github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
+        },
+        cloudSpeechCredentials: { openai: personal("Voice/key"), xai: work },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: personal("Hub/key"),
+            enabled: true,
+          },
+        },
+        easDeviceHosts: [
+          {
+            kind: "eas",
+            id: "eas",
+            label: "EAS Simulator",
+            accessToken: personal("Expo/token"),
+            maxSessionMinutes: 30,
+            idleMinutes: 10,
+            maxConcurrentSessions: 2,
+          },
+        ],
+      });
+
+      // An older client's save echoes a reference it cannot decode as the redacted marker.
+      const removed = yield* service.updateSettings({
+        secretProviders: { [SecretProviderId.make("personal")]: null },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: SECRET_REDACTED,
+            enabled: true,
+          },
+        },
+      });
+      assert.notInclude(JSON.stringify(removed), "op://Private");
+      assert.deepEqual(removed.providerInstances[instanceId]?.environment, [
+        { name: "WORK_TOKEN", value: work, sensitive: true },
+        { name: "PLAIN", value: "kept", sensitive: false },
+      ]);
+      assert.equal(removed.sourceControlHosts.bitbucket?.accessToken, "");
+      assert.deepEqual(removed.sourceControlHosts.github?.tokens, {
+        "github.com": "",
+        "ghe.acme.test": work,
+      });
+      assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
+      assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
+      assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("knows every strictly decoded field that can hold a secret reference", () =>
+    Effect.sync(() => {
+      // Shipped clients decode these as strings. Each must be covered by the older-client case above.
+      assert.deepEqual(strictSecretReferencePaths(ServerSettings.ast), [
+        "cloudSpeechCredentials.openai",
+        "cloudSpeechCredentials.xai",
+        "cloudSpeechCredentials.openrouter",
+        "easDeviceHosts.[].accessToken",
+        "simlockDeviceHosts.[].agentToken",
+        "usageLimitSources.*.managementKey",
+      ]);
+    }),
   );
 
   it.effect("keeps the retired keys for another load when a token cannot be copied", () => {
@@ -1567,6 +1836,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
     });
     const layerSettings = ServerSettingsModule.layer.pipe(
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provide(layerFailingSecretStore(cause)),
       Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
       Layer.provideMerge(
@@ -1823,6 +2093,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         }),
       );
       const layerSettings = ServerSettingsModule.layer.pipe(
+        Layer.provide(ManagedPolicy.layerTest()),
+        Layer.provide(ManagedPolicy.layerTest()),
         Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
         Layer.provide(layerSecretStore),
         Layer.provideMerge(
@@ -1984,3 +2256,710 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettings())),
   );
 });
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "server settings under a managed policy",
+  (it) => {
+    const policy: ManagedPolicyDocument = {
+      schemaVersion: 1,
+      organization: "Example Corp",
+      settings: {
+        defaultRuntimeMode: { value: "approval-required", locked: false },
+        enableAgentDeviceAccess: { value: false, locked: true },
+      },
+    };
+
+    it.effect("uses policy defaults until the user picks something else", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+
+        assert.equal((yield* service.getSettings).defaultRuntimeMode, "approval-required");
+
+        // The built-in default differs from the policy's, so choosing it must persist.
+        yield* service.updateSettings({ defaultRuntimeMode: "full-access" });
+        assert.equal((yield* service.getSettings).defaultRuntimeMode, "full-access");
+        assert.include(yield* fs.readFileString(config.settingsPath), '"full-access"');
+
+        // Choosing the policy's value leaves nothing in the file to outlive the policy.
+        yield* service.updateSettings({ defaultRuntimeMode: "approval-required" });
+        assert.notInclude(yield* fs.readFileString(config.settingsPath), "defaultRuntimeMode");
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+
+    it.effect("keeps a stored value that equals a policy default through unrelated writes", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({ defaultRuntimeMode: "approval-required" }),
+        );
+
+        yield* service.updateSettings({ defaultAutoPull: true });
+        assert.include(yield* fs.readFileString(config.settingsPath), '"approval-required"');
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+
+    it.effect("keeps stored values under whole-object policy defaults, and only the user's", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const selection = {
+          ...DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+          model: "managed",
+        };
+        const chosenModel = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-mini" };
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            storageCleanup: { logsAfterDays: 30, browserArtifactsAfterDays: 7 },
+            textGenerationModelSelection: selection,
+          }),
+        );
+
+        // Picking another model on the policy's instance differs from the policy in one field only.
+        yield* service.updateSettings({
+          defaultAutoPull: true,
+          defaultModelSelection: chosenModel,
+        });
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.deepEqual(stored.storageCleanup, {
+          logsAfterDays: 30,
+          browserArtifactsAfterDays: 7,
+        });
+        // Model selections are saved whole, never as the fields that differ from the policy's.
+        assert.deepEqual(stored.textGenerationModelSelection, selection);
+        assert.deepEqual(stored.defaultModelSelection, chosenModel);
+        // The switch the server derives from the policy's idle compaction stays out of the file.
+        assert.notProperty(stored, "compactIdleThreads");
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: {
+              storageCleanup: {
+                value: { ...DEFAULT_SERVER_SETTINGS.storageCleanup, logsAfterDays: 30 },
+                locked: false,
+              },
+              "textGenerationModelSelection.model": { value: "managed", locked: false },
+              defaultModelSelection: {
+                value: { instanceId: "codex", model: "gpt-managed" },
+                locked: false,
+              },
+              idleCompaction: { value: "beforeCacheExpires", locked: false },
+            },
+          }),
+        ),
+      ),
+    );
+
+    it.effect(
+      "keeps an idle compaction choice saved before idleCompaction over a policy default",
+      () =>
+        // The file holds only the legacy switch: off differs from the policy's default, on matches it.
+        Effect.forEach([false, true], (compactIdleThreads) =>
+          Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const config = yield* ServerConfig.ServerConfig;
+            const fs = yield* FileSystem.FileSystem;
+            const chosen = compactIdleThreads ? "beforeCacheExpires" : "onReturn";
+            yield* fs.writeFileString(config.settingsPath, JSON.stringify({ compactIdleThreads }));
+
+            assert.equal((yield* service.getSettings).idleCompaction, chosen);
+            yield* service.updateSettings({ defaultAutoPull: true });
+            // What applies once the policy is gone is still the user's choice.
+            const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+            assert.equal(globalIdleCompaction(stored), chosen);
+          }).pipe(
+            Effect.provide(
+              layerServerSettings({
+                schemaVersion: 1,
+                organization: "Example Corp",
+                settings: { idleCompaction: { value: "beforeCacheExpires", locked: false } },
+              }),
+            ),
+          ),
+        ),
+    );
+
+    it.effect("lays locks over the user's own and per-project values without persisting them", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const projectId = ProjectId.make("project-locked");
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            enableAgentDeviceAccess: true,
+            projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+          }),
+        );
+
+        const settings = yield* service.getSettings;
+        assert.isFalse(settings.enableAgentDeviceAccess);
+        assert.isFalse(settings.projectSettingsOverrides[projectId]?.enableAgentDeviceAccess);
+        assert.deepEqual(service.managedPolicy, {
+          organization: "Example Corp",
+          lockedSettings: ["enableAgentDeviceAccess"],
+        });
+
+        const rejected = yield* service
+          .updateSettings({ enableAgentDeviceAccess: true, defaultAutoPull: true })
+          .pipe(Effect.flip);
+        assert.equal(rejected.operation, "write-managed-setting");
+        assert.equal(rejected.managedSetting, "enableAgentDeviceAccess");
+        assert.equal(
+          rejected.message,
+          "enableAgentDeviceAccess is managed by Example Corp and cannot be changed.",
+        );
+        assert.isFalse((yield* service.getSettings).defaultAutoPull);
+
+        const projectRejected = yield* service
+          .updateSettings({
+            projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } },
+          })
+          .pipe(Effect.flip);
+        assert.equal(projectRejected.managedSetting, "enableAgentDeviceAccess");
+
+        // Unrelated writes, and writes that keep the locked value, go through.
+        yield* service.updateSettings({ enableAgentDeviceAccess: false, defaultAutoPull: true });
+        assert.isTrue((yield* service.getSettings).defaultAutoPull);
+
+        // The user's own value stays on disk, ready for when the policy is removed.
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.isTrue(stored.enableAgentDeviceAccess);
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+    it.effect("accepts a project override that brings the locked value inside a new setting", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const projectId = ProjectId.make("project-text-generation");
+        const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-locked" };
+
+        yield* service.updateSettings({
+          projectSettingsOverrides: { [projectId]: { textGenerationModelSelection: selection } },
+        });
+
+        const project = (yield* service.getSettings).projectSettingsOverrides[projectId];
+        assert.equal(project?.textGenerationModelSelection?.model, "gpt-locked");
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            settings: {
+              "textGenerationModelSelection.model": { value: "gpt-locked", locked: true },
+            },
+          }),
+        ),
+      ),
+    );
+
+    it.effect(
+      "compares a project's partial override with a locked entry by the keys it holds",
+      () =>
+        Effect.gen(function* () {
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const codexId = ProviderInstanceId.make("codex");
+          const projectWith = (enabled: boolean) => ({
+            projectSettingsOverrides: {
+              [ProjectId.make("project-codex")]: { providerInstances: { [codexId]: { enabled } } },
+            },
+          });
+
+          yield* service.updateSettings(projectWith(true));
+          const refused = yield* service.updateSettings(projectWith(false)).pipe(Effect.flip);
+          assert.equal(refused.managedSetting, "providerInstances.codex");
+        }).pipe(
+          Effect.provide(
+            layerServerSettings({
+              schemaVersion: 1,
+              organization: "Example Corp",
+              settings: {
+                "providerInstances.codex": {
+                  value: { driver: "codex", enabled: true },
+                  locked: true,
+                },
+              },
+            }),
+          ),
+        ),
+    );
+
+    it.effect("lowers default runtime modes above the ceiling without rewriting them", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const raised = ProjectId.make("project-raised");
+        const supervised = ProjectId.make("project-supervised");
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            defaultRuntimeMode: "auto",
+            projectSettingsOverrides: {
+              [raised]: { defaultRuntimeMode: "full-access" },
+              [supervised]: { defaultRuntimeMode: "approval-required" },
+            },
+          }),
+        );
+
+        const settings = yield* service.getSettings;
+        assert.equal(settings.defaultRuntimeMode, "auto-accept-edits");
+        assert.equal(
+          settings.projectSettingsOverrides[raised]?.defaultRuntimeMode,
+          "auto-accept-edits",
+        );
+        assert.equal(
+          settings.projectSettingsOverrides[supervised]?.defaultRuntimeMode,
+          "approval-required",
+        );
+
+        yield* service.updateSettings({ defaultAutoPull: true });
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.equal(stored.defaultRuntimeMode, "auto");
+        assert.equal(stored.projectSettingsOverrides[raised].defaultRuntimeMode, "full-access");
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: { maxRuntimeMode: "auto-accept-edits" },
+          }),
+        ),
+      ),
+    );
+  },
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "server settings under a provider policy",
+  (it) => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const codex = ProviderDriverKind.make("codex");
+    const cursor = ProviderDriverKind.make("cursor");
+    const bedrock = { name: "CLAUDE_CODE_USE_BEDROCK", value: "1", sensitive: false };
+    const policy: ManagedPolicyDocument = {
+      schemaVersion: 1,
+      organization: "Example Corp",
+      limits: {
+        providers: {
+          allowedDrivers: [claude, codex],
+          instances: {
+            [claude]: {
+              locked: true,
+              environment: [{ name: bedrock.name, value: bedrock.value }],
+              binaryPath: "/opt/claude/bin/claude",
+            },
+            [codex]: { locked: false, launchArgs: "-c model_provider=gateway" },
+          },
+        },
+      },
+    };
+
+    it.effect("refuses enabling a driver the policy leaves out, and keeps existing ones", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const cursorId = ProviderInstanceId.make("cursor_work");
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            providerInstances: {
+              [cursorId]: { driver: cursor, enabled: true },
+              // A default instance id is no proof of its driver.
+              codex: { driver: cursor, enabled: true },
+            },
+            textGenerationModelSelection: { instanceId: cursorId, model: "auto" },
+          }),
+        );
+
+        const settings = yield* service.getSettings;
+        // Never deleted: the instance stays for its threads, and the registry shows it unavailable.
+        assert.equal(settings.providerInstances[cursorId]?.driver, cursor);
+        // Built-in text generation does not fall back onto a disallowed driver either.
+        assert.equal(settings.textGenerationModelSelection.instanceId, "claudeAgent");
+
+        const rejected = yield* service
+          .updateProviderInstance({
+            operation: "create",
+            instanceId: ProviderInstanceId.make("cursor_new"),
+            instance: { driver: cursor, enabled: true },
+          })
+          .pipe(Effect.flip);
+        assert.equal(rejected.operation, "use-disallowed-provider");
+        assert.equal(rejected.message, "Example Corp's policy does not allow the Cursor provider.");
+        // Switching it on for one project is enabling it too.
+        const perProject = yield* service
+          .updateSettings({
+            projectSettingsOverrides: {
+              [ProjectId.make("project-a")]: {
+                providerInstances: { [cursorId]: { enabled: true } },
+              },
+            },
+          })
+          .pipe(Effect.flip);
+        assert.equal(perProject.operation, "use-disallowed-provider");
+
+        // The client echoes a default instance that was running before it was configured.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: ProviderInstanceId.make("cursor"),
+          instance: { driver: cursor, enabled: true },
+        });
+
+        // Turning it off, or removing it, is still the user's call.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: cursorId,
+          instance: { driver: cursor, enabled: false },
+        });
+        yield* service.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+        assert.isUndefined((yield* service.getSettings).providerInstances[cursorId]);
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+
+    it.effect("keeps a locked Codex pin from being bypassed by managed setup", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const codexId = ProviderInstanceId.make("codex_chatgpt");
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            providerInstances: { [codexId]: { driver: codex, config: { setupMode: "managed" } } },
+          }),
+        );
+
+        const effective = (yield* service.getSettings).providerInstances[codexId];
+        assert.deepEqual(effective?.config, { binaryPath: "/opt/gateway/codex" });
+        // A stored value stays for when the policy is gone; a new one is refused.
+        const refused = yield* service
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId: ProviderInstanceId.make("codex_new"),
+            instance: { driver: codex, config: { setupMode: "managed" } },
+          })
+          .pipe(Effect.flip);
+        assert.equal(refused.managedSetting, "providerInstances.codex_new.config.setupMode");
+        // Adding a Codex instance sends the default setup, which leaves the pin in charge.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: ProviderInstanceId.make("codex_cli"),
+          instance: { driver: codex, config: { setupMode: "existing" } },
+        });
+      }).pipe(
+        Effect.provide(
+          layerServerSettings({
+            schemaVersion: 1,
+            organization: "Example Corp",
+            limits: {
+              providers: {
+                instances: { [codex]: { locked: true, binaryPath: "/opt/gateway/codex" } },
+              },
+            },
+          }),
+        ),
+      ),
+    );
+
+    it.effect("pins instance fields at read time and refuses edits to locked ones", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const claudeId = ProviderInstanceId.make("claudeAgent");
+        const codexId = ProviderInstanceId.make("codex");
+        const userVariable = { name: "MY_FLAG", value: "on", sensitive: false };
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            providerInstances: {
+              [claudeId]: {
+                driver: claude,
+                environment: [{ ...bedrock, value: "0" }, userVariable, { ...bedrock, value: "2" }],
+                config: { binaryPath: "/usr/local/bin/claude" },
+              },
+            },
+          }),
+        );
+
+        const effective = yield* service.getSettings;
+        const claudeInstance = effective.providerInstances[claudeId];
+        assert.deepEqual(claudeInstance?.environment, [bedrock, userVariable]);
+        assert.deepEqual(claudeInstance?.config, { binaryPath: "/opt/claude/bin/claude" });
+        // The implicit default Codex instance gets the unlocked default too.
+        assert.deepEqual(effective.providerInstances[codexId]?.config, {
+          launchArgs: "-c model_provider=gateway",
+        });
+
+        const lockedBinary = yield* service
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId: claudeId,
+            instance: { ...claudeInstance!, config: { binaryPath: "/tmp/claude" } },
+          })
+          .pipe(Effect.flip);
+        assert.equal(lockedBinary.operation, "write-managed-setting");
+        assert.equal(
+          lockedBinary.managedSetting,
+          "providerInstances.claudeAgent.config.binaryPath",
+        );
+        const lockedVariable = yield* service
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId: claudeId,
+            instance: { ...claudeInstance!, environment: [userVariable] },
+          })
+          .pipe(Effect.flip);
+        assert.equal(
+          lockedVariable.managedSetting,
+          "providerInstances.claudeAgent.environment.CLAUDE_CODE_USE_BEDROCK",
+        );
+
+        // Saving what the client was shown, plus an unrelated edit, goes through without baking
+        // the policy into the file: the user's own values come back once the policy is removed.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: claudeId,
+          instance: { ...claudeInstance!, displayName: "Claude (work)" },
+        });
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: codexId,
+          instance: effective.providerInstances[codexId]!,
+        });
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.deepEqual(stored.providerInstances[claudeId], {
+          driver: claude,
+          displayName: "Claude (work)",
+          environment: [{ ...bedrock, value: "0" }, { ...bedrock, value: "2" }, userVariable],
+          config: { binaryPath: "/usr/local/bin/claude" },
+        });
+        assert.isUndefined(stored.providerInstances[codexId]);
+
+        // Unlocked fields are the user's to override.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: codexId,
+          instance: { driver: codex, config: { launchArgs: "--mine" } },
+        });
+        assert.deepEqual((yield* service.getSettings).providerInstances[codexId]?.config, {
+          launchArgs: "--mine",
+        });
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+  },
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
+  "server settings under a runtime mode ceiling",
+  (it) => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const acpRegistry = ProviderDriverKind.make("acpRegistry");
+    const policy: ManagedPolicyDocument = {
+      schemaVersion: 1,
+      organization: "Example Corp",
+      limits: {
+        maxRuntimeMode: "auto-accept-edits",
+        providers: {
+          instances: {
+            [claude]: {
+              locked: false,
+              environment: [{ name: "CLAUDE_CODE_USE_BEDROCK", value: "1" }],
+              binaryPath: "/opt/claude/bin/claude",
+            },
+          },
+        },
+      },
+    };
+
+    it.effect("keeps the secret of a variable it hides when the instance is saved", () => {
+      const shared = ServerSecretStore.layer.pipe(
+        Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+        Layer.provideMerge(
+          Layer.fresh(ServerConfig.layerTest(process.cwd(), { prefix: "t3code-hidden-secret-" })),
+        ),
+      );
+      const withPolicy = <A, E>(
+        document: ManagedPolicyDocument | undefined,
+        use: (
+          service: ServerSettingsModule.ServerSettingsService["Service"],
+        ) => Effect.Effect<A, E>,
+      ) =>
+        ServerSettingsModule.ServerSettingsService.pipe(
+          Effect.flatMap(use),
+          Effect.provide(
+            ServerSettingsModule.layer.pipe(Layer.provide(ManagedPolicy.layerTest(document))),
+          ),
+        );
+      const claudeId = ProviderInstanceId.make("claudeAgent");
+      const token = { name: "ANTHROPIC_API_KEY", value: "sk-kept", sensitive: true };
+      return Effect.gen(function* () {
+        yield* withPolicy(undefined, (service) =>
+          service.updateProviderInstance({
+            operation: "upsert",
+            instanceId: claudeId,
+            instance: { driver: claude, environment: [token] },
+          }),
+        );
+        // The ceiling shows only pinned variables, so the client saves without the token.
+        yield* withPolicy(policy, (service) =>
+          service.getSettings.pipe(
+            Effect.flatMap((settings) =>
+              service.updateProviderInstance({
+                operation: "upsert",
+                instanceId: claudeId,
+                instance: {
+                  ...settings.providerInstances[claudeId]!,
+                  displayName: "Claude (work)",
+                },
+              }),
+            ),
+          ),
+        );
+        const restored = yield* withPolicy(undefined, (service) => service.getSettings);
+        assert.equal(restored.providerInstances[claudeId]?.environment?.[0]?.value, token.value);
+
+        // Removing a secret provider still clears a hidden variable that read from it.
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Anthropic/key",
+        };
+        yield* withPolicy(undefined, (service) =>
+          decodeServerSettingsPatch({
+            secretProviders: {
+              personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+            },
+          }).pipe(
+            Effect.flatMap(service.updateSettings),
+            Effect.andThen(
+              service.updateProviderInstance({
+                operation: "upsert",
+                instanceId: claudeId,
+                instance: {
+                  driver: claude,
+                  environment: [{ name: token.name, value: reference, sensitive: true }],
+                },
+              }),
+            ),
+          ),
+        );
+        yield* withPolicy(policy, (service) =>
+          service.updateSettings({ secretProviders: { [reference.provider]: null } }),
+        );
+        const cleared = yield* withPolicy(undefined, (service) => service.getSettings);
+        assert.notInclude(JSON.stringify(cleared), "op://Private");
+      }).pipe(Effect.provide(shared));
+    });
+
+    it.effect("ignores stored launch configuration and refuses new values", () =>
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const claudeId = ProviderInstanceId.make("claudeAgent");
+        const registryId = ProviderInstanceId.make("acp_devin");
+        const userVariable = {
+          name: "CLAUDE_CONFIG_DIR",
+          value: "/tmp/allow-all",
+          sensitive: false,
+        };
+        const storedClaude = {
+          driver: claude,
+          environment: [userVariable, { ...userVariable, value: "/tmp/later-wins" }],
+          config: {
+            binaryPath: "/tmp/wrapper",
+            launchArgs: "--dangerously-skip-permissions",
+            homePath: "/tmp/allow-all",
+            autoCompactWindow: "300000",
+          },
+        };
+        yield* fs.writeFileString(
+          config.settingsPath,
+          JSON.stringify({
+            providerInstances: {
+              [claudeId]: storedClaude,
+              [registryId]: {
+                driver: acpRegistry,
+                config: { agentId: "devin", commandPath: "/tmp/agent", commandArgs: ["--yolo"] },
+              },
+            },
+          }),
+        );
+
+        // Even an unlocked pin wins, and the user's launch values and variables are not used.
+        const effective = yield* service.getSettings;
+        const claudeInstance = effective.providerInstances[claudeId]!;
+        assert.deepEqual(claudeInstance.config, {
+          binaryPath: "/opt/claude/bin/claude",
+          autoCompactWindow: "300000",
+        });
+        assert.deepEqual(claudeInstance.environment, [
+          { name: "CLAUDE_CODE_USE_BEDROCK", value: "1", sensitive: false },
+        ]);
+        assert.deepEqual(effective.providerInstances[registryId]?.config, { agentId: "devin" });
+
+        const refused = (instance: typeof claudeInstance) =>
+          service
+            .updateProviderInstance({ operation: "upsert", instanceId: claudeId, instance })
+            .pipe(Effect.flip);
+        const launchArgs = yield* refused({
+          ...claudeInstance,
+          config: { ...claudeInstance.config!, launchArgs: "--permission-mode bypassPermissions" },
+        });
+        assert.equal(launchArgs.operation, "write-managed-setting");
+        assert.equal(launchArgs.managedSetting, "providerInstances.claudeAgent.config.launchArgs");
+        const binary = yield* refused({
+          ...claudeInstance,
+          config: { ...claudeInstance.config!, binaryPath: "/tmp/other-wrapper" },
+        });
+        assert.equal(binary.managedSetting, "providerInstances.claudeAgent.config.binaryPath");
+        const environment = yield* refused({
+          ...claudeInstance,
+          environment: [{ name: "NODE_OPTIONS", value: "--require /tmp/x.js", sensitive: false }],
+        });
+        assert.equal(environment.managedSetting, "providerInstances.claudeAgent.environment");
+        const commandArgs = yield* service
+          .updateProviderInstance({
+            operation: "upsert",
+            instanceId: registryId,
+            instance: {
+              driver: acpRegistry,
+              config: { agentId: "devin", commandArgs: ["--dangerously-skip-permissions"] },
+            },
+          })
+          .pipe(Effect.flip);
+        assert.equal(commandArgs.managedSetting, "providerInstances.acp_devin.config.commandArgs");
+
+        // Unrelated writes carry the stored instance through unchanged, duplicates included.
+        yield* service.updateSettings({ defaultAutoPull: true });
+
+        // What the client was shown saves, with user-owned edits, and the stored values survive.
+        yield* service.updateProviderInstance({
+          operation: "upsert",
+          instanceId: claudeId,
+          instance: {
+            ...claudeInstance,
+            displayName: "Claude (work)",
+            config: { ...claudeInstance.config!, autoCompactWindow: "400000" },
+          },
+        });
+        const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+        assert.deepEqual(stored.providerInstances[claudeId], {
+          ...storedClaude,
+          displayName: "Claude (work)",
+          config: { ...storedClaude.config, autoCompactWindow: "400000" },
+        });
+      }).pipe(Effect.provide(layerServerSettings(policy))),
+    );
+  },
+);
