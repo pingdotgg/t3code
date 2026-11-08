@@ -44,6 +44,8 @@ const FIXTURES = "../src/orchestration-v2/testkit/fixtures";
 // Use acpRegistry transcripts: vendor transcripts carry state in frames this agent drops.
 export const SCENARIOS = [
   { id: "showcase", name: "Showcase", file: "./dev-replay/showcase_transcript.ndjson" },
+  // At least 15 s per turn, so the learner run (scripts/learner-e2e.ts) can send mid-reply.
+  { id: "slow", name: "Slow", file: "./dev-replay/showcase_transcript.ndjson", delayScale: 3 },
   {
     id: "todo-list",
     name: "Plan and reads",
@@ -204,9 +206,9 @@ function runAgent(): void {
         resolve();
       });
     });
-  const sleep = (ms: number, signal: AbortSignal) =>
+  const sleep = (ms: number, signal: AbortSignal, scale: number) =>
     untilAbort(
-      new Promise((resolve) => setTimeout(resolve, Math.min(ms, MAX_RECORDED_DELAY_MS))),
+      new Promise((resolve) => setTimeout(resolve, Math.min(ms, MAX_RECORDED_DELAY_MS) * scale)),
       signal,
     );
 
@@ -216,12 +218,14 @@ function runAgent(): void {
     signal: AbortSignal,
   ): Promise<"cancelled" | undefined> => {
     const session = sessions.get(sessionId)!;
+    const scenario = SCENARIOS.find((candidate) => candidate.id === session.model);
+    const scale = scenario !== undefined && "delayScale" in scenario ? scenario.delayScale : 1;
     // Random, so a session loaded after a restart cannot reuse earlier tool rows.
     const live = { sessionId, workspace: session.cwd, turnKey: NodeCrypto.randomUUID() };
     for (const recorded of turn.frames) {
       const frame = materialize(recorded.frame, live) as LogicalFrame;
       if (frame.kind === "request") {
-        await sleep(recorded.afterMs ?? FRAME_DELAY_MS, signal);
+        await sleep(recorded.afterMs ?? FRAME_DELAY_MS, signal, scale);
         if (signal.aborted) return;
         const id = nextAgentRequestId++;
         let answer: unknown;
@@ -258,7 +262,7 @@ function runAgent(): void {
       const firstDelay = recorded.afterMs ?? (text === undefined ? FRAME_DELAY_MS : CHUNK_DELAY_MS);
       const chunks = text === undefined ? [undefined] : streamChunks(text);
       for (const [index, chunk] of chunks.entries()) {
-        await sleep(index === 0 ? firstDelay : CHUNK_DELAY_MS, signal);
+        await sleep(index === 0 ? firstDelay : CHUNK_DELAY_MS, signal, scale);
         if (signal.aborted) return;
         send({
           method: frame.method,
