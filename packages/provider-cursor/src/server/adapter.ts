@@ -2401,11 +2401,14 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
-            // A conversation this process has not sent to was told on its first run.
+            // Rollback resets the retained ordinal; app run ordinals keep increasing.
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
-                : { orchestration: turnInput.runOrdinal > 1, device: false };
+                : {
+                    orchestration: turnInput.providerThread.lastRunOrdinal !== null,
+                    device: false,
+                  };
             const interrupted = yield* Ref.get(interruptedPrompt);
             const { message, prompt } = yield* resolveUserMessage(
               turnInput,

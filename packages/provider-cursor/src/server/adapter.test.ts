@@ -725,17 +725,18 @@ describe("CursorAdapterV2", () => {
         }),
         Effect.provide(TestProviderHost.layer({ cwd: workspace })),
       );
-      const runtime = yield* adapter.openSession({
+      let runtime = yield* adapter.openSession({
         threadId,
         providerSessionId: ProviderSessionId.make("cursor-device-session"),
         modelSelection,
         runtimePolicy,
       });
-      const providerThread = yield* runtime.ensureThread({
+      let providerThread = yield* runtime.ensureThread({
         threadId,
         modelSelection,
         runtimePolicy,
       });
+      providerThread = { ...providerThread, lastRunOrdinal: 4 };
       const now = yield* DateTime.now;
       const appThread = {
         id: threadId,
@@ -828,6 +829,34 @@ describe("CursorAdapterV2", () => {
         yield* send(),
         told(false, false),
         "instructions are sent only once after rollback",
+      );
+      const restored = yield* runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("cursor-start-again"),
+          appRunOrdinal: 0,
+        },
+      });
+      // CheckpointRollbackService persists null at the thread-start boundary.
+      providerThread = { ...restored.providerThread, lastRunOrdinal: null };
+      runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-device-restarted"),
+        modelSelection,
+        runtimePolicy,
+      });
+      providerThread = yield* runtime.resumeThread({ providerThread });
+      assert.deepEqual(
+        yield* send(),
+        told(true, true),
+        "a restarted session restores instructions after rollback",
+      );
+      assert.deepEqual(
+        yield* send(),
+        told(false, false),
+        "restarted sessions deliver instructions only once",
       );
     }).pipe(
       Effect.scoped,
