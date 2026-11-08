@@ -77,40 +77,45 @@ describe("startDesktopUpdateLaunchNotice", () => {
 });
 
 describe("retryFailedUpdateRunServers", () => {
-  it("closes a failed server that already restarted on the target instead of retrying it", async () => {
-    const environmentId = EnvironmentId.make("already-updated");
+  it("settles a failed server that already restarted on the target and retries only the others", async () => {
     const targetVersion = "9.9.9";
+    const serverVersions = new Map([
+      [EnvironmentId.make("already-updated"), targetVersion],
+      [EnvironmentId.make("behind"), "9.9.8"],
+    ]);
     using _config = vi
       .spyOn(serverEnvironment, "configValueAtom")
-      .mockReturnValue(
-        Atom.make({ environment: { serverVersion: targetVersion } } as unknown as ServerConfig),
+      .mockImplementation((environmentId) =>
+        Atom.make({
+          environment: { serverVersion: serverVersions.get(environmentId!) },
+        } as unknown as ServerConfig),
       );
+    const rejection = "Remote updates must select a newer server version.";
+    const failedMachine = (environmentId: EnvironmentId) => ({
+      environmentId,
+      label: environmentId,
+      updatesProviders: false,
+      server: {
+        environmentId,
+        serverLabel: environmentId,
+        selfUpdate: "boot-service" as const,
+        targetVersion,
+      },
+      handedOffVersion: null,
+      startedAt: 0,
+      result: "failed" as const,
+      failure: rejection,
+      providerFailure: null,
+    });
     setUpdateEverythingRun(() => ({
       localVersion: null,
       phase: "servers",
       restartAt: null,
-      machines: [
-        {
-          environmentId,
-          label: "Remote",
-          updatesProviders: false,
-          server: {
-            environmentId,
-            serverLabel: "Remote",
-            selfUpdate: "boot-service",
-            targetVersion,
-          },
-          handedOffVersion: null,
-          startedAt: 0,
-          result: "failed",
-          failure: "Not back after 32 minutes",
-          providerFailure: null,
-        },
-      ],
+      machines: [...serverVersions.keys()].map(failedMachine),
     }));
     const update = vi.fn(async (): Promise<ServerUpdateOutcome> => ({
       status: "failed",
-      message: "Remote updates must select a newer server version.",
+      message: rejection,
     }));
 
     retryFailedUpdateRunServers(update);
@@ -122,7 +127,16 @@ describe("retryFailedUpdateRunServers", () => {
       run = current;
       return null;
     });
-    expect(update).not.toHaveBeenCalled();
-    expect(run).toBeNull();
+    expect(update.mock.calls.map(([target]) => target.environmentId)).toEqual(["behind"]);
+    expect(
+      (run as UpdateEverythingRun | null)?.machines.map(({ environmentId, result, server }) => ({
+        environmentId,
+        result,
+        retryable: server !== null,
+      })),
+    ).toEqual([
+      { environmentId: "already-updated", result: "done", retryable: false },
+      { environmentId: "behind", result: "failed", retryable: true },
+    ]);
   });
 });
