@@ -345,8 +345,8 @@ interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
   /**
-   * Every counted token matched a whole word at full weight, before phrase
-   * bonuses, and has three or more letters: "a" or "ui" is too little to go on.
+   * Every counted token matched a whole word at full weight before phrase bonuses.
+   * Tokens have at least three characters, except optional filler words.
    */
   readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
