@@ -2558,6 +2558,19 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
 
+        // Claude Code re-arms the copied transcript's unmet goal, including one its Stop-hook cap
+        // ended, which T3 records as complete.
+        yield* runtime.forkThread({
+          sourceProviderThread: {
+            ...sourceProviderThread,
+            goal: { objective: "Ship the release", status: "complete", checks: 9 },
+          },
+          targetThreadId,
+        });
+        const clearGoal = forkCalls[1]?.clearGoal?.("forked-native-session");
+        assert.equal(clearGoal?.resume, "forked-native-session");
+        assert.deepEqual(clearGoal?.tools, []);
+
         yield* runtime.startTurn({
           appThread: {
             createdBy: "user",

@@ -689,6 +689,8 @@ export interface ClaudeAgentSdkSessionForkInput {
   readonly environment: NodeJS.ProcessEnv;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+  /** Options that resume the fork, given when the copied transcript carries a `/goal` to clear. */
+  readonly clearGoal?: (forkSessionId: string) => ClaudeAgentSdkQueryOptions;
 }
 
 export interface ClaudeAgentSdkSubagentLookupInput {
@@ -1166,7 +1168,7 @@ export const layerQueryRunner: Layer.Layer<
     const hostEnvironment = yield* HostProcess.Environment;
     const portDiscovery = yield* PortScanner.PortDiscovery;
 
-    return ClaudeAgentSdkQueryRunner.of({
+    const runner: ClaudeAgentSdkQueryRunnerShape = ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: random.uuidV4(),
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(
         function* (input: ClaudeAgentSdkQueryOpenInput) {
@@ -1603,6 +1605,26 @@ export const layerQueryRunner: Layer.Layer<
             sessionId: result.sessionId,
           },
         });
+        // Claude Code re-arms an unmet goal's Stop hook from the copied transcript on resume.
+        // Clearing it is a local command, and runs before the head is read so rollback keeps it.
+        if (input.clearGoal !== undefined) {
+          const session = yield* runner.open({
+            options: input.clearGoal(result.sessionId),
+            threadId: input.threadId,
+            providerSessionId: input.providerSessionId,
+          });
+          yield* session.offer(makeClaudeUserMessage({ text: "/goal clear" })).pipe(
+            Effect.andThen(
+              session.messages.pipe(
+                Stream.takeUntil((message) => message.type === "result"),
+                Stream.runDrain,
+              ),
+            ),
+            Effect.timeout("30 seconds"),
+            Effect.mapError((cause) => queryRunnerError(cause, "clearGoal")),
+            Effect.ensuring(session.close.pipe(Effect.ignore)),
+          );
+        }
         // The SDK remaps copied UUIDs. Capture the inherited head before the
         // fork's first run appends messages.
         const headMessageId = usesHostConfig
@@ -1657,6 +1679,7 @@ export const layerQueryRunner: Layer.Layer<
       ),
       assertComplete: Effect.void,
     });
+    return runner;
   }),
 );
 
@@ -12266,12 +12289,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
               };
+              const sourceGoal = forkInput.sourceProviderThread.goal;
               const forked = yield* queryRunner.forkSession({
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
                 environment: adapterOptions.environment,
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
+                // A fork starts without its source's goal, as Codex forks do. "complete" can
+                // also mean Claude's Stop-hook cap ended the turn with the goal still armed.
+                ...(sourceGoal == null
+                  ? {}
+                  : {
+                      clearGoal: (nativeThreadId: string) => {
+                        const options = makeClaudeQueryOptions({
+                          modelSelection: forkInput.modelSelection ?? input.modelSelection,
+                          modelCatalog,
+                          nativeThreadId,
+                          resume: true,
+                          cwd: input.runtimePolicy.cwd,
+                          settings: adapterOptions.settings,
+                          environment: adapterOptions.environment,
+                          tools: [],
+                        });
+                        return options.permissionMode === "bypassPermissions"
+                          ? { ...options, allowDangerouslySkipPermissions: true }
+                          : options;
+                      },
+                    }),
               });
               yield* Ref.update(openedNativeThreads, (current) => {
                 const updated = new Set(current);
