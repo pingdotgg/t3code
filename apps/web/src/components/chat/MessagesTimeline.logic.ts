@@ -1444,6 +1444,14 @@ function turnFoldLabel(ending: TurnFoldEnding, elapsedMs: number | null): string
   }
 }
 
+function firstIndexById(entries: ReadonlyArray<TimelineEntry>): Map<string, number> {
+  const indexById = new Map<string, number>();
+  for (const [index, entry] of entries.entries()) {
+    if (!indexById.has(entry.id)) indexById.set(entry.id, index);
+  }
+  return indexById;
+}
+
 function gatherOpenFoldWork(
   entries: ReadonlyArray<TimelineEntry>,
   folds: Iterable<TurnFold>,
@@ -1451,14 +1459,20 @@ function gatherOpenFoldWork(
 ) {
   const gatheredByAnchorId = new Map<string, TimelineEntry[]>();
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
+  // One index for every open fold; searching the entries per fold made each update quadratic.
+  let indexById: Map<string, number> | undefined;
   for (const fold of folds) {
-    const anchorIndex = isOpen(fold)
-      ? entries.findIndex((entry) => entry.id === fold.anchorEntryId)
-      : -1;
-    const gathered =
-      anchorIndex > 0
-        ? entries.slice(0, anchorIndex).filter((entry) => fold.hiddenEntryIds.has(entry.id))
-        : [];
+    let gathered: TimelineEntry[] = [];
+    if (isOpen(fold)) {
+      indexById ??= firstIndexById(entries);
+      const anchorIndex = indexById.get(fold.anchorEntryId) ?? -1;
+      const indexes: number[] = [];
+      for (const id of fold.hiddenEntryIds) {
+        const index = indexById.get(id);
+        if (index !== undefined && index < anchorIndex) indexes.push(index);
+      }
+      gathered = indexes.sort((a, b) => a - b).map((index) => entries[index]!);
+    }
     if (gathered.length > 0) gatheredByAnchorId.set(fold.anchorEntryId, gathered);
     foldsByAnchorEntryId.set(gathered[0]?.id ?? fold.anchorEntryId, fold);
   }
