@@ -120,7 +120,7 @@ import {
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
 import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
-import { useThreadShell } from "../../state/entities";
+import { useThreadShell, useThreadWaitingForHostAdmission } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
@@ -666,6 +666,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 const TOP_STATUS_ICONS = {
+  queued: ClockIcon,
   working: CircleDashedIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
@@ -996,8 +997,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread =
     props.suppressUnseenDone !== true && hasUnseenCompletion({ ...thread, lastVisitedAt });
+  const waitingForHostAdmission = useThreadWaitingForHostAdmission(threadRef);
   const status = mergePipelineParentStatus(
-    resolveSidebarThreadStatus(thread),
+    resolveSidebarThreadStatus({ ...thread, waitingForHostAdmission }),
     props.stepStatus ?? null,
   );
   // A run's attention badge opens the step that needs the user, or the parent when it has no thread yet.
@@ -1046,55 +1048,61 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           icon: "working" as const,
           className: "text-info-foreground",
         }
-      : status === "waiting"
+      : status === "queued"
         ? {
-            label: "Waiting",
-            icon: "waiting" as const,
+            label: "Queued",
+            icon: "queued" as const,
             className: "text-muted-foreground",
           }
-        : status === "approval"
+        : status === "waiting"
           ? {
-              label: "Approval",
-              icon: "approval" as const,
-              className: "text-warning-foreground",
+              label: "Waiting",
+              icon: "waiting" as const,
+              className: "text-muted-foreground",
             }
-          : status === "input"
+          : status === "approval"
             ? {
-                label: "Input",
-                icon: "input" as const,
-                className: "text-indigo-600 dark:text-indigo-300",
+                label: "Approval",
+                icon: "approval" as const,
+                className: "text-warning-foreground",
               }
-            : status === "request"
+            : status === "input"
               ? {
-                  label: "Request",
-                  icon: "request" as const,
-                  className: "text-guest-foreground",
+                  label: "Input",
+                  icon: "input" as const,
+                  className: "text-indigo-600 dark:text-indigo-300",
                 }
-              : status === "limited"
+              : status === "request"
                 ? {
-                    label: "Limited",
-                    icon: "failed" as const,
-                    className: "text-warning-foreground",
+                    label: "Request",
+                    icon: "request" as const,
+                    className: "text-guest-foreground",
                   }
-                : status === "failed"
+                : status === "limited"
                   ? {
-                      label: "Failed",
+                      label: "Limited",
                       icon: "failed" as const,
-                      className: "text-error-foreground",
+                      className: "text-warning-foreground",
                     }
-                  : isWoke
+                  : status === "failed"
                     ? {
-                        label: "Woke",
-                        icon: "woke" as const,
-                        className: "text-warning-foreground",
+                        label: "Failed",
+                        icon: "failed" as const,
+                        className: "text-error-foreground",
                       }
-                    : isUnread
+                    : isWoke
                       ? {
-                          label: "Done",
-                          icon: "done" as const,
-                          className: "text-success-foreground",
+                          label: "Woke",
+                          icon: "woke" as const,
+                          className: "text-warning-foreground",
                         }
-                      : null;
+                      : isUnread
+                        ? {
+                            label: "Done",
+                            icon: "done" as const,
+                            className: "text-success-foreground",
+                          }
+                        : null;
   const attentionBadgeButton = (badge: NonNullable<typeof topStatus>, iconClassName: string) => (
     <Tooltip>
       <TooltipTrigger

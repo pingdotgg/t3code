@@ -101,6 +101,21 @@ export function useServerConfigs() {
   return useAtomValue(environmentPresentations.serverConfigsAtom);
 }
 
+const threadWaitingForHostAdmissionAtom = Atom.family((key: string) => {
+  const ref = parseThreadKey(key);
+  return Atom.make(
+    (get) =>
+      get(environmentPresentations.serverConfigsAtom)
+        .get(ref.environmentId)
+        ?.hostAdmission?.waitingThreadIds.includes(ref.threadId) === true,
+  ).pipe(Atom.withLabel(`web-thread-host-admission:${key}`));
+});
+
+/** Per-thread, so a row re-renders only when its own wait starts or ends, not on every count. */
+export function useThreadWaitingForHostAdmission(ref: ScopedThreadRef): boolean {
+  return useAtomValue(threadWaitingForHostAdmissionAtom(threadKey(ref)));
+}
+
 export function useThreadShells(enabled = true): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(
     enabled ? environmentThreadShells.threadShellsAtom : EMPTY_THREAD_SHELLS_ATOM,

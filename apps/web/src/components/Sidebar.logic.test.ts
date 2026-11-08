@@ -510,6 +510,8 @@ describe("resolveThreadStatusPill", () => {
       ...baseThread,
       runtime: { ...baseThread.runtime, status: "queued" as const, activeRunId: null },
     };
+    expect(resolveSidebarThreadStatus(queued)).toBe("working");
+    expect(resolveSidebarThreadStatus({ ...queued, waitingForHostAdmission: true })).toBe("queued");
     expect(resolveThreadStatusPill({ thread: queued })).toMatchObject({ label: "Connecting" });
     expect(
       resolveThreadStatusPill({ thread: { ...queued, waitingForHostAdmission: true } }),
