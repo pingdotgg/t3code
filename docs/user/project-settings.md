@@ -86,6 +86,14 @@ environment's time zone, which may differ from your phone's. Choose **Once**
 to run a task a single time at a date and time in your own time zone. If the
 environment is offline then, the task runs when it is back.
 
+Under **Destination**, choose where runs go. **New thread each run** keeps every
+run separate. The two one-thread choices start a thread on the first run and post
+later runs there: one continues the same conversation, the other starts each run
+in a fresh session that doesn't see earlier runs, so the thread stays readable
+without the agent's context growing. To move a one-thread task, pick another
+thread in its project under **Destination**. Moving such a task to another
+project starts a new thread there on its next run.
+
 Deleting a thread also deletes tasks that post into that thread. Tasks that start
 a new thread on each run survive deletion of their previous threads.
 

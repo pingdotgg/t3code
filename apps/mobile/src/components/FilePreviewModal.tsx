@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as Dialog from "./ui/Dialog";
 import { useContext, useEffect, useEffectEvent, useState } from "react";
 import { Platform } from "react-native";
@@ -13,6 +14,7 @@ import { refreshAssetUrl } from "../state/assets";
 import { filePreviewGallery, filePreviewKey, filePreviewName } from "../lib/filePreviewGallery";
 import { FilePreviewGallery } from "./FilePreviewGallery";
 import { FilePreview } from "./FilePreview";
+import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import type { FilePreviewItem, FilePreviewSource } from "./FilePreviewModal.types";
 
 export type {
@@ -21,14 +23,16 @@ export type {
   ResolvedFilePreviewSource,
 } from "./FilePreviewModal.types";
 
-class PreviewResolutionError extends Error {
-  constructor(
-    override readonly cause: unknown,
-    readonly fallbackMessage: string,
-  ) {
-    super(fallbackMessage, { cause });
+class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>()(
+  "PreviewResolutionError",
+  { cause: Schema.Defect(), fallbackMessage: Schema.String },
+) {
+  override get message(): string {
+    return this.fallbackMessage;
   }
 }
+
+const isPreviewResolutionError = Schema.is(PreviewResolutionError);
 
 interface ResolvedPreviewUri {
   readonly uri: string;
@@ -42,7 +46,10 @@ async function resolvePreviewUri(
   if ("uri" in item) return { uri: item.uri };
   if ("attachment" in item) {
     return loadLocalAttachmentPreview(item.attachment, signal).catch((error: unknown) => {
-      throw new PreviewResolutionError(error, "Attach the file again and retry.");
+      throw new PreviewResolutionError({
+        cause: error,
+        fallbackMessage: "Attach the file again and retry.",
+      });
     });
   }
   // Refresh expired URLs before handing them to Quick Look or ACTION_VIEW, which retain them.
@@ -52,12 +59,25 @@ async function resolvePreviewUri(
       return value;
     })
     .catch((error: unknown) => {
-      throw new PreviewResolutionError(
-        error,
-        "Reconnect to this environment and try again. The file may have been moved or deleted.",
-      );
+      throw new PreviewResolutionError({
+        cause: error,
+        fallbackMessage:
+          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+      });
     });
   return { uri: url + (item.srcFragment ?? "") };
+}
+
+// Shares from the unresolved item so remote URLs refresh and draft files take their own lease.
+function pdfActionsSource(item: FilePreviewItem): MediaActionsSource {
+  const metadata = {
+    name: filePreviewName(item),
+    mimeType: item.mimeType ?? "application/pdf",
+    ...(item.sourceIdentifier ? { sourceIdentifier: item.sourceIdentifier } : {}),
+  };
+  if ("uri" in item) return { ...metadata, uri: item.uri };
+  if ("attachment" in item) return { ...metadata, attachment: item.attachment };
+  return { ...metadata, environmentId: item.environmentId, resource: item.resource };
 }
 
 function ResolvedFilePreview(props: {
@@ -99,9 +119,9 @@ function ResolvedFilePreview(props: {
           if (progressiveGallery && index !== selectedIndex) return settle(index, null);
           controller.abort();
           onResolutionError(
-            error instanceof PreviewResolutionError
+            isPreviewResolutionError(error)
               ? error
-              : new PreviewResolutionError(error, "Try again."),
+              : new PreviewResolutionError({ cause: error, fallbackMessage: "Try again." }),
           );
         },
       );
@@ -159,9 +179,16 @@ function ResolvedFilePreview(props: {
         : []),
     ]);
   };
+  const actionsSource =
+    selected.kind === "pdf" ? (selected.actionsSource ?? pdfActionsSource(selected)) : undefined;
   return (
     <FilePreview
-      source={{ ...selected, kind: selected.kind, uri }}
+      source={{
+        ...selected,
+        kind: selected.kind,
+        uri,
+        ...(actionsSource ? { actionsSource } : {}),
+      }}
       onRequestClose={props.onRequestClose}
       onOpenError={onOpenError}
     />
