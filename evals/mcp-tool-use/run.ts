@@ -1571,6 +1571,10 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (found.length === 0) return toolResult(call.id, "No matching deferred tools found");
     return loadTools(tools, call.id, found);
   }
+  // T3 refuses a page call without exactly one source before any mocked result.
+  if (isPageTool(name) && (typeof input.html === "string") === (typeof input.path === "string")) {
+    return failed("Pass exactly one of html or path.");
+  }
   const mock = testCase.setup.mocks?.[name];
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
@@ -1693,13 +1697,20 @@ export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "s
     prompt,
   ].join("\n");
 
+const isPageTool = (tool: string) => tool === "html_preview" || tool === "html_render";
+
 /** `page` is the HTML a page tool shows: its inline `html`, or the file the agent wrote at `path`. */
 const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
-  if ((tool !== "html_preview" && tool !== "html_render") || !isRecord(input)) return input;
+  if (!isPageTool(tool) || !isRecord(input)) return input;
   const path = valueText(input.path);
-  // A patch may name the file relative to the agent's working directory.
-  const written = [...files].find(([file]) => !file.startsWith("/") && path.endsWith(`/${file}`));
-  const page = typeof input.html === "string" ? input.html : (files.get(path) ?? written?.[1]);
+  // A patch may name the file relative to the agent's working directory. When two written files
+  // could be this one, the page is unknown, so page checks fail instead of grading a stale copy.
+  const written = [...files].filter(
+    ([file]) =>
+      file === path || (!file.startsWith("/") && path.endsWith(`/${file.replace(/^\.\//, "")}`)),
+  );
+  const page =
+    typeof input.html === "string" ? input.html : written.length === 1 ? written[0]![1] : undefined;
   return page === undefined ? input : { ...input, page };
 };
 
@@ -1708,10 +1719,12 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const written = scriptsBefore(run.calls);
-  const calls = run.calls.map((call, index) => ({
-    ...call,
-    input: withPage(call.tool, withOptionsObject(call.input), written[index]!),
-  }));
+  // A refused page call showed nothing, so it neither previews nor renders.
+  const calls = run.calls.flatMap((call, index) =>
+    call.failed && isPageTool(call.tool)
+      ? []
+      : [{ ...call, input: withPage(call.tool, withOptionsObject(call.input), written[index]!) }],
+  );
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
   const found = ({ tool, args = {} }: McpToolUseCall) =>

@@ -321,10 +321,21 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
   };
 
   assert.deepEqual(failed(expect, run([write, fix, render])), []);
-  const relative = { ...write, input: { ...write.input, file_path: "v.html" } };
-  assert.deepEqual(failed(expect, run([relative, { ...render, input: { path: "/tmp/v.html" } }])), [
+  assert.deepEqual(failed(expect, run([write, fix, { ...render, failed: true }])), [
+    'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
+  ]);
+  const relative = { ...write, input: { ...write.input, file_path: "./v.html" } };
+  assert.deepEqual(failed(expect, run([relative, render])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
     'callsMustNot html_render {"page":"~#000"}',
+  ]);
+  const fixed = {
+    ...write,
+    input: { ...write.input, content: "<p style=background:var(--card)>" },
+  };
+  assert.deepEqual(failed(expect, run([fixed, relative, render])), [
+    'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
+    "page known html_render /tmp/v.html",
   ]);
   assert.deepEqual(failed(expect, run([write, render])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',

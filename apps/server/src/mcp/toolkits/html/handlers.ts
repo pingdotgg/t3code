@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as HtmlRender from "../../../htmlRender/HtmlRender.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { loadCaller } from "../../threadAccess.ts";
 import { HtmlPreviewToolkit, HtmlRenderToolkit, type HtmlToolkit } from "./tools.ts";
 
 const INVALID_PAGE_ERRORS = new Set([
@@ -21,23 +22,30 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
     message: error.message,
   });
 
-const pageSource = (input: {
+// The server reads the file for the caller, so only a thread that reads files without asking may
+// pass a path; a supervised thread passes the HTML its provider already let it read.
+const pageSource = Effect.fn("HtmlToolkit.pageSource")(function* (input: {
   readonly html?: string | undefined;
   readonly path?: string | undefined;
-}): Effect.Effect<HtmlRender.HtmlRenderSource, OrchestratorMcpFailure> => {
+}) {
   if (input.html !== undefined && input.path === undefined) {
-    return Effect.succeed({ html: input.html });
+    return { html: input.html } satisfies HtmlRender.HtmlRenderSource;
   }
-  if (input.path !== undefined && input.html === undefined) {
-    return Effect.succeed({ path: input.path });
-  }
-  return Effect.fail(
-    new OrchestratorMcpFailure({
+  if (input.path === undefined || input.html !== undefined) {
+    return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message: "Pass exactly one of html or path.",
-    }),
-  );
-};
+    });
+  }
+  const { limits } = yield* loadCaller();
+  if (limits.runtimeMode !== "full-access") {
+    return yield* new OrchestratorMcpFailure({
+      code: "capability_denied",
+      message: "This thread asks before it reads files, so pass html instead of path.",
+    });
+  }
+  return { path: input.path } satisfies HtmlRender.HtmlRenderSource;
+});
 
 const handlers = {
   // Local-file access limits this host browser to T3-launched agents.

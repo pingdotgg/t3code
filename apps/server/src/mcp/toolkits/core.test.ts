@@ -272,6 +272,17 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
+    // This thread asks before reading files, so the server will not read one for it.
+    const byPath = yield* server
+      .callTool({
+        name: "html_render",
+        arguments: { path: "/tmp/revenue.html", title: "Revenue", height: 240 },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(declaredFailure(byPath)).toMatchObject({ code: "capability_denied" });
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
@@ -294,6 +305,8 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
                 archivedAt: null,
                 activeRunId: RunId.make("mcp-core-run"),
                 providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: "approval-required",
+                interactionMode: "default",
               } as OrchestrationV2ThreadShell),
           }),
         ),
