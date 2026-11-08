@@ -126,7 +126,7 @@ const makeTildeProviderFixtures = Effect.fn(
     prefix: ".t3-provider-path-test-",
   });
   const codexPath = path.join(fixtureDir, "codex");
-  const claudePath = path.join(fixtureDir, "claude");
+  const claudePath = path.join(fixtureDir, "claude.mjs");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
   const codexScriptPath = path.join(fixtureDir, "codex-script.json");
   const codexFixtureDir = path.join(import.meta.dirname, "testFixtures");
