@@ -1,5 +1,10 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
+import { stopError } from "../mobile-behavior.ts";
 import { scriptOf } from "./fake-fx.ts";
 import { caseResult, checkFails, feedMotion, frameStats, type SampleRow } from "./grade.ts";
 
@@ -92,3 +97,19 @@ it("reads the fake provider's script from the prompt marker", () => {
   expect(scriptOf("Run. [[eval:hold:bg-1]]")).toMatchObject({ kind: "hold", key: "bg-1" });
   expect(scriptOf("plain text")).toMatchObject({ kind: "reply" });
 });
+
+it.effect("counts a device run as finished only once its runner writes the summary", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "mobile-behavior-" });
+    // The runner opens results.jsonl before its first sample, so a crash leaves it behind.
+    yield* fs.writeFileString(path.join(directory, "results.jsonl"), "");
+    expect(stopError(directory, 1)).toBe(`the cases stopped (exit 1); see ${directory}/run.log`);
+    expect(stopError(directory, 0)).toBeUndefined();
+
+    // Blocking cases exit 1 after a complete run; grading reports those.
+    yield* fs.writeFileString(path.join(directory, "summary.md"), "");
+    expect(stopError(directory, 1)).toBeUndefined();
+  }).pipe(Effect.provide(NodeServices.layer)),
+);

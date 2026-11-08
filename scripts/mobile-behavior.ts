@@ -32,6 +32,14 @@ interface TargetRun {
   readonly error?: string;
 }
 
+export function stopError(directory: string, code: number): string | undefined {
+  // The runner writes summary.md after its last sample; results.jsonl exists from the first.
+  const finished = NodeFS.existsSync(NodePath.join(directory, "summary.md"));
+  return finished || code === 0
+    ? undefined
+    : `the cases stopped (exit ${code}); see ${directory}/run.log`;
+}
+
 /** Keeps a lease alive while the cases run: they go minutes without an agent-device call. */
 function renewWhileRunning(pool: Pool, stateDir: string, session: string, token: string) {
   const gateway = pool.agentDeviceUrl.replace(/\/v1\/agent-device\/?$/, "");
@@ -120,10 +128,8 @@ async function runTarget(
       child.on("close", (exit) => resolve(exit ?? 1)),
     );
     transcript.end();
-    const hasResults = NodeFS.existsSync(NodePath.join(directory, "results.jsonl"));
-    return hasResults || code === 0
-      ? { target, directory }
-      : { target, directory, error: `the cases stopped (exit ${code}); see ${directory}/run.log` };
+    const error = stopError(directory, code);
+    return error ? { target, directory, error } : { target, directory };
   } finally {
     stopRenewing();
     await device.release();
