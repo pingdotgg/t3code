@@ -51,6 +51,8 @@ const projectRef = scopeProjectRef(environmentId, ProjectId.make("snap-shot-proj
 function setup(): Disposable {
   storage.clear();
   vi.stubGlobal("localStorage", storage);
+  // Resets the store's record of what it last wrote along with the storage it wrote to.
+  void useComposerDraftStore.persist.clearStorage();
   useComposerDraftStore.setState({
     draftsByThreadKey: {},
     draftThreadsByThreadKey: {},
