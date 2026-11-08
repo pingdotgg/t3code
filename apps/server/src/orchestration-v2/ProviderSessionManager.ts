@@ -1737,31 +1737,35 @@ export const layerWithOptions = (
                     })
                     .pipe(Effect.catchCause(() => Effect.succeed(true)));
             if (hasPendingWork) return;
-            const latest = (yield* Ref.get(sessions)).get(key);
-            if (
-              latest?.runtime !== entry.runtime ||
-              latest.linkedEnvironmentsByThread.get(input.threadId) !== loadedWith ||
-              hasBusyTurn(latest, input.providerThread.id)
-            ) {
-              return;
-            }
+            // Forget the load first so a timed-out unload still resumes natively next turn.
+            const unloading = yield* Ref.modify(sessions, (current) => {
+              const latest = current.get(key);
+              if (
+                latest?.runtime !== entry.runtime ||
+                latest.linkedEnvironmentsByThread.get(input.threadId) !== loadedWith ||
+                hasBusyTurn(latest, input.providerThread.id)
+              ) {
+                return [false, current] as const;
+              }
+              const loadedProviderThreadKeyByThread = new Map(
+                latest.loadedProviderThreadKeyByThread,
+              );
+              loadedProviderThreadKeyByThread.delete(input.threadId);
+              return [
+                true,
+                new Map(current).set(key, { ...latest, loadedProviderThreadKeyByThread }),
+              ] as const;
+            });
+            if (!unloading) return;
             yield* unloadThread({ providerThread: input.providerThread }).pipe(
               Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
               Effect.tap(() =>
                 Ref.update(sessions, (current) => {
                   const latest = current.get(key);
                   if (latest?.runtime !== entry.runtime) return current;
-                  const loadedProviderThreadKeyByThread = new Map(
-                    latest.loadedProviderThreadKeyByThread,
-                  );
-                  loadedProviderThreadKeyByThread.delete(input.threadId);
                   const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
                   linkedEnvironmentsByThread.delete(input.threadId);
-                  return new Map(current).set(key, {
-                    ...latest,
-                    loadedProviderThreadKeyByThread,
-                    linkedEnvironmentsByThread,
-                  });
+                  return new Map(current).set(key, { ...latest, linkedEnvironmentsByThread });
                 }),
               ),
               Effect.catchCause((cause) =>
@@ -2220,14 +2224,9 @@ export const layerWithOptions = (
                         latest.loadedProviderThreadKeyByThread,
                       );
                       loadedProviderThreadKeyByThread.delete(threadId);
-                      const linkedEnvironmentsByThread = new Map(latest.linkedEnvironmentsByThread);
-                      if (linkedEnvironmentsByThread.has(threadId)) {
-                        linkedEnvironmentsByThread.set(threadId, null);
-                      }
                       return new Map(sessions).set(key, {
                         ...latest,
                         loadedProviderThreadKeyByThread,
-                        linkedEnvironmentsByThread,
                       });
                     });
                   }
