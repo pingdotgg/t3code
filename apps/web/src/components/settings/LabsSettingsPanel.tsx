@@ -199,8 +199,8 @@ function ConnectBetaGatewayRow() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const linkLimit = useAtomValue(relayEnvironmentDiscovery.stateValueAtom).betaGatewayLinkLimit;
-  // Stays visible while on, so a relay that stops offering the beta cannot hide the way out.
-  if (linkLimit === undefined && !settings.connectBetaGatewayEnabled) return null;
+  // The relay offers the beta only to listed testers. A leftover "on" does nothing without it.
+  if (linkLimit === undefined) return null;
   return (
     <SettingsRow
       serverScoped
@@ -209,7 +209,7 @@ function ConnectBetaGatewayRow() {
       description={
         <>
           Link through T3&apos;s own gateway instead of a Cloudflare tunnel, free for up to{" "}
-          {linkLimit ?? 100} machines. Applies when you next turn on T3 Connect in{" "}
+          {linkLimit} machines. Applies when you next turn on T3 Connect in{" "}
           <Link to="/settings/access" className="underline underline-offset-2">
             Sharing & access
           </Link>

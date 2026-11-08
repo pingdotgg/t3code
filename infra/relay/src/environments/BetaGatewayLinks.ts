@@ -89,6 +89,12 @@ export class BetaGatewayLinks extends Context.Service<
   }
 >()("t3code-relay/environments/BetaGatewayLinks") {}
 
+/** Whether this relay offers the beta to the account: configured, and the account is a tester. */
+export const offersBetaGateway = (
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  userId: string,
+) => config.betaGatewayDomain !== undefined && config.betaGatewayTesters?.has(userId) === true;
+
 const persistenceError = (cause: unknown) => new BetaGatewayPersistenceError({ cause });
 const activeBetaLink = and(
   eq(linksTable.endpointProviderKind, "t3_relay"),
@@ -183,7 +189,11 @@ const make = Effect.gen(function* () {
       const { userId, proof, request } = input;
       const { environmentId, environmentPublicKey } = proof;
       const domain = config.betaGatewayDomain;
-      if (!domain || !isManagedEndpointHostname(`connector.${domain}`, domain)) {
+      if (
+        !domain ||
+        !offersBetaGateway(config, userId) ||
+        !isManagedEndpointHostname(`connector.${domain}`, domain)
+      ) {
         return yield* new BetaGatewayUnavailable({});
       }
       const freshKey = Hex.encode(yield* random.randomBytes(8));

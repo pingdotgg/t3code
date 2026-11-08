@@ -141,5 +141,8 @@ its active sessions and future sign-ins must be disabled.
 ## T3 Connect Unlimited (beta)
 
 The relay offers the beta only when `RELAY_BETA_GATEWAY_DOMAIN` (a GitHub variable for
-production) and `RELAY_BETA_GATEWAY_SECRET` (a secret) are set. Deploy the gateway first:
-clients show the Labs option as soon as the relay offers it. [Gateway setup](../../infra/connect-gateway/README.md)
+production) and `RELAY_BETA_GATEWAY_SECRET` (a secret) are set, and only to the Clerk user IDs
+in `RELAY_BETA_GATEWAY_TESTERS` (a GitHub variable, separated by commas). Only those accounts see
+the Labs option or can link. To add or remove a tester, edit the variable and run the relay
+deploy workflow. Removing a tester blocks new links; their existing links keep working until
+unlinked. Deploy the gateway first. [Gateway setup](../../infra/connect-gateway/README.md)

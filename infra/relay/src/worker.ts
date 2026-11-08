@@ -190,6 +190,12 @@ export const layer = Api.make(
         new Error("RELAY_BETA_GATEWAY_SECRET must contain at least 32 characters."),
       );
     }
+    // Clerk user IDs separated by commas or whitespace. Unset offers the beta to nobody.
+    const betaGatewayTesters = new Set(
+      Option.getOrElse(yield* Config.option(Config.String("RELAY_BETA_GATEWAY_TESTERS")), () => "")
+        .split(/[\s,]+/u)
+        .filter((userId) => userId.length > 0),
+    );
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -266,7 +272,9 @@ export const layer = Api.make(
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
         managedEndpointNamespace: stage,
-        ...(betaGatewayDomain && betaGatewaySecret ? { betaGatewayDomain, betaGatewaySecret } : {}),
+        ...(betaGatewayDomain && betaGatewaySecret
+          ? { betaGatewayDomain, betaGatewaySecret, betaGatewayTesters }
+          : {}),
         managedEndpointCleanupMode,
         legacyManagedEndpointCleanupMode,
         ...(legacyTunnelGraceMinutes === undefined ? {} : { legacyTunnelGraceMinutes }),

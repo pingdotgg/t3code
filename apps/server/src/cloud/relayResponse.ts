@@ -88,7 +88,7 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
       reason === "unlink_before_switching_transport"
         ? "Run `t3 connect unlink` before switching this environment's transport."
         : reason === "beta_gateway_not_configured"
-          ? "Choose a beta-enabled relay before enrolling this environment."
+          ? "T3 Connect Unlimited (beta) is not enabled for this account."
           : undefined;
     if (hint)
       return yield* new RelayRequestError({

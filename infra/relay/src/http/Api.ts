@@ -976,7 +976,8 @@ export const layerClientApi = HttpApiBuilder.group(
         Effect.fn("relay.api.client.listEnvironments")(function* () {
           const { userId } = yield* RelayClientPrincipal;
           const environments = yield* links.listForUser({ userId });
-          return config.betaGatewayDomain
+          // Clients show the beta's Labs switch only when this is set.
+          return BetaGatewayLinks.offersBetaGateway(config, userId)
             ? { environments, betaGatewayLinkLimit: BETA_GATEWAY_LINK_LIMIT }
             : { environments };
         }, mapRelayCommonApiErrors("not_authorized")),

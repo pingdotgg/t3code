@@ -68,7 +68,8 @@ cannot add more until you are under the limit again.
 
 T3 Connect Unlimited links a machine through T3's own gateway instead of a
 Cloudflare tunnel. Each account can link up to 100 machines this way, separate
-from the regular limit. Nothing extra to install.
+from the regular limit. Nothing extra to install. The beta is invite-only for
+now; the Labs option appears only on invited accounts.
 
 - **Desktop app:** turn on **Settings → Labs → T3 Connect Unlimited (beta)**,
   then turn on T3 Connect in **Sharing & access**.

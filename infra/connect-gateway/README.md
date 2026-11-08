@@ -27,6 +27,6 @@ One gateway serves one beta domain. It is a single point of failure: when it res
 
    `T3_CONNECT_LISTEN` chooses a different loopback port.
 
-5. Set `RELAY_BETA_GATEWAY_DOMAIN=<domain>` on the relay (a GitHub variable for production) and deploy it. The relay then offers the beta to clients, so do this last.
+5. Set `RELAY_BETA_GATEWAY_TESTERS` to the testers' Clerk user IDs, separated by commas, and `RELAY_BETA_GATEWAY_DOMAIN=<domain>` on the relay (GitHub variables for production), then deploy it. The relay then offers the beta to those accounts, so do this last.
 
 The gateway asks the relay which connector tokens are still linked every 30 seconds, in batches. An unlinked environment loses its route at the next check. If the relay cannot answer, routes stay up for 5 minutes after their last good check, so a short relay outage does not disconnect hosts.

@@ -81,6 +81,7 @@ const services = BetaGatewayLinks.layer.pipe(
       cloudMintPublicKey: "pub",
       managedEndpointBaseDomain: undefined,
       betaGatewayDomain: betaDomain,
+      betaGatewayTesters: new Set(["user", "other"]),
       managedEndpointNamespace: "test",
     }),
   ),
@@ -238,12 +239,16 @@ describe("beta gateway links", () => {
       }).pipe(Effect.provide(services)),
   );
   it.effect(
-    "refuses classic reservations and rolls back a failed environment credential write",
+    "refuses accounts outside the testers and classic reservations, and rolls back a failed environment credential write",
     () =>
       Effect.gen(function* () {
         const beta = yield* BetaGatewayLinks.BetaGatewayLinks;
         const links = yield* EnvironmentLinks.EnvironmentLinks;
         const db = yield* RelayDb.RelayDb;
+        expect(yield* beta.enroll(enrollment("outsider", "env")).pipe(Effect.flip)).toMatchObject({
+          _tag: "BetaGatewayUnavailable",
+        });
+        expect(yield* links.getForUser({ userId: "outsider", environmentId: "env" })).toBeNull();
         yield* db.execute(sql`insert into relay_managed_endpoint_allocations (user_id,environment_id,hostname,tunnel_name,created_at,updated_at)
         values ('user','classic','classic.example.test','classic','2026-01-01','2026-01-01')`);
         expect(yield* beta.enroll(enrollment("user", "classic")).pipe(Effect.flip)).toMatchObject({

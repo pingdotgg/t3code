@@ -71,7 +71,7 @@ it.effect("retries an expired link proof but not a revoked bearer, both 401", ()
 
 it.effect.each([
   { reason: "unlink_before_switching_transport", hint: "t3 connect unlink" },
-  { reason: "beta_gateway_not_configured", hint: "beta-enabled relay" },
+  { reason: "beta_gateway_not_configured", hint: "not enabled for this account" },
 ])("stops retrying when the relay reports $reason", ({ reason, hint }) =>
   Effect.gen(function* () {
     const error = yield* filterRelayResponse(
