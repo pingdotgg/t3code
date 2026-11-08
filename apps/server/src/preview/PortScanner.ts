@@ -386,7 +386,7 @@ const parsePsLaunches = (raw: string): ReadonlyMap<number, ListenerLaunch> => {
     const match = /^\s*(\d+)\s(.*)$/.exec(line);
     if (!match) continue;
     const value = AGENT_THREAD_ASSIGNMENT.exec(match[2]!)?.[1];
-    const argv0 = match[2]!.split(" ", 1)[0] ?? "";
+    const argv0 = match[2]!.split(" ", 1)[0]?.trim() ?? "";
     launches.set(Number(match[1]), {
       threadId: value ? ThreadId.make(value) : null,
       title: argv0.length > 0 && !argv0.includes("/") && !argv0.includes("=") ? argv0 : null,
@@ -485,8 +485,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
   const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
-  // Each current listener pid's launch. A process keeps its launch environment, and its title once
-  // it listens, so a pid is read once while it listens. Cleared while no client retains the
+  // Each current listener pid's launch. A process keeps its launch environment, so a pid is read
+  // once while it listens, keeping the first title seen. Cleared while no client retains the
   // scanner, since unscanned pids can be reused.
   const launchesRef = yield* Ref.make<ReadonlyMap<number, ListenerLaunch>>(new Map());
   let runningAgents = 0;
@@ -494,7 +494,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
   // lsof on macOS reports the exec-time name, so the environment read there covers every listener.
-  const readsTitles = hostPlatform !== "linux";
+  const readsTitles = hostPlatform === "darwin";
 
   // Runs on every macOS poll, so only an uncached read is traced.
   const readLaunches = Effect.fnUntraced(function* (pids: ReadonlyArray<number>) {
