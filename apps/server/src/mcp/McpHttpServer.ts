@@ -1141,7 +1141,7 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
 
 // KnowledgeMap comes from the server runtime: one instance, so its write lock covers RPC and MCP saves.
 const layerKnowledgeToolkit = toolkitRegistration(KnowledgeToolkit, KnowledgeHandlers.layer);
-const layerQuizToolkit = toolkitRegistration(QuizToolkit, QuizHandlers.layer);
+export const layerQuizToolkit = toolkitRegistration(QuizToolkit, QuizHandlers.layer);
 const layerCourseToolkit = toolkitRegistration(CourseToolkit, CourseHandlers.layer).pipe(
   Layer.provide(OrchestratorMcpService.layer),
 );

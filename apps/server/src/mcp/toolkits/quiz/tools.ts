@@ -7,9 +7,19 @@ import { QUESTION_CARD_TOOL_NAME, QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/qu
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
+// First, so the model writes the reply before the question.
+const reply = Schema.optional(
+  Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))).annotate({
+    description:
+      "After the learner answers a card: your reply, shown to them as your message text just before this card. Give your verdict on their answer, then teach what this card tests. The learner never sees your thinking, so put the reply here unless you already wrote it as response text.",
+  }),
+);
+
 export const QuizCardInput = Schema.Struct({
+  reply,
   answer: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
   explanation: Schema.String.pipe(Schema.check(Schema.isMaxLength(1500))),
   level: Schema.Literals(["remember", "understand", "apply", "analyse"]),
@@ -28,7 +38,10 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [McpInvocationContext.McpInvocationContext],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
 })
   .annotate(Tool.Title, "Ask a quiz")
   .annotate(Tool.Readonly, true)
@@ -36,6 +49,7 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   .annotate(Tool.Idempotent, false);
 
 export const QuestionCardInput = Schema.Struct({
+  reply,
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
   blanks: Schema.optional(
     Schema.Array(
@@ -70,7 +84,10 @@ const QuestionCardTool = Tool.make(QUESTION_CARD_TOOL_NAME, {
   success: Schema.Struct({ questionCard: QuestionCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [McpInvocationContext.McpInvocationContext],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
 })
   .annotate(Tool.Title, "Ask a question")
   .annotate(Tool.Readonly, true)
