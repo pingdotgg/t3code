@@ -1,13 +1,23 @@
-// @effect-diagnostics nodeBuiltinImport:off - expectations mirror the host path joins the script under test performs.
+// @effect-diagnostics nodeBuiltinImport:off - Clears capture outputs in a real temporary folder.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, it } from "@effect/vitest";
 import { PNG } from "pngjs";
 
-import type { ShowcaseStoreAssetSpec } from "./mobile-showcase.config.ts";
+import showcaseConfig, {
+  type ShowcaseScene,
+  type ShowcaseStoreAssetSpec,
+} from "./mobile-showcase.config.ts";
 import {
+  clearShowcaseCaptureOutputs,
   encodeAndroidPairingUrls,
   normalizeStorePng,
   parsePairingCredentialOutput,
+  planShowcaseCaptures,
   readPngMetadata,
+  showcaseCaptureDirectory,
   validateStoreAsset,
 } from "./mobile-showcase.ts";
 
@@ -90,4 +100,41 @@ it("encodes Android pairing URLs without shell-sensitive JSON quotes", () => {
   assert.equal(encoded.startsWith("json-uri:"), true);
   assert.deepStrictEqual(JSON.parse(decodeURIComponent(encoded.slice("json-uri:".length))), urls);
   assert.equal(encoded.includes('"'), false);
+});
+
+it("keeps unselected scenes on a partial capture and clears the folder on a full one", async () => {
+  const pixel = showcaseConfig.devices.find((device) => device.id === "pixel");
+  assert.ok(pixel);
+  const seeded = [...pixel.scenes.map((scene) => `${scene}.png`), "stale.png"];
+  const cases = [
+    {
+      scenes: new Set<ShowcaseScene>(["thread"]),
+      remaining: seeded.filter((file) => file !== "thread.png"),
+    },
+    { scenes: new Set<ShowcaseScene>(), remaining: [] },
+  ];
+  const outputDirectory = await NodeFSP.mkdtemp(
+    NodePath.join(NodeOS.tmpdir(), "t3-showcase-test-"),
+  );
+  try {
+    for (const { scenes, remaining } of cases) {
+      const [capture] = planShowcaseCaptures(showcaseConfig, {
+        platforms: new Set(),
+        deviceIds: new Set(["pixel"]),
+        scenes,
+        appearances: new Set(),
+        themes: new Set(),
+      });
+      assert.ok(capture);
+      const directory = showcaseCaptureDirectory(outputDirectory, capture);
+      await NodeFSP.mkdir(directory, { recursive: true });
+      for (const file of seeded) {
+        await NodeFSP.writeFile(NodePath.join(directory, file), "png");
+      }
+      await clearShowcaseCaptureOutputs(outputDirectory, capture);
+      assert.deepStrictEqual((await NodeFSP.readdir(directory)).sort(), remaining.sort());
+    }
+  } finally {
+    await NodeFSP.rm(outputDirectory, { recursive: true, force: true });
+  }
 });

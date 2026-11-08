@@ -243,6 +243,27 @@ export function showcaseCaptureDirectory(
   );
 }
 
+function isFullCapture(capture: ShowcaseCapture): boolean {
+  return capture.scenes.length === capture.device.scenes.length;
+}
+
+export async function clearShowcaseCaptureOutputs(
+  outputDirectory: string,
+  capture: ShowcaseCapture,
+): Promise<void> {
+  const directory = showcaseCaptureDirectory(outputDirectory, capture);
+  if (isFullCapture(capture)) {
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  } else {
+    await Promise.all(
+      capture.scenes.map((scene) =>
+        NodeFSP.rm(NodePath.join(directory, `${scene}.png`), { force: true }),
+      ),
+    );
+  }
+  await NodeFSP.mkdir(directory, { recursive: true });
+}
+
 async function finalizeCapture(destination: string, device: ShowcaseDevice): Promise<void> {
   const normalized = normalizeStorePng(await NodeFSP.readFile(destination));
   await NodeFSP.writeFile(destination, normalized);
@@ -1537,11 +1558,7 @@ async function main(): Promise<void> {
   const outputDirectory = NodePath.resolve(REPO_ROOT, showcaseConfig.outputDirectory);
   if (options.validateOnly) {
     for (const capture of captures) {
-      await validateCaptureSet(
-        capture,
-        outputDirectory,
-        capture.scenes.length === capture.device.scenes.length,
-      );
+      await validateCaptureSet(capture, outputDirectory, isFullCapture(capture));
     }
     return;
   }
@@ -1550,9 +1567,7 @@ async function main(): Promise<void> {
   const metroHost = hasIos ? lanIpv4Address() : "127.0.0.1";
   await NodeFSP.mkdir(outputDirectory, { recursive: true });
   for (const capture of captures) {
-    const directory = showcaseCaptureDirectory(outputDirectory, capture);
-    await NodeFSP.rm(directory, { recursive: true, force: true });
-    await NodeFSP.mkdir(directory, { recursive: true });
+    await clearShowcaseCaptureOutputs(outputDirectory, capture);
   }
 
   const showcaseRootDir = await NodeFSP.mkdtemp(
@@ -1622,11 +1637,7 @@ async function main(): Promise<void> {
           (cleanup) => androidCleanups.push(cleanup),
         );
       }
-      await validateCaptureSet(
-        capture,
-        outputDirectory,
-        capture.scenes.length === capture.device.scenes.length,
-      );
+      await validateCaptureSet(capture, outputDirectory, isFullCapture(capture));
     }
 
     NodeProcess.stdout.write(
