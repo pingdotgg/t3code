@@ -41,7 +41,15 @@ describe("DesktopUpdates", () => {
               : (mode === "mixed" ? Effect.fail(ordinary) : Effect.interrupt).pipe(
                   Effect.ensuring(Effect.die(error)),
                 );
-      const harness = makeHarness({ quitAndInstall: failure });
+      const cleanupStarted = Deferred.makeUnsafe<void>();
+      const releaseCleanup = Deferred.makeUnsafe<void>();
+      const harness = makeHarness({
+        env: { T3CODE_DESKTOP_UPDATE_INSTALLER: "/test/installer" },
+        quitAndInstall: Deferred.succeed(cleanupStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseCleanup)),
+          Effect.andThen(failure),
+        ),
+      });
       return Effect.scoped(
         Effect.gen(function* () {
           const desktopState = yield* DesktopState.DesktopState;
@@ -49,7 +57,16 @@ describe("DesktopUpdates", () => {
           yield* updates.configure;
           harness.emit("update-downloaded", { version: "1.2.4" });
           yield* flushCallbacks;
-          const result = yield* updates.install;
+          const installing = yield* updates.install.pipe(Effect.forkChild);
+          yield* Deferred.await(cleanupStarted);
+          harness.emit("error", new Error("updater error during cleanup"));
+          yield* flushCallbacks;
+          assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+          assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.equal(harness.installRecords.size, 1);
+          assert.isFalse((yield* updates.install).accepted);
+          yield* Deferred.succeed(releaseCleanup, undefined);
+          const result = yield* Fiber.join(installing);
           assert.isTrue(result.accepted);
           assert.isFalse(yield* Ref.get(desktopState.quitting));
           assert.deepEqual(
@@ -105,60 +122,98 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("restores only desired-running instances after an installer error event", () => {
-    const starts: string[] = [];
-    const stops: string[] = [];
-    const makeInstance = (id: DesktopBackendPool.BackendInstanceId, initiallyRunning: boolean) => {
-      let desiredRunning = initiallyRunning;
-      return {
-        id,
-        label: Effect.succeed(id),
-        currentConfig: Effect.succeedNone,
-        start: Effect.sync(() => {
-          starts.push(id);
-          desiredRunning = true;
-        }),
-        stop: () =>
-          Effect.sync(() => {
-            stops.push(id);
-            desiredRunning = false;
+  it.effect.each(["pending", "settled", "external"] as const)(
+    "handles %s installer errors without starting undesired instances",
+    (phase) => {
+      const installStarted = Deferred.makeUnsafe<void>();
+      const releaseInstall = Deferred.makeUnsafe<void>();
+      const starts: string[] = [];
+      const stops: string[] = [];
+      const makeInstance = (
+        id: DesktopBackendPool.BackendInstanceId,
+        initiallyRunning: boolean,
+      ) => {
+        let desiredRunning = initiallyRunning;
+        return {
+          id,
+          label: Effect.succeed(id),
+          currentConfig: Effect.succeedNone,
+          start: Effect.sync(() => {
+            starts.push(id);
+            desiredRunning = true;
           }),
-        snapshot: Effect.sync(() => ({
-          desiredRunning,
-          ready: false,
-          activePid: Option.none(),
-          restartAttempt: 0,
-          restartScheduled: false,
-        })),
-        waitForReady: () => Effect.succeed(true),
-      } satisfies DesktopBackendPool.DesktopBackendInstance;
-    };
-    const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
-    const wsl = makeInstance(DesktopBackendPool.BackendInstanceId("wsl:default"), true);
-    const harness = makeHarness({ backendInstances: [primary, wsl] });
+          stop: () =>
+            Effect.sync(() => {
+              stops.push(id);
+              desiredRunning = false;
+            }),
+          snapshot: Effect.sync(() => ({
+            desiredRunning,
+            ready: false,
+            activePid: Option.none(),
+            restartAttempt: 0,
+            restartScheduled: false,
+          })),
+          waitForReady: () => Effect.succeed(true),
+        } satisfies DesktopBackendPool.DesktopBackendInstance;
+      };
+      const primary = makeInstance(DesktopBackendPool.PRIMARY_INSTANCE_ID, false);
+      const wsl = makeInstance(DesktopBackendPool.BackendInstanceId("wsl:default"), true);
+      const harness = makeHarness({
+        env: phase === "external" ? { T3CODE_DESKTOP_UPDATE_INSTALLER: "/test/installer" } : {},
+        backendInstances: [primary, wsl],
+        quitAndInstall: Deferred.succeed(installStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseInstall)),
+        ),
+      });
 
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-downloaded", { version: "1.2.4" });
-        yield* flushCallbacks;
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
 
-        yield* updates.install;
-        assert.sameMembers(stops, [primary.id, wsl.id]);
-        assert.isFalse((yield* wsl.snapshot).desiredRunning);
-        const { changes } = yield* updates.subscribe;
-        const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
-        yield* flushCallbacks;
-        harness.emit("error", new Error("native installer refused"));
-        assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
+          const installing = yield* updates.install.pipe(Effect.forkChild);
+          yield* Deferred.await(installStarted);
+          if (phase === "settled") {
+            yield* Deferred.succeed(releaseInstall, undefined);
+            yield* Fiber.join(installing);
+          }
+          assert.sameMembers(stops, [primary.id, wsl.id]);
+          assert.isFalse((yield* wsl.snapshot).desiredRunning);
+          const { changes } = yield* updates.subscribe;
+          const recovered = yield* Stream.runHead(changes).pipe(Effect.forkChild);
+          yield* flushCallbacks;
+          harness.emit("error", new Error("native installer refused"));
+          if (phase !== "settled") {
+            yield* flushCallbacks;
+            assert.deepEqual(starts, phase === "external" ? [] : [wsl.id]);
+            assert.equal(harness.updateRestartMarkers.size, phase === "external" ? 1 : 0);
+            assert.equal(harness.installRecords.size, phase === "external" ? 1 : 0);
+            yield* Deferred.succeed(releaseInstall, undefined);
+            yield* Fiber.join(installing);
+          }
+          if (phase === "external") {
+            harness.emit("error", new Error("updater error after external handoff"));
+            yield* flushCallbacks;
+            assert.deepEqual(starts, []);
+            assert.isFalse((yield* wsl.snapshot).desiredRunning);
+            assert.equal(harness.updateRestartMarkers.size, 1);
+            assert.equal(harness.installRecords.size, 1);
+            return;
+          }
+          assert.equal(Option.getOrThrow(yield* Fiber.join(recovered)).errorContext, "install");
+          assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.equal(harness.installRecords.size, 0);
 
-        assert.deepEqual(starts, [wsl.id]);
-        assert.isFalse((yield* primary.snapshot).desiredRunning);
-        assert.isTrue((yield* wsl.snapshot).desiredRunning);
-      }),
-    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
-  });
+          assert.deepEqual(starts, [wsl.id]);
+          assert.isFalse((yield* primary.snapshot).desiredRunning);
+          assert.isTrue((yield* wsl.snapshot).desiredRunning);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    },
+  );
 
   it.effect("holds the install reservation until failed-install recovery finishes", () => {
     const recoveryStarted = Deferred.makeUnsafe<void>();

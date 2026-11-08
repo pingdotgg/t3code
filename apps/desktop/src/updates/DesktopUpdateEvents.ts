@@ -35,7 +35,15 @@ export const makeUpdateEvents = Effect.fn("desktop.updates.makeEvents")(function
   checks: UpdateChecks,
   install: UpdateInstall,
 ) {
-  const { offerable, updateStateRef, setState, updateState, activeUpdateAction } = context;
+  const {
+    config,
+    environment,
+    offerable,
+    updateStateRef,
+    setState,
+    updateState,
+    activeUpdateAction,
+  } = context;
   const { checkForUpdates } = checks;
   const { recoverFailedInstall } = install;
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
@@ -149,7 +157,10 @@ export const makeUpdateEvents = Effect.fn("desktop.updates.makeEvents")(function
       cause,
     });
     if (Option.isSome(activeAction) && activeAction.value === "install") {
-      yield* recoverFailedInstall(error.message);
+      // External handoff owns recovery after cleanup; updater events cannot cancel its helper.
+      if (environment.platform !== "darwin" || Option.isNone(config.desktopUpdateInstaller)) {
+        yield* recoverFailedInstall(error.message);
+      }
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
         cause: describeUpdateErrorCause(error.cause),
