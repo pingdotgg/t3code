@@ -1430,6 +1430,12 @@ function ScheduledTaskEditorForm({
     query: "",
   });
   const worktreeBaseRef = scheduledTaskWorktreeBaseRef(draft.baseRef, automaticBaseRefs.refs);
+  // Until the project's refs load, the automatic base would save as `main`. A failed lookup falls back to it.
+  const automaticBaseRefLoading =
+    automaticBaseRef &&
+    selectedProject !== undefined &&
+    automaticBaseRefs.data === null &&
+    automaticBaseRefs.error === null;
   const instanceEntries = providerInstanceEntriesFor(
     providers,
     settings,
@@ -1470,7 +1476,8 @@ function ScheduledTaskEditorForm({
       saving ||
       editingTaskMissing ||
       !connected ||
-      tasksQuery.data === null
+      tasksQuery.data === null ||
+      automaticBaseRefLoading
     )
       return;
     const selection = activeSelection;
@@ -2151,6 +2158,7 @@ function ScheduledTaskEditorForm({
             editingTaskMissing ||
             !connected ||
             !tasksQuery.data ||
+            automaticBaseRefLoading ||
             (draft.enabled && draft.scheduleMode === "webhook" && webhookDenial !== undefined)
           }
           onClick={() => void submit()}

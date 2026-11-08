@@ -668,14 +668,20 @@ function TaskForm({
     )
     .sort((left, right) => Number(right.pinnedAt != null) - Number(left.pinnedAt != null));
   const automaticBaseRef = draft.workspace === "worktree" && !draft.baseRef.trim();
+  const automaticBaseRefCwd = automaticBaseRef
+    ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
+    : null;
   const automaticBaseRefs = usePaginatedBranches({
     environmentId,
-    cwd: automaticBaseRef
-      ? (projects.find((project) => project.id === draft.projectId)?.workspaceRoot ?? null)
-      : null,
+    cwd: automaticBaseRefCwd,
     query: "",
   });
   const worktreeBaseRef = scheduledTaskWorktreeBaseRef(draft.baseRef, automaticBaseRefs.refs);
+  // Until the project's refs load, the automatic base would save as `main`. A failed lookup falls back to it.
+  const automaticBaseRefLoading =
+    automaticBaseRefCwd !== null &&
+    automaticBaseRefs.data === null &&
+    automaticBaseRefs.error === null;
   const config = useEnvironmentServerConfig(environmentId);
   const destinationLabel = useScheduledTaskDestinationLabel(environmentId, draft.threadId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
@@ -716,7 +722,8 @@ function TaskForm({
       saving ||
       dictationPending ||
       taskMissing ||
-      environmentUnavailable
+      environmentUnavailable ||
+      automaticBaseRefLoading
     )
       return;
     // Preserve signatures edited on other clients by sending the task's current value.
@@ -1315,6 +1322,7 @@ function TaskForm({
           dictationPending ||
           taskMissing ||
           environmentUnavailable ||
+          automaticBaseRefLoading ||
           // The server refuses an enabled webhook task under this policy.
           (draft.enabled && draft.schedule.mode === "webhook" && webhookDenial !== undefined)
         }
