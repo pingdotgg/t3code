@@ -165,7 +165,7 @@ jobs:
       - name: Install dependencies
         run: |
           npx -y "$(node -p 'require("./package.json").packageManager')" install --frozen-lockfile
-          echo "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
+          cygpath -w "$PWD/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Test and typecheck what our commits touch
         run: node fork/check-changes.mjs "$BASE_TAG"

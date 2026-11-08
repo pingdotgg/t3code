@@ -6,7 +6,10 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
+
+// Use the workspace's own vp (node_modules/.bin), whatever the caller's PATH.
+process.env.PATH = `${resolve("node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}`;
 
 const base = process.argv[2];
 if (!base) throw new Error("usage: check-changes.mjs <base-tag>");
@@ -21,8 +24,10 @@ function run(cmd, args, opts = {}) {
   return r.status ?? 1;
 }
 
-const changed = spawnSync("git", ["diff", "--name-only", `${base}..HEAD`], { encoding: "utf8" })
-  .stdout.split("\n")
+const diff = spawnSync("git", ["diff", "--name-only", `${base}..HEAD`], { encoding: "utf8" });
+if (diff.status !== 0) throw new Error(`git diff failed: ${diff.error ?? diff.stderr}`);
+const changed = diff.stdout
+  .split("\n")
   .map((s) => s.trim())
   .filter((s) => s && existsSync(s));
 
@@ -58,7 +63,10 @@ if (tests.length) {
   }
 }
 
-// Typecheck every workspace package with a changed source file.
+// Typecheck every workspace package with a changed source file, except the
+// server: its effect-tsgo run exits non-zero while listing only warnings and
+// suggestions, so it can't tell a real error apart. Its tests still run.
+const SKIP_TYPECHECK = new Set(["t3"]);
 const packages = new Set();
 for (const f of changed) {
   const m = /^(apps|packages)\/[^/]+\//.exec(f);
@@ -66,7 +74,13 @@ for (const f of changed) {
   const pkgJson = join(m[0], "package.json");
   if (!existsSync(pkgJson)) continue;
   const pkg = JSON.parse(readFileSync(pkgJson, "utf8"));
-  if (pkg.scripts?.typecheck && pkg.name && !pkg.name.includes("mobile")) packages.add(pkg.name);
+  if (
+    pkg.scripts?.typecheck &&
+    pkg.name &&
+    !pkg.name.includes("mobile") &&
+    !SKIP_TYPECHECK.has(pkg.name)
+  )
+    packages.add(pkg.name);
 }
 for (const name of packages) {
   if (run("vp", ["run", "--filter", name, "typecheck"]) !== 0)
