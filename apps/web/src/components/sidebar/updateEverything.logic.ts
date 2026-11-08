@@ -108,8 +108,10 @@ export function collectServerUpdateTargets(
       skip("needs a manual update");
       continue;
     }
+    // Only a desktop app's control channel accepts this request. Older apps lack it, and wsl.exe
+    // cannot pass it to a WSL backend, so either way the update has to start on that machine.
     if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
-      skip("needs a newer desktop app");
+      skip("update the desktop app on that machine");
       continue;
     }
     const serverVersion = config.environment.serverVersion;
@@ -336,7 +338,7 @@ function trackSwitchMove(
   if (selfUpdate === null) return { skip: "needs a manual update" };
   if (selfUpdate !== "desktop-managed") return { selfUpdate };
   if (config.environment.capabilities.desktopAppChannelSwitch !== true) {
-    return { skip: "needs a newer desktop app" };
+    return { skip: "switch the desktop app on that machine" };
   }
   // Squirrel.Mac renames the bundle for the new track and then cannot relaunch it.
   if (!sameTrack && config.environment.platform.os === "darwin") {

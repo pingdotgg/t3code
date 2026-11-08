@@ -85,6 +85,31 @@ describe("collectServerUpdateTargets", () => {
     ]);
   });
 
+  it("sends desktop servers without the desktop update channel to that machine's app", () => {
+    // A WSL backend runs in desktop mode, but wsl.exe cannot pass it the desktop's control fd.
+    const wsl = machine("wsl-backend", "0.0.40", "desktop-managed");
+    const { targets, skipped } = collectServerUpdateTargets(
+      [
+        {
+          ...wsl,
+          serverConfig: {
+            ...wsl.serverConfig!,
+            environment: {
+              ...wsl.serverConfig!.environment,
+              capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
+            },
+          },
+        },
+      ],
+      "0.0.50",
+    );
+
+    expect(targets).toEqual([]);
+    expect(skipped.map((entry) => [entry.label, entry.reason])).toEqual([
+      ["wsl-backend", "update the desktop app on that machine"],
+    ]);
+  });
+
   it("skips servers whose policy refuses the update, with the policy's message", () => {
     const managed = (
       id: string,
@@ -239,7 +264,7 @@ describe("collectChannelSwitchTargets", () => {
         "ahead",
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
-      ["old-desktop", "needs a newer desktop app"],
+      ["old-desktop", "switch the desktop app on that machine"],
       [
         "no-nightly",
         "Example Corp manages T3 Code updates. Only stable releases can be installed.",
