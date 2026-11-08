@@ -24,7 +24,11 @@ function createList(bundle: string) {
     nativeScroll = 2200;
   });
   const state = {
-    props: { maintainScrollAtEnd: { animated: true, onLayout: true, onDataChange: true } },
+    props: {
+      maintainScrollAtEnd: { animated: true, onLayout: true, onDataChange: true } as
+        | { animated: boolean; onLayout: boolean; onDataChange: boolean }
+        | undefined,
+    },
     didContainersLayout: true,
     pendingNativeMVCPAdjust: undefined,
     refScroller: { current: { scrollToEnd, getCurrentScrollOffset: () => nativeScroll } },
@@ -76,6 +80,10 @@ function createList(bundle: string) {
     scrolled(offset: number) {
       nativeScroll = offset;
       state.scroll = offset;
+    },
+    /** The app passes maintainScrollAtEnd={false} once the reader scrolls away. */
+    releaseFollow() {
+      state.props.maintainScrollAtEnd = undefined;
     },
     /** A pin that lands at the end brings the threshold back. */
     reachEnd() {
@@ -131,5 +139,13 @@ describe.each(["react.mjs", "react.js"])("maintainScrollAtEnd while animated (%s
     list.dataChange();
     list.frame();
     expect(list.scrollToEnd.mock.calls.at(-1)).toEqual([{ animated: true }]);
+  });
+
+  it("drops a queued resize pin once the reader scrolls away", () => {
+    const list = createList(bundle);
+    list.frame(700);
+    list.releaseFollow();
+    list.frame();
+    expect(list.scrollToEnd).not.toHaveBeenCalled();
   });
 });
