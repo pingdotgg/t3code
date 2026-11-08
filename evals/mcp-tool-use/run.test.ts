@@ -330,6 +330,12 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
   ]);
   const refusedPath = { ...render, step: 1, failed: true };
   assert.deepEqual(failed(expect, run([write, refusedPath, fix, render])), []);
+  // T3 may still refuse an unanswered page call, so early grading waits for its result.
+  assert.isFalse(failedEarly(expect, run([write, render])));
+  assert.isTrue(failedEarly(expect, run([write, { ...render, failed: false }])));
+  assert.deepEqual(failed({ notCalls: ["html_render"] }, run([{ ...render, failed: true }])), [
+    "notCalls html_render",
+  ]);
   const relative = { ...write, input: { ...write.input, file_path: "././v.html" } };
   assert.deepEqual(failed(expect, run([relative, render])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',

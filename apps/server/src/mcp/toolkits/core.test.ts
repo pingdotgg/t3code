@@ -275,21 +275,23 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
     // Only a full-access thread may have the server read a file for it.
-    const byPath = (caller: McpInvocationContext.McpInvocationScope) =>
+    const byPath = (name: string, caller: McpInvocationContext.McpInvocationScope) =>
       server
         .callTool({
-          name: "html_render",
-          arguments: { path: "/tmp/t3-missing-revenue.html", title: "Revenue", height: 240 },
+          name,
+          arguments: { path: "/t3-missing-dir/revenue.html", title: "Revenue", height: 240 },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, caller),
           Effect.provideService(McpSchema.McpServerClient, client),
-          Effect.map(declaredFailure),
+          // html_preview reports failures as plain text, html_render as a declared failure.
+          Effect.map((result) => (result.isError ? JSON.stringify(result.content) : undefined)),
         );
-    expect(yield* byPath(scope)).toMatchObject({ code: "capability_denied" });
-    expect(
-      yield* byPath({ ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } }),
-    ).toMatchObject({ code: "invalid_request" });
+    const fullAccess = { ...scope, thread: { ...scope.thread!, threadId: fullAccessThreadId } };
+    for (const name of ["html_preview", "html_render"]) {
+      expect(yield* byPath(name, scope), name).toContain("only full-access threads");
+      expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
+    }
   }).pipe(
     Effect.provide(
       McpHttpServer.layerHtmlToolkit.pipe(
