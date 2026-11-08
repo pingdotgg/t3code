@@ -3,6 +3,7 @@ import { type DesktopBridge, EnvironmentId, ProjectId, ThreadId } from "@t3tools
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { waitForSnapShotContexts } from "../../lib/desktopSnapShot";
 import * as imageCompression from "../../lib/imageCompression";
 import {
   questionAttachmentDraftId,
@@ -260,6 +261,49 @@ describe("durable snapshot delivery", () => {
       }
     },
   );
+
+  it("lands a capture before its window text and holds sends until the text fills in", async () => {
+    using _env = setup();
+    const target = scopeThreadRef(environmentId, ThreadId.make("pending-text-thread"));
+    const capture = {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: "window.png",
+      mimeType: "image/png" as const,
+      sizeBytes: 3,
+      dataUrl: "data:image/png;base64,AQID",
+      contextPending: true,
+      source: {
+        kind: "snap-shot" as const,
+        capturedAt: "2026-09-01T00:00:00.000Z",
+        appName: "Editor",
+        windowTitle: "main.ts",
+      },
+    };
+    let fillContext!: (context: { accessibleText: string }) => void;
+    const context = new Promise<{ accessibleText: string }>((resolve) => {
+      fillContext = resolve;
+    });
+    const bridge = {
+      readSnapShot: async () => capture,
+      readSnapShotContext: () => context,
+      acknowledgeSnapShot: vi.fn(async () => undefined),
+    } as unknown as DesktopBridge;
+
+    await deliverSnapShot(bridge, capture, () => target);
+    const landed = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(landed?.images.map(({ id, source }) => [id, source?.accessibleText])).toEqual([
+      [capture.id, undefined],
+    ]);
+    const sendWait = waitForSnapShotContexts([capture.id]);
+    expect(sendWait).not.toBeNull();
+
+    fillContext({ accessibleText: "const answer = 42;" });
+    await sendWait;
+    const filled = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(filled?.images[0]?.source?.accessibleText).toBe("const answer = 42;");
+    expect(filled?.persistedAttachments[0]?.source?.accessibleText).toBe("const answer = 42;");
+    expect(waitForSnapShotContexts([capture.id])).toBeNull();
+  });
 });
 
 describe("snapshot destination ownership", () => {

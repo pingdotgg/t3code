@@ -120,6 +120,8 @@ export class ElectronWindow extends Context.Service<
     readonly setMain: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly clearMain: (window: Option.Option<Electron.BrowserWindow>) => Effect.Effect<void>;
     readonly prepareReveal: (window: Electron.BrowserWindow) => Effect.Effect<boolean>;
+    readonly warmCaptureReveal: Effect.Effect<void>;
+    readonly coolCaptureReveal: Effect.Effect<void>;
     readonly reveal: (window: Electron.BrowserWindow) => Effect.Effect<void>;
     readonly sendAll: (channel: string, ...args: readonly unknown[]) => Effect.Effect<void>;
     readonly destroyAll: Effect.Effect<void>;
@@ -132,7 +134,7 @@ export class ElectronWindow extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
-  // Lazy-load native accessibility on capture reveal to avoid startup cost for other users.
+  // Keep native accessibility out of startup when App Shots is disabled.
   let windowsForegroundFocus: ReturnType<typeof startWindowsForegroundFocusThread> | undefined;
   const ensureWindowsForegroundFocus = () => {
     windowsForegroundFocus ??= startWindowsForegroundFocusThread(
@@ -212,6 +214,13 @@ export const make = Effect.gen(function* () {
   });
 
   return ElectronWindow.of({
+    warmCaptureReveal: Effect.sync(() => {
+      if (platform === "win32") ensureWindowsForegroundFocus();
+    }).pipe(Effect.withSpan("ElectronWindow.warmCaptureReveal")),
+    coolCaptureReveal: Effect.sync(() => {
+      windowsForegroundFocus?.close();
+      windowsForegroundFocus = undefined;
+    }).pipe(Effect.withSpan("ElectronWindow.coolCaptureReveal")),
     create: Effect.fn("ElectronWindow.create")(function (options, behavior) {
       const webPreferences = options.webPreferences;
       const diagnosticOptions = {

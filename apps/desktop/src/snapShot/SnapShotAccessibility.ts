@@ -12,6 +12,7 @@ import {
   compactAccessibilityTree,
   findAccessibleWindow,
   isWaylandSession,
+  makeAccessibilityTextCollector,
 } from "./snapShot.ts";
 
 const ACCESSIBILITY_TIMEOUT_MS = 3_000;
@@ -162,22 +163,37 @@ async function readCapturedWindowAccessibility(
       (accessibleBounds !== null &&
         Math.abs(accessibleBounds.x - matchingBounds.x) <= 2 &&
         Math.abs(accessibleBounds.y - matchingBounds.y) <= 2));
-  const flatRead = window
-    .tree()
-    .then((tree) => {
-      progress.accessibleText =
-        accessibleWindowText(tree, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS) || undefined;
-      progress.flatComplete = true;
-    })
-    .catch(() => {
-      progress.flatComplete = true;
-    });
+  const readFlatText = () =>
+    window
+      .tree()
+      .then((tree) => {
+        progress.accessibleText =
+          accessibleWindowText(tree, SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS) || undefined;
+        progress.flatComplete = true;
+      })
+      .catch(() => {
+        progress.flatComplete = platform !== "win32";
+      });
+  const flatRead = platform === "win32" ? undefined : readFlatText();
+  const text = makeAccessibilityTextCollector(SNAP_SHOT_ACCESSIBLE_TEXT_MAX_CHARS);
+  let traversalFailed = false;
   // Preserve the screenshot frame origin and scale so accessibility coordinates include decorations.
   const sourceBounds =
     matchMode === "wayland" && active.clientBounds
       ? active.bounds
       : (accessibleBounds ?? active.bounds);
   const richRead = accessibleWindowElementTree(window, sourceBounds, imageSize, {
+    ...(platform === "win32"
+      ? {
+          onText: (name?: string, value?: string) => {
+            text.add(name, value);
+            progress.accessibleText = text.text || undefined;
+          },
+          onTraversalError: () => {
+            traversalFailed = true;
+          },
+        }
+      : {}),
     locationsReliable,
     onProgress: (root, truncated, descendantLocationsReliable) => {
       progress.richLocationsReliable = descendantLocationsReliable;
@@ -187,15 +203,20 @@ async function readCapturedWindowAccessibility(
     shouldContinue: () => !progress.timedOut,
     verifyDescendantLocations: matchMode === "wayland",
   })
-    .then((rich) => {
+    .then(async (rich) => {
       progress.richComplete = true;
       if (rich) {
         progress.richRoot = rich.root;
         progress.richTruncated = rich.truncated;
       }
+      if (platform === "win32" && !progress.timedOut) {
+        if (!rich || traversalFailed) await readFlatText();
+        else progress.flatComplete = true;
+      }
     })
-    .catch(() => {
+    .catch(async () => {
       progress.richComplete = true;
+      if (platform === "win32" && !progress.timedOut) await readFlatText();
     });
   onStarted();
   await Promise.all([flatRead, richRead]);

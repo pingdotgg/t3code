@@ -163,6 +163,23 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "prewarms capture focus without querying or focusing a window and releases it on disable",
+    () =>
+      Effect.gen(function* () {
+        const windows = yield* ElectronWindow.ElectronWindow;
+        yield* windows.warmCaptureReveal;
+        yield* windows.warmCaptureReveal;
+        assert.equal(startWindowsForegroundFocusThreadMock.mock.calls.length, 1);
+        assert.equal(windowsForegroundPrepareMock.mock.calls.length, 0);
+        assert.equal(windowsForegroundFocusMock.mock.calls.length, 0);
+        yield* windows.coolCaptureReveal;
+        assert.equal(windowsForegroundCloseMock.mock.calls.length, 1);
+        yield* windows.warmCaptureReveal;
+        assert.equal(startWindowsForegroundFocusThreadMock.mock.calls.length, 2);
+      }).pipe(Effect.provide(layerTestFor("win32"))),
+  );
+
   it.effect("never falls back to an auxiliary window as the main window", () =>
     Effect.gen(function* () {
       const electronWindow = yield* ElectronWindow.ElectronWindow;

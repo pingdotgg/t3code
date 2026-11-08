@@ -1,23 +1,9 @@
 import type * as Electron from "electron";
-import { assert, beforeEach, expect, it, vi } from "vite-plus/test";
+import { assert, expect, it, vi } from "vite-plus/test";
 
 import type { RegionSnapShotChild, RegionSnapShotProcess } from "./RegionSnapShot.ts";
 
-const { createFromBufferMock, resizeMock } = vi.hoisted(() => ({
-  createFromBufferMock: vi.fn(),
-  resizeMock: vi.fn(),
-}));
-
-vi.mock("electron", () => ({
-  nativeImage: { createFromBuffer: createFromBufferMock },
-}));
-
 import { makeRegionSnapShotPool, startRegionSnapShotProcess } from "./RegionSnapShot.ts";
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  createFromBufferMock.mockReturnValue({ resize: resizeMock });
-});
 
 function fakeChild() {
   const messageListeners: Array<(message: unknown) => void> = [];
@@ -48,7 +34,7 @@ const region = { x: 0, y: 0, width: 2, height: 1 };
 it("rejects when the child exits before replying", async () => {
   const fake = fakeChild();
   const child = startRegionSnapShotProcess("worker.cjs", () => fake.child);
-  const capture = child.capture(region);
+  const capture = child.capture(region, region);
   fake.emit("ready");
   fake.exit();
 
@@ -58,7 +44,7 @@ it("rejects when the child exits before replying", async () => {
 it("cancels a pending capture on close and kills the child", async () => {
   const fake = fakeChild();
   const child = startRegionSnapShotProcess("worker.cjs", () => fake.child);
-  const capture = child.capture(region);
+  const capture = child.capture(region, region);
   child.close();
 
   await expect(capture).rejects.toThrow(/cancelled/);
@@ -107,9 +93,9 @@ function fakePool() {
 
 it("rejects a second capture while one is in flight", async () => {
   const { pool, processes } = fakePool();
-  const first = pool.capture(region);
+  const first = pool.capture(region, region);
 
-  await expect(pool.capture(region)).rejects.toThrow(/still in progress/);
+  await expect(pool.capture(region, region)).rejects.toThrow(/still in progress/);
   assert.lengthOf(processes, 1);
 
   processes[0]!.resolve({ width: 1, height: 1, png: Buffer.from([1]) });
@@ -119,7 +105,7 @@ it("rejects a second capture while one is in flight", async () => {
 it("closes the standby and the in-flight child", async () => {
   const { pool, processes } = fakePool();
   pool.warm();
-  const capture = pool.capture(region);
+  const capture = pool.capture(region, region);
   pool.warm();
   assert.lengthOf(processes, 2);
 
@@ -128,6 +114,6 @@ it("closes the standby and the in-flight child", async () => {
   await expect(capture).rejects.toThrow(/cancelled/);
   assert.lengthOf(processes[0]!.close.mock.calls, 1);
   assert.lengthOf(processes[1]!.close.mock.calls, 1);
-  await expect(pool.capture(region)).rejects.toThrow(/unavailable/);
+  await expect(pool.capture(region, region)).rejects.toThrow(/unavailable/);
   assert.lengthOf(processes, 2);
 });

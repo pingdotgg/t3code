@@ -2,13 +2,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This desktop-only helper owns a Node child process.
 import * as NodeChildProcess from "node:child_process";
 
-import * as Electron from "electron";
+import type * as Electron from "electron";
 
 import type { ActiveWindow } from "./ActiveWindow.ts";
 
 const CAPTURE_TIMEOUT_MS = 15_000;
 
-export type RegionSnapShotRequest = { readonly region: Electron.Rectangle };
+export type RegionSnapShotRequest = {
+  readonly region: Electron.Rectangle;
+  readonly maxSize: Electron.Size;
+};
 export type RegionSnapShotResult =
   | {
       readonly type: "result";
@@ -51,6 +54,7 @@ export type RegionSnapShotProcess = {
   readonly alive: boolean;
   readonly capture: (
     region: Electron.Rectangle,
+    maxSize: Electron.Size,
   ) => Promise<{ width: number; height: number; png: Buffer }>;
   readonly close: () => void;
 };
@@ -102,7 +106,7 @@ export function startRegionSnapShotProcess(
     get alive() {
       return !settled;
     },
-    capture: async (region) => {
+    capture: async (region, maxSize) => {
       if (settled) throw new Error("Windows window capture helper already used.");
       const timeout = setTimeout(
         () => finish(new Error("Windows window capture timed out. Try again.")),
@@ -112,7 +116,7 @@ export function startRegionSnapShotProcess(
       try {
         await ready.promise;
         if (settled) return await result.promise;
-        child.send({ region });
+        child.send({ region, maxSize });
         return await result.promise;
       } finally {
         clearTimeout(timeout);
@@ -127,6 +131,7 @@ export type RegionSnapShotPool = {
   readonly cool: () => void;
   readonly capture: (
     region: Electron.Rectangle,
+    maxSize: Electron.Size,
   ) => Promise<{ width: number; height: number; png: Buffer }>;
   readonly close: () => void;
 };
@@ -149,7 +154,7 @@ export function makeRegionSnapShotPool(
   return {
     warm,
     cool,
-    capture: async (region) => {
+    capture: async (region, maxSize) => {
       if (closed) throw new Error("Windows window capture is unavailable.");
       if (inFlight?.alive) {
         throw new Error("Windows window capture is still in progress. Try again.");
@@ -158,7 +163,7 @@ export function makeRegionSnapShotPool(
       standby = undefined;
       inFlight = current;
       try {
-        return await current.capture(region);
+        return await current.capture(region, maxSize);
       } finally {
         if (inFlight === current) inFlight = undefined;
         warm();
@@ -178,23 +183,11 @@ export async function captureRegionWindowSnapshot(
   region: Electron.Rectangle,
   maxSize: Electron.Size,
 ): Promise<{ readonly source: RegionSnapShotSource; readonly png: Buffer }> {
-  const shot = await pool.capture(region);
-  const scale = Math.min(maxSize.width / shot.width, maxSize.height / shot.height, 1);
-  const png =
-    scale < 1
-      ? Electron.nativeImage
-          .createFromBuffer(shot.png)
-          .resize({
-            width: Math.max(1, Math.round(shot.width * scale)),
-            height: Math.max(1, Math.round(shot.height * scale)),
-            quality: "best",
-          })
-          .toPNG()
-      : shot.png;
+  const shot = await pool.capture(region, maxSize);
   return {
     source: {
       name: active.title.trim() || active.owner.name.trim() || "Window",
     },
-    png,
+    png: shot.png,
   };
 }

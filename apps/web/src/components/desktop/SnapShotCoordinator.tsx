@@ -1,6 +1,7 @@
 import {
   type DesktopBridge,
   type DesktopPendingSnapShot,
+  type DesktopSnapShot,
   type DesktopSnapShotEvent,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -29,7 +30,11 @@ import {
 } from "../../lib/snapShotAnimation";
 import { resizeSnapShotSource } from "../../lib/snapShotSource";
 import { playSnapShotSound } from "../../lib/snapShotSound";
-import { dispatchSnapShotComposerFocus, getDesktopSnapShotBridge } from "../../lib/desktopSnapShot";
+import {
+  dispatchSnapShotComposerFocus,
+  getDesktopSnapShotBridge,
+  trackSnapShotContext,
+} from "../../lib/desktopSnapShot";
 import {
   countQuestionRequestAttachments,
   openQuestionAttachmentDraft,
@@ -150,6 +155,25 @@ async function afterNextPaint(): Promise<void> {
   });
 }
 
+async function fillSnapShotContext(
+  bridge: DesktopBridge,
+  capture: DesktopSnapShot,
+  imageSize: Parameters<typeof resizeSnapShotSource>[1],
+  resolveTarget: () => CaptureTarget,
+  persistence: Promise<void>,
+): Promise<void> {
+  const context = await bridge.readSnapShotContext(capture.id);
+  await persistence;
+  if (!context?.accessibleText && !context?.accessibility) return;
+  useComposerDraftStore
+    .getState()
+    .setImageSource(
+      resolveTarget(),
+      capture.id,
+      resizeSnapShotSource({ ...capture.source, ...context }, imageSize),
+    );
+}
+
 export async function deliverSnapShot(
   bridge: DesktopBridge,
   item: DesktopPendingSnapShot,
@@ -205,7 +229,15 @@ export async function deliverSnapShot(
     store
       .getComposerDraft(target)
       ?.persistedAttachments.filter((attachment) => attachment.id !== capture.id) ?? [];
-  await store.syncPersistedAttachments(target, [...persistedAttachments, persisted]);
+  const persistence = store.syncPersistedAttachments(target, [...persistedAttachments, persisted]);
+  if (capture.contextPending) {
+    // Registered before any await so a send started now still waits for the text.
+    trackSnapShotContext(
+      capture.id,
+      fillSnapShotContext(bridge, capture, compressed.imageSize, resolveTarget, persistence),
+    );
+  }
+  await persistence;
   if (!store.getComposerDraft(target)?.persistedAttachments.some(({ id }) => id === capture.id)) {
     throw new Error("The captured window could not be saved to the draft.");
   }

@@ -1,4 +1,5 @@
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_CLIENT_SETTINGS,
@@ -286,6 +287,14 @@ vi.mock("node:child_process", () => ({
     return process;
   },
 }));
+vi.mock("../electron/WindowsForegroundFocusThread.ts", () => ({
+  startWindowsForegroundFocusThread: () => ({
+    prepare: async () => false,
+    focus: async () => false,
+    close: () => undefined,
+  }),
+}));
+
 vi.mock("electron", () => {
   class BaseWindow {
     protected readonly state: (typeof flashWindows)[number];
@@ -489,6 +498,7 @@ const layerTest = (
   MacPermissions.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
+        ElectronWindow.layer,
         Layer.succeed(
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
@@ -870,7 +880,7 @@ it.effect.each([
   { platform: "darwin", animations: false },
   { platform: "linux", animations: true },
 ] as const)(
-  "captures again while accessibility is pending on $platform (animations: $animations)",
+  "delivers captures before their pending accessibility on $platform (animations: $animations)",
   ({ platform, animations }) => {
     const fixture = concurrentCaptureFixture(platform, animations);
     return Effect.scoped(
@@ -885,7 +895,12 @@ it.effect.each([
         assert.lengthOf(fixture.readyIds, 0);
         fixture.first.pixels.resolve();
         yield* Effect.promise(() => fixture.first.handoff.promise);
-        assert.lengthOf(fixture.readyIds, 0);
+        yield* Fiber.join(first);
+        assert.lengthOf(fixture.readyIds, 1);
+        const firstId = fixture.readyIds[0]!;
+        const firstContext = yield* service
+          .readContext(firstId)
+          .pipe(Effect.forkChild({ startImmediately: true }));
 
         yield* TestClock.adjust("200 millis");
         fixture.second.pixels.resolve();
@@ -901,30 +916,37 @@ it.effect.each([
         const secondOverlays = flashWindows.filter((window) => !window.destroyed);
         if (platform !== "linux") assert.isNotEmpty(secondOverlays);
 
-        fixture.second.context.resolve({ accessibleText: "Explorer accessibility" });
         yield* Fiber.join(second);
-        assert.lengthOf(fixture.readyIds, 1);
-        fixture.first.context.resolve({ accessibleText: "Discord accessibility" });
-        yield* Fiber.join(first);
         assert.lengthOf(fixture.readyIds, 2);
-        assert.equal(new Set(fixture.readyIds).size, 2);
-        assert.deepEqual(fixture.readyIds, fixture.requestedIds.toReversed());
-        const newer = yield* service.read(fixture.readyIds[0]!);
-        const older = yield* service.read(fixture.readyIds[1]!);
+        assert.deepEqual(fixture.readyIds, fixture.requestedIds);
+        const secondId = fixture.readyIds[1]!;
+        const newer = yield* service.read(secondId);
+        const older = yield* service.read(firstId);
         assert.equal(newer.source.windowTitle, fixture.second.title);
-        assert.equal(newer.source.accessibleText, "Explorer accessibility");
+        assert.isUndefined(newer.source.accessibleText);
+        assert.isTrue(newer.contextPending);
         assert.equal(
           newer.dataUrl,
           `data:image/png;base64,${fixture.second.png.toString("base64")}`,
         );
         assert.equal(older.source.windowTitle, fixture.first.title);
-        assert.equal(older.source.accessibleText, "Discord accessibility");
+        assert.isUndefined(older.source.accessibleText);
         assert.equal(
           older.dataUrl,
           `data:image/png;base64,${fixture.first.png.toString("base64")}`,
         );
 
-        yield* service.acknowledge(fixture.readyIds[1]!);
+        fixture.second.context.resolve({ accessibleText: "Explorer accessibility" });
+        assert.deepEqual(yield* service.readContext(secondId), {
+          accessibleText: "Explorer accessibility",
+        });
+        fixture.first.context.resolve({ accessibleText: "Discord accessibility" });
+        assert.deepEqual(yield* Fiber.join(firstContext), {
+          accessibleText: "Discord accessibility",
+        });
+        assert.isNull(yield* service.readContext(firstId));
+
+        yield* service.acknowledge(firstId);
         assert.isTrue(secondOverlays.every((window) => !window.destroyed));
         if (platform === "linux") {
           assert.lengthOf(fixture.second.feedback.close.mock.calls, 0);
@@ -970,9 +992,13 @@ it.effect.each(["succeeds", "fails"] as const)(
         fixture.second.context.resolve({ accessibleText: "Explorer accessibility" });
         yield* Fiber.join(second);
         assert.equal(fixture.state.handoffs, 2);
-        const newer = yield* service.read(fixture.readyIds.at(-1)!);
+        const newerId = fixture.readyIds.at(-1)!;
+        const newer = yield* service.read(newerId);
         assert.equal(newer.source.windowTitle, fixture.second.title);
-        assert.equal(newer.source.accessibleText, "Explorer accessibility");
+        assert.equal(
+          newer.source.accessibleText ?? (yield* service.readContext(newerId))?.accessibleText,
+          "Explorer accessibility",
+        );
       }).pipe(Effect.ensuring(Effect.sync(fixture.releaseAll))),
     ).pipe(Effect.provide(fixture.layer), Effect.ensuring(Effect.sync(fixture.reset)));
   },
@@ -997,6 +1023,7 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
       role: "window",
       name: "Editor",
       bounds: dipBounds,
+      value: "Scaled text",
       children: async () => [
         {
           role: "button",
@@ -1015,10 +1042,11 @@ it.effect("matches Windows accessibility windows on a scaled display", () => {
       yield* service.configure(enabledSettings());
       yield* service.capture;
       const saved = yield* decodePendingMetadata(metadata);
-      assert.include(saved.source.accessibleText, "Scaled text");
+      const source = { ...saved.source, ...(yield* service.readContext(saved.id)) };
+      assert.include(source.accessibleText, "Scaled text");
       assert.deepEqual(
-        saved.source.accessibility?.format === "element-tree"
-          ? saved.source.accessibility.root.children[0]?.bounds
+        source.accessibility?.format === "element-tree"
+          ? source.accessibility.root.children[0]?.bounds
           : undefined,
         { x: 200, y: 200, width: 200, height: 100 },
       );
@@ -1111,19 +1139,18 @@ it.effect.each([
         assert.lengthOf(getSourcesMock.mock.calls, 0);
         assert.deepEqual(accessibilityByPidMock.mock.calls, [[123, { timeout: 0 }]]);
         const saved = yield* decodePendingMetadata(metadata);
+        const source = { ...saved.source, ...(yield* service.readContext(saved.id)) };
         assert.equal(saved.source.appName, "Text Editor");
         assert.equal(saved.source.appIdentifier, window.appIdentifier);
-        assert.include(saved.source.accessibleText, "Verified text");
-        assert.deepInclude(saved.source.accessibility, {
+        assert.include(source.accessibleText, "Verified text");
+        assert.deepInclude(source.accessibility, {
           format: "element-tree",
           coordinateSpace: "captured-image",
           imageSize: { width: imageSize.width, height: imageSize.height },
           truncated: false,
         });
         assert.deepInclude(
-          saved.source.accessibility?.format === "element-tree"
-            ? saved.source.accessibility.root
-            : undefined,
+          source.accessibility?.format === "element-tree" ? source.accessibility.root : undefined,
           {
             role: "window",
             name: "Editor",
@@ -1132,8 +1159,8 @@ it.effect.each([
           },
         );
         assert.isNull(
-          saved.source.accessibility?.format === "element-tree"
-            ? saved.source.accessibility.root.children[0]?.bounds
+          source.accessibility?.format === "element-tree"
+            ? source.accessibility.root.children[0]?.bounds
             : undefined,
         );
         assert.lengthOf(flashWindows, 0);
@@ -1466,17 +1493,23 @@ it.each([
   ["darwin", "", "value", 650],
   ["linux", "wayland", "value", 650],
   ["darwin", "", "name", 100],
+  ["win32", "", "value", 650],
+  ["win32", "", "name", 100],
 ] as const)(
   "preserves long text outside the scroll view on %s %s (%s)",
   async (platform, session, field, lines) => {
     const text = `${"Document line\n".repeat(lines)}End of document`;
     vi.stubEnv("XDG_SESSION_TYPE", session);
     const bounds = { x: 0, y: 0, width: 800, height: 600 };
+    const flatRead = vi.fn(async () => ({
+      name: "Editor",
+      children: [{ [field]: text, children: [] }],
+    }));
     const window = {
       role: "window",
       name: "Editor",
       bounds,
-      tree: async () => ({ name: "Editor", children: [{ [field]: text, children: [] }] }),
+      tree: flatRead,
       children: async () => [
         { role: "text_area", [field]: text, bounds, children: async () => [] },
       ],
@@ -1496,11 +1529,114 @@ it.each([
         text: `Editor\n${text}`,
         truncated: false,
       });
+      assert.lengthOf(flatRead.mock.calls, platform === "win32" ? 0 : 1);
     } finally {
       vi.unstubAllEnvs();
     }
   },
 );
+
+it("keeps Windows text outside the rich serialization budget without a second traversal", async () => {
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  const children = Array.from({ length: 80 }, (_, index) => ({
+    role: "button",
+    name: `Button ${index}`,
+    description: "x".repeat(1000),
+    bounds,
+    children: async () => [],
+  }));
+  const tree = vi.fn(async () => {
+    throw new Error("Duplicate traversal");
+  });
+  const window = { role: "window", name: "Editor", bounds, tree, children: async () => children };
+  accessibilityForegroundMock.mockReset().mockResolvedValue({ pid: 123, asElement: () => window });
+  const result = await readAccessibleWindowContext(
+    { title: "Editor", bounds, owner: { processId: 123 } },
+    "win32",
+    "Editor",
+  );
+  const text = ["Editor", ...children.map((child) => child.name)].join("\n");
+  assert.equal(result?.accessibleText, text);
+  assert.deepEqual(result?.accessibility, { format: "flat-text", text, truncated: false });
+  assert.lengthOf(tree.mock.calls, 0);
+});
+
+it.each(["missing", "failed"] as const)(
+  "falls back to native Windows text when child traversal is %s",
+  async (mode) => {
+    const bounds = { x: 0, y: 0, width: 800, height: 600 };
+    const tree = vi.fn(async () => ({
+      name: "Editor",
+      children: [{ value: "Recovered text", children: [] }],
+    }));
+    const window = {
+      role: "window",
+      name: "Editor",
+      bounds,
+      tree,
+      ...(mode === "failed"
+        ? {
+            children: async () => {
+              throw new Error("Unavailable provider");
+            },
+          }
+        : {}),
+    };
+    accessibilityForegroundMock
+      .mockReset()
+      .mockResolvedValue({ pid: 123, asElement: () => window });
+    const result = await readAccessibleWindowContext(
+      { title: "Editor", bounds, owner: { processId: 123 } },
+      "win32",
+      "Editor",
+    );
+    assert.equal(result?.accessibleText, "Editor\nRecovered text");
+    assert.lengthOf(tree.mock.calls, 1);
+  },
+);
+
+it("returns Windows text collected before a stalled child without starting another traversal", async () => {
+  vi.useFakeTimers();
+  const bounds = { x: 0, y: 0, width: 800, height: 600 };
+  const blocked = Promise.withResolvers<[]>();
+  const entered = Promise.withResolvers<void>();
+  const text = "x".repeat(8001);
+  const tree = vi.fn(async () => ({ name: "unexpected", children: [] }));
+  const window = {
+    role: "window",
+    name: "Editor",
+    bounds,
+    tree,
+    children: async () => [
+      {
+        role: "text_area",
+        value: text,
+        bounds,
+        children: () => {
+          entered.resolve();
+          return blocked.promise;
+        },
+      },
+    ],
+  };
+  accessibilityForegroundMock.mockReset().mockResolvedValue({ pid: 123, asElement: () => window });
+  try {
+    const pending = readAccessibleWindowContext(
+      { title: "Editor", bounds, owner: { processId: 123 } },
+      "win32",
+      "Editor",
+    );
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(3000);
+    const context = await pending;
+    assert.equal(context?.accessibleText, `Editor\n${text}`);
+    assert.lengthOf(tree.mock.calls, 0);
+  } finally {
+    blocked.resolve([]);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+  }
+});
 
 it.each([
   { names: ["⠙ t3code"], expected: "Verified text" },

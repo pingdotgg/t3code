@@ -109,6 +109,7 @@ import {
   retryAttachmentUpload,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
+import { waitForSnapShotContexts } from "../../lib/desktopSnapShot";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
@@ -486,6 +487,14 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
+    const readDraftImages = () =>
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.images ?? [];
+    const pendingSnapShotText = waitForSnapShotContexts(readDraftImages().map(({ id }) => id));
+    if (pendingSnapShotText) {
+      sendInFlightRef.current = true;
+      await pendingSnapShotText;
+      sendInFlightRef.current = false;
+    }
     const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
@@ -597,9 +606,15 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    // The composer's image ref updates after render, so text that just landed is only in the store.
+    const textFilledImages = pendingSnapShotText
+      ? new Map(readDraftImages().map((image) => [image.id, image]))
+      : null;
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
-        images: sendContextImages,
+        images: textFilledImages
+          ? sendContextImages.map((image) => textFilledImages.get(image.id) ?? image)
+          : sendContextImages,
         fileCount: composerFiles.length,
         previewAnnotations: sendContextPreviewAnnotations,
         direct: directAnnotation,

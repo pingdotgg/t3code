@@ -76,6 +76,8 @@ function layerElectronWindow(destroyAll: Effect.Effect<void> = Effect.void) {
     setMain: () => Effect.void,
     clearMain: () => Effect.void,
     prepareReveal: () => Effect.succeed(false),
+    warmCaptureReveal: Effect.void,
+    coolCaptureReveal: Effect.void,
     reveal: () => Effect.void,
     sendAll: () => Effect.void,
     destroyAll,

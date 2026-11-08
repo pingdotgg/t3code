@@ -4,6 +4,7 @@ import { pipe } from "effect/Function";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
+  DesktopSnapShotContext,
   isModifierPairShortcut,
   snapShotModifierPairLabel,
   snapShotShortcutModifierPair,
@@ -41,6 +42,7 @@ import * as Electron from "electron";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { startGlobalShiftShortcutProcess } from "./GlobalShiftShortcutProcess.ts";
 import { startMacModifierPairShortcutProcess } from "./MacModifierPairShortcutProcess.ts";
 import { activeWindow, type ActiveWindow } from "./ActiveWindow.ts";
@@ -75,6 +77,7 @@ import {
   type RegionSnapShotSource,
 } from "./RegionSnapShot.ts";
 import { type SnapShotAnimationDestination, SnapShotTransition } from "./SnapShotTransition.ts";
+import type { CapturedWindowAccessibilityContext } from "./SnapShotAccessibility.ts";
 import {
   type AccessibilityProcessPool,
   makeSnapShotAccessibilityProcessPool,
@@ -119,6 +122,9 @@ const MAC_PERMISSION_MESSAGES = new Set([
 ]);
 
 const decodePendingCapture = Schema.decodeUnknownEffect(DesktopPendingSnapShot);
+const decodeSnapShotContext = Schema.decodeUnknownEffect(DesktopSnapShotContext);
+const CONTEXT_PENDING = Symbol("context-pending");
+const MAX_PENDING_CONTEXTS = 8;
 
 const PendingCaptureJson = Schema.fromJsonString(DesktopPendingSnapShot);
 const decodePendingCaptureJson = Schema.decodeEffect(PendingCaptureJson);
@@ -213,6 +219,7 @@ export class DesktopSnapShot extends Context.Service<
       DesktopSnapShotError
     >;
     readonly read: (id: string) => Effect.Effect<DesktopSnapShotValue, DesktopSnapShotError>;
+    readonly readContext: (id: string) => Effect.Effect<DesktopSnapShotContext | null>;
     readonly setAnimationDestination: (
       id: string,
       destination: SnapShotAnimationDestination,
@@ -761,6 +768,7 @@ export const make = Effect.gen(function* () {
   const permissions = yield* MacPermissions.MacPermissions;
   const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const random = yield* SecureRandom.SecureRandom;
@@ -898,7 +906,14 @@ export const make = Effect.gen(function* () {
       Effect.andThen(emit({ type: "failed" })),
     );
 
+  // Window text can take seconds to read, so captures are delivered first and their text follows.
+  const pendingContexts = new Map<
+    string,
+    Promise<CapturedWindowAccessibilityContext | undefined>
+  >();
+
   const discardCapture = Effect.fn("desktop.snapShot.discardCapture")(function* (id: string) {
+    pendingContexts.delete(id);
     closeLinuxFeedback(id);
     transition.dismiss(id);
     yield* Effect.forEach(
@@ -973,7 +988,11 @@ export const make = Effect.gen(function* () {
     const metadataPath = path.join(captureDirectory, `${id}.json`);
 
     yield* Effect.gen(function* () {
-      const accessibilityContext = yield* Effect.promise(() => contextPromise);
+      const settledContext = yield* Effect.promise(() =>
+        Promise.race([contextPromise, Promise.resolve(CONTEXT_PENDING)]),
+      );
+      const contextPending = settledContext === CONTEXT_PENDING;
+      const accessibilityContext = contextPending ? undefined : settledContext;
       const appIconDataUrl = yield* Effect.promise(() =>
         iconDataUrl(source, active, environment.platform),
       );
@@ -1006,6 +1025,7 @@ export const make = Effect.gen(function* () {
           ...(appIdentifier ? { appIdentifier } : {}),
           ...(appIconDataUrl ? { appIconDataUrl } : {}),
         },
+        ...(contextPending ? { contextPending } : {}),
       });
       if (!imageTempReady) yield* fileSystem.writeFile(imageTempPath, png);
       yield* fileSystem.rename(imageTempPath, imagePath);
@@ -1014,6 +1034,16 @@ export const make = Effect.gen(function* () {
         yield* encodePendingCaptureJson(pending),
       );
       yield* fileSystem.rename(metadataPath + ".tmp", metadataPath);
+      if (contextPending) {
+        pendingContexts.set(
+          id,
+          contextPromise.catch(() => undefined),
+        );
+        for (const staleId of pendingContexts.keys()) {
+          if (pendingContexts.size <= MAX_PENDING_CONTEXTS) break;
+          pendingContexts.delete(staleId);
+        }
+      }
     }).pipe(Effect.mapError((cause) => captureFailure(cause, id)));
   });
 
@@ -1149,8 +1179,10 @@ export const make = Effect.gen(function* () {
     }
     if (settings.snapShotEnabled && environment.platform === "win32") {
       regionSnapShotPool.warm();
+      yield* electronWindow.warmCaptureReveal;
     } else {
       regionSnapShotPool.cool();
+      yield* electronWindow.coolCaptureReveal;
     }
     if (!settings.snapShotEnabled || !settings.snapShotFlash || mode === "unavailable") {
       flash.dispose();
@@ -1762,6 +1794,16 @@ export const make = Effect.gen(function* () {
           ),
         ),
     ),
+    readContext: Effect.fn("DesktopSnapShot.readContext")(function* (id) {
+      const pending = pendingContexts.get(id);
+      if (!pending) return null;
+      const context = yield* Effect.promise(() => pending);
+      if (pendingContexts.get(id) === pending) pendingContexts.delete(id);
+      return yield* decodeSnapShotContext({
+        ...(context?.accessibleText ? { accessibleText: context.accessibleText } : {}),
+        ...(context?.accessibility ? { accessibility: context.accessibility } : {}),
+      }).pipe(Effect.orElseSucceed(() => null));
+    }),
     setAnimationDestination: Effect.fn("DesktopSnapShot.setAnimationDestination")(
       function (id, destination) {
         return Effect.promise(async () => {

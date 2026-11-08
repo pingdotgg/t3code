@@ -2,6 +2,7 @@ import {
   DesktopPendingSnapShot,
   DesktopSnapShot as DesktopSnapShotSchema,
   DesktopSnapShotAnimationDestination,
+  DesktopSnapShotContext,
   DesktopSnapShotId,
   DesktopSnapShotShortcutAvailability,
   DesktopSnapShotState,
@@ -178,6 +179,16 @@ export const readSnapShot = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.snapShot.read")(function* (id, event) {
     yield* ensureTrustedSnapShotSender(event);
     return yield* (yield* DesktopSnapShot.DesktopSnapShot).read(id);
+  }),
+});
+
+export const readSnapShotContext = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.READ_SNAP_SHOT_CONTEXT_CHANNEL,
+  payload: DesktopSnapShotId,
+  result: Schema.NullOr(DesktopSnapShotContext),
+  handler: Effect.fn("desktop.ipc.snapShot.readContext")(function* (id, event) {
+    yield* ensureTrustedSnapShotSender(event);
+    return yield* (yield* DesktopSnapShot.DesktopSnapShot).readContext(id);
   }),
 });
 

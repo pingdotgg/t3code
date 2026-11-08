@@ -227,8 +227,16 @@ export const DesktopPendingSnapShot = Schema.Struct({
   mimeType: Schema.Literal("image/png"),
   sizeBytes: Schema.Int,
   source: SnapShotSource,
+  /** The window text is still being read; `readSnapShotContext` resolves it. */
+  contextPending: Schema.optional(Schema.Boolean),
 });
 export type DesktopPendingSnapShot = typeof DesktopPendingSnapShot.Type;
+
+export const DesktopSnapShotContext = Schema.Struct({
+  accessibleText: SnapShotSource.fields.accessibleText,
+  accessibility: SnapShotSource.fields.accessibility,
+});
+export type DesktopSnapShotContext = typeof DesktopSnapShotContext.Type;
 
 export const DesktopSnapShot = Schema.Struct({
   ...DesktopPendingSnapShot.fields,
@@ -1075,6 +1083,8 @@ export interface DesktopBridge {
   setSnapShotShortcutSuppressed: (suppressed: boolean) => Promise<void>;
   listPendingSnapShots: () => Promise<readonly DesktopPendingSnapShot[]>;
   readSnapShot: (id: string) => Promise<DesktopSnapShot>;
+  /** Waits for a pending capture's window text; `null` when none is pending for `id`. */
+  readSnapShotContext: (id: string) => Promise<DesktopSnapShotContext | null>;
   setSnapShotAnimationDestination: (
     destination: DesktopSnapShotAnimationDestination,
   ) => Promise<void>;

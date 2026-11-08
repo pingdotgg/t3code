@@ -97,6 +97,8 @@ function layerElectronWindow(window: ReturnType<typeof makeTestWindow>["window"]
       setMain: () => Effect.void,
       clearMain: () => Effect.void,
       prepareReveal: () => Effect.succeed(false),
+      warmCaptureReveal: Effect.void,
+      coolCaptureReveal: Effect.void,
       reveal: () => Effect.void,
       sendAll: () => Effect.void,
       destroyAll: Effect.void,

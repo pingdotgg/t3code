@@ -16,3 +16,20 @@ export function subscribeSnapShotComposerFocus(listener: () => void): () => void
 export function getDesktopSnapShotBridge(): DesktopBridge | undefined {
   return typeof window === "undefined" ? undefined : window.desktopBridge;
 }
+
+const pendingSnapShotContexts = new Map<string, Promise<void>>();
+
+/** Captures land before their window text; sends wait here so the text still goes out with them. */
+export function trackSnapShotContext(id: string, filled: Promise<void>): void {
+  const tracked: Promise<void> = filled
+    .catch(() => undefined)
+    .finally(() => {
+      if (pendingSnapShotContexts.get(id) === tracked) pendingSnapShotContexts.delete(id);
+    });
+  pendingSnapShotContexts.set(id, tracked);
+}
+
+export function waitForSnapShotContexts(ids: ReadonlyArray<string>): Promise<void> | null {
+  const pending = ids.flatMap((id) => pendingSnapShotContexts.get(id) ?? []);
+  return pending.length > 0 ? Promise.all(pending).then(() => undefined) : null;
+}

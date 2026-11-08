@@ -545,6 +545,11 @@ interface ComposerDraftStoreState {
     options?: { allowDuplicates?: boolean },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
+  setImageSource: (
+    threadRef: ComposerThreadTarget,
+    imageId: string,
+    source: SnapShotSource,
+  ) => void;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3331,6 +3336,32 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftsByThreadKey[threadKey] = nextDraft;
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setImageSource: (threadRef, imageId, source) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          set((state) => {
+            const current = state.draftsByThreadKey[threadKey];
+            if (!current?.images.some((image) => image.id === imageId)) {
+              return state;
+            }
+            return {
+              draftsByThreadKey: {
+                ...state.draftsByThreadKey,
+                [threadKey]: {
+                  ...current,
+                  images: current.images.map((image) =>
+                    image.id === imageId ? { ...image, source } : image,
+                  ),
+                  persistedAttachments: current.persistedAttachments.map((attachment) =>
+                    attachment.id === imageId ? { ...attachment, source } : attachment,
+                  ),
+                },
+              },
+            };
           });
         },
         addFiles: (threadRef, files, options) => {

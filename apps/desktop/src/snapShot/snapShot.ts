@@ -89,35 +89,61 @@ export function snapShotShortcutSystemConflict(shortcut: SnapShotKeyChord): stri
   return null;
 }
 
-export function accessibleWindowText(root: AccessibilityTreeNode, maxChars: number): string {
+export function makeAccessibilityTextCollector(maxChars: number) {
   const seen = new Set<string>();
-  const stack = [root];
   let text = "";
+  let full = maxChars <= 0;
+  return {
+    get text() {
+      return text;
+    },
+    get full() {
+      return full;
+    },
+    add: (name?: string, value?: string) => {
+      for (const entry of [name, value]) {
+        if (full) return;
+        const candidate = entry?.replaceAll("\0", "").trim();
+        if (!candidate || seen.has(candidate)) continue;
+
+        const separator = text ? "\n" : "";
+        const remaining = maxChars - text.length - separator.length;
+        if (remaining <= 0) {
+          full = true;
+          return;
+        }
+        const candidateEnd =
+          candidate.length <= remaining
+            ? candidate.length
+            : /[\uD800-\uDBFF]/.test(candidate[remaining - 1] ?? "")
+              ? remaining - 1
+              : remaining;
+        if (candidateEnd === 0) {
+          full = true;
+          return;
+        }
+        text += separator + candidate.slice(0, candidateEnd);
+        if (candidateEnd < candidate.length || text.length === maxChars) {
+          full = true;
+          return;
+        }
+        seen.add(candidate);
+      }
+    },
+  };
+}
+
+export function accessibleWindowText(root: AccessibilityTreeNode, maxChars: number): string {
+  const collector = makeAccessibilityTextCollector(maxChars);
+  const stack = [root];
   let visited = 0;
-  while (stack.length > 0 && text.length < maxChars && visited < MAX_ACCESSIBILITY_TREE_NODES) {
+  while (stack.length > 0 && !collector.full && visited < MAX_ACCESSIBILITY_TREE_NODES) {
     const node = stack.pop()!;
     visited += 1;
-    for (const value of [node.name, node.value]) {
-      const candidate = value?.replaceAll("\0", "").trim();
-      if (!candidate || seen.has(candidate)) continue;
-
-      const separator = text ? "\n" : "";
-      const remaining = maxChars - text.length - separator.length;
-      if (remaining <= 0) return text;
-      const candidateEnd =
-        candidate.length <= remaining
-          ? candidate.length
-          : /[\uD800-\uDBFF]/.test(candidate[remaining - 1] ?? "")
-            ? remaining - 1
-            : remaining;
-      if (candidateEnd === 0) return text;
-      text += separator + candidate.slice(0, candidateEnd);
-      if (candidateEnd < candidate.length) return text;
-      seen.add(candidate);
-    }
+    collector.add(node.name, node.value);
     stack.push(...node.children.toReversed());
   }
-  return text;
+  return collector.text;
 }
 
 type AccessibilityElement = {
@@ -339,6 +365,8 @@ export function compactAccessibilityTree(
 }
 
 type AccessibleWindowElementTreeOptions = {
+  readonly onText?: (name?: string, value?: string) => void;
+  readonly onTraversalError?: () => void;
   readonly locationsReliable?: boolean;
   readonly onProgress?: (
     root: SnapShotAccessibilityNode,
@@ -380,6 +408,14 @@ export async function accessibleWindowElementTree(
       return undefined;
     }
     const elementBounds = safeProperty(() => current.bounds);
+    if (options.onText) {
+      try {
+        options.onText(current.name ?? undefined, current.value ?? undefined);
+      } catch {
+        truncated = true;
+        options.onTraversalError?.();
+      }
+    }
     if (required && elementBounds) rootBounds = elementBounds;
     if (
       !required &&
@@ -405,12 +441,17 @@ export async function accessibleWindowElementTree(
     options.onProgress?.(root, true, descendantLocationsReliable());
 
     const readChildren = safeProperty(() => current.children);
-    if (typeof readChildren !== "function") return node;
+    if (typeof readChildren !== "function") {
+      if (options.onTraversalError) truncated = true;
+      options.onTraversalError?.();
+      return node;
+    }
     let children: ReadonlyArray<AccessibilityElement>;
     try {
       children = await readChildren.call(current);
     } catch {
       truncated = true;
+      options.onTraversalError?.();
       return node;
     }
     if (!shouldContinue()) {
