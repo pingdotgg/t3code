@@ -1191,9 +1191,9 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.succeed(release, undefined);
       assert.isTrue(Exit.isFailure(yield* Fiber.join(first)));
       assert.deepStrictEqual((yield* Fiber.join(remaining)).pr, remoteStatusWithPr.pr);
-      assert.equal(state.remoteInvalidationCalls, 2);
+      assert.equal(state.remoteStatusCalls, 1);
       yield* broadcaster.refreshStatus("/repo");
-      assert.equal(state.remoteInvalidationCalls, 3);
+      assert.equal(state.remoteStatusCalls, 2);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 });
