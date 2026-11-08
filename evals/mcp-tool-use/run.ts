@@ -1765,12 +1765,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     : toolResult(call.id, output);
 });
 
-const CARD_PURPOSES: ReadonlyArray<CardPurpose> = [
-  "opening-check",
-  "explain-back",
-  "practice",
-  "choice",
-];
+const CARD_PURPOSES: ReadonlyArray<CardPurpose> = ["opening-check", "explain-back"];
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
 /**
  * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`

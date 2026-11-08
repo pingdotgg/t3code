@@ -15,9 +15,9 @@ const reply = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(200
   description:
     "Your words to the learner, shown as your message text just above the card; they never see your thinking. A short reply is refused unless purpose is set. Except when purpose is set, the reply itself must be one tight paragraph: give the verdict on the learner's last answer, if there is one, then teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. When purpose is set, the reply may be one short framing sentence.",
 });
-const purpose = Schema.Literals(["opening-check", "explain-back", "practice", "choice"]).annotate({
+const purpose = Schema.Literals(["opening-check", "explain-back"]).annotate({
   description:
-    "Set only for the lesson's opening check of what the learner knows, when asking them to explain a topic back before it is saved to their map, for a practice problem on something already taught, or for a choice of what comes next; then the reply may be one framing sentence.",
+    "Set only for the lesson's opening check of what the learner knows, or when asking them to explain a topic back before it is saved to their map; then the reply may be one framing sentence.",
 });
 
 export const QuizCardInput = Schema.Struct({

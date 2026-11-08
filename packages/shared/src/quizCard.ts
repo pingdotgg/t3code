@@ -2,7 +2,7 @@ export const QUIZ_CARD_TOOL_NAME = "quiz_card" as const;
 export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
 export const MIN_CARD_REPLY_CHARS = 250;
 
-export type CardPurpose = "opening-check" | "explain-back" | "practice" | "choice";
+export type CardPurpose = "opening-check" | "explain-back";
 
 export function cardReplyProblem(input: {
   readonly reply: string;
@@ -15,7 +15,7 @@ export function cardReplyProblem(input: {
   ) {
     return undefined;
   }
-  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Write the verdict and the teaching this card tests in full in reply, then call the card again. If this card is the opening check, an explain-back request, a practice problem on something already taught or a choice of what comes next, set purpose instead.";
+  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Write the verdict and the teaching this card tests in full in reply, then call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
 }
 
 export interface QuestionCard {
