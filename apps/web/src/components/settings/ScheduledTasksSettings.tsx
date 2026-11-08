@@ -1650,7 +1650,8 @@ function ScheduledTaskEditorForm({
             projectId={selectedProjectId}
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
             threadMode={draft.threadMode}
-            disabled={saving || !connected}
+            // Without thread modes there is no way back to a new thread each run, so stay read-only.
+            disabled={saving || !connected || !offersThreadModes}
             onSelect={(threadId) => setDraft((current) => ({ ...current, threadId }))}
             onThreadModeChange={
               offersThreadModes

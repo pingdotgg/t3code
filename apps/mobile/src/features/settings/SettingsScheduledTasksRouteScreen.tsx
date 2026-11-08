@@ -948,7 +948,14 @@ function TaskForm({
                 borderTop={offersThreadModes}
                 value={destinationLabel}
                 onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
-                disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+                // Without thread modes there is no way back to a new thread each run, so stay read-only.
+                disabled={
+                  !offersThreadModes ||
+                  !draft.projectId ||
+                  saving ||
+                  dictationPending ||
+                  environmentUnavailable
+                }
               />
             ) : null}
           </SettingsSection>
