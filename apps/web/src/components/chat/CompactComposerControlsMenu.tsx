@@ -13,6 +13,7 @@ import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { focusRequestedPermission, useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
+import { type ComposerToolPresets, ComposerToolPresetsSection } from "./ComposerToolPresets";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   interactionMode: ProviderInteractionMode;
@@ -20,6 +21,8 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   runtimeModeOptions: ReadonlyArray<RuntimeModeOption>;
   showInteractionModeToggle: boolean;
   showPermissions?: boolean;
+  /** The tool presets, when their chip moved into this menu. */
+  toolPresets?: ComposerToolPresets | null;
   size?: "sm" | "xs";
   /** Close the portaled popup when its trigger hides. */
   hidden?: boolean;
@@ -74,6 +77,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             onRuntimeModeChange={props.onRuntimeModeChange}
           />
         )}
+        {props.toolPresets ? (
+          <>
+            {props.showInteractionModeToggle || props.showPermissions !== false ? (
+              <MenuDivider />
+            ) : null}
+            <ComposerToolPresetsSection toolPresets={props.toolPresets} />
+          </>
+        ) : null}
       </MenuPopup>
     </Menu>
   );

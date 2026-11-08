@@ -10,7 +10,13 @@ import {
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mcpServerEnabledPatch, skillsDisabledPatch } from "./agentTools.ts";
+import {
+  applyThreadToolPresets,
+  mcpServerEnabledPatch,
+  skillsDisabledPatch,
+  toolPresetState,
+  withThreadToolPreset,
+} from "./agentTools.ts";
 import { resolveProjectSettings } from "./projectSettings.ts";
 import { applyServerSettingsPatch } from "./serverSettings.ts";
 
@@ -90,6 +96,36 @@ describe("project tools overrides", () => {
       "grill-me",
       "prepare-pr",
     ]);
+  });
+});
+
+describe("thread tool presets", () => {
+  const presets = {
+    frontend: { skills: ["Playwright"], mcpServers: ["linear", "missing"] },
+    quiet: { skills: ["grill-me", "playwright"], mcpServers: ["supabase"] },
+  };
+  const effective = {
+    disabledSkills: ["playwright"],
+    mcpServers: { linear: { ...linear, enabled: false }, supabase },
+  };
+
+  it("turns a preset's tools on or off for a thread, on winning where presets share one", () => {
+    expect(applyThreadToolPresets(effective, presets, { frontend: true, quiet: false })).toEqual({
+      disabledSkills: ["grill-me"],
+      mcpServers: { linear, supabase: { ...supabase, enabled: false } },
+    });
+    // A preset the environment doesn't define changes nothing.
+    expect(applyThreadToolPresets(effective, presets, { removed: true })).toBe(effective);
+  });
+
+  it("drops a thread switch that matches what settings already give", () => {
+    expect(toolPresetState(effective, presets.frontend)).toBe("off");
+    expect(toolPresetState(effective, presets.quiet)).toBe("mixed");
+    expect(withThreadToolPreset({ quiet: true }, "frontend", true, "off")).toEqual({
+      quiet: true,
+      frontend: true,
+    });
+    expect(withThreadToolPreset({ frontend: true }, "frontend", false, "off")).toEqual({});
   });
 });
 

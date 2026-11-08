@@ -57,6 +57,9 @@ import {
   McpServerName,
   McpServerProjectOverrides,
   McpServers,
+  ToolPreset,
+  ToolPresetName,
+  ToolPresets,
 } from "./agentTools.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -1394,6 +1397,8 @@ export const ServerSettings = Schema.Struct({
   mcpServers: McpServers.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Skill names hidden from every agent on this environment. */
   disabledSkills: DisabledSkills.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /** Sets of tools a thread can turn on or off together, keyed by name. */
+  toolPresets: ToolPresets.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1739,6 +1744,8 @@ export const ServerSettingsPatch = Schema.Struct({
    */
   mcpServers: Schema.optionalKey(Schema.Record(McpServerName, Schema.NullOr(McpServerConfig))),
   disabledSkills: Schema.optionalKey(DisabledSkills),
+  /** Each entry replaces one preset; `null` removes it. */
+  toolPresets: Schema.optionalKey(Schema.Record(ToolPresetName, Schema.NullOr(ToolPreset))),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

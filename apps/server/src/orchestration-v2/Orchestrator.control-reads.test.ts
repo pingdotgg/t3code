@@ -198,6 +198,98 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("a change to a thread's tool presets waits for its work and replaces its session", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const threadId = ThreadId.make("thread:tool-presets");
+    const sessionId = ProviderSessionId.make("session:tool-presets");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-tool-presets"),
+      threadId,
+      projectId: ProjectId.make("project:tool-presets"),
+      title: "Tools",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("session:tool-presets"),
+      type: "provider-session.attached",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: sessionId,
+        driver: adapter.driver,
+        providerInstanceId: instanceId,
+        status: "ready",
+        cwd: "/repo",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    const request = (status: "pending" | "resolved") =>
+      projections.apply({
+        id: EventId.make(`request:tool-presets:${status}`),
+        type: "runtime-request.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("tool-presets"),
+          nodeId: NodeId.make("node:tool-presets"),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "command",
+          status,
+          responseCapability: {
+            type: "live",
+            providerSessionId: sessionId,
+            supportsFeedback: false,
+          },
+          createdAt: now,
+          resolvedAt: status === "resolved" ? now : null,
+        },
+      });
+    const setPresets = (commandId: CommandId) =>
+      orchestrator.dispatch({
+        type: "thread.tool-presets.set",
+        commandId,
+        threadId,
+        toolPresets: { frontend: true },
+      });
+
+    yield* request("pending");
+    const busy = CommandId.make("tool-presets:busy");
+    assert.isTrue(Result.isFailure(yield* setPresets(busy).pipe(Effect.result)));
+    assert.deepEqual(yield* outbox.listByCommandId(busy), []);
+
+    yield* request("resolved");
+    const changed = CommandId.make("tool-presets:changed");
+    yield* setPresets(changed);
+    assert.deepEqual((yield* projections.getThreadProjection(threadId)).thread.toolPresets, {
+      frontend: true,
+    });
+    assert.deepEqual(
+      (yield* outbox.listByCommandId(changed)).map((effect) => effect.request),
+      [{ type: "provider-session.detach", providerSessionId: sessionId, detail: "Tools changed." }],
+    );
+    // The same switches again leave the session alone.
+    const unchanged = CommandId.make("tool-presets:unchanged");
+    yield* setPresets(unchanged);
+    assert.deepEqual(yield* outbox.listByCommandId(unchanged), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("marks a never-visited thread's first completion unread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

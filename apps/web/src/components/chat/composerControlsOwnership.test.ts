@@ -65,6 +65,20 @@ describe("resolveComposerControlsOwnership", () => {
     expect(result.pickerOwnsModeShortcut).toBe(true);
   });
 
+  it("overflows the tool presets chip before the mode block", () => {
+    const tools = { ...base, matchesDefault: false, toolsBlock: true };
+    expect(
+      resolveComposerControlsOwnership({ ...tools, measuredHiddenBlockCount: 1 }),
+    ).toMatchObject({
+      hiddenBlockIds: ["tools"],
+      modeHidden: false,
+      overflowShowsPermissions: false,
+    });
+    expect(
+      resolveComposerControlsOwnership({ ...tools, measuredHiddenBlockCount: 2 }),
+    ).toMatchObject({ hiddenBlockIds: ["mode", "tools"], overflowShowsPermissions: true });
+  });
+
   it("shows the non-default chip as an icon in the compacted row", () => {
     const result = resolveComposerControlsOwnership({
       ...base,

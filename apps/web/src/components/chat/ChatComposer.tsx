@@ -278,6 +278,7 @@ import {
   usePreparingComposerImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import { useComposerToolPresets } from "./ComposerToolPresets";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
@@ -2340,6 +2341,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
+  const toolPresets = useComposerToolPresets({
+    environmentId,
+    projectId: activeProjectId,
+    routeKind,
+    routeThreadRef,
+    draftId,
+    threadShell: props.activeThreadShell,
+    running:
+      phase === "running" ||
+      (props.activeThreadShell?.hasPendingApprovals ?? false) ||
+      (props.activeThreadShell?.hasPendingUserInput ?? false),
+  });
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2390,6 +2403,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onModelPickerOpenChange={setIsComposerModelPickerOpen}
       modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
+      toolPresets={toolPresets}
     />
   );
   // An open question owns the space above the composer. Only a machine problem,

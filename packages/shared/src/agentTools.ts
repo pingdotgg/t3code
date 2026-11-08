@@ -3,6 +3,9 @@ import type {
   ProjectId,
   ServerSettings,
   ServerSettingsPatch,
+  ThreadToolPresets,
+  ToolPreset,
+  ToolPresets,
 } from "@t3tools/contracts";
 
 /**
@@ -122,4 +125,92 @@ export function mcpServerEnabledPatch(
     entries[name] = { enabled };
   }
   return projectOverridePatch(settings, projectId, "mcpServers", entries);
+}
+
+const lower = (name: string) => name.toLowerCase();
+
+/** Equal switches whatever their key order; absent reads as empty. */
+export function threadToolPresetsEqual(
+  left: ThreadToolPresets | undefined,
+  right: ThreadToolPresets | undefined,
+): boolean {
+  const entries = Object.entries(left ?? {});
+  const other = right ?? {};
+  return (
+    entries.length === Object.keys(other).length &&
+    entries.every(([name, on]) => Object.hasOwn(other, name) && other[name] === on)
+  );
+}
+
+type EffectiveTools = Pick<ServerSettings, "disabledSkills" | "mcpServers">;
+
+/**
+ * Settings' tools with a thread's presets applied. A preset switched on turns
+ * its skills and servers on, one switched off turns them off, and on wins
+ * where two presets share a tool. Servers the settings don't define are skipped.
+ */
+export function applyThreadToolPresets<Tools extends EffectiveTools>(
+  effective: Tools,
+  presets: ToolPresets,
+  switches: ThreadToolPresets | undefined,
+): Tools {
+  const members = (on: boolean) =>
+    Object.entries(switches ?? {}).flatMap(([name, switched]) =>
+      switched === on && Object.hasOwn(presets, name) ? [presets[name]!] : [],
+    );
+  const turnedOn = members(true);
+  const turnedOff = members(false);
+  if (turnedOn.length === 0 && turnedOff.length === 0) return effective;
+  const skillsOn = new Set(turnedOn.flatMap((preset) => preset.skills.map(lower)));
+  const serversOn = new Set(turnedOn.flatMap((preset) => preset.mcpServers));
+  const serversOff = new Set(turnedOff.flatMap((preset) => preset.mcpServers));
+  const disabledSkills = effective.disabledSkills.filter((name) => !skillsOn.has(lower(name)));
+  for (const name of turnedOff.flatMap((preset) => preset.skills)) {
+    if (!skillsOn.has(lower(name)) && !isSkillDisabled(disabledSkills, name)) {
+      disabledSkills.push(name);
+    }
+  }
+  const mcpServers = Object.fromEntries(
+    Object.entries(effective.mcpServers).map(([name, server]) => [
+      name,
+      serversOn.has(name)
+        ? { ...server, enabled: true }
+        : serversOff.has(name)
+          ? { ...server, enabled: false }
+          : server,
+    ]),
+  ) as Tools["mcpServers"];
+  return { ...effective, disabledSkills, mcpServers };
+}
+
+/**
+ * Whether a preset's tools are on as settings have them. Servers the
+ * settings don't define don't count; a preset with nothing left is off.
+ */
+export function toolPresetState(
+  effective: EffectiveTools,
+  preset: ToolPreset,
+): "on" | "off" | "mixed" {
+  const states = [
+    ...preset.skills.map((name) => !isSkillDisabled(effective.disabledSkills, name)),
+    ...preset.mcpServers.flatMap((name) =>
+      Object.hasOwn(effective.mcpServers, name) ? [effective.mcpServers[name]!.enabled] : [],
+    ),
+  ];
+  if (states.length > 0 && states.every(Boolean)) return "on";
+  return states.some(Boolean) ? "mixed" : "off";
+}
+
+/**
+ * A thread's switches with one preset set: a switch that matches what
+ * settings already give is dropped, so the thread follows settings again.
+ */
+export function withThreadToolPreset(
+  switches: ThreadToolPresets | undefined,
+  name: string,
+  on: boolean,
+  settingsState: "on" | "off" | "mixed",
+): ThreadToolPresets {
+  const { [name]: _previous, ...rest } = switches ?? {};
+  return settingsState === (on ? "on" : "off") ? rest : { ...rest, [name]: on };
 }

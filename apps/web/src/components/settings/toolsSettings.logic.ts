@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
 
-export type ToolsTab = "skills" | "mcp";
+export type ToolsTab = "skills" | "mcp" | "presets";
 
 /**
  * `tab` picks the tab; `skill` is the skill whose page is open on the Skills
@@ -24,9 +24,12 @@ export function validateToolsSearch(raw: Record<string, unknown>): {
   skill?: string;
   server?: string;
 } {
-  const tab = raw.tab === "mcp" || raw.tab === "skills" ? raw.tab : undefined;
+  const tab =
+    raw.tab === "mcp" || raw.tab === "skills" || raw.tab === "presets" ? raw.tab : undefined;
   const skill =
-    tab !== "mcp" && typeof raw.skill === "string" && raw.skill.length > 0 ? raw.skill : undefined;
+    (tab === undefined || tab === "skills") && typeof raw.skill === "string" && raw.skill.length > 0
+      ? raw.skill
+      : undefined;
   const server =
     tab === "mcp" && typeof raw.server === "string" && raw.server.length > 0
       ? raw.server

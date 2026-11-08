@@ -58,6 +58,7 @@ import { McpServerDetail } from "./McpServerDetail";
 import { McpServerDialog } from "./McpServerDialog";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillDetail } from "./SkillDetail";
+import { ToolPresetsPanel } from "./ToolPresets";
 import {
   type SkillEnvironment,
   useCheckoutScans,
@@ -205,21 +206,75 @@ export function ToolsSettings({
       value={[tab]}
       onValueChange={(next) => {
         const value = next[0];
-        if (value === "skills" || value === "mcp") onTabChange(value);
+        if (value === "skills" || value === "mcp" || value === "presets") onTabChange(value);
       }}
     >
       <Toggle value="skills">Skills</Toggle>
       <Toggle value="mcp">MCP servers</Toggle>
+      <Toggle value="presets">Presets</Toggle>
     </ToggleGroup>
   );
   return (
     <SettingsPageContainer>
-      {tab === "mcp" ? (
+      {tab === "presets" ? (
+        <PresetsTab tabs={tabs} />
+      ) : tab === "mcp" ? (
         <McpServersPanel tabs={tabs} openName={server ?? null} onOpen={onOpenServer} />
       ) : (
         <SkillsPanel tabs={tabs} openName={skill ?? null} onOpen={onOpenSkill} />
       )}
     </SettingsPageContainer>
+  );
+}
+
+// ── Presets ──────────────────────────────────────────────────────────
+
+/** The Presets tab, listing the skills and servers of the environment shown. */
+function PresetsTab({ tabs }: { tabs: ReactNode }) {
+  const { scope, target, connectedEnvironments } = useSettingsScope();
+  const targets = useToolsTargets();
+  const persist = usePersistToolsPatch();
+  const canWrite = useScopedSettingsWriteAllowed();
+  const environmentId = target?.environmentId ?? null;
+  const shown = targets.find((candidate) => candidate.environmentId === environmentId) ?? null;
+  const connected = connectedEnvironments.find(
+    (environment) => environment.environmentId === environmentId,
+  );
+  const environments: ReadonlyArray<SkillEnvironment> =
+    shown === null || connected === undefined
+      ? []
+      : [
+          {
+            environmentId: shown.environmentId,
+            label: connected.label,
+            serverConfig: connected.serverConfig,
+            cwd: shown.cwd,
+          },
+        ];
+  const providers = useEnvironmentProviders(environments)[0]?.providers ?? EMPTY_PROVIDERS;
+  const settings = connected?.serverConfig?.settings;
+  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
+  const projectId = isProjectScope ? (shown?.projectId ?? null) : null;
+  const servers = listMcpServerRows({
+    environment: settings?.mcpServers ?? {},
+    project:
+      projectId === null ? null : (settings?.projectSettingsOverrides[projectId]?.mcpServers ?? {}),
+  });
+  return (
+    <ToolPresetsPanel
+      tabs={tabs}
+      presets={settings?.toolPresets ?? {}}
+      skills={collectSkillRows(providers, shown?.cwd ?? null).map((row) => ({
+        name: row.name,
+        detail: row.description ?? "",
+      }))}
+      servers={servers.map((row) => ({
+        name: row.name,
+        detail: mcpServerTransportSummary(row.config.transport),
+      }))}
+      canWrite={canWrite && targets.length > 0}
+      onWrite={(toolPresets) => persist(() => ({ toolPresets }))}
+    />
   );
 }
 

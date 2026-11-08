@@ -1,4 +1,4 @@
-# Skills and MCP servers
+# Skills, MCP servers and presets
 
 **Settings → Tools** controls what agents can use on an environment: the skills they load and the
 MCP servers T3 Code gives them. Pick a project in the settings crumb to change them for that
@@ -70,3 +70,19 @@ listed this way; add an access token as a header instead.
 
 Claude, Codex, Cursor, OpenCode, Grok and other ACP agents get these servers. ACP agents that don't
 support URL servers only get command servers. Pi isn't supported yet.
+
+## Presets
+
+A preset is a named set of skills and MCP servers that one thread turns on or off together, such as
+a browser server and its testing skills. Create presets on the **Presets** tab; every project on
+the environment shares them.
+
+Once an environment has a preset, the composer shows a **Tools** menu with a switch for each one.
+Turning a preset on gives that thread its skills and servers even where settings have them off;
+turning it off takes them away for that thread. Where two presets share a tool and one is on, the
+tool stays on. A new thread starts with the presets you picked in its composer, and threads it
+forks or delegates to inherit them.
+
+In a thread that has already started, a change reaches the agent with your next message: T3 Code
+restarts the agent session, which keeps the conversation. Presets can't change while the agent is
+working or waiting on you.

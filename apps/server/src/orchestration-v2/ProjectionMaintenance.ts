@@ -219,8 +219,11 @@ export const layer: Layer.Layer<
     ];
     // Read-state events preserve updatedAt and supersede only each other. Activity events supersede both groups.
     const READ_STATE_THREAD_EVENT_TYPES = ["thread.visited", "thread.marked-unread"];
-    // Older clients skip tag events, so these supersede only each other.
-    const TAG_THREAD_EVENT_TYPE = "thread.tags-updated";
+    // Older clients skip these events, so each type supersedes only itself.
+    const SKIPPED_THREAD_EVENT_TYPES = new Set([
+      "thread.tags-updated",
+      "thread.tool-presets-updated",
+    ]);
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
@@ -245,7 +248,7 @@ export const layer: Layer.Layer<
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
       const retainedReadStateThreadIds = new Set<string>();
-      const retainedTagThreadIds = new Set<string>();
+      const retainedSkippedThreadEvents = new Set<string>();
       // Retain each key's oldest candidate, deleting it only when an older event appears.
       const oldestCandidateByEntityKey = new Map<string, number | null>();
       let deletedEventCount = 0;
@@ -321,11 +324,12 @@ export const layer: Layer.Layer<
               } else retainedReadStateThreadIds.add(row.stream_id);
             } else if (
               row.aggregate_kind === "thread" &&
-              row.event_type === TAG_THREAD_EVENT_TYPE
+              SKIPPED_THREAD_EVENT_TYPES.has(row.event_type)
             ) {
-              if (retainedThreadIds.has(row.stream_id) || retainedTagThreadIds.has(row.stream_id)) {
+              const key = encodeEntityKey([row.event_type, row.stream_id, null]);
+              if (retainedThreadIds.has(row.stream_id) || retainedSkippedThreadEvents.has(key)) {
                 obsolete.push(row.sequence);
-              } else retainedTagThreadIds.add(row.stream_id);
+              } else retainedSkippedThreadEvents.add(key);
             } else if (
               row.event_type === "thread.pull-request-link-updated" &&
               retainedThreadIds.has(row.stream_id)

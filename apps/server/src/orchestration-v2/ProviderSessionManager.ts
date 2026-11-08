@@ -374,14 +374,14 @@ export const layerWithOptions = (
                 return {
                   browser: browserOverridden ? false : settings.enableAgentBrowserAccess,
                   device: deviceOverridden ? false : settings.enableAgentDeviceAccess,
-                  tools: resolveAgentTools(settings, null),
+                  tools: resolveAgentTools(settings, null, thread.toolPresets),
                 };
             }
             const effective = resolveProjectSettings(settings, thread.projectId).settings;
             return {
               browser: effective.enableAgentBrowserAccess,
               device: effective.enableAgentDeviceAccess,
-              tools: resolveAgentTools(settings, thread.projectId),
+              tools: resolveAgentTools(settings, thread.projectId, thread.toolPresets),
             };
           }).pipe(
             Effect.catch((cause) =>

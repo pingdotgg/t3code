@@ -855,6 +855,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "tools-presets",
+    title: "Tool presets",
+    to: "/settings/tools",
+    scope: "project-defaults",
+    searchTerms: [
+      "preset group bundle set skills mcp servers turn on off together thread composer tools menu",
+    ],
+  },
+  {
     id: "agent-browser-access",
     title: "Agent browser access",
     to: "/settings/browser",

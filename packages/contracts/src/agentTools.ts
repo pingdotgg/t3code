@@ -112,6 +112,33 @@ export type DisabledSkills = typeof DisabledSkills.Type;
 export const DisabledSkillsProjectOverride = Schema.Record(TrimmedNonEmptyString, Schema.Boolean);
 export type DisabledSkillsProjectOverride = typeof DisabledSkillsProjectOverride.Type;
 
+export const ToolPresetName = TrimmedNonEmptyString.check(Schema.isMaxLength(48));
+export type ToolPresetName = typeof ToolPresetName.Type;
+
+/**
+ * Skills and MCP servers, by name, that a thread turns on or off together.
+ * A name the environment doesn't have is skipped, so one preset can serve
+ * projects with different servers.
+ */
+export const ToolPreset = Schema.Struct({
+  skills: Schema.Array(TrimmedNonEmptyString).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  mcpServers: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type ToolPreset = typeof ToolPreset.Type;
+
+export const ToolPresets = Schema.Record(ToolPresetName, ToolPreset);
+export type ToolPresets = typeof ToolPresets.Type;
+
+/**
+ * A thread's preset switches: `true` turns a preset's tools on for the
+ * thread, `false` turns them off. An absent preset leaves its tools as
+ * settings have them.
+ */
+export const ThreadToolPresets = Schema.Record(ToolPresetName, Schema.Boolean);
+export type ThreadToolPresets = typeof ThreadToolPresets.Type;
+
 /** An MCP server as a provider session receives it: secrets materialized, enabled only. */
 export interface ResolvedMcpServer {
   readonly name: McpServerName;

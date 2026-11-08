@@ -374,6 +374,7 @@ export function applyServerSettingsPatch(
     usagePriceOverrides: usagePriceOverridesPatch,
     usageModelAliases: usageModelAliasesPatch,
     mcpServers: mcpServersPatch,
+    toolPresets: toolPresetsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -593,6 +594,9 @@ export function applyServerSettingsPatch(
       ? { mcpServers: mergeSettingsEntries(current.mcpServers, mcpServersPatch) }
       : {}),
     ...(patch.disabledSkills !== undefined ? { disabledSkills: patch.disabledSkills } : {}),
+    ...(toolPresetsPatch !== undefined
+      ? { toolPresets: mergeSettingsEntries(current.toolPresets, toolPresetsPatch) }
+      : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined
       ? { sourceControlWriterModelSelection: patch.sourceControlWriterModelSelection }
       : {}),

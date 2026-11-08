@@ -8,7 +8,9 @@ function SettingsToolsRoute() {
   const navigate = Route.useNavigate();
   // A settings search result links by hash, so it opens the tab it points at.
   const hash = useLocation({ select: (location) => location.hash });
-  const resolvedTab = tab ?? (hash === "tools-mcp-servers" ? "mcp" : undefined);
+  const resolvedTab =
+    tab ??
+    (hash === "tools-mcp-servers" ? "mcp" : hash === "tools-presets" ? "presets" : undefined);
   return (
     <ToolsSettings
       {...(resolvedTab === undefined ? {} : { tab: resolvedTab })}
