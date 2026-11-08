@@ -17,6 +17,7 @@ vi.mock(import("./threads"), async () => {
 vi.mock(import("./orchestration"), () => ({
   orchestrationEnvironment: { threadLinkMetadata: () => state.reply } as never,
 }));
+vi.mock(import("./shell"), () => ({ environmentShell: {} as never }));
 vi.mock(import("./atom-registry"), () => ({ appAtomRegistry: {} as never }));
 vi.mock(import("./projects"), () => ({ environmentProjects: {} as never }));
 vi.mock(import("./server"), () => ({
