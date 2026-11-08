@@ -1315,14 +1315,7 @@ function OpenCommandPaletteDialog(props: {
           });
         },
       });
-      const lessonRequest = newLessonRequest(
-        activeThread ??
-          activeDraftThread ??
-          (currentProject
-            ? { environmentId: currentProject.environmentId, projectId: currentProject.id }
-            : null),
-        defaultProjectRef,
-      );
+      const lessonRequest = newLessonRequest(activeThread ?? activeDraftThread, defaultProjectRef);
       const lessonEnvironment = lessonRequest
         ? serverConfigs.get(lessonRequest.projectRef.environmentId)?.environment
         : undefined;

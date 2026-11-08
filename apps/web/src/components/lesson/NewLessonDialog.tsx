@@ -57,7 +57,7 @@ type Request = {
   source?: { threadId: string; excerpt: string };
 };
 const useLessonDialog = create<{ request: Request | null }>(() => ({ request: null }));
-// Opened from a project's thread, draft or page, the lesson defaults to that project.
+// Opened from a project's thread or draft, the lesson defaults to that project.
 export function newLessonRequest(
   open: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId } | null | undefined,
   fallback: ScopedProjectRef | null,
