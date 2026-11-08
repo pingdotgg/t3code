@@ -15,7 +15,15 @@ T3 Code can run [fx](https://fx.sh). fx uses the login on the machine that runs 
 
 If `fx` is not on the server's `PATH`, set **Binary path** to the executable.
 
+T3 Code supports fx 0.0.13 and later. Use the latest release when you can; macOS needs version 15 or later for fx releases after 0.0.13.
+
 Every fx instance on the same machine shares that machine's fx login. T3 Code does not keep a separate login per instance.
+
+## Update fx
+
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, T3 Code checks stable releases but leaves updates to your mise configuration.
+
+To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only; use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
 
 ## Models and effort
 
@@ -38,7 +46,7 @@ fx offers two composer modes.
 
 T3 Code does not offer **Full access** or **Auto-accept edits** for fx. A thread already set to one of those runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
 
-On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pull/1189), fx saves the mode T3 Code sets as its default permission mode. T3 Code sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
+On fx 0.0.14 and later, fx saves the mode T3 Code sets as its default permission mode. T3 Code sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
 
 A message steered into a running turn stops that turn, and fx answers the new message in the same session.
 

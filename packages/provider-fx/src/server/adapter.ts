@@ -20,6 +20,7 @@ import {
   applyFxModelSelection,
   FX_DRIVER_KIND,
   fxPermissionDisposition,
+  fxToolCallWasCancelled,
   fxSessionModeForPolicy,
   makeFxAcpRuntime,
   withFxSessionMode,
@@ -97,6 +98,17 @@ const decodeFxSubagentResult = Schema.decodeUnknownOption(
   ),
 );
 const decodeJsonString = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String));
+const decodeFxToolError = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        message: Schema.optional(Schema.String),
+        code: Schema.optional(Schema.String),
+        details: Schema.optional(Schema.Struct({ error: Schema.optional(Schema.String) })),
+      }),
+    }),
+  ),
+);
 
 /**
  * fx clips every tool result to 199 bytes, so a long sub-agent reply arrives
@@ -128,6 +140,10 @@ function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUp
   const request = "request" in input.value ? input.value.request : input.value;
   const text = Option.getOrUndefined(decodeFxToolContent(tool.data.content))?.[0]?.content.text;
   const outcome = text === undefined ? undefined : fxSubagentOutcome(text);
+  // A failed call carries fx's error envelope, e.g. `Cancelled` after Stop.
+  const failure = Option.getOrUndefined(
+    text === undefined ? Option.none() : decodeFxToolError(text),
+  )?.error;
   const status =
     tool.status === "completed"
       ? outcome?.ok === false
@@ -143,7 +159,15 @@ function extractFxSubagentUpdate(tool: AcpToolCallState): AcpAdapterV2SubagentUp
     title: request.action === "message" ? request.agent : null,
     model: request.model ?? null,
     status,
-    result: status === "running" ? null : (outcome?.result ?? text ?? null),
+    result:
+      status === "running"
+        ? null
+        : (outcome?.result ??
+          failure?.details?.error ??
+          failure?.message ??
+          failure?.code ??
+          text ??
+          null),
   };
 }
 
@@ -188,6 +212,7 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
     extractSubagentUpdate: extractFxSubagentUpdate,
+    isCancelledToolCall: fxToolCallWasCancelled,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
 }

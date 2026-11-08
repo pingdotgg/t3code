@@ -164,6 +164,15 @@ const decodeSessionUpdate = Schema.decodeUnknownEffect(
         _meta: AcpSchema.UpdateSessionNotification.fields._meta,
       }),
     }),
+    // fx reports command cancellation outside ACP's standard tool fields.
+    Schema.Struct({
+      ...AcpSchemaV1.SessionNotification.fields,
+      update: Schema.Struct({
+        ...AcpSchemaV1.ToolCallUpdate.fields,
+        sessionUpdate: Schema.Literals(["tool_call", "tool_call_update"]),
+        command_result: Schema.Json,
+      }),
+    }),
     AcpSchema.UpdateSessionNotification,
     AcpSchemaV1.SessionNotification,
   ]),

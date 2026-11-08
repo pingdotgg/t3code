@@ -226,9 +226,12 @@ import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
 import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
 import { fxSubagentInput } from "./fx_subagent/input.ts";
 import { assertFxSubagentOutput } from "./fx_subagent/fx_output.ts";
+import { fxSubagentStopInput } from "./fx_subagent_stop/input.ts";
+import { assertFxSubagentStopOutput } from "./fx_subagent_stop/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
+import { assertTurnInterruptMidToolFxOutput } from "./turn_interrupt_mid_tool/fx_output.ts";
 import {
   turnInterruptMidToolInput,
   turnInterruptMidToolKiroInput,
@@ -1898,6 +1901,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "fx_subagent_stop",
+    buildInput: fxSubagentStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_subagent_stop/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertFxSubagentStopOutput,
+      },
+    ],
+  },
+  {
     name: "command_output_streaming",
     buildInput: commandOutputStreamingInput,
     providers: [
@@ -1955,6 +1970,17 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolCursorOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./turn_interrupt_mid_tool/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        // fx asks before running the command; a workspace sandbox would deny it.
+        runtimePolicyOverride: {
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        },
+        assertOutput: assertTurnInterruptMidToolFxOutput,
       },
       {
         driver: ProviderDriverKind.make("pi"),

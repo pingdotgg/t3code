@@ -488,6 +488,7 @@ export interface AcpAdapterV2Flavor {
   ) => AcpAdapterV2SubagentUpdate | undefined;
   readonly isProvisionalSubagentTool?: (toolCall: AcpToolCallState) => boolean;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  readonly isCancelledToolCall?: (payload: unknown) => boolean;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
   /** Distinguishes commands from monitors when lifecycle notifications omit their kind. */
@@ -1367,6 +1368,8 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
+  /** Tools the agent failed after Stop; later updates keep them interrupted. */
+  readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   readonly subagents: Map<string, ActiveAcpSubagent>;
@@ -3121,9 +3124,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           reported: AcpAdapterV2SubagentUpdate,
         ) {
-          // See stoppedToolStatus: after Stop, a failed subagent was interrupted.
+          // Providers with cancellation detection already classify their subagent failures.
           const update: AcpAdapterV2SubagentUpdate =
-            context.interrupted && reported.status === "failed"
+            flavor.isCancelledToolCall === undefined &&
+            context.interrupted &&
+            reported.status === "failed"
               ? { ...reported, status: "interrupted" }
               : reported;
           // Hydration uses a new toolCallId but references the original child by subagent_id or task id.
@@ -3785,6 +3790,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          rawPayload?: unknown,
         ) => Effect.Effect<void> = () => Effect.void;
 
         const markAwaitingBackgroundHydration =
@@ -3837,6 +3843,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
           projectedStatus?: ProjectedToolStatus,
+          rawPayload?: unknown,
         ) {
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
@@ -3877,6 +3884,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? toolCall
               : { ...toolCall, backgroundCommandTaskId },
           );
+          // A failure racing Stop needs the provider's cancellation signal before relabeling it.
+          const previousStatus = previous === undefined ? undefined : toolStatus(previous.status);
+          if (
+            context.interrupted &&
+            toolCall.status === "failed" &&
+            flavor.isCancelledToolCall?.(rawPayload) === true &&
+            (previousStatus === undefined ||
+              previousStatus === "pending" ||
+              previousStatus === "running" ||
+              previousStatus === "waiting")
+          ) {
+            context.stoppedToolCallIds.add(toolCall.toolCallId);
+          }
+          const stoppedStatus =
+            projectedStatus ??
+            (toolCall.status === "failed" && context.stoppedToolCallIds.has(toolCall.toolCallId)
+              ? "interrupted"
+              : undefined);
           if (
             followsAgentWorkState &&
             projectedStatus === undefined &&
@@ -3981,7 +4006,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? undefined
             : extractSubagentUpdate(toolCall);
           if (subagentUpdate !== undefined) {
-            yield* emitSubagent(context, subagentUpdate);
+            yield* emitSubagent(
+              context,
+              stoppedStatus === "interrupted" && subagentUpdate.status === "failed"
+                ? { ...subagentUpdate, status: "interrupted" }
+                : subagentUpdate,
+            );
             if (followsAgentWorkState) yield* syncNativeChildren(context);
             if (subagentUpdate.suppressNormalTool !== false) {
               yield* rearmDeferredFinalize(context);
@@ -3989,7 +4019,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           if (
-            projectedStatus === undefined &&
+            stoppedStatus === undefined &&
             !shouldPersistToolUpdate(
               context,
               toolCall.toolCallId,
@@ -4002,7 +4032,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           }
           const status =
-            projectedStatus ?? stoppedToolStatus(context, toolCall) ?? toolStatus(toolCall.status);
+            stoppedStatus ??
+            (flavor.isCancelledToolCall === undefined
+              ? stoppedToolStatus(context, toolCall)
+              : undefined) ??
+            toolStatus(toolCall.status);
           const now = yield* DateTime.now;
           const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
           const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
@@ -5546,7 +5580,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const parsed = parseSessionUpdateEvent(notification);
               for (const event of parsed.events) {
                 if (event._tag === "ToolCallUpdated") {
-                  yield* emitTool(context, event.toolCall);
+                  yield* emitTool(context, event.toolCall, undefined, event.rawPayload);
                 } else if (event._tag === "PlanUpdated") {
                   yield* emitPlan(context, event.payload);
                 } else if (event._tag === "NoticeReceived") {
@@ -8189,6 +8223,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),
               subagents: new Map(),

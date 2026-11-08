@@ -5976,6 +5976,26 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          extractSubagentUpdate: (tool) =>
+            tool.toolCallId === "native-failed-tool"
+              ? {
+                  nativeTaskId: tool.toolCallId,
+                  childSessionId: null,
+                  prompt: "Run a command",
+                  title: null,
+                  model: null,
+                  status: tool.status === "failed" ? "failed" : "running",
+                  result: tool.status === "failed" ? "Permission denied" : null,
+                  suppressNormalTool: tool.status !== "failed",
+                }
+              : undefined,
+          isCancelledToolCall: Schema.is(
+            Schema.Struct({
+              update: Schema.Struct({
+                toolCallId: Schema.Literals(["native-cancel-tool", "native-unseen-cancel-tool"]),
+              }),
+            }),
+          ),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath: yield* path.fromFileUrl(
@@ -6046,15 +6066,57 @@ describe("AcpAdapterV2", () => {
       );
       yield* native.current.request("_test/finish-cancel", {});
       yield* Fiber.join(interrupt);
-      const terminal = Option.getOrThrow(
+      const untilTerminal = Array.from(
         yield* runtime.events.pipe(
-          Stream.filter(
+          Stream.takeUntil(
             (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
           ),
-          Stream.runHead,
+          Stream.runCollect,
         ),
       );
-      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+      const terminal = untilTerminal.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
+      // The agent fails the command Stop cut off, then updates its output.
+      const command = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      const unseenCommand = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-unseen-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(unseenCommand?.status, "interrupted");
+      assert.equal(command?.status, "interrupted");
+      assert.include(command?.type === "command_execution" ? command.output : "", "exit 130");
+      const failure = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-failed-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(failure?.status, "failed");
+      const subagent = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(subagent?.status, "failed");
+      assert.include(
+        failure?.type === "command_execution" ? failure.output : "",
+        "Permission denied",
+      );
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
       );
