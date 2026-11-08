@@ -142,6 +142,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
 
 import { appAtomRegistry } from "../state/atom-registry";
 import {
+  applyNativeComposerDraftText,
   clearComposerDraftContent,
   getComposerDraftSnapshot,
   setComposerDraftText,
@@ -165,7 +166,7 @@ function ThreadComposer({
       ref={editorRef}
       draftKey={draftKey}
       value={draft.text}
-      onChangeText={(text) => setComposerDraftText(draftKey, text)}
+      onChangeText={(text) => applyNativeComposerDraftText(draftKey, text)}
     />
   );
 }
