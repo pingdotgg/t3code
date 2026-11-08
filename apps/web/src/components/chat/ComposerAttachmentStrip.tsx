@@ -341,6 +341,7 @@ export function ComposerAttachmentMediaRow({
           <div
             key={file.id}
             className="relative h-16 w-16 shrink-0 snap-start overflow-hidden rounded-lg border border-border/80 bg-black"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
           >
             <button
               type="button"
@@ -449,6 +450,7 @@ export function ComposerAttachmentFileList({
           <div
             key={file.id}
             className="flex min-w-0 items-center gap-2 py-1 text-sm text-foreground"
+            data-failed-attachment-id={upload?.status === "failed" ? file.id : undefined}
           >
             <PierreEntryIcon pathValue={file.name} kind="file" theme={resolvedTheme} />
             <button

@@ -252,6 +252,7 @@ function FileContextChip(props: {
       isVideo={isVideo}
       theme={resolvedTheme}
       error={props.upload?.status === "failed"}
+      failedAttachmentId={props.upload?.status === "failed" ? props.record.id : undefined}
       unresolved={needsReattach}
       suffix={suffix}
       accessibleLabel={`${isVideo && !needsReattach ? "Preview video" : "File"} attachment, ${props.record.name}, ${size}`}
