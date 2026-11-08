@@ -196,8 +196,10 @@ describe("ElectronUpdater install handoff", () => {
             if (failure === "spawn-failure")
               child.emit("error", new Error("cannot spawn installer"));
             if (failure === "helper-rejection") {
-              child.stderr.emit("data", Buffer.from("invalid signature"));
               child.emit("exit", 1);
+              child.stderr.emit("data", Buffer.from("invalid "));
+              child.stderr.emit("data", Buffer.from("signature"));
+              child.emit("close", 1);
             }
             if (failure === "invalid-readiness")
               child.stdout.emit("data", Buffer.from("unexpected\n"));

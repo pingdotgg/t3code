@@ -227,7 +227,7 @@ export const make = Effect.gen(function* () {
                 const abort = () => finish(new Error("External installer handoff was cancelled."));
                 signal.addEventListener("abort", abort, { once: true });
                 child.once("error", finish);
-                child.once("exit", () =>
+                child.once("close", () =>
                   finish(new Error(errors || "External installer exited before becoming ready.")),
                 );
                 child.stderr?.on("data", (chunk: Buffer) => {
