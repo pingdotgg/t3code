@@ -23,6 +23,8 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
@@ -368,6 +370,45 @@ export const readMedia = DesktopIpc.makeIpcMethod({
       },
       catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
     }).pipe(Effect.orElseSucceed(() => null));
+  }),
+});
+
+const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/;
+
+// Stock Windows answers "none"; anything else may be a replacement file manager, which only the
+// server reveal honors. spawner.string takes about 600 ms longer on Windows, so read stdout here.
+const hasStockWindowsFolderVerb = Effect.fn("desktop.ipc.window.hasStockWindowsFolderVerb")(
+  function* () {
+    const env = yield* HostProcess.Environment;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const handle = yield* spawner.spawn(
+      ChildProcess.make(
+        `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\reg.exe`,
+        ["query", "HKCR\\Directory\\shell", "/ve"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
+      { concurrency: "unbounded" },
+    );
+    return exitCode === 0 && /REG_SZ\s+none\s*$/im.test(stdout);
+  },
+  Effect.scoped,
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed(() => false),
+);
+
+export const revealItemInFolder = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.REVEAL_ITEM_IN_FOLDER_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.revealItemInFolder")(function* (path) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (environment.platform !== "win32" || !WINDOWS_DRIVE_PATH.test(path)) return false;
+    if (!(yield* hasStockWindowsFolderVerb())) return false;
+    Electron.shell.showItemInFolder(path.replaceAll("/", "\\"));
+    return true;
   }),
 });
 

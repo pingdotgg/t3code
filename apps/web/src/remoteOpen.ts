@@ -177,6 +177,15 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   return true;
 }
 
+/** Resolves false when the desktop app declines, so the caller falls back to the server's reveal. */
+export async function revealInDesktopShell(path: string): Promise<boolean> {
+  try {
+    return (await window.desktopBridge?.revealItemInFolder?.(path)) === true;
+  } catch {
+    return false;
+  }
+}
+
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";
 
 export function useRemoteOpenHint(): readonly [seen: boolean, markSeen: () => void] {

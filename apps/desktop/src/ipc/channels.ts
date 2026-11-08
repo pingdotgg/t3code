@@ -7,6 +7,7 @@ export const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const READ_MEDIA_CHANNEL = "desktop:read-media";
 export const OPEN_SYSTEM_SETTINGS_CHANNEL = "desktop:open-system-settings";
+export const REVEAL_ITEM_IN_FOLDER_CHANNEL = "desktop:reveal-item-in-folder";
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
 export const PASTE_AS_TEXT_CHANNEL = "desktop:paste-as-text";

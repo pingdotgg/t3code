@@ -8,16 +8,21 @@ import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
-const { focusedWebContents, ownerWindow } = vi.hoisted(() => ({
+const { focusedWebContents, ownerWindow, showItemInFolder } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
   ownerWindow: vi.fn(),
+  showItemInFolder: vi.fn(),
 }));
 vi.mock("electron", () => ({
   webContents: { getFocusedWebContents: focusedWebContents },
   BrowserWindow: { fromWebContents: ownerWindow },
+  shell: { showItemInFolder },
 }));
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
@@ -25,6 +30,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
+import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
@@ -35,6 +41,7 @@ import {
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
+  revealItemInFolder,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -280,6 +287,82 @@ describe("readMedia", () => {
         mimeType: "",
         data: new Uint8Array(),
       });
+    }),
+  );
+});
+
+describe("revealItemInFolder", () => {
+  const STOCK_FOLDER_VERB =
+    "\r\nHKEY_CLASSES_ROOT\\Directory\\shell\r\n    (Default)    REG_SZ    none\r\n\r\n";
+
+  const reveal = (
+    path: string,
+    input: {
+      readonly platform?: NodeJS.Platform;
+      readonly stdout?: string;
+      readonly exitCode?: number;
+    },
+  ) =>
+    Effect.sync(() => showItemInFolder.mockClear()).pipe(
+      Effect.andThen(revealItemInFolder.handler(path)),
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: input.platform ?? "win32",
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() =>
+              Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(1),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(input.exitCode ?? 0)),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout:
+                    input.stdout === undefined
+                      ? Stream.empty
+                      : Stream.make(new TextEncoder().encode(input.stdout)),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  it.effect("reveals a local file natively on stock Windows", () =>
+    Effect.gen(function* () {
+      const revealed = yield* reveal("C:/Users/t3/my project/a,b.ts", {
+        stdout: STOCK_FOLDER_VERB,
+      });
+
+      assert.isTrue(revealed);
+      assert.deepEqual(showItemInFolder.mock.calls, [["C:\\Users\\t3\\my project\\a,b.ts"]]);
+    }),
+  );
+
+  it.effect.each([
+    ["on macOS", "/Users/t3/a.ts", { platform: "darwin", stdout: STOCK_FOLDER_VERB }],
+    ["for a WSL path", "\\\\wsl.localhost\\Ubuntu\\a.ts", { stdout: STOCK_FOLDER_VERB }],
+    [
+      "with a replacement file manager",
+      "C:\\a.ts",
+      { stdout: "    (Default)    REG_SZ    open\r\n" },
+    ],
+    ["when the registry lookup fails", "C:\\a.ts", { exitCode: 1 }],
+  ] as const)("leaves the reveal to the server $0", ([, path, input]) =>
+    Effect.gen(function* () {
+      const revealed = yield* reveal(path, input);
+
+      assert.isFalse(revealed);
+      assert.equal(showItemInFolder.mock.calls.length, 0);
     }),
   );
 });

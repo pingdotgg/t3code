@@ -14,6 +14,7 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import {
   openRemoteEditorUrl,
+  revealInDesktopShell,
   useRemoteCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
@@ -264,12 +265,17 @@ export const OpenInPicker = memo(function OpenInPicker({
       return true;
     }
     if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+    const reveal = revealFileManager && editor === "file-manager";
+    if (reveal && (await revealInDesktopShell(openInCwd))) {
+      setPreferredEditor(editor);
+      return true;
+    }
     const result = openInEditorMutation({
       environmentId,
       input: {
         cwd: openInCwd,
         editor,
-        ...(revealFileManager && editor === "file-manager" ? { reveal: true } : {}),
+        ...(reveal ? { reveal: true } : {}),
       },
     });
     setPreferredEditor(editor);

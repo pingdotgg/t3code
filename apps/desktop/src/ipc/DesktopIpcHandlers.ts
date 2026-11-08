@@ -44,6 +44,7 @@ import {
   openExternal,
   readMedia,
   openSystemSettings,
+  revealItemInFolder,
   checkSystemPermission,
   pasteAsText,
   probeRemoteEditors,
@@ -150,6 +151,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(receiveProviderAuthCallback);
   yield* ipc.handle(cancelProviderAuthCallback);
   yield* ipc.handle(openSystemSettings);
+  yield* ipc.handle(revealItemInFolder);
   yield* ipc.handle(checkSystemPermission);
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
