@@ -62,6 +62,11 @@ describe("shouldShowInstanceBadge", () => {
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
   });
 
+  it("ignores a non-hex accent color", () => {
+    const entry = { driverKind: codex, accentColor: "blue", enabled: true };
+    expect(shouldShowInstanceBadge(entry, [entry])).toBe(false);
+  });
+
   it("shows the badge when two entries share a driver, even without an accent", () => {
     const first = { driverKind: codex, accentColor: undefined, enabled: true };
     const second = { driverKind: codex, accentColor: undefined, enabled: true };

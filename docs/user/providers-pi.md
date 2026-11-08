@@ -49,8 +49,8 @@ loads for the current workspace; selecting one uses Pi's native skill expansion.
 
 Pi loads its normal user extensions, and project extensions once the folder is trusted in Pi.
 Blocking `select`, `confirm`, `input`, and `editor` dialogs work in T3 Code. Notifications appear in
-the work log. Pi terminal decoration such as titles, status lines, and widgets does not have a T3
-Code equivalent.
+the work log. Extensions can publish status text near the composer. Terminal titles and generic
+widgets do not have a T3 Code equivalent.
 
 ## Permission Modes
 
@@ -86,5 +86,6 @@ threads.
   environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
   then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
   project files off without the notice.
-- The context meter appears once Pi reports usage for the thread. Some model providers only
-  report usage when a response completes, so the meter can wait for the first reply.
+- The context meter is off by default; see [commands and skills](./composer.md#commands-and-skills)
+  to enable it on web and desktop. It appears once Pi reports usage for the thread. Some model
+  providers only report usage when a response completes, so the meter can wait for the first reply.

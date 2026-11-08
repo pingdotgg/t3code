@@ -415,7 +415,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         }}
         initialFocus={searchInputRef}
         align={props.popupAlign ?? "start"}
-        collisionAvoidance={docked ? { align: "shift", fallbackAxisSide: "none" } : undefined}
+        // Docked, the popup opens above the composer and slides over it when that space is short,
+        // so a short window gets its full height (Floating UI sizes to the viewport) instead of a sliver.
+        {...(docked
+          ? { side: "top" as const, collisionAvoidance: { side: "shift", align: "shift" } as const }
+          : {})}
         className="before:hidden"
         padding="none"
         touchBackdrop

@@ -1569,6 +1569,7 @@ html[data-theme-id] [data-app-sidebar] {
   --accent-foreground: var(--app-theme-accent-surface-foreground);
   --muted: var(--app-theme-muted);
   --muted-foreground: var(--app-theme-muted-foreground);
+  --secondary-label: var(--app-theme-secondary-label);
   --border: var(--app-theme-border);
   --input: var(--app-theme-input);
   --sidebar: var(--app-theme-sidebar);
@@ -1846,21 +1847,21 @@ code {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
+/* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */
+:where(:not(iframe))::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
 }
 
-::-webkit-scrollbar-track {
+:where(:not(iframe))::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
+:where(:not(iframe))::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+:where(:not(iframe))::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
 
@@ -2136,7 +2137,7 @@ code {
 }
 
 .chat-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chat-markdown pre {
@@ -2445,14 +2446,18 @@ code {
   padding: 0.05em 0.25em;
 }
 
+/* Markdown delimiters shown, as editable text, around styled text with the caret in it. */
 .composer-rich-marker {
   color: var(--muted-foreground);
   opacity: 0.75;
   font-weight: 400;
   font-style: normal;
   text-decoration: none;
-  user-select: none;
-  pointer-events: none;
+}
+
+/* Delimiters of source restored by undo or redo, once the caret leaves it. */
+.composer-rich-marker-hidden {
+  display: none;
 }
 
 /* Selected chips (node selection from arrowing into or clicking a chip). */
