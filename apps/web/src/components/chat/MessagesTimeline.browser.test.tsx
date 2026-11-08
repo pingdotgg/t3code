@@ -690,6 +690,44 @@ describe("MessagesTimeline messages", () => {
     expect(maxNestedCommits).toBeLessThan(20);
   });
 
+  it("leaves earlier rows alone while a reply streams", async () => {
+    const props = baseProps();
+    let earlierRowRenders = 0;
+    // The row calls this on every render it does.
+    const renderHtmlRender = () => {
+      earlierRowRenders += 1;
+      return <p>Earlier app</p>;
+    };
+    const timeline = (reply: string) => (
+      <MessagesTimeline
+        {...props}
+        renderHtmlRender={renderHtmlRender}
+        timelineEntries={[
+          message("Build the app"),
+          {
+            id: "earlier-app",
+            kind: "html-render",
+            createdAt: CREATED_AT,
+            runId: null,
+            htmlRender: { attachmentId: "app", title: "App", height: 120 },
+          },
+          message(reply, { role: "assistant", streaming: true }, "reply"),
+        ]}
+      />
+    );
+    await using screen = await renderElement(timeline("Working"));
+    await expect.element(screen.getByText("Earlier app")).toBeVisible();
+    await vi.waitFor(() =>
+      expect(props.listRef.current!.getState().sizes.has("entry-reply")).toBe(true),
+    );
+    const rendersBeforeStream = earlierRowRenders;
+    for (let delta = 1; delta <= 10; delta++) {
+      await screen.rerender(timeline(`Working ${"step ".repeat(delta)}done ${delta}`));
+    }
+    await expect.element(screen.getByText("done 10", { exact: false })).toBeVisible();
+    expect(earlierRowRenders).toBe(rendersBeforeStream);
+  });
+
   it("keeps the first and last message headings reachable from either end", async () => {
     setup();
     const props = baseProps();

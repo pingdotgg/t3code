@@ -522,39 +522,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     list.anchorVisibleContent({ key: anchorKey });
   };
 
-  const revealFoldRows = (opening: boolean) =>
-    setFoldRevealBaseIds(
-      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
-    );
-  const onToggleTurnFold = (runId: RunId) => {
-    preserveDisclosurePosition(`turn-fold:${runId}`);
-    revealFoldRows(
-      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
-    );
-    setExpandedRunIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
-      }
-      return next;
-    });
-  };
-  const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    preserveDisclosurePosition(anchorKey);
-    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
-    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
-    setExpandedWorkGroupIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  };
   const onToggleWorkingHistory = (key: string) => {
     // Either way the bar holds still: the history grows and shrinks below it.
     const list = listRef.current;
@@ -678,6 +645,41 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
+  });
+  // Stable because rows get them through context. They follow `rows`: reading it before
+  // its declaration makes the React Compiler skip this whole component.
+  const revealFoldRows = (opening: boolean) =>
+    setFoldRevealBaseIds(
+      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
+    );
+  const onToggleTurnFold = useStableCallback((runId: RunId) => {
+    preserveDisclosurePosition(`turn-fold:${runId}`);
+    revealFoldRows(
+      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
+    );
+    setExpandedRunIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
+  });
+  const onToggleWorkGroup = useStableCallback((groupId: string, anchorKey: string) => {
+    preserveDisclosurePosition(anchorKey);
+    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
+    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
+    setExpandedWorkGroupIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
   });
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
@@ -1356,7 +1358,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
       </div>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  // Legend re-renders rows only when data or extraData changes, so this carries what renderItem reads.
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    foldRevealBaseIds,
+  };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
