@@ -1730,8 +1730,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
   };
 
-  // Folder and labeled rows only drag out to the composer: folders and labels own their order,
-  // so nothing drops in the list.
+  // With folders or project labels on, rows only drag out to the composer; nothing drops in the list.
   const isContextDrag =
     projectFolders !== null ||
     sectionsByProject ||
