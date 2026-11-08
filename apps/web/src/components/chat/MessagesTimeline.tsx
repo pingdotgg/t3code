@@ -882,8 +882,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         strip.dataset.inView = next;
       }
     }
-    // A row only inside the band minimap navigation leaves above its target must not be the
-    // current turn, or Next turn retargets it. 1px absorbs device-pixel scroll rounding.
+    // Ignore rows ending within the offset minimap navigation leaves above its target, or
+    // Next turn keeps retargeting the same row. 1px absorbs device-pixel scroll rounding.
     const currentInset = TIMELINE_MINIMAP_TARGET_OFFSET + 1;
     const currentRange = resolveTimelineMinimapVisibleRange({
       ...state,
