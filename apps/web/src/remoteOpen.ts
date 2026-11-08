@@ -14,6 +14,8 @@ import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
+import { environmentSession } from "~/state/session";
+import { toastManager } from "~/components/ui/toast";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -23,6 +25,7 @@ export interface RemoteOpenHost {
 
 export type RemoteOpenState =
   | { readonly mode: "local-exec" }
+  | { readonly mode: "device-local" }
   | { readonly mode: "remote-links"; readonly host: RemoteOpenHost }
   | { readonly mode: "remote-unavailable" };
 
@@ -53,6 +56,7 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
+  readonly openOnThisDevice?: boolean;
 }): RemoteOpenState {
   const { target } = input;
   if (target === null) {
@@ -86,6 +90,9 @@ export function resolveRemoteOpenState(input: {
         ...(username === null ? {} : { username }),
       },
     };
+  }
+  if (input.isDesktopRenderer && input.openOnThisDevice && deviceLocalRouteKey(target) !== null) {
+    return { mode: "device-local" };
   }
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
@@ -134,10 +141,84 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
 
 const UNRESOLVED_REMOTE_OPEN_ATOM = Atom.make(UNRESOLVED_REMOTE_OPEN);
 
+const DEVICE_LOCAL_ROUTES_KEY = "t3code:device-local-editor-routes:v1";
+const DeviceLocalRoutes = Schema.Array(Schema.String);
+
+export function deviceLocalRouteKey(target: ConnectionTarget): string | null {
+  if (target._tag === "RelayConnectionTarget") {
+    return JSON.stringify([target.environmentId, target._tag]);
+  }
+  if (target._tag !== "BearerConnectionTarget" || target.connectionId.startsWith("local:"))
+    return null;
+  return JSON.stringify([target.environmentId, target._tag, target.connectionId]);
+}
+
+export function deviceLocalPreferenceKey(
+  clientId: string | null,
+  target: ConnectionTarget | undefined,
+): string | null {
+  const routeKey = target === undefined ? null : deviceLocalRouteKey(target);
+  return clientId === null || routeKey === null ? null : JSON.stringify([clientId, routeKey]);
+}
+
+export function withDeviceLocalRoute(routes: readonly string[], key: string, enabled: boolean) {
+  return enabled
+    ? routes.includes(key)
+      ? routes
+      : [...routes, key]
+    : routes.filter((r) => r !== key);
+}
+
+const NO_PREPARED_CONNECTION = Atom.make(
+  Option.none<import("@t3tools/client-runtime/connection").PreparedConnection>(),
+);
+
+let editorClientId: string | null | undefined;
+
+// Identity lives outside Chromium storage, so importing storage cannot authorize another install.
+// The lookup is a synchronous IPC round trip, so it runs once per page.
+function readEditorClientId(): string | null {
+  if (editorClientId === undefined) {
+    try {
+      editorClientId = window.desktopBridge?.getEditorClientId?.() ?? null;
+    } catch {
+      editorClientId = null;
+    }
+  }
+  return editorClientId;
+}
+
+export function useDeviceLocalEditorPreference(environmentId: EnvironmentId | null) {
+  const prepared = useAtomValue(
+    environmentId === null
+      ? NO_PREPARED_CONNECTION
+      : environmentSession.preparedConnectionValueAtom(environmentId),
+  );
+  const target = Option.getOrNull(prepared)?.target;
+  const key = deviceLocalPreferenceKey(readEditorClientId(), target);
+  const [routes, setRoutes] = useLocalStorage<readonly string[], readonly string[]>(
+    DEVICE_LOCAL_ROUTES_KEY,
+    [],
+    DeviceLocalRoutes,
+  );
+  return {
+    available: key !== null && window.desktopBridge?.openLocalEditor !== undefined,
+    enabled:
+      key !== null && window.desktopBridge?.openLocalEditor !== undefined && routes.includes(key),
+    setEnabled: (enabled: boolean) => {
+      if (key !== null) setRoutes((previous) => withDeviceLocalRoute(previous, key, enabled));
+    },
+  };
+}
+
 export function useRemoteOpenResolution(environmentId: EnvironmentId | null): RemoteOpenResolution {
-  return useAtomValue(
+  const resolution = useAtomValue(
     environmentId === null ? UNRESOLVED_REMOTE_OPEN_ATOM : remoteOpenResolutionAtom(environmentId),
   );
+  const preference = useDeviceLocalEditorPreference(environmentId);
+  return preference.enabled
+    ? { state: { mode: "device-local" }, isResolved: resolution.isResolved }
+    : resolution;
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
@@ -175,6 +256,24 @@ export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   }
   window.location.assign(url);
   return true;
+}
+
+export async function openDeviceLocalEditor(editor: EditorId, path: string): Promise<boolean> {
+  try {
+    const result = await window.desktopBridge?.openLocalEditor?.({ editor, path });
+    if (result?.ok) return true;
+    toastManager.add({
+      type: "error",
+      title: "Could not open editor on this device",
+      description:
+        result?.reason === "path-missing"
+          ? `Path does not exist on this device: ${path}. Local paths must match the environment.`
+          : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`,
+    });
+  } catch {
+    toastManager.add({ type: "error", title: "Could not open editor on this device" });
+  }
+  return false;
 }
 
 const REMOTE_OPEN_HINT_KEY = "t3code:remote-open-hint-seen";

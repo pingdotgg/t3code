@@ -149,6 +149,20 @@ shown there apply only to the route marked **In use**; other routes are not
 checked. Direct pairing and T3 Connect have separate sessions and may grant
 different permissions.
 
+### Open files in an editor on this device
+
+By default, T3 Code never assumes a remote machine's files exist on your
+computer, even when its address is `localhost` (a tunnel or VM can use it too).
+If the paths really are the same on this computer, for example a shared mount or
+a forwarded VM folder, open the **Open in** menu in the desktop app and choose
+**Editor location: This device**. Choose **Automatic** to undo it.
+
+The choice applies only to this desktop installation, that machine, and the
+route currently in use. Another route, another installation, or a restored
+backup starts on **Automatic**. The editor opens the same absolute path on this
+computer; if it does not exist here, T3 Code shows an error and does not ask the
+machine to open it. It is not available on web or mobile.
+
 ### Balance new threads across machines
 
 Auto balance is off by default. On web and desktop, enable it in

@@ -3,6 +3,8 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
+  DesktopOpenLocalEditorInputSchema,
+  DesktopOpenLocalEditorResultSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -43,6 +45,8 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { readOrCreateEditorClientId } from "./editorClientId.ts";
+import { launchLocalEditor } from "./localEditorLaunch.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -404,6 +408,30 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const getEditorClientId = DesktopIpc.makeSyncIpcMethod({
+  channel: IpcChannels.GET_EDITOR_CLIENT_ID_CHANNEL,
+  result: Schema.NullOr(Schema.String),
+  handler: () => Effect.sync(() => readOrCreateEditorClientId(Electron.app.getPath("userData"))),
+});
+
+export const openLocalEditor = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_LOCAL_EDITOR_CHANNEL,
+  payload: DesktopOpenLocalEditorInputSchema,
+  result: DesktopOpenLocalEditorResultSchema,
+  handler: Effect.fn("desktop.ipc.window.openLocalEditor")(function* (input, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    // Only the app's own renderer may start processes on this machine.
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return { ok: false as const, reason: "not-allowed" as const };
+    }
+    return yield* launchLocalEditor(input);
   }),
 });
 

@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -6,7 +7,12 @@ import {
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import {
+  deviceLocalPreferenceKey,
+  deviceLocalRouteKey,
+  resolveRemoteOpenState,
+  withDeviceLocalRoute,
+} from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -140,6 +146,123 @@ describe("resolveRemoteOpenState", () => {
         }),
       ).toEqual({ mode: "remote-unavailable" });
     }
+  });
+});
+
+const savedLoopback = (connectionId: string) =>
+  new BearerConnectionTarget({ environmentId, label: "sol", connectionId });
+
+describe("opening editors on this device", () => {
+  const loopback = savedLoopback("bearer:environment-1:http://127.0.0.1:3773/");
+
+  it("keeps a saved loopback route remote under Automatic", () => {
+    // A loopback port can tunnel to a VM or container, so it never implies local files.
+    expect(
+      resolveRemoteOpenState({
+        target: loopback,
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        openOnThisDevice: false,
+      }),
+    ).toEqual({ mode: "remote-unavailable" });
+  });
+
+  it("opens on this device only after an explicit opt-in", () => {
+    expect(
+      resolveRemoteOpenState({
+        target: loopback,
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        openOnThisDevice: true,
+      }),
+    ).toEqual({ mode: "device-local" });
+    expect(
+      resolveRemoteOpenState({
+        target: new RelayConnectionTarget({ environmentId, label: "sol" }),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        openOnThisDevice: true,
+      }),
+    ).toEqual({ mode: "device-local" });
+  });
+
+  it("leaves SSH, primary, and desktop-managed targets on their existing path", () => {
+    const sshTarget = { alias: "sol", username: null };
+    expect(
+      resolveRemoteOpenState({
+        target: new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+        sshTarget,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        openOnThisDevice: true,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } });
+    expect(
+      resolveRemoteOpenState({
+        target: primaryTarget("https://sol.tail1234.ts.net"),
+        sshTarget: null,
+        isDesktopRenderer: false,
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        openOnThisDevice: true,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "tailscale", host: "sol.tail1234.ts.net" } });
+    expect(
+      resolveRemoteOpenState({
+        target: savedLoopback("local:wsl:default"),
+        sshTarget: null,
+        isDesktopRenderer: true,
+        remoteOpenTargets: undefined,
+        openOnThisDevice: true,
+      }),
+    ).toEqual({ mode: "local-exec" });
+  });
+
+  it("keys the preference by environment and route, never by SSH, primary, or managed routes", () => {
+    const sameEnvironmentOtherPort = savedLoopback("bearer:environment-1:http://127.0.0.1:4000/");
+    const otherEnvironment = new BearerConnectionTarget({
+      environmentId: EnvironmentId.make("environment-2"),
+      label: "vm",
+      connectionId: loopback.connectionId,
+    });
+    const keys = [loopback, sameEnvironmentOtherPort, otherEnvironment].map(deviceLocalRouteKey);
+    expect(new Set(keys).size).toBe(3);
+    expect(
+      deviceLocalRouteKey(new RelayConnectionTarget({ environmentId, label: "sol" })),
+    ).not.toBe(null);
+    for (const ineligible of [
+      new SshConnectionTarget({ environmentId, label: "sol", connectionId: "ssh-1" }),
+      primaryTarget("http://127.0.0.1:8000"),
+      savedLoopback("local:wsl:default"),
+    ]) {
+      expect(deviceLocalRouteKey(ineligible)).toBe(null);
+    }
+  });
+
+  it("scopes the opt-in to the install and the active route", () => {
+    const other = savedLoopback("bearer:environment-1:http://127.0.0.1:4000/");
+    const stored = [deviceLocalPreferenceKey("client-a", loopback)!];
+    // Another installation (different client id) never inherits the stored opt-in.
+    expect(stored.includes(deviceLocalPreferenceKey("client-b", loopback)!)).toBe(false);
+    // Switching the active route of the same environment drops the opt-in.
+    expect(stored.includes(deviceLocalPreferenceKey("client-a", other)!)).toBe(false);
+    expect(stored.includes(deviceLocalPreferenceKey("client-a", loopback)!)).toBe(true);
+    // No install identity or no eligible route means no preference at all.
+    expect(deviceLocalPreferenceKey(null, loopback)).toBe(null);
+    expect(deviceLocalPreferenceKey("client-a", undefined)).toBe(null);
+    expect(deviceLocalPreferenceKey("client-a", savedLoopback("local:wsl:default"))).toBe(null);
+  });
+
+  it("changes only the toggled route in the stored preference", () => {
+    const a = deviceLocalRouteKey(loopback)!;
+    const b = deviceLocalRouteKey(savedLoopback("bearer:environment-1:http://127.0.0.1:4000/"))!;
+    const both = withDeviceLocalRoute(withDeviceLocalRoute([], a, true), b, true);
+    expect(both).toEqual([a, b]);
+    expect(withDeviceLocalRoute(both, a, true)).toEqual([a, b]);
+    expect(withDeviceLocalRoute(both, a, false)).toEqual([b]);
+    expect(withDeviceLocalRoute([b], a, false)).toEqual([b]);
   });
 });
 

@@ -552,8 +552,9 @@ function useChatMarkdownState({
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
   const canUseShellActions =
-    canOperateHost &&
-    canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
+    (remoteOpen.state.mode === "device-local" && remoteOpen.isResolved) ||
+    (canOperateHost &&
+      canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved));
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -868,7 +869,9 @@ function useChatMarkdownState({
         }
         openInEditorMenuLabel={preferredEditorMenuLabel}
         onReveal={
-          canUseShellActions && revealInFileManagerLabel !== undefined
+          canUseShellActions &&
+          remoteOpen.state.mode !== "device-local" &&
+          revealInFileManagerLabel !== undefined
             ? async () => revealFileInFileManager((await resolveHostPath()).absolutePath)
             : undefined
         }

@@ -17,6 +17,7 @@ import { useAtomCommand } from "./state/use-atom-command";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
+import { openDeviceLocalEditor, useRemoteCapableEditors, useRemoteOpenState } from "./remoteOpen";
 
 export type FileContextMenuAction =
   | "reveal-in-folder"
@@ -87,13 +88,17 @@ function buildFileContextMenuItems(input: {
 }
 
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
+  const remote = useRemoteOpenState(environmentId);
+  const clientEditors = useRemoteCapableEditors();
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
 
-  const availableEditors = serverConfig?.availableEditors ?? [];
+  const availableEditors =
+    remote.mode === "device-local" ? clientEditors : (serverConfig?.availableEditors ?? []);
   const capabilities: FileContextMenuCapabilities = {
     // WSL can reveal in Windows Explorer despite reporting Linux; use server wording.
     revealLabel:
+      remote.mode !== "device-local" &&
       environmentId !== null &&
       serverConfig?.shellRevealInFileManager === true &&
       serverConfig.availableEditors.includes("file-manager")
@@ -119,6 +124,10 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
         : (action.slice("editor:".length) as EditorId);
     if (action !== "open" && !reveal && !capabilities.editorIds.includes(editor)) return;
 
+    if (remote.mode === "device-local") {
+      if (editor !== "file-manager") await openDeviceLocalEditor(editor, absolutePath);
+      return;
+    }
     const result = await openInEditor({
       environmentId,
       input: { cwd: absolutePath, editor, ...(reveal ? { reveal: true } : {}) },

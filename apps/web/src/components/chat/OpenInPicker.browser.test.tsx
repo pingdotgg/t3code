@@ -60,6 +60,8 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
 vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   ...(await importOriginal()),
   useRemoteOpenState: () => state.remote,
+  useDeviceLocalEditorPreference: () =>
+    ({ available: false, enabled: false, setEnabled: () => undefined }) as const,
   useRemoteCapableEditors: () => state.clientEditors,
   useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,

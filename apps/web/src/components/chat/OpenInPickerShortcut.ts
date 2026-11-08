@@ -10,7 +10,12 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
 import { isOpenFavoriteEditorShortcut } from "../../keybindings";
 import { announce } from "../../lib/announce";
-import { openRemoteEditorUrl, useRemoteCapableEditors, useRemoteOpenState } from "../../remoteOpen";
+import {
+  openDeviceLocalEditor,
+  openRemoteEditorUrl,
+  useRemoteCapableEditors,
+  useRemoteOpenState,
+} from "../../remoteOpen";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import { shellEnvironment } from "../../state/shell";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -75,6 +80,12 @@ export function useOpenFavoriteEditorShortcut({
 
       event.preventDefault();
       const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+      if (remote.mode === "device-local") {
+        void openDeviceLocalEditor(preferredEditor, openInCwd).then((opened) => {
+          if (opened) announce(`Opened in ${label}`);
+        });
+        return;
+      }
       if (remote.mode === "remote-links") {
         const url = buildRemoteOpenUrl({
           editor: preferredEditor,

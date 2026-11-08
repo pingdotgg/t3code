@@ -17,6 +17,7 @@ import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hoo
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
 import { readEnvironmentScope } from "./state/session";
+import { openDeviceLocalEditor, useRemoteCapableEditors, useRemoteOpenState } from "./remoteOpen";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -68,6 +69,8 @@ export function useOpenInPreferredEditor(
   environmentId: EnvironmentId | null,
   availableEditors: readonly EditorId[],
 ) {
+  const remote = useRemoteOpenState(environmentId);
+  const clientEditors = useRemoteCapableEditors();
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
     reportFailure: false,
   });
@@ -89,6 +92,21 @@ export function useOpenInPreferredEditor(
         Cause.fail(
           new PreferredEditorEnvironmentRequiredError({
             targetPath,
+          }),
+        ),
+      );
+    }
+    if (remote.mode === "device-local") {
+      const editor = resolveAndPersistPreferredEditor(clientEditors);
+      if (editor && (await openDeviceLocalEditor(editor, targetPath))) {
+        return AsyncResult.success(editor);
+      }
+      return AsyncResult.failure(
+        Cause.fail(
+          new PreferredEditorUnavailableError({
+            environmentId,
+            targetPath,
+            availableEditorIds: clientEditors,
           }),
         ),
       );

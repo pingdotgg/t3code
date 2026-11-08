@@ -32,6 +32,7 @@ import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  openLocalEditor,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -281,6 +282,26 @@ describe("readMedia", () => {
         data: new Uint8Array(),
       });
     }),
+  );
+});
+
+describe("openLocalEditor", () => {
+  it.effect("refuses callers other than the main window before touching the filesystem", () =>
+    Effect.gen(function* () {
+      const main = { webContents: { id: 1 } } as unknown as Electron.BrowserWindow;
+      const open = (event?: { sender: { id: number } }) =>
+        openLocalEditor
+          .handler({ editor: "vscode", path: "/" }, event)
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      const refused = { ok: false, reason: "not-allowed" };
+      assert.deepEqual(yield* open({ sender: { id: 2 } }), refused);
+      assert.deepEqual(yield* open(undefined), refused);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
 
