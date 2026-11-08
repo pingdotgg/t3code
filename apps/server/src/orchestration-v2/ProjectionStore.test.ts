@@ -1898,7 +1898,7 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
       yield* projectionStore.getThreadShell(threadId),
     );
   }
-  return { projectId, activeThreadId, forkThreadId, otherThreadId };
+  return { projectId, activeThreadId, forkThreadId, sourceThreadId, otherThreadId };
 });
 
 it.effect("SQL shells read a subagent family and a worktree's threads", () =>
@@ -4374,7 +4374,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
-      const { projectId, activeThreadId, forkThreadId, otherThreadId } =
+      const { projectId, activeThreadId, forkThreadId, sourceThreadId, otherThreadId } =
         yield* assertProjectScopedShells("sql-project-shell");
 
       const [stored] = yield* sql<{ readonly payload_json: string }>`
@@ -4394,6 +4394,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         scoped.threads.map((thread) => thread.id),
         [activeThreadId, forkThreadId],
       );
+
+      const forkItemCount = scoped.threads.find(
+        (thread) => thread.id === forkThreadId,
+      )?.visibleItemCount;
+      const source = yield* projectionStore.getThread(sourceThreadId);
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${sourceThreadId}:deleted`),
+        type: "thread.deleted",
+        threadId: sourceThreadId,
+        occurredAt: source.updatedAt,
+        payload: { ...source, deletedAt: source.updatedAt },
+      });
+      const afterDelete = yield* projectionStore.getShellSnapshot();
+      assert.strictEqual(
+        afterDelete.threads.find((thread) => thread.id === forkThreadId)?.visibleItemCount,
+        forkItemCount,
+      );
+      assert.notInclude(
+        [...afterDelete.threads, ...afterDelete.archivedThreads].map((thread) => thread.id),
+        sourceThreadId,
+      );
+      assert.strictEqual(
+        (yield* projectionStore.getThreadShell(forkThreadId))?.visibleItemCount,
+        forkItemCount,
+      );
+      assert.strictEqual(
+        ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(forkThreadId),
+        ).visibleItemCount,
+        forkItemCount,
+      );
+      assert.isNull(yield* projectionStore.getThreadShell(sourceThreadId));
     }),
   );
 

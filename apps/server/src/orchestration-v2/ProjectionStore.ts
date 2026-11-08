@@ -6198,7 +6198,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         worktreePath,
         threadIds,
         listedOnly = false,
-      }: ShellSnapshotOptions & { readonly listedOnly?: boolean } = {},
+        includeDeleted = false,
+      }: ShellSnapshotOptions & {
+        readonly listedOnly?: boolean;
+        readonly includeDeleted?: boolean;
+      } = {},
     ) =>
       sql<ShellThreadRow>`
             SELECT
@@ -6381,7 +6385,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 candidate.ordinal DESC, candidate.run_id DESC
               LIMIT 1
             ) AND blocked.status = 'failed'
-            WHERE t.deleted_at IS NULL${
+            WHERE ${includeDeleted ? sql`TRUE` : sql`t.deleted_at IS NULL`}${
               listedOnly
                 ? sql` AND json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
                     AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1`
@@ -6979,7 +6983,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       while (pendingSourceIds.length > 0) {
         const sourceId = pendingSourceIds.pop();
         if (sourceId === undefined || rowsByThreadId.has(sourceId)) continue;
-        const source = (yield* selectShellThreadRows(sourceId))[0];
+        const source = (yield* selectShellThreadRows(sourceId, { includeDeleted: true }))[0];
         if (source === undefined) continue;
         rowsByThreadId.set(sourceId, source);
         if (source.forked_from_run_source_thread_id !== null) {
@@ -7391,7 +7395,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               if (nextId === undefined || rowsByThreadId.has(nextId)) {
                 continue;
               }
-              const rows = yield* selectShellThreadRows(nextId);
+              const rows = yield* selectShellThreadRows(nextId, {
+                includeDeleted: nextId !== threadId,
+              });
               const row = rows[0];
               if (row === undefined) {
                 continue;
