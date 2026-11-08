@@ -316,10 +316,7 @@ interface ThreadState {
     }
   >;
   /** Running background shells by id; a shell stays at its launch directory when the session moves. */
-  readonly shells: Map<
-    string,
-    { readonly directory: string; readonly command: string | undefined }
-  >;
+  readonly shells: Map<string, { readonly directory: string; command: string | undefined }>;
   /** Shells whose end arrived before their launch result; OpenCode does not wait for the launch to return. */
   readonly endedShells: Set<string>;
   /** Child sessions and shells the user stopped; a wake their reports alone cause runs nothing. */
@@ -525,6 +522,9 @@ const reportOutcome = (state: string | undefined) =>
       : state === "cancelled"
         ? ("cancelled" as const)
         : ("unknown" as const);
+
+const shellCommandOf = (input: Readonly<Record<string, unknown>> | undefined) =>
+  stringField(input, "command")?.trim();
 
 const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
@@ -841,7 +841,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const owesWork = (state: ThreadState) =>
       state.wakes.length > 0 ||
-      state.reports.size > 0 ||
+      [...state.reports.values()].some((entry) => !state.stopped.has(entry.sourceId)) ||
       state.shells.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
       [...state.calls.values()].some((call) => call.background);
@@ -2132,18 +2132,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             return yield* settleCall(call, "completed", subagentOutput(textOf(event.data.content)));
           }
           const output = textOf(event.data.content);
-          const launched = trackShellLaunch(
-            state,
-            event.data.metadata,
-            turn.tools.get(event.data.id)?.input,
-          );
+          // A launch held with its wake arrived before its turn could name it.
+          const shell = state.shells.get(stringField(event.data.metadata, "shellID") ?? "");
+          if (shell !== undefined)
+            shell.command ??= shellCommandOf(turn.tools.get(event.data.id)?.input);
           yield* emitTool(state, turn, event.data.id, "completed", {
             output,
             files: event.data.content.flatMap((part) => (part.type === "file" ? [part] : [])),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
-          if (launched) yield* syncRosterAncestors(state);
           return;
         }
         case "session.tool.failed": {
@@ -2340,10 +2338,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const shellId = stringField(metadata, "shellID");
       if (metadata?.["status"] !== "running" || shellId === undefined) return false;
       if (state.endedShells.delete(shellId) || state.shells.has(shellId)) return false;
-      state.shells.set(shellId, {
-        directory: state.directory,
-        command: stringField(input, "command")?.trim(),
-      });
+      state.shells.set(shellId, { directory: state.directory, command: shellCommandOf(input) });
       return true;
     };
 
@@ -2356,17 +2351,40 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       },
     ) => {
       const shellId = stringField(payload.metadata, "shellID");
-      if (stringField(payload.metadata, "source") !== "shell" || shellId === undefined) return;
+      if (stringField(payload.metadata, "source") !== "shell" || shellId === undefined)
+        return false;
       const shell = state.shells.get(shellId);
-      if (!state.shells.delete(shellId)) state.endedShells.add(shellId);
-      // Removing a shell reports it to its session, which wakes that session.
-      if (!state.stopped.has(shellId)) return;
+      const ended = state.shells.delete(shellId);
+      if (!ended) state.endedShells.add(shellId);
+      // Removing a shell reports it to its session too, which wakes that session.
       state.reports.set(inboxId, {
         inboxId,
         sourceId: shellId,
         text: payload.text,
-        report: { kind: "command", label: shell?.command, outcome: "cancelled" },
+        report: {
+          kind: "command",
+          label: shell?.command,
+          outcome: state.stopped.has(shellId)
+            ? "cancelled"
+            : reportOutcome(stringField(payload.metadata, "state")),
+        },
       });
+      return ended;
+    };
+
+    // Counted on arrival, so Stop sees what a held wake started and a replay counts nothing twice.
+    const trackShells = (state: ThreadState, event: OpenCode2Client.OpenCode2StreamEvent) => {
+      if (event.type === "session.tool.success") {
+        const input = state.active?.tools.get(event.data.id)?.input;
+        return trackShellLaunch(state, event.data.metadata, input);
+      }
+      if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
+        return trackShellEnd(state, event.data.inboxID, event.data.item.payload);
+      }
+      if (event.type === "session.inbox.delivered" || event.type === "session.inbox.cancelled") {
+        state.reports.delete(event.data.inboxID);
+      }
+      return false;
     };
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
@@ -2399,6 +2417,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           busy.delete(sessionId);
         }
       }
+      const tracked = threads.get(sessionId ?? "");
+      const shellsChanged = tracked !== undefined && trackShells(tracked, event);
       if (event.type === "session.created" && event.data.parentID !== undefined) {
         const strayCaller = strays.get(event.data.parentID);
         if (strayCaller !== undefined) {
@@ -2423,9 +2443,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ) {
           held.running = false;
         }
-        return;
+      } else {
+        yield* route(event, sessionId);
       }
-      return yield* route(event, sessionId);
+      if (shellsChanged) yield* syncRosterAncestors(tracked);
     });
 
     const route = Effect.fnUntraced(function* (
@@ -2506,7 +2527,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.subagent.queued ??= event.data.inboxID;
       }
       if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
-        trackShellEnd(state, event.data.inboxID, event.data.item.payload);
         return yield* onReport(state, event.data.inboxID, event.data.item.payload);
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
