@@ -15,7 +15,9 @@ export function useRevealActiveTab(
   useEffect(() => {
     if (activeKey === null) return;
     const strip = stripRef.current;
-    const viewport = strip?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    const viewport =
+      strip?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]') ??
+      strip?.closest<HTMLElement>("[data-layout-tab-strip]");
     const tab = strip?.querySelector<HTMLElement>("[data-active-tab='true']");
     if (!viewport || !tab || typeof ResizeObserver === "undefined") return;
 
