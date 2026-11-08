@@ -166,6 +166,44 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads an MR list whose descriptions pass the default output cap", () =>
+    Effect.gen(function* () {
+      const stdout = JSON.stringify([
+        {
+          iid: 44,
+          title: "Update dependencies",
+          web_url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/44",
+          target_branch: "main",
+          source_branch: "renovate/all",
+          state: "opened",
+          description: "x".repeat(1_100_000),
+        },
+      ]);
+      assert.isAbove(Buffer.byteLength(stdout), 1_000_000);
+      mockedRun.mockImplementationOnce(({ maxOutputBytes = 1_000_000 }) =>
+        Effect.succeed(
+          stdout.length > maxOutputBytes
+            ? { ...processOutput(stdout.slice(0, maxOutputBytes)), stdoutTruncated: true }
+            : processOutput(stdout),
+        ),
+      );
+
+      const result = yield* Effect.gen(function* () {
+        const glab = yield* GitLabCli.GitLabCli;
+        return yield* glab.listMergeRequests({
+          cwd: "/repo",
+          headSelector: "renovate/all",
+          state: "open",
+        });
+      });
+
+      assert.deepStrictEqual(
+        result.map(({ number, state }) => ({ number, state })),
+        [{ number: 44, state: "open" }],
+      );
+    }),
+  );
+
   it.effect("surfaces a friendly error when the merge request is not found", () =>
     Effect.gen(function* () {
       const cause = new VcsProcessExitError({

@@ -22,6 +22,8 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// Each list row carries its whole description, so long ones pass the default 1 MB output cap.
+const MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 const gitLabCliExecutionErrorContext = {
   operation: Schema.Literal("execute"),
@@ -491,6 +493,7 @@ export const make = Effect.gen(function* () {
           "--output",
           "json",
         ],
+        maxOutputBytes: MERGE_REQUEST_LIST_MAX_OUTPUT_BYTES,
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
