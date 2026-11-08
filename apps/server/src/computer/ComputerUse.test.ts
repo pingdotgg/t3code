@@ -34,6 +34,7 @@ const layout = (scale: number, screens = [left, right]) => ({
   bounds: wholeDesktop,
   scale,
   screens,
+  outputs: "DP-1 left, DP-2 right",
 });
 
 const harness = (options: {
@@ -47,6 +48,8 @@ const harness = (options: {
   /** An input event the portal rejects. */
   readonly failInput?: string;
   readonly failCaptures?: number;
+  /** Which output sits where in each capture; the same rectangles every time. */
+  readonly captureOutputs?: ReadonlyArray<string>;
 }) =>
   Effect.gen(function* () {
     const events: Array<string> = [];
@@ -60,6 +63,7 @@ const harness = (options: {
     const lookupReleased = yield* Deferred.make<void>();
     const inputHeld = yield* Deferred.make<void>();
     let lookups = 0;
+    let captures = 0;
     let failCaptures = options.failCaptures ?? 0;
     const opens: Array<string | null> = [];
     const closes = yield* Queue.unbounded<number>();
@@ -144,7 +148,11 @@ const harness = (options: {
                 ? Effect.fail(
                     new ComputerUseOperationError({ operation: "screenshot", cause: "spectacle" }),
                   )
-                : Effect.succeed({ png: png(400, 100), ...layout(1) }),
+                : Effect.succeed({
+                    png: png(400, 100),
+                    ...layout(1),
+                    outputs: options.captureOutputs?.[captures++] ?? layout(1).outputs,
+                  }),
             ),
           ),
         ),
@@ -363,6 +371,22 @@ describe("ComputerUse", () => {
         expect(yield* test.takeClose).toBe(1);
         yield* computer.screenshot({ threadId: threadB });
         expect(test.opens).toEqual([null, "token-1"]);
+      }).pipe(Effect.provide(test.services));
+    }),
+  );
+
+  it.effect("ends control when screens of the same size swap places between screenshots", () =>
+    Effect.gen(function* () {
+      const test = yield* harness({
+        captureOutputs: ["DP-1 left, DP-2 right", "DP-2 left, DP-1 right"],
+      });
+      yield* Effect.gen(function* () {
+        const computer = yield* ComputerUse;
+        yield* computer.screenshot({ threadId: threadA, display: 1 });
+        // The streams' rectangles still match, but the shared one now shows the other screen.
+        const swapped = yield* Effect.flip(computer.screenshot({ threadId: threadA, display: 1 }));
+        expect(swapped.message).toContain("The screen layout changed");
+        expect(yield* test.takeClose).toBe(1);
       }).pipe(Effect.provide(test.services));
     }),
   );
@@ -663,6 +687,7 @@ describe("ComputerUse", () => {
       {
         png: encodePng({ width, height, data }),
         bounds: { x: 0, y: 0, width: 1600, height: 200 },
+        outputs: "",
         scale: 2,
         screens,
       },
@@ -704,6 +729,7 @@ describe("ComputerUse", () => {
       {
         png: encodePng({ width, height, data }),
         bounds: { x: 0, y: 0, width: 1000, height: 200 },
+        outputs: "",
         scale: 3,
         screens,
       },

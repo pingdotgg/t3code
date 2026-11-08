@@ -24,7 +24,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { cropAndResize, decodePng, encodePng, fitScreenshotSize } from "./desktopImage.ts";
-import { KdeDesktop, type DesktopCapture, type DesktopRect } from "./KdeDesktop.ts";
+import { KdeDesktop, layoutChanged, type DesktopCapture, type DesktopRect } from "./KdeDesktop.ts";
 import { parseKeyCombo, textKeysyms } from "./keysyms.ts";
 import type { PortalCallError, PortalStream, RemoteDesktopSession } from "./RemoteDesktopPortal.ts";
 
@@ -61,6 +61,8 @@ interface ActiveControl {
   /** Streams sorted left to right, then top to bottom; their order is the display index. */
   readonly displays: ReadonlyArray<PortalStream>;
   readonly frame: ScreenshotFrame | null;
+  /** Which output sat where in the first capture. Later ones must match it. */
+  readonly outputs: string | null;
 }
 
 interface Opening {
@@ -103,9 +105,6 @@ const intersect = (a: DesktopRect, b: DesktopRect): DesktopRect | null => {
   const bottom = Math.min(a.y + a.height, b.y + b.height);
   return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null;
 };
-
-const layoutChanged =
-  "The screen layout changed since control started. Call `computer_screenshot` again to start over.";
 
 /**
  * Crops a whole-desktop capture to `display`, or to all shared displays, and fits it for a model.
@@ -386,6 +385,7 @@ const make = Effect.gen(function* () {
           session: exit.value,
           displays: [...exit.value.streams].sort((a, b) => a.x - b.x || a.y - b.y),
           frame: null,
+          outputs: null,
         }
       : null;
     const claimed = yield* Ref.modify(state, (current) =>
@@ -530,10 +530,18 @@ const make = Effect.gen(function* () {
             desktop.capture.pipe(
               Effect.flatMap((capture) =>
                 Effect.try({
-                  try: () => renderScreenshot(capture, active.displays, input.display),
+                  // Equal screens that swapped places still line up with the streams.
+                  try: () =>
+                    active.outputs !== null && capture.outputs !== active.outputs
+                      ? layoutChanged
+                      : renderScreenshot(capture, active.displays, input.display),
                   catch: (cause) =>
                     new ComputerUseOperationError({ operation: "screenshot", cause }),
-                }),
+                }).pipe(
+                  Effect.map((shot) =>
+                    typeof shot === "string" ? shot : { ...shot, outputs: capture.outputs },
+                  ),
+                ),
               ),
               Effect.filterOrFail(
                 (shot): shot is Exclude<typeof shot, string> => typeof shot !== "string",
@@ -544,7 +552,7 @@ const make = Effect.gen(function* () {
           );
           yield* Ref.update(state, (value) =>
             value.active?.session === active.session
-              ? { ...value, active: { ...value.active, frame: shot.frame } }
+              ? { ...value, active: { ...value.active, frame: shot.frame, outputs: shot.outputs } }
               : value,
           );
           return {

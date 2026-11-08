@@ -38,6 +38,8 @@ export interface DesktopLayout {
   /** Image pixels per logical pixel in that capture. */
   readonly scale: number;
   readonly screens: ReadonlyArray<DesktopRect>;
+  /** Which output sits where, so equal screens that swap places still read as a change. */
+  readonly outputs: string;
 }
 
 export interface DesktopCapture extends DesktopLayout {
@@ -49,10 +51,12 @@ const KscreenOutputs = Schema.fromJsonString(
   Schema.Struct({
     outputs: Schema.Array(
       Schema.Struct({
+        name: Schema.optional(Schema.String),
         enabled: Schema.Boolean,
         pos: Schema.Struct({ x: Schema.Number, y: Schema.Number }),
         size: Schema.Struct({ width: Schema.Number, height: Schema.Number }),
         scale: Schema.Number,
+        rotation: Schema.optional(Schema.Number),
       }),
     ),
   }),
@@ -88,8 +92,26 @@ export const desktopLayoutFromKscreen = (json: string): DesktopLayout | null => 
     // scale covers every screen and lower-density ones come out upscaled.
     scale: Math.max(1, ...enabled.map((output) => output.scale)),
     screens,
+    outputs: enabled
+      .map((output) =>
+        JSON.stringify([
+          output.name ?? null,
+          output.pos.x,
+          output.pos.y,
+          output.size.width,
+          output.size.height,
+          output.scale,
+          output.rotation ?? null,
+        ]),
+      )
+      .sort()
+      .join("\n"),
   };
 };
+
+export const layoutChanged =
+  "The screen layout changed since control started. Call `computer_screenshot` again to start over.";
+
 const CONSENT_TIMEOUT = "2 minutes";
 
 /** Why this process cannot drive a KDE Plasma Wayland desktop, or null when it can try. */
@@ -122,7 +144,10 @@ export class KdeDesktop extends Context.Service<
       RemoteDesktopSession,
       ComputerUseConsentError | ComputerUseOperationError | ComputerUseUnavailableError
     >;
-    readonly capture: Effect.Effect<DesktopCapture, ComputerUseOperationError>;
+    readonly capture: Effect.Effect<
+      DesktopCapture,
+      ComputerUseOperationError | ComputerUseUnavailableError
+    >;
   }
 >()("t3/computer/KdeDesktop") {}
 
@@ -177,14 +202,32 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const readLayout = Effect.gen(function* () {
+    const screens = yield* processRunner.run({
+      command: "kscreen-doctor",
+      args: ["-j"],
+      timeout: "15 seconds",
+      maxOutputBytes: 4 * 1024 * 1024,
+    });
+    const layout = screens.code === 0 ? desktopLayoutFromKscreen(screens.stdout) : null;
+    if (layout === null) {
+      return yield* new ComputerUseOperationError({
+        operation: "screenshot",
+        cause: { exitCode: screens.code, stderr: screens.stderr.slice(0, 500) },
+      });
+    }
+    return layout;
+  });
+
   // Spectacle reads the screen through KWin, which lets it in by its desktop file. Background
   // mode writes only `--output`. `--fullscreen` is KWin's CaptureWorkspace at native resolution:
-  // every screen's logical bounding box at one scale. A capture that does not fit the layout read
-  // after it is refused.
+  // every screen's logical bounding box at one scale. It reports no layout, so one read on each
+  // side brackets it; a change undone before the second read still goes unseen.
   const capture = Effect.scoped(
     Effect.gen(function* () {
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-computer-" });
       const output = path.join(directory, "screen.png");
+      const before = yield* readLayout;
       const result = yield* processRunner.run({
         command: "spectacle",
         args: ["--new-instance", "--background", "--nonotify", "--fullscreen", "--output", output],
@@ -198,24 +241,15 @@ const make = Effect.gen(function* () {
           cause: { exitCode: result.code, stderr: result.stderr.slice(0, 500) },
         });
       }
-      const screens = yield* processRunner.run({
-        command: "kscreen-doctor",
-        args: ["-j"],
-        timeout: "15 seconds",
-        maxOutputBytes: 4 * 1024 * 1024,
-      });
-      const layout = screens.code === 0 ? desktopLayoutFromKscreen(screens.stdout) : null;
-      if (layout === null) {
-        return yield* new ComputerUseOperationError({
-          operation: "screenshot",
-          cause: { exitCode: screens.code, stderr: screens.stderr.slice(0, 500) },
-        });
+      const layout = yield* readLayout;
+      if (layout.outputs !== before.outputs) {
+        return yield* new ComputerUseUnavailableError({ reason: layoutChanged });
       }
       return { png: yield* fileSystem.readFile(output), ...layout };
     }),
   ).pipe(
     Effect.mapError((cause) =>
-      cause._tag === "ComputerUseOperationError"
+      cause._tag === "ComputerUseOperationError" || cause._tag === "ComputerUseUnavailableError"
         ? cause
         : new ComputerUseOperationError({ operation: "screenshot", cause }),
     ),
