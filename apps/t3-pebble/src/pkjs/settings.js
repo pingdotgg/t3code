@@ -51,7 +51,7 @@ function parseSettings(response) {
     var body = JSON.parse(decodeURIComponent(response));
     return {
       url: typeof body.url === "string" ? body.url.trim() : "",
-      key: typeof body.key === "string" ? body.key.trim() : "",
+      key: typeof body.key === "string" ? body.key.trim() : ""
     };
   } catch (_error) {
     return null;

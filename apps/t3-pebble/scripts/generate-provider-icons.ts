@@ -2,7 +2,7 @@
 // Geometry is read from the same sources the web app draws, so the watch never carries a redrawn
 // substitute. Run from apps/t3-pebble with NODE_PATH pointing at the scripts package's sharp:
 //   NODE_PATH=../../scripts/node_modules bun scripts/generate-provider-icons.ts
-import { mkdir, readFile } from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 import sharp from "sharp";
 
 const SIZE = 14;
@@ -14,7 +14,7 @@ const INK = { black: { r: 0, g: 0, b: 0 }, white: { r: 255, g: 255, b: 255 } };
 type Path = { d: string; fill?: string; fillRule?: string };
 type Logo = { viewBox: string; paths: Path[] } | { png: Buffer };
 
-const read = (path: string) => readFile(new URL(path, ROOT), "utf8");
+const read = (path: string) => NodeFSP.readFile(new URL(path, ROOT), "utf8");
 
 async function webIcons() {
   const source = await read("apps/web/src/components/Icons.tsx");
@@ -122,11 +122,13 @@ async function tint(alpha: Uint8Array, ink: { r: number; g: number; b: number })
     rgba[i * 4 + 2] = ink.b;
     rgba[i * 4 + 3] = alpha[i];
   }
-  return sharp(rgba, { raw: { width: SIZE, height: SIZE, channels: 4 } }).png().toBuffer();
+  return sharp(rgba, { raw: { width: SIZE, height: SIZE, channels: 4 } })
+    .png()
+    .toBuffer();
 }
 
 const logos = { ...(await webIcons()), ...(await packageIcons()) };
-await mkdir(OUT, { recursive: true });
+await NodeFSP.mkdir(OUT, { recursive: true });
 for (const [id, logo] of Object.entries(logos)) {
   const alpha = await alphaMask(logo as Logo);
   for (const [name, ink] of Object.entries(INK)) {

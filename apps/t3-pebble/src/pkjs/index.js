@@ -40,7 +40,7 @@ function flush() {
     function () {
       busy = false;
       flush();
-    },
+    }
   );
 }
 function connect() {
@@ -86,7 +86,7 @@ function list() {
             machine: (t.machine || "").slice(0, 14),
             directory: (path || "").slice(0, 16),
             harness: (t.providerInstanceId || "").slice(0, 16),
-            age: age(t.updatedAt),
+            age: age(t.updatedAt)
           });
         });
       });
@@ -164,12 +164,12 @@ function read(thread, baseline) {
               "file_read",
               "file_search",
               "web_search",
-              "dynamic_tool",
+              "dynamic_tool"
             ].indexOf(item.type) >= 0
           );
         }),
         format,
-        namespaces[thread] || "",
+        namespaces[thread] || ""
       )
       .slice(-8)
       .map(function (item) {
@@ -179,7 +179,7 @@ function read(thread, baseline) {
           text: format(item.text || item.title || "", item.type),
           item: item.itemId || "",
           summary: summary(item),
-          status: item.status || "",
+          status: item.status || ""
         };
       });
     if (
@@ -192,7 +192,7 @@ function read(thread, baseline) {
         text: "Thinking",
         item: "",
         summary: "Thinking",
-        status: "running",
+        status: "running"
       });
     var timeline = JSON.stringify(entries);
     if (timeline !== lastTimeline) {
@@ -206,7 +206,7 @@ function read(thread, baseline) {
           message: entry.text,
           item: entry.item,
           summary: entry.summary,
-          status: entry.status,
+          status: entry.status
         });
       });
       send({ action: "chat_show", thread: thread });

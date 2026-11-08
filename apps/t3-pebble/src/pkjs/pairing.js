@@ -47,15 +47,15 @@ exports.pair = function (origin, pairingCode, callback) {
           url: origin + path,
           headers: { "content-type": contentType },
           body: body,
-          timeout: 20000,
+          timeout: 20000
         },
-        done,
+        done
       );
     }
     var registration = JSON.stringify({
       client_name: "T3 Pebble",
       redirect_uris: [REDIRECT],
-      token_endpoint_auth_method: "none",
+      token_endpoint_auth_method: "none"
     });
     post("/oauth/mcp/register", registration, "application/json", function (error, client) {
       if (error || !client || !client.client_id)
@@ -67,11 +67,11 @@ exports.pair = function (origin, pairingCode, callback) {
         code_challenge: challenge,
         code_challenge_method: "S256",
         state: state,
-        resource: resource,
+        resource: resource
       };
       var decision = {
         authorization: authorization,
-        decision: { _tag: "pairing-code", access: "full-access", code: pairingCode },
+        decision: { _tag: "pairing-code", access: "full-access", code: pairingCode }
       };
       post(
         "/oauth/mcp/decision",
@@ -114,9 +114,9 @@ exports.pair = function (origin, pairingCode, callback) {
               if (error || !token || typeof token.access_token !== "string" || !token.access_token)
                 return callback(new Error("Invalid pairing response"));
               callback(null, token.access_token);
-            },
+            }
           );
-        },
+        }
       );
     });
   });

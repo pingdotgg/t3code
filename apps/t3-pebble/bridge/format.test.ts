@@ -3,7 +3,10 @@ import format from "../src/pkjs/format.js";
 import summary from "../src/pkjs/summary.js";
 
 test("formats markdown and colors code while retaining newlines and long words", () => {
-  const text = format("# Heading\n**bold** and `git status`\n```sh\necho 'hello' # comment\n```", "assistant_message");
+  const text = format(
+    "# Heading\n**bold** and `git status`\n```sh\necho 'hello' # comment\n```",
+    "assistant_message",
+  );
   expect(text).toContain("\x02Heading\x01");
   expect(text).toContain("\x02bold\x01");
   expect(text).toContain("\x04git\x03");
@@ -11,7 +14,10 @@ test("formats markdown and colors code while retaining newlines and long words",
   expect(text).toContain("\x07# comment\x03");
   expect(text).toContain("\n");
   expect(format("$ git status", "command_execution")).toContain("\x04git\x03");
-  const progress = format("$ download\nN/A%[    ] 0 B/s\rN/A%[  ] 5 B/s\rSaved file\n", "command_execution");
+  const progress = format(
+    "$ download\nN/A%[    ] 0 B/s\rN/A%[  ] 5 B/s\rSaved file\n",
+    "command_execution",
+  );
   expect(progress.replace(/[\x01-\x07]/g, "")).toContain("Saved file");
   expect(progress).not.toContain("N/A%");
   expect(format("\u001b[31mred\u001b[0m", "command_execution")).not.toContain("\u001b");
@@ -76,11 +82,14 @@ test("lowercases later labels in three-part summaries", () => {
 });
 
 test("summarizes reasoning-only groups as thought", () => {
-  expect(summary.group([completed("r1", "reasoning", { title: "Planning" })], format)[0].summary).toBe(
-    "Thought",
-  );
+  expect(
+    summary.group([completed("r1", "reasoning", { title: "Planning" })], format)[0].summary,
+  ).toBe("Thought");
   const entries = summary.group(
-    [completed("r1", "reasoning", { title: "Planning" }), completed("r2", "reasoning", { title: "Again" })],
+    [
+      completed("r1", "reasoning", { title: "Planning" }),
+      completed("r2", "reasoning", { title: "Again" }),
+    ],
     format,
   );
   expect(entries[0].summary).toBe("Thought (×2)");
@@ -119,9 +128,9 @@ test("namespaces group ids by thread identity and source position when members l
     { type: "command_execution", status: "completed", title: "$ two", position: 8 },
   ];
   expect(summary.group(members, format, namespace)[0].item).toBe(`${namespace}#7`);
-  expect(
-    summary.group([{ ...members[0], itemId: "real-id" }], format, namespace)[0].item,
-  ).toBe("real-id");
+  expect(summary.group([{ ...members[0], itemId: "real-id" }], format, namespace)[0].item).toBe(
+    "real-id",
+  );
 });
 
 test("retains up to 900 formatted body characters", () => {

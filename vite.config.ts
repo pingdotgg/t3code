@@ -197,6 +197,12 @@ export default defineConfig({
           trailingComma: "none",
         },
       },
+      {
+        files: ["apps/t3-pebble/**/*.js"],
+        options: {
+          trailingComma: "none",
+        },
+      },
     ],
   },
   lint: {

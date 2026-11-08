@@ -16,11 +16,11 @@ exports.speak = function (text, callback) {
       headers: { "xi-api-key": key, "content-type": "application/json" },
       body: JSON.stringify({
         text: String(text || "").slice(0, 4000),
-        model_id: "eleven_flash_v2_5",
+        model_id: "eleven_flash_v2_5"
       }),
       responseType: "arraybuffer",
-      timeout: 60000,
+      timeout: 60000
     },
-    callback,
+    callback
   );
 };

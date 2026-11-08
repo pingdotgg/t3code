@@ -28,7 +28,7 @@ function headers() {
   var result = {
     authorization: "Bearer " + token,
     "content-type": "application/json",
-    accept: "application/json, text/event-stream",
+    accept: "application/json, text/event-stream"
   };
   if (session) {
     result["mcp-session-id"] = session;
@@ -53,7 +53,7 @@ function rpc(method, params, callback) {
       headers: headers(),
       body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method: method, params: params }),
       raw: true,
-      timeout: 20000,
+      timeout: 20000
     },
     function (error, text, request) {
       if (error) {
@@ -72,7 +72,7 @@ function rpc(method, params, callback) {
         return callback(new Error("T3 request failed"));
       session = request.getResponseHeader("mcp-session-id") || session;
       callback(null, (response.result && response.result.structuredContent) || response.result);
-    },
+    }
   );
 }
 
@@ -82,7 +82,7 @@ function initialize(callback) {
     {
       protocolVersion: PROTOCOL,
       capabilities: {},
-      clientInfo: { name: "t3-pebble", version: "0.1.0" },
+      clientInfo: { name: "t3-pebble", version: "0.1.0" }
     },
     function (error, initialized) {
       if (error) return callback(error);
@@ -94,7 +94,7 @@ function initialize(callback) {
           headers: headers(),
           body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
           raw: true,
-          timeout: 20000,
+          timeout: 20000
         },
         function (error) {
           if (error) {
@@ -102,9 +102,9 @@ function initialize(callback) {
             return callback(error);
           }
           callback(null);
-        },
+        }
       );
-    },
+    }
   );
 }
 
@@ -143,7 +143,7 @@ function threadMetadata(callback) {
           metadata = {
             machine: environment.label || "",
             projects: projects,
-            expires: Date.now() + 300000,
+            expires: Date.now() + 300000
           };
           return callback(null, metadata);
         }
@@ -173,12 +173,12 @@ exports.threads = function (cursor, callback) {
             relationshipToParent: thread.relationshipToParent,
             sideChat: thread.sideChat,
             machine: info.machine,
-            directory: info.projects[thread.projectId] || "",
+            directory: info.projects[thread.projectId] || ""
           };
         });
         callback(null, { threads: threads, nextCursor: page.nextCursor });
       });
-    },
+    }
   );
 };
 
