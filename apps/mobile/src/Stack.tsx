@@ -110,6 +110,7 @@ import {
 import {
   ScheduledTaskModelPickerRouteScreen,
   ScheduledTaskBranchPickerRouteScreen,
+  ScheduledTaskThreadPickerRouteScreen,
 } from "./features/settings/ScheduledTaskPickerScreens";
 import { WorktreeBaseBranchPickerRouteScreen } from "./features/settings/WorktreeBaseBranchPickerRouteScreen";
 import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
@@ -305,6 +306,10 @@ const SETTINGS_SCREENS = {
   SettingsWorktreeBaseBranch: createNativeStackScreen({
     screen: WorktreeBaseBranchPickerRouteScreen,
     options: settingsPage("Base branch"),
+  }),
+  SettingsScheduledTaskThread: createNativeStackScreen({
+    screen: ScheduledTaskThreadPickerRouteScreen,
+    options: settingsPage("Destination"),
   }),
   SettingsScheduledTaskModel: createNativeStackScreen({
     screen: ScheduledTaskModelPickerRouteScreen,
