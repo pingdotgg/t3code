@@ -735,6 +735,24 @@ else
   REMOTE_MANAGED=""
 fi
 if [ -z "$REMOTE_PORT" ]; then
+  # The service owns its saved access settings and restart lifecycle.
+  SERVICE_INSTALLED=0
+  case "$(uname -s)" in
+    Darwin)
+      if [ -f "$HOME/Library/LaunchAgents/com.t3tools.t3code.service.plist" ]; then
+        SERVICE_INSTALLED=1
+      fi
+      ;;
+    Linux)
+      if command -v systemctl >/dev/null 2>&1 && systemctl --user cat t3code.service >/dev/null 2>&1; then
+        SERVICE_INSTALLED=1
+      fi
+      ;;
+  esac
+  if [ "$SERVICE_INSTALLED" = 1 ]; then
+    printf 'The T3 Code background service is installed but not ready. Run t3 service restart on this host; SSH will not replace it with a standalone server.\\n' >&2
+    exit 1
+  fi
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
     if [ "$T3_ARCHIVE_MODE" = "1" ]; then

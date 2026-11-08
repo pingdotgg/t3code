@@ -142,6 +142,69 @@ const runArchiveRunner = Effect.fn("test.runArchiveRunner")(
 );
 
 describe("ssh tunnel scripts", () => {
+  it.live.each(["launchd", "systemd", "none"] as const)(
+    "respects %s service ownership when the server is stopped",
+    (manager) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const root = yield* fs.makeTempDirectoryScoped();
+        const bin = `${root}/.t3/bin`;
+        yield* fs.makeDirectory(bin, { recursive: true });
+        const scripts = {
+          t3: `#!/bin/sh
+case "$1" in
+  --version) echo 't3 v${ARCHIVE.archiveVersion}' ;;
+  __ssh-helper)
+    if [ "$2" = --help ]; then exit 0; fi
+    if [ "$2" = pick-port ]; then touch "$HOME/standalone-attempt"; fi
+    exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+          uname: `#!/bin/sh\necho '${manager === "launchd" ? "Darwin" : "Linux"}'\n`,
+          systemctl: `#!/bin/sh\nexit ${manager === "systemd" ? 0 : 1}\n`,
+          curl: "#!/bin/sh\nexit 22\n",
+        };
+        for (const [name, script] of Object.entries(scripts)) {
+          yield* fs.writeFileString(`${bin}/${name}`, script);
+          yield* fs.chmod(`${bin}/${name}`, 0o700);
+        }
+        if (manager === "launchd") {
+          const agents = `${root}/Library/LaunchAgents`;
+          yield* fs.makeDirectory(agents, { recursive: true });
+          yield* fs.writeFileString(`${agents}/com.t3tools.t3code.service.plist`, "installed");
+        }
+        const ssh = ChildProcessSpawner.make((command) => {
+          if (command._tag !== "StandardCommand") return Effect.die("Expected SSH command");
+          return spawner.spawn(
+            ChildProcess.make("sh", ["-s", "--", "test-peer"], {
+              ...command.options,
+              env: { HOME: root, PATH: `${bin}:/usr/bin:/bin` },
+              extendEnv: false,
+            }),
+          );
+        });
+        const result = yield* SshTunnel.launchOrReuseRemoteServer(
+          { alias: "box", hostname: "box", username: null, port: null },
+          undefined,
+          ARCHIVE,
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, ssh), Effect.result);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.isTrue(isSshCommandError(result.failure));
+          if (isSshCommandError(result.failure)) {
+            assert.include(
+              result.failure.stderr,
+              manager === "none" ? "Failed to find an available port" : "t3 service restart",
+            );
+          }
+        }
+        assert.equal(yield* fs.exists(`${root}/standalone-attempt`), manager === "none");
+        assert.isFalse(yield* fs.exists(`${root}/.t3/ssh-launch/test-peer/pid`));
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect(
     "binds SSH forwarding explicitly to loopback regardless of the user's GatewayPorts setting",
     () =>

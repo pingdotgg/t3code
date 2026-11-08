@@ -254,6 +254,10 @@ In the desktop app, open **Settings → Environments → Add environment**, choo
 or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
+If the host has T3 Code's background service installed, keep it running. Restart
+a stopped service with `t3 service restart` on the host before reconnecting over
+SSH.
+
 The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
 `tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).
 The first launch downloads T3 Code's server to `~/.t3/runtime` on the host, so
