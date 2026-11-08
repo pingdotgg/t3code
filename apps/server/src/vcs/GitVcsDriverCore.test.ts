@@ -2252,6 +2252,24 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ],
           );
           assert.isFalse(repos.truncated);
+          yield* git(cwd, [
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.duplicate.path",
+            "./packages/auth service",
+          ]);
+          yield* git(cwd, [
+            "config",
+            "-f",
+            ".gitmodules",
+            "submodule.trailing.path",
+            "packages/auth service/",
+          ]);
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
           const subdirectory = NodePath.join(cwd, "packages");
           const scoped = yield* driver.getReviewRepositories({ cwd: subdirectory });
           assert.equal(scoped.repositories[0]!.cwd, subdirectory);

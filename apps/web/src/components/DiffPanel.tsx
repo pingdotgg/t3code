@@ -516,7 +516,10 @@ export default function DiffPanel({
     void openLink(url, { event });
   };
   const refreshPreviewQuery = branchDiffPreview.refresh;
-  const refreshDiffFromUserAction = refreshPreviewQuery;
+  const refreshDiffFromUserAction = () => {
+    repositoriesQuery.refresh();
+    refreshPreviewQuery();
+  };
 
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
@@ -877,9 +880,9 @@ export default function DiffPanel({
             items={repositories.map((repo) => repo.cwd)}
             filteredItems={repositories
               .filter((repo) =>
-                (repo.name + " " + repo.path + " " + (repo.branch ?? "HEAD"))
+                (repo.name + ": " + (repo.branch ?? "HEAD") + " " + repo.path)
                   .toLowerCase()
-                  .includes(repositoryQuery.toLowerCase()),
+                  .includes(repositoryQuery.trim().toLowerCase()),
               )
               .map((repo) => repo.cwd)}
             value={selectedRepository?.cwd ?? null}

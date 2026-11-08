@@ -3401,9 +3401,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               .pipe(Effect.orElseSucceed(() => null));
             if (!real || (real !== canonicalRoot && !withinRoot(real)) || seen.has(real))
               return null;
+            seen.add(real);
             const stat = yield* fileSystem.stat(real).pipe(Effect.orElseSucceed(() => null));
             if (stat?.type !== "Directory") return null;
-            seen.add(real);
             const repo = yield* resolveRepositoryPathsUncached(real);
             if (!repo?.worktreeRoot) return null;
             const actualRoot = yield* fileSystem
@@ -3459,7 +3459,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       for (const item of found) {
         if (!item) continue;
         repositories.push(item.repository);
-        pending.push(...item.children.filter((child) => !seen.has(child)));
+        pending.push(...new Set(item.children.filter((child) => !seen.has(child))));
       }
       if (seen.size + pending.length > 256) {
         pending = pending.slice(0, Math.max(0, 256 - seen.size));
