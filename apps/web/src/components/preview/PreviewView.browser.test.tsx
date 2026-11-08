@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  openSandboxPreviewRun: vi.fn(),
 }));
 
 const STUB_BROWSER_DEFAULTS = {
@@ -125,6 +126,11 @@ vi.mock(import("~/previewStateStore"), async (original) => ({
         },
   })) as never,
 }));
+vi.mock("~/connection/cloudSandbox", () => ({
+  useCloudPreviewExternalAvailable: () => true,
+  openSandboxPreview: { run: () => mocks.openSandboxPreviewRun() },
+}));
+
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironment: (() => ({ label: "WSL" })) as never,

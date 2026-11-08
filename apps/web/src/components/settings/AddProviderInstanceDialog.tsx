@@ -1,7 +1,5 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 
-import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { CheckIcon, ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
 import {
   deriveAvailableInstanceId,
@@ -32,10 +30,8 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
-import { Badge } from "../ui/badge";
-import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { OptionListDivider, OptionRowGrid, ShowMoreCollapsible } from "./OptionRowGrid";
 import { Input } from "../ui/input";
-import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
 import { providerClients } from "./providerDriverMeta";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
@@ -97,41 +93,24 @@ function ProviderOptionGrid({
   readonly "aria-labelledby"?: string;
 }) {
   return (
-    <RadioGroup
+    <OptionRowGrid
       {...labelProps}
       disabled={disabled}
       value={value}
       onValueChange={onValueChange}
-      className="grid grid-cols-1 sm:grid-cols-2"
-    >
-      {options.map((option) => (
-        <RadioPrimitive.Root
-          key={option.driverKind}
-          value={option.driverKind}
-          className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
-        >
+      items={options.map((option) => ({
+        id: option.driverKind,
+        label: option.label,
+        icon: (
           <ProviderInstanceIcon
             driverKind={option.driverKind}
             displayName={option.label}
             iconClassName="size-4"
           />
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-            {option.label}
-          </span>
-          <RadioPrimitive.Indicator
-            className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
-            aria-hidden
-          >
-            <CheckIcon className="size-3.5 shrink-0" />
-          </RadioPrimitive.Indicator>
-          {option.badgeLabel ? (
-            <Badge variant="warning" size="sm">
-              {option.badgeLabel}
-            </Badge>
-          ) : null}
-        </RadioPrimitive.Root>
-      ))}
-    </RadioGroup>
+        ),
+        ...(option.badgeLabel ? { badgeLabel: option.badgeLabel } : {}),
+      }))}
+    />
   );
 }
 
@@ -483,96 +462,80 @@ export function AddProviderInstanceDialog({
               </div>
 
               {wizardStep === 0 && (moreDriverOptions.length > 0 || acpRegistryAllowed) ? (
-                <Collapsible open={showMoreProviders} onOpenChange={setShowMoreProviders}>
-                  <div className="flex pt-2">
-                    <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
-                      {showMoreProviders ? "Show less" : "Show more"}
-                      <ChevronDownIcon
-                        aria-hidden
-                        className={cn("transition-transform", showMoreProviders && "rotate-180")}
-                      />
-                    </CollapsibleTrigger>
-                  </div>
-                  {/* WizardPanel already animates its height, so the fold opens without its own. */}
-                  <CollapsiblePanel animate={false}>
-                    <div className="space-y-4 pt-4">
-                      <ProviderOptionGrid
-                        options={moreDriverOptions}
-                        value={driver}
-                        disabled={isPreparingRegistryAgent}
-                        onValueChange={selectDriver}
-                        aria-label="More providers"
-                      />
-                      {!acpRegistryAllowed ? null : (
-                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                          <div aria-hidden className="flex-1 border-t border-border/70" />
-                          <span>Or choose from ACP Registry</span>
-                          <div aria-hidden className="flex-1 border-t border-border/70" />
-                        </div>
-                      )}
-                      {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
-                        <div className="grid gap-4">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <h3 className="text-sm font-medium text-foreground">
-                                {isLocalAcp ? "Local ACP command" : "Enter manually"}
-                              </h3>
-                              <p className="mt-0.5 text-xs text-muted-foreground">
-                                {isLocalAcp
-                                  ? `Run an installed ACP executable on ${environmentLabel}.`
-                                  : "Enter an official registry ID and any local executable or auth override."}
-                              </p>
-                            </div>
-                            <Button
-                              onClick={() => {
-                                setIsManualAcpConfiguration(false);
-                                setHasAttemptedSubmit(false);
-                              }}
-                              size="xs"
-                              variant="ghost"
-                            >
-                              Search registry
-                            </Button>
+                <ShowMoreCollapsible open={showMoreProviders} onOpenChange={setShowMoreProviders}>
+                  <div className="space-y-4">
+                    <ProviderOptionGrid
+                      options={moreDriverOptions}
+                      value={driver}
+                      disabled={isPreparingRegistryAgent}
+                      onValueChange={selectDriver}
+                      aria-label="More providers"
+                    />
+                    {!acpRegistryAllowed ? null : (
+                      <OptionListDivider>Or choose from ACP Registry</OptionListDivider>
+                    )}
+                    {!acpRegistryAllowed ? null : isAcpRegistry && isManualAcpConfiguration ? (
+                      <div className="grid gap-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-medium text-foreground">
+                              {isLocalAcp ? "Local ACP command" : "Enter manually"}
+                            </h3>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {isLocalAcp
+                                ? `Run an installed ACP executable on ${environmentLabel}.`
+                                : "Enter an official registry ID and any local executable or auth override."}
+                            </p>
                           </div>
-                          <SettingsGroup variant="plain">
-                            <ProviderSettingsForm
-                              definition={driverOption}
-                              value={configDraft}
-                              idPrefix="add-provider-acpRegistry-manual"
-                              variant="settings"
-                              onChange={setConfigDraft}
-                              environmentId={environmentId}
-                            />
-                            {isLocalAcp ? (
-                              <ProviderEnvironmentSection
-                                environment={localEnvironment}
-                                onChange={setLocalEnvironment}
-                                secretSources={secretSources}
-                              />
-                            ) : null}
-                          </SettingsGroup>
-                          {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
-                            <p className="text-2xs text-destructive">{acpSelectionError}</p>
-                          ) : null}
+                          <Button
+                            onClick={() => {
+                              setIsManualAcpConfiguration(false);
+                              setHasAttemptedSubmit(false);
+                            }}
+                            size="xs"
+                            variant="ghost"
+                          >
+                            Search registry
+                          </Button>
                         </div>
-                      ) : (
-                        <>
-                          <AcpRegistrySearchStep
+                        <SettingsGroup variant="plain">
+                          <ProviderSettingsForm
+                            definition={driverOption}
+                            value={configDraft}
+                            idPrefix="add-provider-acpRegistry-manual"
+                            variant="settings"
+                            onChange={setConfigDraft}
                             environmentId={environmentId}
-                            registry={registry}
-                            providerInstances={settings.providerInstances}
-                            onPrepared={handleAcpPrepared}
-                            onManualConfiguration={handleManualAcpConfiguration}
-                            onLocalConfiguration={handleLocalAcpConfiguration}
                           />
-                          {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
-                            <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>
+                          {isLocalAcp ? (
+                            <ProviderEnvironmentSection
+                              environment={localEnvironment}
+                              onChange={setLocalEnvironment}
+                              secretSources={secretSources}
+                            />
                           ) : null}
-                        </>
-                      )}
-                    </div>
-                  </CollapsiblePanel>
-                </Collapsible>
+                        </SettingsGroup>
+                        {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
+                          <p className="text-2xs text-destructive">{acpSelectionError}</p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <>
+                        <AcpRegistrySearchStep
+                          environmentId={environmentId}
+                          registry={registry}
+                          providerInstances={settings.providerInstances}
+                          onPrepared={handleAcpPrepared}
+                          onManualConfiguration={handleManualAcpConfiguration}
+                          onLocalConfiguration={handleLocalAcpConfiguration}
+                        />
+                        {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
+                          <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>
+                        ) : null}
+                      </>
+                    )}
+                  </div>
+                </ShowMoreCollapsible>
               ) : null}
 
               {isAcpRegistry && wizardStep === 1 && selectedAcp ? (

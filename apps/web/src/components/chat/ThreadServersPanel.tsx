@@ -14,7 +14,7 @@ import { ChevronDown, ChevronUp } from "lucide";
 import { GlobeIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
 import { type MouseEvent, useState } from "react";
 
-import { resolveDiscoveredServerUrl } from "../../browser/browserTargetResolver";
+import { resolveExternalServerUrl } from "../../browser/browserTargetResolver";
 import { readLocalApi } from "../../localApi";
 import { cn, isMacPlatform } from "../../lib/utils";
 import { useThreadDiscoveredPorts } from "../../portDiscoveryState";
@@ -80,14 +80,23 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     // Like links: modified and middle clicks go to the system browser.
     if (event.metaKey || event.ctrlKey || event.button === 1) {
       event.preventDefault();
-      const url = resolveDiscoveredServerUrl(props.environmentId, server.url);
-      await readLocalApi()
-        ?.shell.openExternal(url)
-        .catch((error: unknown) => reportFailure("Unable to open in browser", error));
+      try {
+        const url = await resolveExternalServerUrl(props.environmentId, server.url);
+        await readLocalApi()
+          ?.shell.openExternal(url)
+          .catch((error: unknown) => reportFailure("Unable to open in browser", error));
+      } catch (error) {
+        reportFailure("Unable to open in browser", error);
+      }
       return;
     }
-    const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+    const result = await openDiscoveredPort({ threadRef, port: server, openPreview }).catch(
+      (error: unknown) => {
+        reportFailure("Unable to open preview", error);
+        return null;
+      },
+    );
+    if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       reportFailure("Unable to open preview", squashAtomCommandFailure(result));
     }
   };

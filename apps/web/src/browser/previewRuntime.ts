@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PreviewRuntime, PreviewSessionSnapshot } from "@t3tools/contracts";
 
+import { readPreparedConnection } from "~/state/session";
 import { isElectron } from "~/env";
 import { isPreviewSupportedInRuntime } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -11,6 +12,10 @@ import {
 } from "~/state/entities";
 
 export function previewRuntimeFor(environmentId: EnvironmentId): PreviewRuntime | undefined {
+  // A child cloud sandbox runs its own server, but its loopback services are
+  // only reachable there; its tabs always render server-side.
+  if (readPreparedConnection(environmentId)?.target._tag === "CloudSandboxConnectionTarget")
+    return "server";
   if (!readEnvironmentSupportsServerBrowser(environmentId)) return undefined;
   if (
     isPreviewSupportedInRuntime() &&

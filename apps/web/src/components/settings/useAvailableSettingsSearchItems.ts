@@ -9,6 +9,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { useEnvironmentQuery } from "~/state/query";
 import { useEnvironmentScope } from "~/state/session";
+import { sandboxProfilesList } from "~/state/cloudSandboxProfiles";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
 import { isProviderSettingsEnvironmentAvailable } from "./ProviderSettingsPanel.logic";
 import {
@@ -33,6 +34,12 @@ export function useAvailableSettingsSearchItems() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const hasPeerLinkHost = usePeerLinkHosts().length > 0;
+  const sandboxProfiles = useEnvironmentQuery(
+    primaryEnvironmentId === null
+      ? null
+      : sandboxProfilesList({ environmentId: primaryEnvironmentId, input: {} }),
+  );
+  const hasCloudSandboxProfile = (sandboxProfiles.data?.profiles.length ?? 0) > 0;
   const cloudLinkState = usePrimaryCloudLinkState().data;
   // Same fallback as the Connections row: older servers imply a tunnel from `linked`.
   const managedTunnelActive =
@@ -57,5 +64,6 @@ export function useAvailableSettingsSearchItems() {
     hasThreadAutoSettlement,
     managedTunnelActive,
     hasPeerLinkHost,
+    hasCloudSandboxProfile,
   });
 }

@@ -68,6 +68,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly cloudSandboxesOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -82,6 +83,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasCloudSandboxProfile?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -1249,6 +1251,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["link peer another machine vps agents work there handoff pairing code"],
   },
   {
+    id: "cloud-sandboxes",
+    cloudSandboxesOnly: true,
+    title: "Cloud sandboxes",
+    to: "/settings/connections",
+    targetId: "cloud-sandboxes",
+    searchTerms: [
+      "boat sandbox profile budget monthly spend concurrent template snapshot stop resume delete open",
+    ],
+  },
+  {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
@@ -1444,7 +1456,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
-      (!item.peerLinksOnly || availability.hasPeerLinkHost === true),
+      (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.cloudSandboxesOnly || availability.hasCloudSandboxProfile === true),
   );
 }
 

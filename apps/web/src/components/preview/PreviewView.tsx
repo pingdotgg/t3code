@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useCloudPreviewExternalAvailable } from "~/connection/cloudSandbox";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import type { DesktopPreviewAnnotationVoiceConfig } from "@t3tools/contracts";
@@ -41,7 +42,11 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  resolveExternalServerUrl,
+  resolveServerOwnedUrl,
+  releaseExternalServerUrl,
+} from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -287,7 +292,7 @@ export function PreviewView({
       const resolved =
         isServerTab || !previewBridge
           ? normalizePreviewUrl(next)
-          : resolveDiscoveredServerUrl(threadRef.environmentId, next);
+          : await resolveExternalServerUrl(threadRef.environmentId, next);
       if (await navigateToResolvedUrl(resolved)) {
         recordVisitForThread(threadRef, next);
       }
@@ -304,7 +309,21 @@ export function PreviewView({
     }
   };
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    if (!isServerTab && url && resolveServerOwnedUrl(threadRef.environmentId, url) !== url) {
+      try {
+        const refreshed = await resolveExternalServerUrl(threadRef.environmentId, url);
+        if (await navigateToResolvedUrl(refreshed))
+          await releaseExternalServerUrl(threadRef.environmentId, url);
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to reconnect preview",
+          description: error instanceof Error ? error.message : "Preview access is unavailable.",
+        });
+      }
+      return;
+    }
     if (isServerTab) serverSurfaceRef.current?.reload();
     else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
   };
@@ -385,9 +404,20 @@ export function PreviewView({
     else if (previewBridge && runtimeTabId) void previewBridge.goForward(runtimeTabId);
   };
 
-  const handleOpenInBrowser = () => {
-    if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+  const externalAvailable = useCloudPreviewExternalAvailable(threadRef.environmentId);
+  const handleOpenInBrowser = async () => {
+    if (!localApi || !url || !externalAvailable) return;
+    try {
+      await localApi.shell.openExternal(
+        await resolveExternalServerUrl(threadRef.environmentId, url),
+      );
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open in browser",
+        description: error instanceof Error ? error.message : "Preview access is unavailable.",
+      });
+    }
   };
 
   const moveTarget = alternatePreviewRuntime(
@@ -399,34 +429,43 @@ export function PreviewView({
   const moveLabel =
     moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
   const handleMoveTab = async () => {
-    if (!moveTarget || !tabId || !snapshot) return;
-    const result = await openPreviewSession({
-      openPreview: open,
-      threadRef,
-      ...(url
-        ? {
-            url:
-              moveTarget === "desktop"
-                ? resolveDiscoveredServerUrl(threadRef.environmentId, url)
-                : url,
-          }
-        : {}),
-      viewport,
-      ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
-      runtime: moveTarget,
-    });
-    if (result._tag === "Failure") {
-      if (isAtomCommandInterrupted(result)) return;
-      const error = squashAtomCommandFailure(result);
+    if (!moveTarget || !tabId || !snapshot || (moveTarget === "desktop" && !externalAvailable))
+      return;
+    try {
+      const result = await openPreviewSession({
+        openPreview: open,
+        threadRef,
+        ...(url
+          ? {
+              url:
+                moveTarget === "desktop"
+                  ? await resolveExternalServerUrl(threadRef.environmentId, url)
+                  : resolveServerOwnedUrl(threadRef.environmentId, url),
+            }
+          : {}),
+        viewport,
+        ...(snapshot.profileId === undefined ? {} : { profileId: snapshot.profileId }),
+        runtime: moveTarget,
+      });
+      if (result._tag === "Failure") {
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: "Unable to move the browser tab",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+        return;
+      }
+      useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
+      await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
+    } catch (error) {
       toastManager.add({
         type: "error",
         title: "Unable to move the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : "Preview access is unavailable.",
       });
-      return;
     }
-    useRightPanelStore.getState().openBrowser(threadRef, result.value.tabId);
-    await closePreviewSession({ closePreview, snapshot, tabId, threadRef });
   };
 
   const handlePictureInPicture = () => {
@@ -916,7 +955,7 @@ export function PreviewView({
         onForward={handleForward}
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
-        onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
+        onOpenInBrowser={tabId && externalAvailable ? handleOpenInBrowser : undefined}
         onCapture={previewBridge && tabId && !isServerTab ? handleCapture : undefined}
         captureDisabled={!desktopOverlay || isUnreachable}
         recording={recordingRuntimeTabId !== null}
@@ -952,7 +991,9 @@ export function PreviewView({
               }
               actions={moreMenuActions}
               {...(moveTarget
-                ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
+                ? moveTarget === "desktop" && !externalAvailable
+                  ? {}
+                  : { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}
               profileName={activeProfileName}
               zoomFactor={

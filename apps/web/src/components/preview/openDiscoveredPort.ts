@@ -4,7 +4,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import { resolveExternalServerUrl } from "~/browser/browserTargetResolver";
 import type { BrowserSettingsReadError, OpenPreviewMutation } from "~/browser/openFileInPreview";
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -19,7 +19,7 @@ export async function openDiscoveredPort<E>(input: {
   const resolvedUrl =
     previewRuntimeFor(input.threadRef.environmentId) === "server"
       ? input.port.url
-      : resolveDiscoveredServerUrl(input.threadRef.environmentId, input.port.url);
+      : await resolveExternalServerUrl(input.threadRef.environmentId, input.port.url);
   const result = await openPreviewSession({
     openPreview: input.openPreview,
     threadRef: input.threadRef,

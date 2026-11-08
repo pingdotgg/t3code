@@ -6,6 +6,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 
+import { releaseExternalServerUrl } from "~/browser/browserTargetResolver";
 import { useClosedViewStore } from "~/closedViewStore";
 import { beginPreviewSessionClose, cancelPreviewSessionClose } from "~/previewStateStore";
 
@@ -30,6 +31,8 @@ export async function closePreviewSession<E>(
   if (result._tag === "Failure") {
     cancelPreviewSessionClose(input.threadRef, input.snapshot, input.tabId);
   } else if (input.snapshot) {
+    if (input.snapshot.navStatus._tag !== "Idle")
+      await releaseExternalServerUrl(input.threadRef.environmentId, input.snapshot.navStatus.url);
     useClosedViewStore.getState().remember({
       kind: "browser",
       threadRef: input.threadRef,

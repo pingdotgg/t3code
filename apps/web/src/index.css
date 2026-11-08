@@ -220,6 +220,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       transparent calc(var(--chat-composer-attachment-overlap) + 10px)
     );
   --color-zinc-25: oklch(99.2% 0 0);
+  --color-boat: #263fa9;
   --animate-skeleton: skeleton 2.4s infinite;
   /* Duty-cycled indicator animations: long holds with stepped ramps, so the
      compositor updates discrete frames instead of every vsync. */

@@ -1,18 +1,33 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import { isPrivateNetworkHost, isPublicFaviconHost } from "@t3tools/shared/hostClassification";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const readPreparedConnection = vi.fn();
+const openSandboxPreviewRun = vi.fn();
 const env = vi.hoisted(() => ({ isElectron: false }));
 
 vi.mock("~/state/session", () => ({ readPreparedConnection }));
+vi.mock("~/connection/cloudSandbox", () => ({
+  openSandboxPreview: { run: openSandboxPreviewRun },
+}));
+vi.mock("~/rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => null },
+}));
+vi.mock("~/state/primaryEnvironment", () => ({ primaryEnvironmentIdAtom: {} }));
 vi.mock("~/env", () => env);
 
 describe("browser target resolver", () => {
-  beforeEach(() => readPreparedConnection.mockReset());
+  beforeEach(() => {
+    readPreparedConnection.mockReset();
+    openSandboxPreviewRun.mockReset();
+  });
 
-  it("refuses public relay hosts until the authenticated gateway exists", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "https://relay.example.com" });
+  it("returns the raw URL for a public relay host instead of the client localhost", async () => {
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "https://relay.example.com",
+      target: { _tag: "BearerConnectionTarget" },
+    });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(
       resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "http://localhost:5173"),
@@ -20,7 +35,10 @@ describe("browser target resolver", () => {
   });
 
   it("normalizes schemeless localhost server-picker values", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://localhost:3773" });
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://localhost:3773",
+      target: { _tag: "BearerConnectionTarget" },
+    });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:5173")).toBe(
       "http://localhost:5173/",
@@ -28,14 +46,128 @@ describe("browser target resolver", () => {
     expect(
       resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "0.0.0.0:3000/app"),
     ).toBe("http://localhost:3000/app");
+
+    // A sandbox's loopback is its own, so the normalized URL is kept rather than mapped.
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "https://tunnel.example.com/sb",
+      target: { _tag: "CloudSandboxConnectionTarget" },
+    });
+    expect(
+      resolveDiscoveredServerUrl(EnvironmentId.make("sandbox-normalize"), "localhost:5173"),
+    ).toBe("http://localhost:5173/");
   });
 
   it("maps discovered loopback servers onto a remote environment host", async () => {
-    readPreparedConnection.mockReturnValue({ httpBaseUrl: "http://192.168.1.25:3773" });
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "http://192.168.1.25:3773",
+      target: { _tag: "BearerConnectionTarget" },
+    });
     const { resolveDiscoveredServerUrl } = await import("./browserTargetResolver");
     expect(
       resolveDiscoveredServerUrl(EnvironmentId.make("environment-1"), "localhost:3000/app"),
     ).toBe("http://192.168.1.25:3000/app");
+
+    const sandboxEnvironment = EnvironmentId.make("sandbox-environment-1");
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "https://tunnel.example.com/sb",
+      target: { _tag: "CloudSandboxConnectionTarget", environmentId: sandboxEnvironment },
+    });
+    const { resolveServerOwnedUrl, resolveExternalServerUrl, releaseExternalServerUrl } =
+      await import("./browserTargetResolver");
+    const hostedFor = (serverOwned: string) =>
+      `https://d.example.com/pfx${new URL(serverOwned).pathname}${new URL(serverOwned).search}&t=ymmc`;
+    openSandboxPreviewRun.mockImplementation((_registry, input) =>
+      Promise.resolve(
+        input.close === true
+          ? AsyncResult.success({ url: input.url })
+          : AsyncResult.success({ url: hostedFor(input.url) }),
+      ),
+    );
+
+    // Non-aliases pass through untouched; the sandbox's own loopback form is kept.
+    expect(resolveServerOwnedUrl(sandboxEnvironment, "https://plain.example.com")).toBe(
+      "https://plain.example.com",
+    );
+    expect(resolveServerOwnedUrl(sandboxEnvironment, "http://localhost:3000/app")).toBe(
+      "http://localhost:3000/app",
+    );
+
+    // Hosting a loopback service resolves through the sandbox's controller.
+    const hosted = await resolveExternalServerUrl(
+      sandboxEnvironment,
+      "http://localhost:3000/app?x=1",
+    );
+    expect(hosted).toBe("https://d.example.com/pfx/app?x=1&t=ymmc");
+    expect(openSandboxPreviewRun).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        environmentId: sandboxEnvironment,
+        url: "http://localhost:3000/app?x=1",
+        local: false,
+      }),
+    );
+
+    // The alias maps back to its server-owned form, without the provider token.
+    expect(resolveServerOwnedUrl(sandboxEnvironment, hosted)).toBe("http://localhost:3000/app?x=1");
+
+    // Re-resolving an alias re-mints a fresh hosted URL from the server form.
+    await expect(resolveExternalServerUrl(sandboxEnvironment, `${hosted}&z=2`)).resolves.toBe(
+      "https://d.example.com/pfx/app?x=1&z=2&t=ymmc",
+    );
+    expect(openSandboxPreviewRun).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ url: "http://localhost:3000/app?x=1&z=2" }),
+    );
+
+    // Releasing an alias closes its hosting session.
+    await releaseExternalServerUrl(
+      sandboxEnvironment,
+      "https://d.example.com/pfx/app?x=1&z=2&t=ymmc",
+    );
+    expect(openSandboxPreviewRun).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ close: true }),
+    );
+
+    // Sandbox URLs that are not loopback services load directly.
+    await expect(
+      resolveExternalServerUrl(sandboxEnvironment, "https://plain.example.com/site"),
+    ).resolves.toBe("https://plain.example.com/site");
+    expect(openSandboxPreviewRun).toHaveBeenCalledTimes(3);
+  });
+
+  it("forgets a forwarded loopback alias once its close has been sent", async () => {
+    const sandboxEnvironment = EnvironmentId.make("sandbox-close-1");
+    readPreparedConnection.mockReturnValue({
+      httpBaseUrl: "https://tunnel.example.com/sb",
+      target: { _tag: "CloudSandboxConnectionTarget", environmentId: sandboxEnvironment },
+    });
+    const { resolveServerOwnedUrl, resolveExternalServerUrl, releaseExternalServerUrl } =
+      await import("./browserTargetResolver");
+    openSandboxPreviewRun.mockImplementation((_registry, input) =>
+      Promise.resolve(
+        AsyncResult.success({
+          url:
+            input.close === true
+              ? input.url
+              : `http://127.0.0.1:47123${new URL(input.url).pathname}`,
+        }),
+      ),
+    );
+
+    const forwarded = await resolveExternalServerUrl(
+      sandboxEnvironment,
+      "http://localhost:3000/app",
+    );
+    expect(forwarded).toBe("http://127.0.0.1:47123/app");
+    expect(resolveServerOwnedUrl(sandboxEnvironment, forwarded)).toBe("http://localhost:3000/app");
+
+    await releaseExternalServerUrl(sandboxEnvironment, forwarded);
+    expect(openSandboxPreviewRun).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ url: forwarded, close: true }),
+    );
+    expect(resolveServerOwnedUrl(sandboxEnvironment, forwarded)).toBe(forwarded);
   });
 
   it("keeps localhost for servers on the desktop's own WSL or primary backend", async () => {

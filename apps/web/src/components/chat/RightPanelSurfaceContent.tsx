@@ -32,6 +32,9 @@ const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
+const CloudDesktopPanel = lazy(() =>
+  import("../desktop/CloudDesktopPanel").then((module) => ({ default: module.CloudDesktopPanel })),
+);
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
 type RightPanelTerminalProps = Omit<
@@ -114,6 +117,15 @@ export function RightPanelSurfaceContent(props: {
             composerDraftTarget={props.composerDraftTarget}
             workspaceMutationId={props.workspaceMutationId}
             visible={visible}
+          />
+        </Suspense>
+      );
+    case "cloud-desktop":
+      return (
+        <Suspense fallback={null}>
+          <CloudDesktopPanel
+            key={threadRef.environmentId}
+            environmentId={threadRef.environmentId}
           />
         </Suspense>
       );
