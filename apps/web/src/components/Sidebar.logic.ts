@@ -47,8 +47,8 @@ import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 import { isElectron } from "../env";
 import { shouldShowThreadJumpHintsForModifiers } from "../keybindings";
 import { isTerminalFocused, subscribeToTerminalFocusChanges } from "../lib/terminalFocus";
-import { isModelPickerOpen } from "../modelPickerVisibility";
-import { shortcutModifierStore, type ShortcutModifierState } from "../shortcutModifierState";
+import { isModelPickerOpen, subscribeToModelPickerVisibility } from "../modelPickerVisibility";
+import { shortcutModifierStore } from "../shortcutModifierState";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 
 export function shouldNavigateAfterThreadPark(input: {
@@ -694,11 +694,7 @@ export function threadShortcutContext(routeThreadRef: ScopedThreadRef | null) {
   };
 }
 
-function hasHeldModifier(modifiers: ShortcutModifierState): boolean {
-  return modifiers.metaKey || modifiers.ctrlKey || modifiers.altKey || modifiers.shiftKey;
-}
-
-/** Whether the current modifier combination has been held, unchanged, for `delayMs`. */
+/** Whether the current modifier combination, including none, has been held unchanged for `delayMs`. */
 function createModifierHoldStore(delayMs: number): ClockStore<boolean> {
   const listeners = new Set<() => void>();
   let held = false;
@@ -712,10 +708,10 @@ function createModifierHoldStore(delayMs: number): ClockStore<boolean> {
   };
   const onModifiersChange = () => {
     stopDeadline();
-    stopDeadline = hasHeldModifier(shortcutModifierStore.getSnapshot())
-      ? deadlineStore(deadlineAfter(delayMs)).subscribe(() => setHeld(true))
-      : () => {};
-    setHeld(false);
+    const deadline = deadlineStore(deadlineAfter(delayMs));
+    stopDeadline = deadline.subscribe(() => setHeld(true));
+    // A deadline another subscriber already passed never notifies a late joiner.
+    setHeld(deadline.getSnapshot());
   };
 
   return {
@@ -745,10 +741,12 @@ function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
   const unsubscribeHold = threadJumpModifierHold.subscribe(listener);
   const unsubscribeFocus = subscribeToTerminalFocusChanges(listener);
   const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
+  const unsubscribeModelPicker = subscribeToModelPickerVisibility(listener);
   return () => {
     unsubscribeHold();
     unsubscribeFocus();
     unsubscribeTerminals();
+    unsubscribeModelPicker();
   };
 }
 

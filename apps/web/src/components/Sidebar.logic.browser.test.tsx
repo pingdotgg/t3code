@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
+import { registerModelPickerContent } from "../modelPickerVisibility";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import {
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
@@ -111,5 +112,44 @@ describe("useThreadJumpHintsVisible", () => {
     await expect.element(output).toHaveTextContent("shown");
     await userEvent.keyboard(`{/${modifier}}`);
     await expect.element(output).toHaveTextContent("hidden");
+  });
+
+  it("returns when the model picker closes while the modifier is still held", async () => {
+    const keybindings = compileResolvedKeybindingsConfig([
+      { key: "mod+1", command: "thread.jump.1", when: "!modelPickerOpen" },
+    ]);
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    using _timers = fakeTimers();
+    const output = screen.getByRole("status");
+
+    await userEvent.keyboard(`{${modifier}>}`);
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
+    let unregisterModelPicker = () => {};
+    await act(() => {
+      unregisterModelPicker = registerModelPickerContent();
+    });
+    await expect.element(output).toHaveTextContent("hidden");
+    await act(() => unregisterModelPicker());
+    await expect.element(output).toHaveTextContent("shown");
+    await userEvent.keyboard(`{/${modifier}}`);
+  });
+
+  it("shows after the delay for a jump binding without a modifier", async () => {
+    const keybindings = compileResolvedKeybindingsConfig([{ key: "f1", command: "thread.jump.1" }]);
+    // Mounting starts the hold delay.
+    using _timers = fakeTimers();
+    await using screen = await render(<JumpHints keybindings={keybindings} />, {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    const output = screen.getByRole("status");
+
+    await act(() => vi.advanceTimersByTime(THREAD_JUMP_HINT_SHOW_DELAY_MS));
+    await expect.element(output).toHaveTextContent("shown");
   });
 });
