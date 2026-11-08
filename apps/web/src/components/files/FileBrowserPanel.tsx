@@ -191,6 +191,7 @@ export default function FileBrowserPanel({
     buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
   const entryKindsRef = useRef(entryKinds);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
+  const searchExpandedRef = useRef(new Set<string>());
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
@@ -417,8 +418,15 @@ export default function FileBrowserPanel({
       const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
       if (updates.length > 0) model.batch(updates);
     }
-    if (query.trim()) setAllDirectoriesExpanded(model, directoryPaths, true);
-    else model.closeSearch();
+    if (query.trim()) {
+      // Only directories new to the results open, so one the user collapsed stays closed.
+      const fresh = directoryPaths.filter((path) => !searchExpandedRef.current.has(path));
+      for (const path of fresh) searchExpandedRef.current.add(path);
+      setAllDirectoriesExpanded(model, fresh, true);
+    } else {
+      searchExpandedRef.current.clear();
+      model.closeSearch();
+    }
   }, [ready, entryKinds, model, treePaths, query, directoryPaths]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active

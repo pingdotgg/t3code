@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
-const FILESYSTEM_PATH_MAX_LENGTH = 512;
+export const FILESYSTEM_PATH_MAX_LENGTH = 512;
 
 export const FILESYSTEM_METADATA_BATCH_LIMIT = 64;
 

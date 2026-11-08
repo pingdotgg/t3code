@@ -24,6 +24,7 @@ import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 import { UsageModelFilter } from "./usage.ts";
 import { SecretProviderId, SecretProviderSlug } from "./secretReference.ts";
 import { SettingsSecretValue } from "./settingsSecretValue.ts";
+import { FILESYSTEM_PATH_MAX_LENGTH } from "./filesystem.ts";
 import { EnvironmentMachineKind, ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { KeybindingShortcut } from "./keybindings.ts";
 import {
@@ -1772,7 +1773,9 @@ export const ServerSettingsPatch = Schema.Struct({
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),
   projectSearchDirectories: Schema.optionalKey(
-    Schema.Array(TrimmedString).check(Schema.isMaxLength(32)),
+    Schema.Array(TrimmedString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))).check(
+      Schema.isMaxLength(32),
+    ),
   ),
   addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   ghqCloneLayout: Schema.optionalKey(Schema.Boolean),
