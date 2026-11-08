@@ -17,11 +17,7 @@ import {
   type UsageProviderKind,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
-import {
-  needsCursorKeychainAccess,
-  refreshUsage,
-  usageSummaryInput,
-} from "@t3tools/client-runtime/state/usage";
+import { refreshUsage, usageSummaryInput } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
@@ -49,7 +45,6 @@ export interface EnvironmentUsageStatus extends EnvironmentUsageOption {
    */
   readonly error: string | null;
   readonly summary: UsageSummary | null;
-  readonly needsCursorKeychainAccess: boolean;
 }
 
 interface UsageAtomValue {
@@ -104,7 +99,6 @@ const usageByWindowAtom = Atom.family((key: string) =>
           isPending,
           error: awaitingSession && isPending ? null : access.error,
           summary: null,
-          needsCursorKeychainAccess: false,
         });
         continue;
       }
@@ -132,10 +126,6 @@ const usageByWindowAtom = Atom.family((key: string) =>
         isConnected,
         error: failed ? "This environment could not report usage." : null,
         summary,
-        needsCursorKeychainAccess: needsCursorKeychainAccess(
-          summary,
-          get(serverEnvironment.providersValueAtom(environmentId)),
-        ),
       });
     }
 
