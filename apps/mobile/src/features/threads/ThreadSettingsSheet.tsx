@@ -957,7 +957,9 @@ function ThreadSettingsMainContent(props: {
       content = (
         <View className="items-center px-8 py-14">
           <Text className="text-center text-sm text-foreground-muted">
-            {session.favoritesOnly && session.searchQuery.trim().length === 0
+            {session.favoritesOnly &&
+            session.providerFilter === null &&
+            session.searchQuery.trim().length === 0
               ? "No favorite models"
               : hasActiveCatalogFilter
                 ? "No matching models"
