@@ -428,7 +428,7 @@ const MachineMenu = memo(function MachineMenu({
           render={
             <span
               className={cn(
-                "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 text-meta text-dim-foreground sm:h-6",
+                "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
                 environmentUnavailable && "text-warning-foreground",
               )}
               aria-label={`Run on: ${environmentLabel}`}
@@ -776,7 +776,7 @@ const RunContextSelector = memo(function RunContextSelector({
         className={cn(
           isPanel
             ? THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS
-            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent px-1.75 text-meta text-dim-foreground sm:h-6",
+            : "inline-flex h-7 min-w-0 max-w-[48%] flex-initial items-center justify-start gap-1 rounded-md border border-transparent ps-2 pe-1.75 text-meta text-dim-foreground sm:h-6",
         )}
         onContextMenu={handleContextMenu}
         aria-label={isPanel ? runContextLabel : undefined}
