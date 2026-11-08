@@ -37,7 +37,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
 
-import { toolOutputImages } from "@t3tools/shared/toolOutput";
+import { lessonCardReplyMessageId, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
@@ -1639,6 +1639,68 @@ layer("ProviderEventIngestorV2", (it) => {
           projectedScreenshot?.type === "dynamic_tool" ? projectedScreenshot.output : null,
         ),
         [{ mimeType: "image/png", data: screenshotBase64 }],
+      );
+    }),
+  );
+
+  it.effect("stores a card's reply as an assistant message that side chats can anchor on", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const card = (id: string, reply?: string): OrchestrationV2TurnItem => ({
+        id: TurnItemId.make(id),
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: "question_card",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__question_card",
+        input: {},
+        output: { questionCard: { question: "Why?", ...(reply ? { reply } : {}) } },
+      });
+
+      yield* eventSink.write({ events: [threadEvent] });
+      for (const turnItem of [card("turn-item:card-a", "Right: it halves."), card("turn-item:b")]) {
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+      }
+
+      const { messages } = yield* projectionStore.getThreadRecords(
+        threadEvent.threadId,
+        ["messages"],
+        { messageRoles: ["assistant"] },
+      );
+      assert.deepEqual(
+        messages.map(({ id, role, text, streaming }) => ({ id, role, text, streaming })),
+        [
+          {
+            id: lessonCardReplyMessageId("turn-item:card-a"),
+            role: "assistant",
+            text: "Right: it halves.",
+            streaming: false,
+          },
+        ],
       );
     }),
   );

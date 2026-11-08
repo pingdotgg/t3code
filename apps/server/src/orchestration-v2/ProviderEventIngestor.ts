@@ -27,6 +27,7 @@ import * as SqlError from "effect/sql/SqlError";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { lessonCardFromToolItem, lessonCardReplyMessageId } from "@t3tools/shared/toolOutput";
 import {
   ProviderTurnAnalytics,
   type ProviderTurnAnalyticsContext,
@@ -569,18 +570,45 @@ export const layer: Layer.Layer<
                   nodeId: input.event.message.nodeId,
                 }),
               ];
-            case "turn_item.updated":
+            case "turn_item.updated": {
+              const item = input.event.turnItem;
+              const updated = yield* makeDomainEvent(input, {
+                type: "turn-item.updated",
+                threadId: item.threadId,
+                payload: boundFileChangeForStorage(stripUnservedToolOutputImageBytes(item)),
+                runId: item.runId,
+                nodeId: item.nodeId,
+              });
+              const reply =
+                item.type === "dynamic_tool" && item.status === "completed"
+                  ? lessonCardFromToolItem(item)?.reply
+                  : undefined;
+              if (!reply) return [updated];
+              const createdAt = item.startedAt ?? item.updatedAt;
               return [
+                updated,
                 yield* makeDomainEvent(input, {
-                  type: "turn-item.updated",
-                  threadId: input.event.turnItem.threadId,
-                  payload: boundFileChangeForStorage(
-                    stripUnservedToolOutputImageBytes(input.event.turnItem),
-                  ),
-                  runId: input.event.turnItem.runId,
-                  nodeId: input.event.turnItem.nodeId,
+                  type: "message.updated",
+                  threadId: item.threadId,
+                  payload: {
+                    createdBy: "agent",
+                    creationSource: "provider",
+                    id: lessonCardReplyMessageId(item.id),
+                    threadId: item.threadId,
+                    runId: item.runId,
+                    nodeId: item.nodeId,
+                    role: "assistant",
+                    text: reply,
+                    attachments: [],
+                    streaming: false,
+                    createdAt,
+                    updatedAt: item.completedAt ?? item.updatedAt,
+                  },
+                  runId: item.runId,
+                  nodeId: item.nodeId,
                 }),
               ];
+            }
             case "runtime_request.updated":
               return [
                 yield* makeDomainEvent(input, {

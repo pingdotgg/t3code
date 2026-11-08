@@ -31,6 +31,7 @@ import {
   htmlRenderFromToolItem,
   mcpAppFromToolItem,
   lessonCardFromToolItem,
+  lessonCardReplyMessageId,
 } from "@t3tools/shared/toolOutput";
 import {
   contextCompactionLabel,
@@ -728,6 +729,18 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         ? lessonCardFromToolItem(item)
         : undefined;
     if (quizCard !== undefined) {
+      if (quizCard.reply) {
+        const message: ChatMessage = {
+          id: lessonCardReplyMessageId(item.id),
+          role: "assistant",
+          text: quizCard.reply,
+          runId: item.runId,
+          streaming: false,
+          createdAt,
+          updatedAt: DateTime.formatIso(item.updatedAt),
+        };
+        entries.push({ id: message.id, kind: "message", createdAt, message, ...attemptMetadata });
+      }
       entries.push({
         id: item.id,
         kind: "quiz-card",

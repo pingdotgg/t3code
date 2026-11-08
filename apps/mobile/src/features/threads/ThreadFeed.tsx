@@ -1801,6 +1801,13 @@ function renderFeedEntry(
                 skills={props.skills}
               />
             </MarkdownImageAvailableWidthContext>
+            <CopyTextButton
+              accessibilityLabel="Copy message"
+              text={reply}
+              tintColor={iconSubtleColor}
+              buttonSize={props.replyActionSize.button}
+              iconSize={props.replyActionSize.icon}
+            />
           </View>
         ) : null}
         {"answer" in entry.quizCard ? (
