@@ -229,7 +229,7 @@ export function PullRequestStackMenu({
           />
           <TooltipPopup>
             {stale
-              ? notice
+              ? (notice ?? "Checking the stack with the host…")
               : `Merge stack through #${reference.number} into ${stack.base} (${mergeLayers.length} ${mergeLayers.length === 1 ? terminology.singular : terminology.plural})`}
           </TooltipPopup>
         </Tooltip>

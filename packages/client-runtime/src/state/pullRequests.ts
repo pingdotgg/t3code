@@ -4,6 +4,7 @@ import {
   PullRequestDetail as PullRequestDetailSchema,
   PullRequestPreview,
   PullRequestReviewGuideResult,
+  PullRequestStack,
   PullRequestListResult,
   PullRequestChecks,
   PullRequestDiffResult,
@@ -684,14 +685,31 @@ export function createPullRequestStackAtomFamily<R, E>(
   refreshes = createPullRequestRefreshAtomFamily(runtime),
 ) {
   const routedRequest = createPullRequestRouter();
-  return createEnvironmentRpcQueryAtomFamily(runtime, {
+  const hostAnswers = Atom.family((_key: string) =>
+    Atom.make(false).pipe(Atom.setIdleTTL(5 * 60_000)),
+  );
+  const answeredKey = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => JSON.stringify([target.environmentId, target.input]);
+  const stack = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:pull-requests:stack",
+    // A saved answer paints at once; `answered` stays false until the host answers.
+    persistence: persistQuery(Schema.NullOr(PullRequestStack)),
     tag: WS_METHODS.pullRequestsStack,
     execute: (input) => routedRequest(WS_METHODS.pullRequestsStack, input),
     staleTimeMs: 60_000,
     idleTtlMs: LINKED_PULL_REQUEST_IDLE_TTL_MS,
     refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    onAnswer: (target, _value, registry) =>
+      Effect.sync(() => registry.set(hostAnswers(answeredKey(target)), true)),
   });
+  /** Whether this session has the host's own answer, which is what merging one layer alone needs. */
+  const answered = (target: {
+    readonly environmentId: EnvironmentId;
+    readonly input: PullRequestRef;
+  }) => hostAnswers(answeredKey(target));
+  return Object.assign(stack, { answered });
 }
 
 export function pullRequestDetailToVcsStatus(

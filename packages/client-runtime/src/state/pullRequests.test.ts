@@ -43,6 +43,7 @@ import {
   applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
+  createPullRequestStackAtomFamily,
   pullRequestPendingEditsAtom,
 } from "./pullRequests.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
@@ -2871,4 +2872,53 @@ it.effect.each(["accepted", "refused"] as const)(
         expect(state()).toBe(outcome === "accepted" ? "closed" : "open");
       }),
     ),
+);
+
+it.effect("paints a saved stack answer at once while the host read is out", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const saved = new Map<string, string>();
+      const store = {
+        load: (_environmentId: EnvironmentId, key: string) =>
+          Effect.sync(() => Option.fromUndefinedOr(saved.get(key))),
+        save: (_environmentId: EnvironmentId, key: string, payload: string) =>
+          Effect.sync(() => void saved.set(key, payload)),
+      };
+      const earlier = yield* makeTestRuntime(
+        {
+          [WS_METHODS.pullRequestsStack]: () => Effect.succeed(null),
+        } as unknown as WsRpcProtocolClient,
+        undefined,
+        false,
+        {},
+        store,
+      );
+      const target = { environmentId: TARGET.environmentId, input: actionReference };
+      const stacks = createPullRequestStackAtomFamily(earlier.runtime);
+      const first = stacks(target);
+      earlier.registry.mount(first);
+      yield* Effect.promise(() => executeAtomQuery(earlier.registry, first));
+      expect(earlier.registry.get(stacks.answered(target))).toBe(true);
+
+      // A later session finds the answer saved while its own read waits on the host.
+      const sent = yield* Deferred.make<void>();
+      const waiting = yield* makeTestRuntime(
+        {
+          [WS_METHODS.pullRequestsStack]: () =>
+            Deferred.succeed(sent, undefined).pipe(Effect.andThen(Effect.never)),
+        } as unknown as WsRpcProtocolClient,
+        undefined,
+        false,
+        {},
+        store,
+      );
+      const waitingStacks = createPullRequestStackAtomFamily(waiting.runtime);
+      const stack = waitingStacks(target);
+      waiting.registry.mount(stack);
+      yield* Deferred.await(sent);
+      expect(waiting.registry.get(stack)).toMatchObject({ _tag: "Success", value: null });
+      // Offline, a saved answer settles without the host; only a host answer may clear a merge.
+      expect(waiting.registry.get(waitingStacks.answered(target))).toBe(false);
+    }),
+  ),
 );

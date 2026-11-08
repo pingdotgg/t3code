@@ -88,10 +88,16 @@ describe("saved stack navigation", () => {
       isFresh: true,
       notice: null,
     });
-    expect(pullRequestStackView({ ...query, isPending: true }, saved).isFresh).toBe(true);
+    // A shown answer being read again may be one restored from the device, so it cannot clear a
+    // merge; it shows as it is, with no refresh notice.
+    expect(pullRequestStackView({ ...query, isPending: true }, saved)).toEqual({
+      data: saved,
+      isFresh: false,
+      notice: null,
+    });
     expect(pullRequestStackView({ ...query, data: null, isPending: true }, saved)).toMatchObject({
       data: null,
-      isFresh: true,
+      isFresh: false,
     });
   });
 });
