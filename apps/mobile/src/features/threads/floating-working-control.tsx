@@ -1,7 +1,7 @@
 import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ComponentProps, type ReactNode, useEffect, useRef, useState } from "react";
 import {
   type LayoutChangeEvent,
   Pressable,
@@ -67,6 +67,35 @@ const AnimatedGlassView = Animated.createAnimatedComponent(UniwindGlassView);
 // Segment widths feed back into labelWidth; ignore sub-point changes to avoid rounding-driven ellipsis loops.
 function settleWidth(next: number) {
   return (current: number) => (Math.abs(current - next) < 1 ? current : next);
+}
+
+// Same activation as ControlPill's activateOnPressIn: press-in for latency, onPress for a11y, deduped.
+function ActivateOnPressInPressable(
+  props: Omit<ComponentProps<typeof Pressable>, "onPress" | "onPressIn" | "onPressOut"> & {
+    readonly onPress: () => void;
+  },
+) {
+  const { onPress, ...pressableProps } = props;
+  const activatedOnPressInRef = useRef(false);
+  return (
+    <Pressable
+      {...pressableProps}
+      onPressIn={() => {
+        activatedOnPressInRef.current = true;
+        onPress();
+      }}
+      onPressOut={() => {
+        // Defer reset: Pressability calls onPressOut before onPress for the same gesture.
+        setTimeout(() => {
+          activatedOnPressInRef.current = false;
+        }, 0);
+      }}
+      onPress={() => {
+        if (activatedOnPressInRef.current) return;
+        onPress();
+      }}
+    />
+  );
 }
 
 const CONTROL_OVERLAY_OFFSET = CONTROL_HEIGHT + CONTROL_GAP - COMPOSER_CAPSULE_INSET;
@@ -222,11 +251,11 @@ export function FloatingWorkingControl(props: {
     <View className="flex-row items-center">
       {statusContent}
       {extensionStatus !== null ? (
-        <Pressable
+        <ActivateOnPressInPressable
           accessibilityRole="button"
           accessibilityLabel={extensionStatus.label}
           accessibilityHint="Shows the full Pi status"
-          onPressIn={extensionStatus.onPress}
+          onPress={extensionStatus.onPress}
           onLayout={(event) => setExtensionWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: availableLabelWidth * 0.5 }}
           className="h-11 flex-row items-center px-3 active:opacity-70"
@@ -235,7 +264,7 @@ export function FloatingWorkingControl(props: {
           <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
             {extensionStatus.label}
           </Text>
-        </Pressable>
+        </ActivateOnPressInPressable>
       ) : null}
       {action !== null ? (
         <View
@@ -243,18 +272,18 @@ export function FloatingWorkingControl(props: {
           className="h-11 flex-row items-center"
         >
           <View className="h-4 w-px bg-border" />
-          <Pressable
+          <ActivateOnPressInPressable
             accessibilityRole="button"
             accessibilityLabel={action.accessibilityLabel}
             accessibilityState={{ disabled: action.disabled }}
             disabled={action.disabled}
-            onPressIn={action.disabled ? undefined : action.onPress}
+            onPress={action.onPress}
             className={`h-11 items-center justify-center px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
           >
             <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
               {action.label}
             </Text>
-          </Pressable>
+          </ActivateOnPressInPressable>
         </View>
       ) : null}
       {hasPreview ? (
@@ -272,11 +301,11 @@ export function FloatingWorkingControl(props: {
         </View>
       ) : null}
       {agents !== null ? (
-        <Pressable
+        <ActivateOnPressInPressable
           accessibilityRole="button"
           accessibilityLabel={`Open agents, ${agents.accessibilityLabel}`}
           accessibilityHint="Opens this turn's subagents"
-          onPressIn={props.onOpenAgents}
+          onPress={props.onOpenAgents}
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
@@ -285,14 +314,14 @@ export function FloatingWorkingControl(props: {
           <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {agents.label}
           </Text>
-        </Pressable>
+        </ActivateOnPressInPressable>
       ) : null}
       {hasQueue ? (
-        <Pressable
+        <ActivateOnPressInPressable
           accessibilityRole="button"
           accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
           accessibilityHint="Opens queued messages to send now, edit, or remove"
-          onPressIn={props.onOpenQueue}
+          onPress={props.onOpenQueue}
           onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
@@ -304,7 +333,7 @@ export function FloatingWorkingControl(props: {
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {props.queuedCount} queued
           </Text>
-        </Pressable>
+        </ActivateOnPressInPressable>
       ) : null}
     </View>
   );
@@ -632,14 +661,14 @@ function StatusLabelRow(props: {
       onLayout={props.onLayout}
     >
       {props.onPress ? (
-        <Pressable
+        <ActivateOnPressInPressable
           accessibilityLabel={props.accessibilityLabel}
           accessibilityRole={props.accessibilityRole}
           className={`${rowClassName} active:opacity-70`}
-          onPressIn={props.onPress}
+          onPress={props.onPress}
         >
           {props.children}
-        </Pressable>
+        </ActivateOnPressInPressable>
       ) : (
         <View accessible accessibilityLabel={props.accessibilityLabel} className={rowClassName}>
           {props.children}
