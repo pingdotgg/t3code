@@ -2529,3 +2529,63 @@ it.effect(
       }),
     ).pipe(Effect.provide(layer)),
 );
+
+it.effect("an action that fails just after its timeout still reports its own failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const failing = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      contexts[0]!.page.emulateMedia.mockImplementationOnce(() => {
+        started.resolve();
+        return failing.promise;
+      });
+      const failed = yield* broker
+        .invoke<void>({
+          scope,
+          tabId,
+          operation: "setColorScheme",
+          input: { colorScheme: "dark" },
+          timeoutMs: 1_000,
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      // Operations time themselves out a little after the request arrives; their reason wins.
+      yield* TestClock.adjust("1100 millis");
+      failing.reject(new Error("Target page crashed"));
+      expect(yield* Fiber.join(failed)).toMatchObject({ _tag: "PreviewAutomationExecutionError" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.effect("a recording stop that never finishes leaves its tab busy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const context = contexts[0]!;
+      yield* broker.invoke({ scope, tabId, operation: "recordingStart", input: {} });
+      const started = Promise.withResolvers<void>();
+      context.sessions.at(-1)!.detach.mockImplementationOnce(() => {
+        started.resolve();
+        return new Promise<void>(() => {});
+      });
+      const stuck = yield* broker
+        .invoke<void>({ scope, tabId, operation: "recordingStop", input: {}, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.promise(() => started.promise);
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(stuck)).toMatchObject({ _tag: "PreviewAutomationTimeoutError" });
+      const busy = yield* broker
+        .invoke<void>({ scope, tabId, operation: "click", input: { ref: "e1" }, timeoutMs: 1_000 })
+        .pipe(Effect.flip, Effect.forkScoped);
+      // The host answers in arrival order, so a refused click has its answer before this one.
+      yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+      // A click that queued instead of being refused would time out here.
+      yield* TestClock.adjust("2 seconds");
+      expect(yield* Fiber.join(busy)).toMatchObject({
+        _tag: "PreviewAutomationControlInterruptedError",
+        reason: "busy",
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);

@@ -127,6 +127,8 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
 }`;
 const UNATTACHED_FILL_VIEWPORT = { width: 1280, height: 800 } as const;
 const NAVIGATION_TIMEOUT_MS = 15_000;
+// Must stay under the broker's 1 s host response grace.
+const HOST_ANSWER_MARGIN_MS = 500;
 const VIEWER_NAVIGATION_OPTIONS = { waitUntil: "commit", timeout: NAVIGATION_TIMEOUT_MS } as const;
 const ACTION_TIMELINE_LIMIT = 50;
 
@@ -2131,7 +2133,9 @@ const make = Effect.gen(function* () {
         }
         // A stop cannot act twice (a retry finds no recording);
         // dropping a late one would leave capture running.
-        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
+        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab), signal, {
+          runIfExpired: true,
+        });
       }
     }
     const tab = await requireTab(request);
@@ -2179,7 +2183,7 @@ const make = Effect.gen(function* () {
       });
     }
     // An action blocked by a dialog outlives its request; point the agent at the dialog.
-    if (tab.dialog && tab.control.overdue)
+    if (tab.dialog && tab.control.overdue && tab.control.agentCanActNow(agentSessionId))
       throw new BrowserControlInterrupted({
         message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
         reason: "dialogPending",
@@ -2307,9 +2311,10 @@ const make = Effect.gen(function* () {
       try: (signal) => runOperation(request, signal).finally(() => markUsed(request)),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
-      // Answer before the broker evicts this host; the abandoned run still holds its tab's queue.
+      // Lets the operation report its own timeout first, yet answers before the broker's
+      // response grace evicts this host. The abandoned run still holds its tab's queue.
       Effect.timeoutOrElse({
-        duration: request.timeoutMs,
+        duration: request.timeoutMs + HOST_ANSWER_MARGIN_MS,
         orElse: () =>
           Effect.fail(
             new ServerBrowserPage.ServerBrowserOperationError({

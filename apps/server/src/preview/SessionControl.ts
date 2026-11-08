@@ -94,7 +94,12 @@ export class SessionControl {
     return this.running?.aborted === true;
   }
 
-  private async action<A>(allowed: () => boolean, run: () => Promise<A>, signal?: AbortSignal) {
+  private async action<A>(
+    allowed: () => boolean,
+    run: () => Promise<A>,
+    signal?: AbortSignal,
+    runIfExpired = false,
+  ) {
     this.assertOpen();
     if (!allowed())
       throw new BrowserControlInterrupted({ message: "You do not control this browser tab." });
@@ -102,7 +107,7 @@ export class SessionControl {
     return this.enqueue(async () => {
       this.assertOpen();
       if (epoch !== this.epoch || !allowed()) throw new BrowserControlInterrupted();
-      if (signal?.aborted) {
+      if (signal?.aborted && !runIfExpired) {
         throw new DOMException(
           "This browser request expired before it could start.",
           "TimeoutError",
@@ -121,7 +126,13 @@ export class SessionControl {
     return this.agentId === null || this.agentId === agentId;
   }
 
-  agent<A>(agentId: string, run: () => Promise<A>, signal?: AbortSignal) {
+  /** `runIfExpired` still starts work whose request expired while queued, for work that must not be dropped. */
+  agent<A>(
+    agentId: string,
+    run: () => Promise<A>,
+    signal?: AbortSignal,
+    { runIfExpired = false }: { readonly runIfExpired?: boolean } = {},
+  ) {
     if (!this.agentMayAct(agentId))
       return Promise.reject(
         new BrowserControlInterrupted({
@@ -143,7 +154,12 @@ export class SessionControl {
           reason: "busy",
         }),
       );
-    return this.action(() => this.agentMayAct(agentId) && this.owner === null, run, signal);
+    return this.action(
+      () => this.agentMayAct(agentId) && this.owner === null,
+      run,
+      signal,
+      runIfExpired,
+    );
   }
 
   agentCanActNow(agentId: string) {
