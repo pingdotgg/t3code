@@ -128,6 +128,7 @@ it.effect.each([
       }
       frames.push(new Uint8Array(event.data as ArrayBuffer));
       for (const message of mutations) socket.send(JSON.stringify(message));
+      socket.send(JSON.stringify({ type: "streamSize", width: 1600, height: 1000 }));
       socket.send("malformed input");
       socket.send(JSON.stringify({ type: "ack" }));
       received.resolve();
@@ -137,7 +138,11 @@ it.effect.each([
     yield* Effect.promise(() => acked.promise);
     expect(frames).toEqual([frame]);
     expect(viewports).toEqual([{ type: "viewport", width: 1280, height: 800 }]);
-    expect(inputs).toEqual(canOperate ? [...mutations, null] : []);
+    expect(inputs).toEqual([
+      ...(canOperate ? mutations : []),
+      { type: "streamSize", width: 1600, height: 1000 },
+      ...(canOperate ? [null] : []),
+    ]);
     expect(attachments).toEqual([
       {
         threadId: "thread",

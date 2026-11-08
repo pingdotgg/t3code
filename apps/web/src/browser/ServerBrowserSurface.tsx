@@ -219,7 +219,7 @@ export function ServerBrowserSurface(props: {
   );
   const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
   const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
-  const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
+  const capRef = useRef<{ width: number; height: number } | null>(null);
 
   // Keep clearInput stable: a new identity reconnects the stream.
   const send = (input: PreviewStreamInput) => {
@@ -330,14 +330,14 @@ export function ServerBrowserSurface(props: {
       const ratio = window.devicePixelRatio || 1;
       const width = Math.round(size.width * ratio);
       const height = Math.round(size.height * ratio);
-      setCap((current) =>
-        current !== null && current.width >= width && current.height >= height
-          ? current
-          : {
-              width: Math.max(width, current?.width ?? 0),
-              height: Math.max(height, current?.height ?? 0),
-            },
-      );
+      const current = capRef.current;
+      if (current && current.width >= width && current.height >= height) return;
+      const cap = {
+        width: Math.max(width, current?.width ?? 0),
+        height: Math.max(height, current?.height ?? 0),
+      };
+      capRef.current = cap;
+      clientRef.current?.setFrameSize(cap);
     };
     const measure = () => {
       timer = null;
@@ -348,7 +348,7 @@ export function ServerBrowserSurface(props: {
       if (previous?.width === size.width && previous.height === size.height) return;
       sizeRef.current = size;
       if (followSize) clientRef.current?.send({ type: "resize", ...size });
-      // Growing the cap reconnects the stream; wait until resizing settles.
+      // Wait until resizing settles before increasing the frame size.
       if (capTimer !== null) clearTimeout(capTimer);
       capTimer = setTimeout(growCap, previous === null ? 0 : RESIZE_THROTTLE_MS * 2);
     };
@@ -366,7 +366,13 @@ export function ServerBrowserSurface(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the preview stream client and paints its frames onto the canvas while visible
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!visible || accessDenied || hostSetup || !access || !cap || !canvas) return;
+    if (!visible || accessDenied || hostSetup || !access || !canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const cap = capRef.current ?? {
+      width: Math.max(1, Math.round(canvas.clientWidth * ratio)),
+      height: Math.max(1, Math.round(canvas.clientHeight * ratio)),
+    };
+    capRef.current = cap;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
     const painter = createPreviewFramePainter(canvas, () => {
       if (hasFrameRef.current) return;
@@ -458,7 +464,6 @@ export function ServerBrowserSurface(props: {
   }, [
     access,
     accessDenied,
-    cap,
     clearInput,
     environmentId,
     followSize,

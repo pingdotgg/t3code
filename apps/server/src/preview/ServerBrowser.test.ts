@@ -809,6 +809,68 @@ it.live("enforces provider ownership and explicit targets when a session has mul
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("changes a viewer's frame size without releasing control or resizing the page", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, broker, tabId } = yield* ready;
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      const session = contexts[0]!.sessions.at(-1)!;
+      page.setViewportSize.mockClear();
+      session.send.mockClear();
+      yield* viewer.input({ type: "streamSize", width: 1800, height: 1200 });
+      expect(session.send).toHaveBeenCalledWith("Page.startScreencast", {
+        format: "jpeg",
+        quality: 70,
+        maxWidth: 1800,
+        maxHeight: 1200,
+      });
+      expect(page.setViewportSize).not.toHaveBeenCalled();
+      yield* viewer.input({ type: "text", text: "still controlled" });
+      expect(session.send).toHaveBeenCalledWith("Input.insertText", { text: "still controlled" });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.control?.owner).toBe("human");
+      yield* viewer.input({ type: "releaseControl" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("lets a read-only viewer change only its own frame size and bounds the dimensions", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const session = contexts[0]!.sessions.at(-1)!;
+      session.send.mockClear();
+      for (const [width, height] of [
+        [0, 800],
+        [800, -1],
+        [NaN, 800],
+        [Infinity, 800],
+        ["900", 800],
+      ])
+        yield* watcher.input({ type: "streamSize", width, height });
+      expect(session.send).not.toHaveBeenCalled();
+      yield* watcher.input({ type: "streamSize", width: 99999, height: 99999 });
+      expect(session.send).toHaveBeenCalledWith("Page.startScreencast", {
+        format: "jpeg",
+        quality: 70,
+        maxWidth: 7680,
+        maxHeight: 4320,
+      });
+      session.send.mockClear();
+      yield* watcher.input({ type: "streamSize", width: 99999, height: 99999 });
+      expect(session.send).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("streams to a read-only viewer without allowing takeover, input, or viewport changes", () =>
   Effect.scoped(
     Effect.gen(function* () {
