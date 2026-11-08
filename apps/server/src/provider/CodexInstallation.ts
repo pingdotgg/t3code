@@ -7,7 +7,8 @@ import {
 import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { CODEX_CLI_COMMAND, parseCodexCliVersion, resolveCodexCliPath } from "./codexCli.ts";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -381,12 +382,15 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const localCache = new Map<string, { fingerprint: string; executable: CodexExecutable | null }>();
   const resolveLocal = Effect.fn("CodexInstallation.resolveLocal")(
     function* () {
-      const executablePath = yield* resolveCommandPath("codex", { env: environment }).pipe(
+      const executablePath = yield* resolveCodexCliPath({
+        binaryPath: CODEX_CLI_COMMAND,
+        environment,
+      }).pipe(
         Effect.provideService(HostProcess.Platform, platform),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
       );
-      if (executablePath === null) return null;
+      if (executablePath === CODEX_CLI_COMMAND) return null;
       // Keep launcher symlinks intact: version-manager shims dispatch by their invoked name.
       const realExecutablePath = yield* fs.realPath(executablePath);
       const realManaged = yield* fs.realPath(managedDirectory).pipe(Effect.option);
@@ -405,7 +409,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           ? cached.executable
           : yield* Effect.gen(function* () {
               const output = yield* runCommand(executablePath, ["--version"]);
-              const version = /^codex-cli (\d+\.\d+\.\d+)$/u.exec(output.trim())?.[1];
+              const version = parseCodexCliVersion(output);
               if (!version) return null;
               yield* runCommand(executablePath, ["app-server", "--help"]);
               return {

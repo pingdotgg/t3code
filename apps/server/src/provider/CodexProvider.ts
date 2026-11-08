@@ -37,6 +37,12 @@ import {
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
 import {
+  CODEX_CLI_COMMAND,
+  parseCodexCliVersion,
+  resolveCodexCliPath,
+  resolveCodexDesktopCliPath,
+} from "./codexCli.ts";
+import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
@@ -77,9 +83,6 @@ const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
-// `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
-// Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
-const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -491,12 +494,29 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
   readonly environment?: NodeJS.ProcessEnv | undefined;
 }) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const platform = yield* HostProcess.Platform;
   const environment = yield* codexProcessEnvironment(input);
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.binaryPath,
-    codexAppServerArgs(input.launchArgs),
-    { env: environment, extendEnv: true },
-  );
+  const args = codexAppServerArgs(input.launchArgs);
+  let spawnCommand = yield* resolveSpawnCommand(input.binaryPath, args, {
+    env: environment,
+    extendEnv: true,
+  });
+  if (
+    platform === "win32" &&
+    input.binaryPath === CODEX_CLI_COMMAND &&
+    spawnCommand.command === CODEX_CLI_COMMAND
+  ) {
+    const desktopPath = resolveCodexDesktopCliPath(platform, {
+      ...process.env,
+      ...input.environment,
+    });
+    if (desktopPath !== null) {
+      spawnCommand = yield* resolveSpawnCommand(desktopPath, args, {
+        env: environment,
+        extendEnv: true,
+      });
+    }
+  }
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -634,7 +654,7 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
       }),
     );
     if (result.code !== 0) return null;
-    return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
+    return parseCodexCliVersion(result.stdout);
   },
   Effect.timeoutOption(Duration.millis(DEFAULT_TIMEOUT_MS)),
   Effect.map(Option.getOrNull),
@@ -774,8 +794,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const probeResult = yield* probe({
+  const binaryPath = yield* resolveCodexCliPath({
     binaryPath: codexSettings.binaryPath,
+    environment: { ...process.env, ...resolvedEnvironment },
+  });
+  const probeResult = yield* probe({
+    binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
     cwd: process.cwd(),
@@ -793,7 +817,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     const installed = !isCodexAppServerSpawnError(error);
     const version = installed
       ? yield* probeCodexCliVersion({
-          binaryPath: codexSettings.binaryPath,
+          binaryPath,
           homePath: codexSettings.homePath,
           cwd: process.cwd(),
           environment: resolvedEnvironment,
@@ -812,8 +836,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         auth: { status: "unknown" },
         message: installed
           ? `Codex app-server provider probe failed: ${error.message}.`
-          : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
-            (codexSettings.binaryPath === "codex"
+          : `Could not start Codex CLI (\`${binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
+            (binaryPath === CODEX_CLI_COMMAND
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
               : " Make sure the configured executable exists and can be run."),
       },

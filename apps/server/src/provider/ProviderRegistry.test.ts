@@ -539,6 +539,33 @@ it.layer(
       }),
     );
 
+    it.effect(
+      "finds the Codex CLI bundled with the Windows desktop app when it is not on PATH",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-desktop-" });
+          const bin = path.join(root, "OpenAI", "Codex", "bin", "version-hash");
+          yield* fs.makeDirectory(bin, { recursive: true });
+          yield* fs.writeFileString(path.join(bin, "codex.exe"), "codex");
+          yield* fs.writeFileString(path.join(bin, "codex-code-mode-host.exe"), "host");
+
+          let probedBinaryPath: string | undefined;
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            (input) => {
+              probedBinaryPath = input.binaryPath;
+              return Effect.succeed(makeCodexProbeSnapshot());
+            },
+            { PATH: "", LOCALAPPDATA: root },
+          );
+
+          expect(probedBinaryPath).toBe(path.join(bin, "codex.exe"));
+          expect(status.installed).toBe(true);
+        }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "win32")),
+    );
+
     it.effect("keeps the probe failure without a version when --version also fails", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
