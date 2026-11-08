@@ -182,6 +182,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
         render={
           <ThreadDetailsControl
             part="choice"
+            chevronAlign="icon"
             className="h-8 min-h-8 sm:min-h-8"
             aria-label="Previous agents"
           />
