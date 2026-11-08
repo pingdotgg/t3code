@@ -9,7 +9,7 @@ import {
 interface PendingActivation {
   readonly request: DesktopAppActivationRequest;
   readonly resolve: (response: DesktopAppActivationResponse) => void;
-  timeout: ReturnType<typeof setTimeout> | undefined;
+  readonly timeout: ReturnType<typeof setTimeout>;
   dispatched: boolean;
 }
 
@@ -41,10 +41,9 @@ export class DesktopAppActivationBroker {
     this.#activate = input.activate;
   }
 
-  // waitForRenderer starts the timeout at dispatch: a cold launch can outlast it, and no caller is blocked.
   request(
     request: DesktopAppActivationRequest,
-    options?: { readonly waitForRenderer?: boolean },
+    timeoutMs = this.#requestTimeoutMs,
   ): Promise<DesktopAppActivationResponse> {
     if (this.#closed) {
       return Promise.resolve(
@@ -58,10 +57,19 @@ export class DesktopAppActivationBroker {
     }
 
     const response = new Promise<DesktopAppActivationResponse>((resolve) => {
+      const timeout = setTimeout(() => {
+        this.#settle(
+          failure(
+            request.requestId,
+            "request-timeout",
+            "The desktop app did not finish opening the project in time.",
+          ),
+        );
+      }, timeoutMs);
       this.#pending.set(request.requestId, {
         request,
         resolve,
-        timeout: options?.waitForRenderer ? undefined : this.#startTimeout(request.requestId),
+        timeout,
         dispatched: false,
       });
     });
@@ -121,25 +129,12 @@ export class DesktopAppActivationBroker {
       try {
         pending.dispatched = true;
         renderer(pending.request);
-        pending.timeout ??= this.#startTimeout(pending.request.requestId);
       } catch {
         pending.dispatched = false;
         this.#renderer = null;
       }
       return;
     }
-  }
-
-  #startTimeout(requestId: string): ReturnType<typeof setTimeout> {
-    return setTimeout(() => {
-      this.#settle(
-        failure(
-          requestId,
-          "request-timeout",
-          "The desktop app did not finish opening the project in time.",
-        ),
-      );
-    }, this.#requestTimeoutMs);
   }
 
   #settle(response: DesktopAppActivationResponse): void {

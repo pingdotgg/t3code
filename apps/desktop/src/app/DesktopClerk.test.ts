@@ -461,6 +461,8 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
     const received: Array<string> = [];
     const openedWorkspaces: Array<string> = [];
     const pairLink = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
+    const htmlNamedFolder = NodePath.join(clerkStateDir, "site.html");
+    NodeFS.mkdirSync(htmlNamedFolder, { recursive: true });
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -484,6 +486,7 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       };
       assert.strictEqual(openFile("/workspace/page.html"), 1);
       assert.strictEqual(openFile("/workspace/project"), 1);
+      assert.strictEqual(openFile(htmlNamedFolder), 1);
       yield* Effect.yieldNow;
       assert.deepStrictEqual(received, [
         "https://example.com/page",
@@ -493,7 +496,7 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         pairLink,
         "file:///workspace/page.html",
       ]);
-      assert.deepStrictEqual(openedWorkspaces, ["/workspace/project"]);
+      assert.deepStrictEqual(openedWorkspaces, ["/workspace/project", htmlNamedFolder]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, listeners)),
       Effect.provideService(HostProcess.Arguments, ["t3"]),

@@ -27,6 +27,7 @@ import type * as Electron from "electron";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
@@ -34,6 +35,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
+// A drop can launch the app, so this also covers a cold start.
+const OPEN_WORKSPACE_TIMEOUT_MS = 120_000;
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
 
 export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
@@ -300,6 +303,7 @@ const { logWarning } = makeComponentLogger("desktop-app-activation");
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const electronDialog = yield* ElectronDialog.ElectronDialog;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
   const path = yield* Path.Path;
@@ -393,6 +397,13 @@ export const make = Effect.gen(function* () {
       return yield* Effect.sync(() => broker.complete(response));
     }),
     openWorkspace: Effect.fn("DesktopAppActivation.openWorkspace")(function* (workspaceRoot) {
+      if (!(yield* desktopSettings.get).localEnvironmentEnabled) {
+        yield* electronDialog.showErrorBox(
+          "Could not open folder",
+          "Turn on the local environment in Settings to open folders in T3 Code.",
+        );
+        return;
+      }
       const response = yield* Effect.promise(() =>
         broker.request(
           {
@@ -403,11 +414,11 @@ export const make = Effect.gen(function* () {
             // Only macOS delivers open-file.
             platform: "darwin",
           },
-          { waitForRenderer: true },
+          OPEN_WORKSPACE_TIMEOUT_MS,
         ),
       );
       if (response.ok) return;
-      yield* logWarning("failed to open a workspace", { code: response.code, workspaceRoot });
+      yield* logWarning("failed to open a workspace", { code: response.code });
       // Quitting settles queued requests this way, and an error box would block shutdown.
       if (response.code === "renderer-unavailable") return;
       yield* electronDialog.showErrorBox("Could not open folder", response.message);

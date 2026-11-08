@@ -1,4 +1,6 @@
 import { createClerkBridge } from "@clerk/electron";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Clerk only gets the no-op pre-ready FileSystem, and open-file can fire before ready.
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 import { storage } from "@clerk/electron/storage";
 import * as Context from "effect/Context";
@@ -242,7 +244,8 @@ export const make = Effect.gen(function* () {
       for (const url of pendingOpenUrls.splice(0)) handleOpenUrl(url);
       handleOpenFile = (path) => {
         void runPromise(
-          DesktopWebLinks.isWebPageFile(path)
+          DesktopWebLinks.isWebPageFile(path) &&
+            !NodeFS.statSync(path, { throwIfNoEntry: false })?.isDirectory()
             ? webLinks.receive(NodeURL.pathToFileURL(path).href)
             : appActivation.openWorkspace(path),
         );
