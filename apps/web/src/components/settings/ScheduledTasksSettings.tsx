@@ -93,12 +93,11 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
+import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destination";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
-  moveDraftToThread,
   scheduleDraftErrors,
-  scheduledTaskDestinationThreads,
   toDateTimeLocalValue,
   webhookDeliveryLabel,
   defaultScheduledTaskProjectId,
@@ -153,9 +152,6 @@ import {
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
-
-// Thread ids are trimmed, so the leading space keeps this from matching one.
-const NEW_THREAD_DESTINATION = " new-thread";
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
@@ -1212,7 +1208,7 @@ function ScheduledTaskDestination({
   readonly threadId: ThreadId | null;
   readonly threadMode: ScheduledTaskThreadMode;
   readonly disabled: boolean;
-  readonly onSelect: (thread: { id: ThreadId; projectId: ProjectId } | null) => void;
+  readonly onSelect: (threadId: ThreadId) => void;
   /** Absent on servers that predate thread modes. */
   readonly onThreadModeChange: ((mode: ScheduledTaskThreadMode) => void) | undefined;
 }) {
@@ -1226,11 +1222,7 @@ function ScheduledTaskDestination({
   );
   const thread = shell ?? family.data?.threads.find((row) => row.id === threadId);
   const currentLabel =
-    ref !== null
-      ? thread?.title.trim() || `Thread ${ref.threadId}`
-      : threadMode === "new_thread"
-        ? "New thread each run"
-        : "Started by the first run";
+    ref !== null ? thread?.title.trim() || `Thread ${ref.threadId}` : "Started by the first run";
   const shells = useVisibleThreadShells(open);
   // Mounts older settled threads matching the query, which shells may leave out.
   useThreadSearch(open && projectId ? [environmentId] : [], query, {
@@ -1243,10 +1235,11 @@ function ScheduledTaskDestination({
     currentThreadId: threadId,
     query,
   });
-  const search = query.trim().toLocaleLowerCase();
-  const items: ReadonlyArray<string> = [
-    ...(search ? [] : [NEW_THREAD_DESTINATION]),
-    ...(threadId !== null && currentLabel.toLocaleLowerCase().includes(search) ? [threadId] : []),
+  const items: ReadonlyArray<ThreadId> = [
+    ...(threadId !== null &&
+    currentLabel.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+      ? [threadId]
+      : []),
     ...threads.map((row) => row.id),
   ];
   const handleOpenChange = (next: boolean) => {
@@ -1282,7 +1275,7 @@ function ScheduledTaskDestination({
           </SelectPopup>
         </Select>
       ) : null}
-      {!onThreadModeChange || threadMode !== "new_thread" ? (
+      {threadMode !== "new_thread" ? (
         <Combobox
           items={items}
           filteredItems={items}
@@ -1290,15 +1283,9 @@ function ScheduledTaskDestination({
           autoHighlight
           open={open && !disabled}
           onOpenChange={handleOpenChange}
-          value={threadId ?? (threadMode === "new_thread" ? NEW_THREAD_DESTINATION : null)}
+          value={threadId}
           onValueChange={(value) => {
-            if (value === NEW_THREAD_DESTINATION) {
-              onSelect(null);
-              handleOpenChange(false);
-              return;
-            }
-            const picked = threads.find((row) => row.id === value);
-            if (picked) onSelect(picked);
+            if (value !== null && value !== threadId) onSelect(value);
             handleOpenChange(false);
           }}
         >
@@ -1329,11 +1316,9 @@ function ScheduledTaskDestination({
               {items.map((value, index) => (
                 <ComboboxItem key={value} index={index} value={value}>
                   <span className="block truncate">
-                    {value === NEW_THREAD_DESTINATION
-                      ? "New thread each run"
-                      : value === threadId
-                        ? currentLabel
-                        : threads.find((row) => row.id === value)?.title || "Untitled thread"}
+                    {value === threadId
+                      ? currentLabel
+                      : threads.find((row) => row.id === value)?.title || "Untitled thread"}
                   </span>
                 </ComboboxItem>
               ))}
@@ -1666,13 +1651,7 @@ function ScheduledTaskEditorForm({
             threadId={draft.threadId ? (draft.threadId as ThreadId) : null}
             threadMode={draft.threadMode}
             disabled={saving || !connected}
-            onSelect={(thread) =>
-              setDraft((current) =>
-                thread === null
-                  ? { ...unbindDraftFromThread(current), threadMode: "new_thread" }
-                  : moveDraftToThread(current, thread),
-              )
-            }
+            onSelect={(threadId) => setDraft((current) => ({ ...current, threadId }))}
             onThreadModeChange={
               offersThreadModes
                 ? (threadMode) =>

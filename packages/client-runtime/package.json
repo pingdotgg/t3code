@@ -79,6 +79,10 @@
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
     },
+    "./scheduled-task-destination": {
+      "types": "./src/scheduledTaskDestination.ts",
+      "default": "./src/scheduledTaskDestination.ts"
+    },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
       "default": "./src/scheduledTaskWebhook.ts"

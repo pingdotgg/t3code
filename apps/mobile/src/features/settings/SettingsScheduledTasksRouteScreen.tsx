@@ -908,53 +908,51 @@ function TaskForm({
           />
         </SettingsSection>
 
-        <SettingsSection
-          title="Destination"
-          footer={
-            draft.threadMode === "new_thread"
-              ? "Each run starts a new thread."
-              : `${
-                  draft.threadMode === "continue"
-                    ? "Runs continue one conversation."
-                    : "Runs share one thread, each in a fresh session without earlier runs' context."
-                }${
-                  draft.threadId === null ? " The first run starts the thread." : ""
-                } Deleting it also deletes this task.`
-          }
-        >
-          {offersThreadModes ? (
-            <SelectRow
-              label="Runs go to"
-              value={THREAD_MODE_LABELS[draft.threadMode]}
-              actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
-                (mode) => ({
-                  id: mode,
-                  title: THREAD_MODE_LABELS[mode],
-                  state: draft.threadMode === mode ? "on" : undefined,
-                }),
-              )}
-              onSelect={(id) => {
-                if (id === "new_thread")
-                  setDraft({ ...unbindDraftFromThread(draft), threadMode: id });
-                else if (id === "continue" || id === "fresh_session")
-                  setDraft({ ...draft, threadMode: id });
-              }}
-            />
-          ) : null}
-          {!offersThreadModes || draft.threadMode !== "new_thread" ? (
-            <PickerRow
-              label="Thread"
-              borderTop={offersThreadModes}
-              value={
-                draft.threadId === null && draft.threadMode !== "new_thread"
-                  ? "Started by the first run"
-                  : destinationLabel
-              }
-              onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
-              disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
-            />
-          ) : null}
-        </SettingsSection>
+        {offersThreadModes || draft.threadMode !== "new_thread" ? (
+          <SettingsSection
+            title="Destination"
+            footer={
+              draft.threadMode === "new_thread"
+                ? "Each run starts a new thread."
+                : `${
+                    draft.threadMode === "continue"
+                      ? "Runs continue one conversation."
+                      : "Runs share one thread, each in a fresh session without earlier runs' context."
+                  }${
+                    draft.threadId === null ? " The first run starts the thread." : ""
+                  } Deleting it also deletes this task.`
+            }
+          >
+            {offersThreadModes ? (
+              <SelectRow
+                label="Runs go to"
+                value={THREAD_MODE_LABELS[draft.threadMode]}
+                actions={(Object.keys(THREAD_MODE_LABELS) as ScheduledTaskThreadMode[]).map(
+                  (mode) => ({
+                    id: mode,
+                    title: THREAD_MODE_LABELS[mode],
+                    state: draft.threadMode === mode ? "on" : undefined,
+                  }),
+                )}
+                onSelect={(id) => {
+                  if (id === "new_thread")
+                    setDraft({ ...unbindDraftFromThread(draft), threadMode: id });
+                  else if (id === "continue" || id === "fresh_session")
+                    setDraft({ ...draft, threadMode: id });
+                }}
+              />
+            ) : null}
+            {draft.threadMode !== "new_thread" ? (
+              <PickerRow
+                label="Thread"
+                borderTop={offersThreadModes}
+                value={destinationLabel}
+                onPress={() => navigation.navigate("SettingsScheduledTaskThread")}
+                disabled={!draft.projectId || saving || dictationPending || environmentUnavailable}
+              />
+            ) : null}
+          </SettingsSection>
+        ) : null}
 
         <SettingsSection title="Workspace">
           <SelectRow

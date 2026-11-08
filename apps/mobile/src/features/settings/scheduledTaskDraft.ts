@@ -254,18 +254,6 @@ export function hasScheduledTaskDraftChanges(
   return draftSignature(initial) !== draftSignature(current);
 }
 
-export function moveDraftToThread(
-  draft: ScheduledTaskDraft,
-  thread: { readonly id: ThreadId; readonly projectId: ProjectId },
-): ScheduledTaskDraft {
-  return {
-    ...draft,
-    threadId: thread.id,
-    projectId: thread.projectId,
-    threadMode: draft.threadMode === "new_thread" ? "continue" : draft.threadMode,
-  };
-}
-
 /** Leaves the thread but keeps the mode. Matches MCP: new threads stay out of the shared checkout. */
 export function unbindDraftFromThread(draft: ScheduledTaskDraft): ScheduledTaskDraft {
   if (draft.threadId === null) return draft;
