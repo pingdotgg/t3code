@@ -55,6 +55,7 @@ import {
 } from "@t3tools/contracts";
 import { mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -10741,6 +10742,188 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* changes.until(() => continuationRequests.length === 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  const openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame = Effect.fnUntraced(function* (
+    name: string,
+  ) {
+    const changes = yield* makeChangeSignal;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: `t3-claude-v2-${name}-`,
+    });
+    const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+    const deadStreamEnded = yield* Deferred.make<void>();
+    let opened = 0;
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir,
+      // startTurn reads the auto-compact window from settings between opening the query and
+      // attaching the turn; holding that read until the CLI's stream has ended pins the race.
+      fileSystem: {
+        ...fileSystem,
+        readFileString: (filePath, encoding) =>
+          opened === 1 && filePath.endsWith("settings.json")
+            ? Deferred.await(deadStreamEnded).pipe(
+                Effect.andThen(fileSystem.readFileString(filePath, encoding)),
+              )
+            : fileSystem.readFileString(filePath, encoding),
+      },
+      path: yield* Path.Path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator,
+      continuationRequests: { offer: () => Effect.void },
+      queryRunner: {
+        allocateSessionId: Effect.succeed(`native-${name}`),
+        open: () =>
+          Effect.gen(function* () {
+            opened += 1;
+            const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+            return {
+              // The first CLI exits without writing a frame.
+              messages:
+                opened === 1
+                  ? Stream.empty.pipe(Stream.ensuring(Deferred.succeed(deadStreamEnded, undefined)))
+                  : Stream.fromQueue(sdkMessages),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              mcpServerStatus: Effect.succeed([]),
+              readMcpResource: () => Effect.die("unexpected MCP resource read"),
+              callMcpTool: () => Effect.die("unexpected MCP tool call"),
+              listPermissionRules: Effect.die("unexpected permission rules read"),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Queue.shutdown(sdkMessages),
+            };
+          }),
+        forkSession: () => Effect.die("unused forkSession"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make(`thread-${name}`);
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-${name}`),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    yield* runtime.events.pipe(
+      Stream.runForEach((event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }).pipe(Effect.andThen(changes.notify)),
+      ),
+      Effect.forkScoped,
+    );
+    const now = yield* DateTime.now;
+    const turnInput = (attempt: string, providerTurnOrdinal: number) =>
+      makeClaudeTestTurnInput({
+        threadId,
+        providerThread,
+        now,
+        attemptId: RunAttemptId.make(`attempt-${name}-${attempt}`),
+        text: "Continue with the plan.",
+        attachments: [],
+        providerTurnOrdinal,
+      });
+    const providerTurnId = (attempt: string) =>
+      idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:attempt-${name}-${attempt}`,
+      });
+    const terminalOf = (turnId: ProviderTurnId) =>
+      events.find((event) => event.type === "turn.terminal" && event.providerTurnId === turnId);
+    return { changes, runtime, providerThread, turnInput, providerTurnId, terminalOf };
+  });
+
+  it.effect("fails a turn whose Claude query ends before its first frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-dies-before-frame",
+        );
+        const turnId = harness.providerTurnId("a");
+
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        const followUp = yield* harness.runtime
+          .startTurn(harness.turnInput("b", 2))
+          .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isSuccess(followUp),
+          `the turn whose query ended before its first frame is still active: ${
+            Exit.isFailure(followUp) ? Cause.pretty(followUp.cause) : ""
+          }`,
+        );
+        if (Exit.isSuccess(started)) {
+          yield* harness.changes.until(() => harness.terminalOf(turnId) !== undefined);
+          const terminal = harness.terminalOf(turnId);
+          assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("Stop ends a turn whose Claude query ended before its first frame", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* openAdapterWhoseFirstQueryEndsBeforeItsFirstFrame(
+          "claude-query-dies-before-frame-stop",
+        );
+        const turnId = harness.providerTurnId("a");
+
+        const started = yield* harness.runtime
+          .startTurn(harness.turnInput("a", 1))
+          .pipe(Effect.exit);
+        if (Exit.isFailure(started)) return;
+        const stop = yield* harness.runtime
+          .interruptTurn({ providerThread: harness.providerThread, providerTurnId: turnId })
+          .pipe(Effect.exit);
+        assert.isTrue(
+          Exit.isSuccess(stop),
+          `Stop on the turn whose query ended before its first frame failed: ${
+            Exit.isFailure(stop) ? Cause.pretty(stop.cause) : ""
+          }`,
+        );
+        yield* harness.changes.until(() => harness.terminalOf(turnId) !== undefined);
+        const terminal = harness.terminalOf(turnId);
+        assert.include(
+          ["interrupted", "failed"],
+          terminal?.type === "turn.terminal" ? terminal.status : undefined,
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
