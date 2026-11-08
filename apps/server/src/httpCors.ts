@@ -7,6 +7,8 @@ export const browserApiCorsAllowedHeaders = [
   "traceparent",
   "content-type",
   "dpop",
+  "mcp-session-id",
+  "mcp-protocol-version",
   ORCHESTRATION_PROTOCOL_HEADER,
 ] as const;
 
