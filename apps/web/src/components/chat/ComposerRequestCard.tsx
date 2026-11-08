@@ -40,7 +40,7 @@ function Header({
     props: mergeProps<"div">(
       {
         className:
-          "flex min-h-8 w-full min-w-0 items-center gap-2 px-2.5 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
+          "flex min-h-8 w-full min-w-0 items-center gap-2 ps-2.5 pe-3.25 text-start [button&]:cursor-pointer [button&]:rounded-control [button&]:outline-none [button&]:focus-visible:outline-2 [button&]:focus-visible:-outline-offset-2 [button&]:focus-visible:outline-ring",
         children: (
           <>
             <span aria-hidden className="flex shrink-0 items-center [&>svg]:size-[13px]">
@@ -85,7 +85,7 @@ function Well({
   ...props
 }: Omit<ComponentProps<"div">, "className" | "style"> & { density?: "default" | "options" }) {
   return (
-    <div className="px-1.5">
+    <div className="ps-2.5 pe-3.25">
       <div
         className={cn(
           "flex min-w-0 flex-col rounded-control surface-well",
@@ -100,7 +100,7 @@ function Well({
 function Footer(props: Omit<ComponentProps<"div">, "className" | "style">) {
   return (
     <div
-      className="flex min-w-0 flex-wrap items-center justify-end gap-2 py-1.5 ps-2.5 pe-1.5"
+      className="flex min-w-0 flex-wrap items-center justify-end gap-2 py-1.5 ps-2.5 pe-3.25"
       {...props}
     />
   );
