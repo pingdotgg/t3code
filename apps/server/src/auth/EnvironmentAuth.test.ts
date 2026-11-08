@@ -137,10 +137,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         >[0];
 
         const authenticated = yield* serverAuth.authenticateHttpRequest(request);
+        // HTTPS can't expire a plain http:// session cookie, so the HTTPS dev session must outrank it.
+        const overHttps = yield* serverAuth.authenticateHttpRequest({
+          cookies: {
+            [sessions.cookieName]: scopedExchange.sessionToken,
+            [`__Secure-${devExchange.cookieName}`]: devExchange.sessionToken,
+          },
+          headers: {},
+        } as never);
         expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
         expect(devExchange.expireNormalCookie).toBe(true);
         expect(devExchange.response).toMatchObject(authScopeResponse(AuthStandardClientScopes));
         expect(authenticated.scopes).toEqual(["orchestration:read"]);
+        expect(overHttps.scopes).toEqual(AuthStandardClientScopes);
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({

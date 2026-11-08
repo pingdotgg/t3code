@@ -760,16 +760,23 @@ export const make = Effect.gen(function* () {
       sessions.legacyCookieName,
     );
     const hasAuthorization = request.headers.authorization !== undefined;
-    const devCookieToken = devAuth
-      ? (request.cookies[secureCookieName(devAuth.cookieName)] ??
-        request.cookies[devAuth.cookieName])
+    const secureDevCookieToken = devAuth
+      ? request.cookies[secureCookieName(devAuth.cookieName)]
       : undefined;
-    return (
-      selectedCredential ??
-      (!hasAuthorization && devCookieToken !== undefined
+    const devCookieToken =
+      secureDevCookieToken ?? (devAuth ? request.cookies[devAuth.cookieName] : undefined);
+    const devCredential =
+      !hasAuthorization && devCookieToken !== undefined
         ? { token: devCookieToken, source: "dev-cookie" as const }
-        : undefined)
-    );
+        : undefined;
+    // HTTPS can't expire an http:// session cookie, so an HTTPS dev session outranks it.
+    const plainCookieShadowsSecureDev =
+      secureDevCookieToken !== undefined &&
+      selectedCredential?.source === "cookie" &&
+      !selectedCredential.secure;
+    return plainCookieShadowsSecureDev
+      ? (devCredential ?? selectedCredential)
+      : (selectedCredential ?? devCredential);
   };
 
   // Cookies span ports; reject cookie-authenticated requests and sockets from other same-site origins.
