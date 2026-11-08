@@ -1,4 +1,5 @@
 import * as NodeOS from "node:os";
+import * as NodeSqlite from "node:sqlite";
 
 import {
   AgentSessionScanError,
@@ -55,9 +56,19 @@ class TranscriptParseError extends Schema.TaggedError<TranscriptParseError>()(
     return `Could not parse the transcript at ${this.filePath}.`;
   }
 }
+
+class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("CodexStateReadError", {
+  databasePath: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Could not read Codex projects from ${this.databasePath}.`;
+  }
+}
 const METADATA_READ_BYTES = 8 * 1024;
 const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
+const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
 const MAX_TRANSCRIPTS_PER_SOURCE = 5000;
 
@@ -159,7 +170,9 @@ const decodeCodexHistoryBase = Schema.decodeUnknownOption(
 );
 // Original rollouts end in their thread ID, rewound ones in `<thread ID>_<rollout ID>`.
 const CODEX_ROLLOUT_ID_PATTERN =
-  /[-_]([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+  /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?\.jsonl$/i;
+// Codex records a chat's project only here; moving a chat leaves its rollout cwd unchanged.
+const CODEX_STATE_DATABASE = "state_5.sqlite";
 const decodeCodexSessionIndexEntry = Schema.decodeUnknownOption(
   Schema.fromJsonString(CodexSessionIndexEntry),
 );
@@ -224,6 +237,7 @@ interface RawCandidate {
   readonly transcripts: ReadonlyArray<{
     readonly filePath: string;
     readonly mtimeMs: number | null;
+    readonly projectRoots?: ReadonlyArray<string> | undefined;
   }>;
 }
 
@@ -233,6 +247,7 @@ interface TranscriptCandidate {
   readonly providerInstanceId: ProviderInstanceId;
   readonly homePath: string;
   readonly size: number;
+  readonly projectRoots?: ReadonlyArray<string> | undefined;
 }
 
 interface MetadataReadBudget {
@@ -1234,6 +1249,54 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const readCodexProjectRoots = Effect.fn("AgentSessionScanner.readCodexProjectRoots")(function* (
+    homePath: string,
+  ) {
+    const rootsByThread = new Map<string, Array<string>>();
+    const databasePath = path.join(homePath, CODEX_STATE_DATABASE);
+    return yield* Effect.try({
+      try: () => {
+        const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+        try {
+          database.exec("PRAGMA busy_timeout = 100");
+          const rows = database
+            .prepare(
+              `SELECT threads.id AS id, project_roots.path AS path
+               FROM threads JOIN project_roots ON project_roots.project_id = threads.project_id
+               ORDER BY threads.rowid DESC, project_roots.position LIMIT ?`,
+            )
+            .all(MAX_CODEX_PROJECT_ROOT_ROWS);
+          for (const { id, path: root } of rows) {
+            if (typeof id !== "string" || typeof root !== "string" || root.trim().length === 0) {
+              continue;
+            }
+            const roots = rootsByThread.get(id);
+            if (roots === undefined) rootsByThread.set(id, [root]);
+            else roots.push(root);
+          }
+          return rootsByThread;
+        } finally {
+          database.close();
+        }
+      },
+      catch: (cause) => new CodexStateReadError({ databasePath, cause }),
+    }).pipe(Effect.orElseSucceed((): ReadonlyMap<string, ReadonlyArray<string>> => new Map()));
+  });
+
+  // A chat inside its project, such as in a subdirectory, keeps its own cwd.
+  const projectCwd = (cwd: string, projectRoots: ReadonlyArray<string> | undefined) => {
+    if (projectRoots === undefined) return cwd;
+    const resolved = normalizeForWorktreeMatch(
+      path.resolve(expandHomePath(cwd.trim(), homeDir)),
+      foldWorktreeCase,
+    );
+    return projectRoots.some((root) =>
+      resolved.startsWith(normalizeForWorktreeMatch(path.resolve(root), foldWorktreeCase)),
+    )
+      ? cwd
+      : projectRoots[0]!;
+  };
+
   const discoverCodexTranscripts = Effect.fn("AgentSessionScanner.discoverCodexTranscripts")(
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const sessionsDir = path.join(homePath, "sessions");
@@ -1295,7 +1358,15 @@ export const make = Effect.gen(function* () {
           }
         }
       }
-      return { transcripts, truncated };
+      const projectRoots = yield* readCodexProjectRoots(homePath);
+      return {
+        transcripts: transcripts.map((transcript) => {
+          const threadId = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1];
+          const roots = threadId === undefined ? undefined : projectRoots.get(threadId);
+          return roots === undefined ? transcript : { ...transcript, projectRoots: roots };
+        }),
+        truncated,
+      };
     },
   );
 
@@ -1365,13 +1436,14 @@ export const make = Effect.gen(function* () {
         providerInstanceId: ProviderInstanceId;
         homePath: string;
         lastActiveAtMs: number;
-        transcripts: Array<{ filePath: string; mtimeMs: number }>;
+        transcripts: Array<TranscriptCandidate>;
       }
     >();
 
     for (const transcript of transcripts) {
-      const cwd = yield* readCwd(source, transcript, budget);
-      if (cwd === null || cwd === false) continue;
+      const rolloutCwd = yield* readCwd(source, transcript, budget);
+      if (rolloutCwd === null || rolloutCwd === false) continue;
+      const cwd = projectCwd(rolloutCwd, transcript.projectRoots);
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
@@ -1718,7 +1790,8 @@ export const make = Effect.gen(function* () {
           candidates.flatMap((candidate) =>
             candidate.source === "codex" && candidate.providerInstanceId === providerInstanceId
               ? candidate.transcripts.flatMap((transcript) => {
-                  const id = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1];
+                  const match = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath);
+                  const id = match?.[2] ?? match?.[1];
                   return id === undefined ? [] : [[id, transcript.filePath] as const];
                 })
               : [],
@@ -1804,7 +1877,10 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(snapshot.cwd)) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
+          const expandedCwd = expandHomePath(
+            projectCwd(snapshot.cwd.value, transcript.projectRoots).trim(),
+            homeDir,
+          );
           if (
             !path.isAbsolute(expandedCwd) ||
             (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
