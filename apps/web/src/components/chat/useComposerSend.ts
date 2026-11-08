@@ -1542,15 +1542,14 @@ export function useComposerSend(input: ComposerSendInput) {
           failureToastShown = true;
         }
       }
-      // An interrupted send shows no error, but its text still needs a way back.
-      if (copyFailedMessage && !failureToastShown) {
+      // Keeping the new draft drops the failed message, so say so even with no text to copy.
+      if (!restoresDraft && !failureToastShown) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Message not sent",
             description: "Your new draft was kept.",
-            timeout: 0,
-            actionProps: copyFailedMessage,
+            ...(copyFailedMessage ? { timeout: 0, actionProps: copyFailedMessage } : {}),
           }),
         );
       }
