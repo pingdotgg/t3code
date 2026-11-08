@@ -106,6 +106,21 @@ describe("thread links", () => {
     );
   });
 
+  it("reads an angle-bracketed destination as the labeled link, not an autolink", () => {
+    const title = titlesIn({ local: { t1: "Here" }, there: { t1: "There" } });
+    expect(
+      relabelThreadLinks(
+        "[old](<t3-thread://v2/there/t1>) and [older](<t3-thread://v2/local/t1>)",
+        local,
+        title,
+      ),
+    ).toBe("[There](t3-thread://v2/there/t1) and [Here](t3-thread://v2/local/t1)");
+    expect(
+      relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
+    ).toBe("Kept label");
+    expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
+  });
+
   it("turns a v2 link it cannot resolve into plain text, never the raw link", () => {
     expect(
       relabelThreadLinks(
