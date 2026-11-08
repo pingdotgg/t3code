@@ -43,13 +43,13 @@ const requireReply = Effect.fn("QuizHandlers.requireReply")(function* (card: Les
   }
 });
 
-const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now with no more text: no repeat of the question or options, no note that their answer will arrive; their pick, confidence and thinking arrive as their next message. Then:
+const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now, without repeating the question or options or saying their answer will arrive; their pick, confidence and thinking arrive as their next message. Then:
 - Say whether it was right, and why, in one or two lines. For a wrong pick, name the wrong idea that option stands for, so the lure is not learned.
 - Read confidence with the verdict. Right and sure: step up a level. Right but unsure: one more item at this level. Wrong and sure: a real misconception; re-teach it, then retest the same wrong idea in a new setting. Wrong and unsure, or "don't know": a gap; a short fix is enough.
 - Two right in a row with high confidence means the items are too easy: go up.`;
 
 const QUESTION_CARD_SHOWN =
-  "Shown to the learner as a card. End your turn now with no more text: no repeat of the question, no note that their answer will arrive; their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
+  "Shown to the learner as a card. End your turn now without repeating the question or saying their answer will arrive; their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
 
 const handlers = {
   quiz_card: McpToolAccess.readsAsCaller((input) =>
