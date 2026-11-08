@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
 import {
   makeClaudeCapabilitiesCacheKey,
   makeClaudeContinuationGroupKey,
@@ -120,6 +122,11 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       expect(
         (yield* mergeClaudeProcessEnvironment({ homePath }, instance, {})).CLAUDE_CODE_ARTIFACT,
       ).toBe("1");
+      const windows = yield* mergeClaudeProcessEnvironment({ homePath }, undefined, {
+        claude_code_artifact: "1",
+      }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+      expect(windows.claude_code_artifact).toBe("1");
+      expect(windows).not.toHaveProperty("CLAUDE_CODE_ARTIFACT");
     }),
   );
 });

@@ -71,10 +71,15 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
   instanceEnvironment: ProviderInstanceEnvironment | undefined,
   hostEnvironment: NodeJS.ProcessEnv,
 ) {
+  // Windows reads names without regard to case, so any spelling there is the user's choice.
+  const windows = (yield* HostProcess.Platform) === "win32";
+  const hostSetsArtifact = Object.keys(hostEnvironment).some(
+    (name) => (windows ? name.toUpperCase() : name) === "CLAUDE_CODE_ARTIFACT",
+  );
   const baseEnvironment: NodeJS.ProcessEnv = {
-    // Claude Code turns its artifact tools off by default only for SDK entrypoints, not t3-code.
-    CLAUDE_CODE_ARTIFACT: "0",
     ...hostEnvironment,
+    // Claude Code turns its artifact tools off by default only for SDK entrypoints, not t3-code.
+    ...(hostSetsArtifact ? {} : { CLAUDE_CODE_ARTIFACT: "0" }),
     CLAUDE_CODE_ENTRYPOINT: "t3-code",
   };
   for (const name of CLAUDE_HOST_SESSION_VARIABLES) delete baseEnvironment[name];
