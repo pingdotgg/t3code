@@ -63,7 +63,16 @@ describe("resolveComposerSendPresentation", () => {
     [{ isDraft: true, localCommand: "side-chat" }, "Send"],
     [
       { replyingToApproval: true, running: true, canSteer: true, localCommand: "side-chat" },
-      "Queue",
+      "Respond to approval",
+    ],
+    [
+      {
+        replyingToApproval: true,
+        running: true,
+        canSteer: true,
+        localCommand: "side-chat-unavailable",
+      },
+      "Respond to approval",
     ],
   ] as const)("does not present a local command when it will be sent as text", (input, label) => {
     expect(resolveComposerSendPresentation({ ...idle, ...input }).label).toBe(label);

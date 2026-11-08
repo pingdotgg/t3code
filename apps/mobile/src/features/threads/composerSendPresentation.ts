@@ -55,13 +55,21 @@ export function resolveComposerSendPresentation(input: {
       offersFollowUpChoice: false,
     };
   }
+  if (input.replyingToApproval && input.localCommand?.startsWith("side-chat")) {
+    return {
+      label: "Respond to approval",
+      icon: "arrow.up",
+      action: null,
+      alternate: null,
+      offersFollowUpChoice: false,
+    };
+  }
   if (
     input.localCommand !== null &&
     !(
       input.isDraft &&
       (input.localCommand === "feedback" || input.localCommand.startsWith("side-chat"))
-    ) &&
-    !(input.replyingToApproval && input.localCommand.startsWith("side-chat"))
+    )
   ) {
     return {
       label: LOCAL_COMMAND_LABEL[input.localCommand],
