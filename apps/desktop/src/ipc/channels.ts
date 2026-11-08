@@ -12,6 +12,7 @@ export const SET_APP_ICON_CHANNEL = "desktop:set-app-icon";
 export const GET_COMPUTER_USE_PERMISSIONS_CHANNEL = "desktop:get-computer-use-permissions";
 export const OPEN_COMPUTER_USE_PRIVACY_SETTINGS_CHANNEL =
   "desktop:open-computer-use-privacy-settings";
+export const INSTALL_CHROME_EXTENSION_CHANNEL = "desktop:install-chrome-extension";
 export const GET_COMPUTER_HISTORY_STATUS_CHANNEL = "desktop:get-computer-history-status";
 export const GET_COMPUTER_HISTORY_TIMELINE_CHANNEL = "desktop:get-computer-history-timeline";
 export const PATCH_COMPUTER_HISTORY_SETTINGS_CHANNEL = "desktop:patch-computer-history-settings";

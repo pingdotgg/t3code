@@ -16,6 +16,7 @@ import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as ComputerHistoryManager from "../computerHistory/ComputerHistoryManager.ts";
 import { ensureChromeNativeHostRegistered } from "../computerUse/nativeHost.ts";
+import { scheduleChromeExtensionAutoInstall } from "../computerUse/chromeExtensionSetup.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
@@ -276,6 +277,12 @@ const bootstrap = Effect.gen(function* () {
     // (in the background) so it works without a visit to Settings.
     if (decoded.desktopControl.enabled && decoded.desktopControl.browserControlEnabled) {
       void ensureChromeNativeHostRegistered();
+      // And load the extension itself into Chrome, once, so a new install
+      // needs no trip to chrome://extensions.
+      scheduleChromeExtensionAutoInstall({
+        stateDir: environment.stateDir,
+        isDevelopment: environment.isDevelopment,
+      });
     }
   });
 

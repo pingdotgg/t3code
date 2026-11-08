@@ -103,6 +103,11 @@ export function ComputerUseSettings() {
   );
   const [permState, setPermState] = useState<DesktopComputerUsePermissionsState | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
+  const [chromeInstall, setChromeInstall] = useState<{
+    readonly running: boolean;
+    readonly message: string | null;
+    readonly ok: boolean;
+  }>({ running: false, message: null, ok: false });
 
   const refreshPermissions = useCallback(async () => {
     const bridge = window.desktopBridge;
@@ -157,6 +162,26 @@ export function ComputerUseSettings() {
     }
   };
 
+  const installChromeExtension = async () => {
+    const bridge = window.desktopBridge;
+    if (!bridge?.installChromeExtension) {
+      setChromeInstall({ running: false, message: BRIDGE_UNSUPPORTED_MESSAGE, ok: false });
+      return;
+    }
+    setChromeInstall({ running: true, message: null, ok: false });
+    try {
+      const result = await bridge.installChromeExtension();
+      setChromeInstall({ running: false, message: result.detail, ok: result.ok });
+    } catch (error) {
+      setChromeInstall({
+        running: false,
+        message: error instanceof Error ? error.message : "Could not add the extension",
+        ok: false,
+      });
+    }
+    void refreshPermissions();
+  };
+
   const chromeStatus = permState?.chromeExtension;
   const needsMacPrivacy = permState?.platform === "darwin";
   const bridgeSupported = onDesktop && isBridgeSupported();
@@ -169,7 +194,7 @@ export function ComputerUseSettings() {
             <MonitorIcon className="mt-0.5 size-4 shrink-0" />
             <p>
               You are connected to a remote environment. Computer Use settings apply on the host
-              running the ${APP_DISPLAY_NAME} desktop app.
+              running the {APP_DISPLAY_NAME} desktop app.
             </p>
           </div>
         ) : null}
@@ -374,8 +399,9 @@ export function ComputerUseSettings() {
           <DialogHeader>
             <DialogTitle>Google Chrome</DialogTitle>
             <DialogDescription>
-              Load the ${APP_DISPLAY_NAME} extension so agents can open and drive tabs in a labelled
-              group without taking over your browsing.
+              Load the {APP_DISPLAY_NAME} extension so agents can open and drive tabs in a labelled
+              group without taking over your browsing. {APP_DISPLAY_NAME} can do it for you: it
+              opens Chrome and clicks through the steps below.
             </DialogDescription>
           </DialogHeader>
           <DialogPanel className="space-y-3 text-sm text-muted-foreground">
@@ -415,8 +441,28 @@ export function ComputerUseSettings() {
               </ExtensionStatus>
             ) : null}
           </DialogPanel>
+          {chromeInstall.message ? (
+            <p
+              className={
+                chromeInstall.ok
+                  ? "px-6 text-sm text-muted-foreground"
+                  : "px-6 text-sm text-destructive"
+              }
+            >
+              {chromeInstall.message}
+            </p>
+          ) : null}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>Close</DialogClose>
+            {chromeStatus?.status !== "installed" ? (
+              <Button
+                type="button"
+                disabled={chromeInstall.running}
+                onClick={() => void installChromeExtension()}
+              >
+                {chromeInstall.running ? "Adding to Chrome…" : "Add to Chrome for me"}
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogPopup>
       </Dialog>

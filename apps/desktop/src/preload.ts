@@ -251,6 +251,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_COMPUTER_USE_PERMISSIONS_CHANNEL, undefined),
   openComputerUsePrivacySettings: (pane) =>
     ipcRenderer.invoke(IpcChannels.OPEN_COMPUTER_USE_PRIVACY_SETTINGS_CHANNEL, pane),
+  installChromeExtension: () =>
+    ipcRenderer.invoke(IpcChannels.INSTALL_CHROME_EXTENSION_CHANNEL, undefined),
   getComputerHistoryStatus: () =>
     ipcRenderer.invoke(IpcChannels.GET_COMPUTER_HISTORY_STATUS_CHANNEL, undefined),
   getComputerHistoryTimeline: () =>

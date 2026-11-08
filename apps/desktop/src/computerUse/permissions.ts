@@ -175,6 +175,18 @@ function nativeHostRegisteredWindows(): boolean {
   return anyHostManifest(NodePath.join(local, MTCODE_DESKTOP_PROFILE.name));
 }
 
+/** Whether any Chrome/Chromium profile on this machine has MT Code's extension enabled. */
+export function isChromeExtensionInstalled(): boolean {
+  for (const root of chromeProfileRoots()) {
+    for (const profile of profileDirectories(root)) {
+      for (const name of ["Secure Preferences", "Preferences"]) {
+        if (chromeExtensionInstalledInPreferences(NodePath.join(profile, name))) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function resolveChromeExtensionStatus(): {
   status: DesktopChromeExtensionStatus;
   detail: string;

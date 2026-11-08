@@ -109,6 +109,8 @@ require scripts/build-desktop-artifact.ts "stageMunimComputerUse" "desktop build
 require apps/server/src/desktopControl/desktopMcpLaunch.ts "mtcodeDesktopProfileEnv" "desktop MCP launched under the MT identity profile"
 require apps/desktop/src/computerHistory/ComputerHistoryManager.ts "mtcodeDesktopProfileEnv" "Computer History daemon runs under the MT identity profile"
 require apps/desktop/src/computerUse/nativeHost.ts "install-native-host" "MT Code registers its Chrome native host"
+require apps/desktop/src/app/DesktopApp.ts "scheduleChromeExtensionAutoInstall" "MT Code loads its Chrome extension itself at launch"
+require apps/desktop/src/computerUse/chromeExtensionDriver.ts "Load unpacked" "Chrome extension setup drives chrome://extensions"
 
 # --- Computer-use desktop MCP auto-injection into agent sessions (b671c08ef lineage, 2026-08-25) ---
 # Every spawned session gets the bundled `mt-desktop` MCP server; user-defined

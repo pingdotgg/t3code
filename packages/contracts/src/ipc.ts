@@ -656,6 +656,13 @@ export const DesktopComputerUsePermissionsStateSchema = Schema.Struct({
 export type DesktopComputerUsePermissionsState =
   typeof DesktopComputerUsePermissionsStateSchema.Type;
 
+export const DesktopChromeExtensionInstallResultSchema = Schema.Struct({
+  ok: Schema.Boolean,
+  detail: Schema.String,
+});
+export type DesktopChromeExtensionInstallResult =
+  typeof DesktopChromeExtensionInstallResultSchema.Type;
+
 /**
  * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
  * PreviewTabState shape but uses serialisable primitives only.
@@ -1252,6 +1259,11 @@ export interface DesktopBridge {
    * needed so the app appears in the list.
    */
   openComputerUsePrivacySettings?: (pane: DesktopComputerUsePrivacyPane) => Promise<boolean>;
+  /**
+   * Load MT Code's extension into Chrome by driving chrome://extensions with
+   * desktop control (Developer mode, Load unpacked). Opens a Chrome window.
+   */
+  installChromeExtension?: () => Promise<DesktopChromeExtensionInstallResult>;
   /**
    * Swap the icon the running app wears. The installed bundle keeps its own
    * icon: rewriting that would break the signature, and with it every macOS
