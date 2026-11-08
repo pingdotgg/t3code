@@ -125,6 +125,10 @@ const makeTildeProviderFixtures = Effect.fn(
     directory: homePath,
     prefix: ".t3-provider-path-test-",
   });
+  yield* fileSystem.writeFileString(
+    path.join(fixtureDir, "package.json"),
+    JSON.stringify({ type: "commonjs" }),
+  );
   const codexPath = path.join(fixtureDir, "codex");
   const claudePath = path.join(fixtureDir, "claude.mjs");
   const claudeHomePath = path.join(fixtureDir, "claude-home");
