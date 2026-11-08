@@ -8,15 +8,21 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 
 // First, so the model writes the reply before the question.
 const reply = Schema.String.check(Schema.isPattern(/\S/), Schema.isMaxLength(2000)).annotate({
   description:
-    "Your words to the learner, shown as your message text just above the card; they never see your thinking. Except for an opening check or explain-back request, the reply itself must be one tight paragraph: give the verdict on the learner's last answer, if there is one, then teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check or explain-back request, the reply itself may be one short framing sentence.",
+    "Your words to the learner, shown as your message text just above the card; they never see your thinking. A short reply is refused unless purpose is set or the teaching is already in real message text above (not thinking). Except for an opening check or explain-back request, the reply itself must be one tight paragraph: give the verdict on the learner's last answer, if there is one, then teach what this card tests with its facts (rules, numbers, definitions) written out here, never just a pointer to a table or text above. For an opening check or explain-back request, set purpose and the reply itself may be one short framing sentence.",
+});
+const purpose = Schema.Literals(["opening-check", "explain-back"]).annotate({
+  description:
+    "Set only for the lesson's opening check of what the learner knows, or when asking them to explain a topic back before it is saved to their map; then the reply may be one framing sentence.",
 });
 
 export const QuizCardInput = Schema.Struct({
   reply,
+  purpose: Schema.optional(purpose),
   answer: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
   explanation: Schema.String.pipe(Schema.check(Schema.isMaxLength(1500))),
   level: Schema.Literals(["remember", "understand", "apply", "analyse"]),
@@ -35,7 +41,10 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [McpInvocationContext.McpInvocationContext],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
 })
   .annotate(Tool.Title, "Ask a quiz")
   .annotate(Tool.Readonly, true)
@@ -44,6 +53,7 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
 
 export const QuestionCardInput = Schema.Struct({
   reply,
+  purpose: Schema.optional(purpose),
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
   blanks: Schema.optional(
     Schema.Array(
@@ -78,7 +88,10 @@ const QuestionCardTool = Tool.make(QUESTION_CARD_TOOL_NAME, {
   success: Schema.Struct({ questionCard: QuestionCardInput, message: Schema.String }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
-  dependencies: [McpInvocationContext.McpInvocationContext],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+  ],
 })
   .annotate(Tool.Title, "Ask a question")
   .annotate(Tool.Readonly, true)

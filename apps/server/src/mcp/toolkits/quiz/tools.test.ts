@@ -17,9 +17,15 @@ describe("QuestionCardInput", () => {
     };
     expect(decode(blanks)).toEqual(blanks);
     expect(
-      decode({ reply: "Check.", question: "How fast?", number: { answer: 10, tolerance: 0.1 } }),
+      decode({
+        reply: "Check.",
+        purpose: "opening-check",
+        question: "How fast?",
+        number: { answer: 10, tolerance: 0.1 },
+      }),
     ).toEqual({
       reply: "Check.",
+      purpose: "opening-check",
       question: "How fast?",
       number: { answer: 10, tolerance: 0.1 },
     });
@@ -66,10 +72,13 @@ describe("QuizCardInput", () => {
 
 it("tells the model what a card's reply holds", () => {
   for (const tool of Object.values(QuizToolkit.tools)) {
-    const schema = advertisedJsonSchema(tool) as { properties: { reply: object } };
+    const schema = advertisedJsonSchema(tool) as { properties: Record<string, object> };
     expect(schema.properties.reply, tool.name).toMatchObject({
       maxLength: 2000,
       description: expect.stringContaining("teach what this card tests"),
+    });
+    expect(schema.properties.purpose, tool.name).toMatchObject({
+      description: expect.stringContaining("opening check"),
     });
   }
 });

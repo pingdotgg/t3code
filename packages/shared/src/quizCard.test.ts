@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
   answeredCardIds,
+  cardReplyProblem,
+  MIN_CARD_REPLY_CHARS,
   blankAnswerRight,
   blanksAnswerMessage,
   cardAnswerMessage,
@@ -29,6 +31,15 @@ const card: QuizCard = {
 };
 
 describe("quiz cards", () => {
+  it("requires teaching in the visible reply unless a purpose permits framing", () => {
+    expect(MIN_CARD_REPLY_CHARS).toBe(250);
+    expect(cardReplyProblem({ reply: "Short.", shownBefore: 0 })).toBeDefined();
+    expect(cardReplyProblem({ reply: "Short.", shownBefore: 250 })).toBeUndefined();
+    expect(cardReplyProblem({ reply: "x".repeat(250), shownBefore: 0 })).toBeUndefined();
+    expect(
+      cardReplyProblem({ reply: "Short.", purpose: "opening-check", shownBefore: 0 }),
+    ).toBeUndefined();
+  });
   it("reads which cards the user's messages answered", () => {
     const answer = cardAnswerMessage('Quiz answer: "High", right.', "item-2");
     expect(quizAnswerGrade(answer)).toBe("right");
