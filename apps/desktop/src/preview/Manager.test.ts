@@ -1,5 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeVM from "node:vm";
 import type {
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
@@ -2438,6 +2439,74 @@ describe("PreviewManager", () => {
         });
         yield* Effect.yieldNow;
         expect(pick.pollUnsafe()).toBeDefined();
+        expect(yield* Fiber.join(pick)).toBeNull();
+      }),
+    ),
+  );
+
+  effectIt.effect("moves keyboard focus into the preview's webview when annotation starts", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        // The app renderer's DOM: keys reach a guest only while its <webview> element has focus.
+        const cancelAnnotationButton = { tagName: "BUTTON" };
+        const document = { activeElement: cancelAnnotationButton as object };
+        const makeWebview = (id: number) => {
+          const element = {
+            tagName: "WEBVIEW",
+            isConnected: true,
+            getWebContentsId: () => id,
+            focus: () => {
+              document.activeElement = element;
+            },
+          };
+          return element;
+        };
+        const otherTabWebview = makeWebview(43);
+        const previewWebview = makeWebview(42);
+        const webviews = [otherTabWebview, previewWebview];
+        Object.assign(document, {
+          querySelector: (selector: string) => (/webview/iu.test(selector) ? webviews[0] : null),
+          querySelectorAll: (selector: string) => (/webview/iu.test(selector) ? webviews : []),
+          getElementsByTagName: (tag: string) => (/^webview$/iu.test(tag) ? webviews : []),
+        });
+        const context = NodeVM.createContext({ document });
+        const host = Object.assign(makeTestHostWebContents(), {
+          executeJavaScript: vi.fn(async (script: string) => NodeVM.runInContext(script, context)),
+          isFocused: () => true,
+          focus: vi.fn(),
+        });
+        const guest = {
+          ...makeTestPreviewWebContents(
+            async () => ({
+              toPNG: () => Buffer.from("unused"),
+              toJPEG: () => Buffer.from("unused"),
+              getSize: () => ({ width: 1, height: 1 }),
+            }),
+            42,
+            host,
+          ),
+          // Electron reports every guest of a focused window as focused.
+          isFocused: () => true,
+          focus: vi.fn(),
+          send: (channel: string, ...args: unknown[]) => {
+            webviewSend(channel, ...args);
+            // Resolve after registration finishes so focus may move before or after this send.
+            if (channel === "preview:start-pick")
+              queueMicrotask(() => Deferred.doneUnsafe(started, Effect.void));
+          },
+          once: vi.fn(),
+          ipc: { on: vi.fn(), off: vi.fn(), removeListener: vi.fn() },
+        };
+        fromId.mockReturnValue(guest as never);
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const pick = yield* manager.pickElement("tab_1").pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+
+        expect(document.activeElement).toBe(previewWebview);
+
+        yield* manager.cancelPickElement("tab_1");
         expect(yield* Fiber.join(pick)).toBeNull();
       }),
     ),
