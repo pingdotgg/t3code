@@ -1,6 +1,7 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { SidebarVariant } from "@t3tools/contracts/settings";
+import { Atom } from "effect/reactivity";
 
 import {
   hasUnseenCompletion,
@@ -227,6 +228,13 @@ export function arrangeDetailedFolder(input: {
     }
   }
   return { items, hiddenThreads: collapsed ? main.filter((thread) => !isRouteRow(thread)) : [] };
+}
+
+/** How many rows the Waiting on you list shows across every project, for the window title. */
+export function waitingOnYouCountAtom(shells: {
+  quietThreadShellsAtom: Atom.Atom<ReadonlyArray<EnvironmentThreadShell>>;
+}): Atom.Atom<number> {
+  return Atom.make((get) => threadsWaitingOnYou(get(shells.quietThreadShellsAtom), null).length);
 }
 
 /** Threads asking the user something themselves; a parent raising a worker's ask is not one. */

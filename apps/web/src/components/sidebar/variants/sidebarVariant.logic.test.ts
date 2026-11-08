@@ -1,5 +1,18 @@
+import { PrimaryConnectionTarget } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import { createEnvironmentThreadShellAtoms } from "@t3tools/client-runtime/state/threads";
+import {
+  EnvironmentId,
+  ProjectId,
+  RuntimeRequestId,
+  ThreadId,
+  type OrchestrationV2ShellSnapshot,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS, type SidebarVariant } from "@t3tools/contracts/settings";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSidebarLayout } from "./sidebarLayout";
@@ -9,6 +22,7 @@ import {
   detailedFolderShows,
   rowAttention,
   threadsWaitingOnYou,
+  waitingOnYouCountAtom,
   variantRowStyle,
   workerSummary,
   workersByParent,
@@ -247,5 +261,132 @@ describe("workers", () => {
     expect(
       threadsWaitingOnYou(threads, new Set(["environment-a:project-a"])).map((thread) => thread.id),
     ).toEqual(["w2"]);
+  });
+});
+
+describe("waitingOnYouCountAtom", () => {
+  const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+  const projectId = ProjectId.make("project-a");
+  const here = EnvironmentId.make("environment-a");
+  const there = EnvironmentId.make("environment-b");
+  const approval = {
+    id: RuntimeRequestId.make("request-a"),
+    kind: "command" as const,
+    createdAt: now,
+  };
+  const wire = (
+    id: string,
+    overrides: Partial<OrchestrationV2ThreadShell> = {},
+  ): OrchestrationV2ThreadShell => ({
+    id: ThreadId.make(id),
+    projectId,
+    title: id,
+    providerInstanceId: "codex" as OrchestrationV2ThreadShell["providerInstanceId"],
+    modelSelection: {
+      instanceId: "codex",
+      model: "gpt-5.4",
+    } as OrchestrationV2ThreadShell["modelSelection"],
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    latestRunId: null,
+    activeRunId: null,
+    status: "idle",
+    pendingRuntimeRequest: null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+    ...overrides,
+  });
+  const asking = (id: string, overrides: Partial<OrchestrationV2ThreadShell> = {}) =>
+    wire(id, { pendingRuntimeRequest: approval, ...overrides });
+  const worker = (id: string, parent: string) =>
+    asking(id, {
+      lineage: {
+        rootThreadId: ThreadId.make(parent),
+        parentThreadId: ThreadId.make(parent),
+        relationshipToParent: "subagent",
+      },
+    });
+
+  function count(
+    threads: Record<string, OrchestrationV2ThreadShell[]>,
+    options: { hiddenTags?: ReadonlyArray<string>; disabled?: EnvironmentId } = {},
+  ) {
+    const ids = Object.keys(threads).map((id) => EnvironmentId.make(id));
+    const catalogValueAtom = Atom.make({
+      isReady: true,
+      entries: new Map(
+        ids.map((id) => [
+          id,
+          {
+            target: new PrimaryConnectionTarget({
+              environmentId: id,
+              label: "Environment",
+              httpBaseUrl: "https://example.test",
+              wsBaseUrl: "wss://example.test",
+            }),
+            profile: Option.none(),
+            enabled: id !== options.disabled,
+          },
+        ]),
+      ),
+    });
+    const shells = createEnvironmentThreadShellAtoms({
+      catalogValueAtom,
+      snapshotAtom: (id) =>
+        Atom.make<OrchestrationV2ShellSnapshot | null>({
+          schemaVersion: 1,
+          snapshotSequence: 0,
+          projects: [],
+          threads: threads[id] ?? [],
+          archivedThreads: [],
+        }),
+      hiddenThreadTagsAtom: () => Atom.make(options.hiddenTags ?? null),
+    });
+    const registry = AtomRegistry.make();
+    const value = registry.get(waitingOnYouCountAtom(shells));
+    registry.dispose();
+    return value;
+  }
+
+  it("counts each thread asking you, workers on their own", () => {
+    expect(
+      count({
+        [here]: [wire("parent"), worker("worker-a", "parent"), worker("worker-b", "parent")],
+      }),
+    ).toBe(2);
+  });
+
+  it("leaves out a thread the tag filter hides", () => {
+    expect(
+      count(
+        { [here]: [asking("shown"), asking("hidden", { tags: ["later"] })] },
+        { hiddenTags: ["later"] },
+      ),
+    ).toBe(1);
+  });
+
+  it("leaves out an archived thread", () => {
+    expect(count({ [here]: [asking("open"), asking("archived", { archivedAt: now })] })).toBe(1);
+  });
+
+  it("leaves out a switched off environment", () => {
+    expect(count({ [here]: [asking("a")], [there]: [asking("b")] }, { disabled: there })).toBe(1);
   });
 });
