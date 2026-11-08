@@ -22,6 +22,7 @@ import {
   type LayoutState,
   type LayoutWorkspace,
 } from "./layoutModel";
+import { getLayoutBehavior } from "./layoutBehavior";
 import { saveLayoutNow, useLayoutStore } from "./layoutStore";
 
 /** Handles fill the gap between panes (the chrome gutter), centered on the boundary. */
@@ -175,6 +176,7 @@ export function LayoutResizeHandles({
           base,
           active.columnId,
           active.value,
+          getLayoutBehavior().whenNoRoom,
           active.unitWidth,
           active.drawnUnitWidth,
         )

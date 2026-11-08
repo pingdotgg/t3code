@@ -475,7 +475,15 @@ export const useLayoutStore = create<LayoutStoreState>()(
         focusAdjacentTab: (delta) => apply((layout) => focusAdjacentLayoutTab(layout, delta)),
         resizeColumnEdge: (columnId, width, unitWidth, drawnUnitWidth) =>
           apply(
-            (layout) => resizeLayoutColumnEdge(layout, columnId, width, unitWidth, drawnUnitWidth),
+            (layout) =>
+              resizeLayoutColumnEdge(
+                layout,
+                columnId,
+                width,
+                getLayoutBehavior().whenNoRoom,
+                unitWidth,
+                drawnUnitWidth,
+              ),
             true,
           ),
         moveTab: (tabId, destination) =>
