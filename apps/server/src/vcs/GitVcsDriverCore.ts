@@ -2446,6 +2446,30 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             });
           }
         }
+        // A conflicted multi-commit `cherry-pick --no-commit` leaves only the sequencer, and reset
+        // would clear its unmerged entries so `--continue` proceeds past them.
+        const sequencerError = new GitCommandError({
+          operation: "GitVcsDriver.commit",
+          command: "git commit",
+          cwd,
+          detail:
+            "Cannot commit selected files during a cherry-pick or revert. Commit all files, then continue the cherry-pick or revert.",
+        });
+        const gitDir = yield* runGitStdout("GitVcsDriver.commit.sequencer", cwd, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ]);
+        const isSequencing = yield* fileSystem.exists(path.join(gitDir.trim(), "sequencer")).pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                ...sequencerError,
+                detail: "Could not check whether a cherry-pick or revert is in progress.",
+                cause,
+              }),
+          ),
+        );
+        if (isSequencing) return yield* sequencerError;
         yield* runGit("GitVcsDriver.commit.reset", cwd, ["reset"]).pipe(
           Effect.catchTags({ GitCommandError: () => Effect.void }),
         );
