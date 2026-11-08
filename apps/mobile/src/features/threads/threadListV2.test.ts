@@ -1,5 +1,4 @@
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -43,6 +42,7 @@ import {
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
   sortThreadsForListV2,
+  threadListInboxReturns,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
   type ThreadListV2ListItem,
@@ -1706,7 +1706,7 @@ describe("Working section beta", () => {
   it("leaves Working immediately when the mobile tracker has no exit grace", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(NOW));
-    const tracker = createInboxReturnTracker({ graceMs: 0 });
+    const tracker = threadListInboxReturns;
     const working = makeThread({ id: ThreadId.make("grace"), title: "grace", runtime: running });
     const inactive = { ...working, runtime: null };
     const render = () =>
