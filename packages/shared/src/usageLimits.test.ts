@@ -19,8 +19,10 @@ import {
   collectLimitPools,
   elapsedShare,
   exhaustedUsageWindow,
+  meterPercent,
+  paceMarkPercent,
   paceOf,
-  paceRemainingPercent,
+  refillSpan,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
@@ -156,11 +158,39 @@ describe("new thread model fallback", () => {
 describe("pace", () => {
   it("places the clock three fifths through a five-hour window with two hours left", () => {
     expect(elapsedShare(window, now)).toBeCloseTo(0.6);
-    expect(paceRemainingPercent(window, now)).toBe(40);
+    expect(paceMarkPercent(window, now, "left")).toBe(40);
+    expect(paceMarkPercent(window, now, "used")).toBe(60);
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
   });
+});
+
+describe("usage meters", () => {
+  it.each([
+    [37.4, 37, "used"],
+    [37.4, 63, "left"],
+    [-5, 0, "used"],
+    [-5, 100, "left"],
+    [130, 100, "used"],
+    [130, 0, "left"],
+  ] as const)("shows %s%% used as %s on a %s meter", (usedPercent, expected, display) => {
+    expect(meterPercent(usedPercent, display)).toBe(expected);
+  });
+
+  it.each([
+    [70, 40, "left", { start: 60, width: 40 }],
+    [70, 40, "used", { start: 30, width: 40 }],
+    [30, 100, "left", { start: 70, width: 30 }],
+    [30, 100, "used", { start: 0, width: 30 }],
+    [0, 50, "left", null],
+    [0, 50, "used", null],
+  ] as const)(
+    "hatches the reset on a %s%% used segment refilled by %s%% on a %s meter",
+    (usedPercent, refillPercent, display, expected) => {
+      expect(refillSpan(usedPercent, refillPercent, display)).toEqual(expected);
+    },
+  );
 });
 
 describe("pools", () => {
