@@ -611,9 +611,41 @@ const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
   invalidate: () => Effect.void,
 });
 
-it.effect.each([1, 9009])(
-  "Test connection preserves Windows exit %s guidance across the wire",
-  (exitCode) =>
+it.effect.each([
+  {
+    name: "Windows exit 1",
+    exitCode: 1,
+    windowsHost: true,
+    stderr: "private SSH diagnostics",
+    reason:
+      "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+  },
+  {
+    name: "Windows exit 9009",
+    exitCode: 9009,
+    windowsHost: true,
+    stderr: "private SSH diagnostics",
+    reason:
+      "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+  },
+  {
+    name: "missing Node on a POSIX host",
+    exitCode: 1,
+    windowsHost: false,
+    stderr: "private SSH diagnostics\r\nNode is missing from the non-interactive SSH PATH\r\n",
+    reason:
+      "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+  },
+  {
+    name: "unrecognized POSIX failure",
+    exitCode: 1,
+    windowsHost: false,
+    stderr: "private SSH diagnostics",
+    reason: null,
+  },
+])(
+  "Test connection preserves $name guidance across the wire",
+  ({ exitCode, windowsHost, stderr, reason }) =>
     Effect.gen(function* () {
       const { host } = yield* fixture();
       const service = yield* DeviceService.make.pipe(
@@ -636,10 +668,14 @@ it.effect.each([1, 9009])(
                 pid: ChildProcessSpawner.ProcessId(123),
                 stdout: Stream.make(
                   new TextEncoder().encode(
-                    config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
+                    config
+                      ? "hostname 192.0.2.1\nport 22\n"
+                      : windows && windowsHost
+                        ? "Windows_NT\r\n"
+                        : "",
                   ),
                 ),
-                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
+                stderr: Stream.make(new TextEncoder().encode(stderr)),
                 all: Stream.empty,
                 exitCode: Effect.succeed(
                   ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
@@ -656,19 +692,19 @@ it.effect.each([1, 9009])(
         ),
       );
       const error = yield* service
-        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
+        .testHost({ kind: "ssh", id: "remote", label: "SSH test", target: "remote.test" })
         .pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeviceHostUnavailableError",
-        hostId: "windows",
-        hostLabel: "Windows test",
-        reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      });
+      expect(error).toMatchObject(
+        reason === null
+          ? { _tag: "DeviceOperationError", operation: "probe host", reason: "request_failed" }
+          : { _tag: "DeviceHostUnavailableError", hostId: "remote", hostLabel: "SSH test", reason },
+      );
       const codec = Schema.fromJsonString(DeviceError);
       const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
       expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        reason === null
+          ? "Device probe host failed: Could not communicate with device support. Try refreshing devices."
+          : `SSH test is unavailable: ${reason}`,
       );
       expect(decoded.message).not.toContain("private SSH diagnostics");
     }).pipe(

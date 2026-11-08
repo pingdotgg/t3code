@@ -84,6 +84,13 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const isSshCommandError = Schema.is(SshCommandError);
 
+const isSshNodeMissing = (cause: unknown) =>
+  isSshCommandError(cause) &&
+  cause.exitCode === 1 &&
+  cause.stderr
+    .split(/\r?\n/u)
+    .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH");
+
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
   const cause = windows ? windows.cause : error.cause;
@@ -96,12 +103,7 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
     return "Could not connect to this host over SSH.";
 
   // Only the known bootstrap diagnostic is safe to expose as Node guidance.
-  if (
-    cause.exitCode === 1 &&
-    cause.stderr
-      .split(/\r?\n/u)
-      .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
-  )
+  if (isSshNodeMissing(cause))
     return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
   if (windows) return windows.message;
 
@@ -1389,7 +1391,8 @@ export const make = Effect.gen(function* () {
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
         Effect.mapError((error) =>
-          error._tag === "DeviceHostError" && SshDeviceHost.isSshWindowsHostError(error.cause)
+          error._tag === "DeviceHostError" &&
+          (SshDeviceHost.isSshWindowsHostError(error.cause) || isSshNodeMissing(error.cause))
             ? new DeviceHostUnavailableError({
                 hostId: host.id,
                 hostLabel: host.label,
