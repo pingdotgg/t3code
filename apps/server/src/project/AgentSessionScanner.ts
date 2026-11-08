@@ -36,6 +36,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { OmpSettings } from "@t3tools/provider-omp/settings";
 import { resolveOmpSessionsDir } from "@t3tools/provider-omp/server/usage";
 import { resolvePiSessionsDir } from "@t3tools/provider-pi/server/usage";
 import * as ServerSettings from "../serverSettings.ts";
@@ -144,6 +145,7 @@ const CodexSessionIndexEntry = Schema.Struct({
 });
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
+const decodeOmpSettings = Schema.decodeUnknownOption(OmpSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
 const decodeTranscriptRecord = Schema.decodeUnknownOption(Schema.fromJsonString(TranscriptRecord));
 const decodeTranscriptValue = Schema.decodeUnknownOption(TranscriptRecord);
@@ -1453,11 +1455,13 @@ export const make = Effect.gen(function* () {
             instance.environment,
             hostEnvironment,
           ).pipe(Effect.provideService(HostProcess.HomeDirectory, homeDir));
-          homePath = (source === "omp" ? resolveOmpSessionsDir : resolvePiSessionsDir)(
-            environment,
-            homeDir,
-            path,
-          );
+          if (source === "omp") {
+            const config = decodeOmpSettings(instance.config ?? {});
+            if (Option.isNone(config)) continue;
+            homePath = resolveOmpSessionsDir(environment, homeDir, path, config.value.launchArgs);
+          } else {
+            homePath = resolvePiSessionsDir(environment, homeDir, path);
+          }
         } else if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;

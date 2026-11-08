@@ -13,6 +13,12 @@ import {
 } from "./mcpExtensionSource.ts";
 
 const RESERVED_OMP_LAUNCH_ARGUMENTS = new Set([
+  "--restore",
+  "--from-claude",
+  "--from-codex",
+  "--goal",
+  "--alias",
+  "--cwd",
   "--continue",
   "-c",
   "--export",
@@ -45,6 +51,7 @@ export const OMP_ARGUMENTS_WITH_VALUES = new Set([
   "-n",
   "--prompt-template",
   "--provider",
+  "--profile",
   "--session-dir",
   "--skill",
   "--system-prompt",
@@ -74,7 +81,6 @@ const OMP_ARGUMENTS_WITHOUT_VALUES = new Set([
   "--no-themes",
   "--no-tools",
   "-nt",
-  "--offline",
   "--verbose",
 ]);
 
@@ -253,9 +259,6 @@ export function buildOmpRpcLaunch(input: {
   readonly extensionPath: string | undefined;
   readonly sessionPath?: string | undefined;
   readonly ephemeral?: boolean;
-  // T3 stops these processes as soon as they answer. They run --offline because Omp's startup
-  // catalog refresh renews expired OAuth tokens, and a stop mid-request loses the rotated one.
-  readonly shortLived?: boolean;
   readonly disableExtensions?: boolean;
   readonly disableTools?: boolean;
   readonly runtimeMode?: "approval-required" | "auto-accept-edits" | "auto" | "full-access";

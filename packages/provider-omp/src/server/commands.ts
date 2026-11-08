@@ -1,11 +1,11 @@
 import { type ServerProviderSkill, type ServerProviderSlashCommand } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
-// T3 routes /compact to the dedicated RPC command.
+// Native mode arguments must reach the command dispatcher rather than become summary instructions.
 const OMP_COMPACT_SLASH_COMMAND: ServerProviderSlashCommand = {
   name: "compact",
   description: "Summarize the conversation and reduce context usage",
-  input: { hint: "Optional instructions" },
+  input: { hint: "[soft|remote|snapcompact] or instructions" },
 };
 
 export interface OmpCompactCommand {
@@ -20,13 +20,16 @@ export function parseOmpCompactCommand(text: string): OmpCompactCommand | null {
   if (rest.length === 0) return {};
   if (!/^\s/.test(rest)) return null;
   const customInstructions = rest.trim();
+  if (/^(soft|remote|snapcompact)(?:\s|$)/.test(customInstructions)) return null;
   return customInstructions.length === 0 ? {} : { customInstructions };
 }
 
 export function withOmpBuiltinSlashCommands(
   commands: ReadonlyArray<ServerProviderSlashCommand>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
-  return [OMP_COMPACT_SLASH_COMMAND, ...commands.filter((command) => command.name !== "compact")];
+  return commands.some((command) => command.name === "compact")
+    ? commands
+    : [OMP_COMPACT_SLASH_COMMAND, ...commands];
 }
 
 export interface OmpDiscoveredCommands {

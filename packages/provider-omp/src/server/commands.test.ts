@@ -1,6 +1,10 @@
 import { expect, it } from "@effect/vitest";
 
-import { parseOmpDiscoveredCommands } from "./commands.ts";
+import {
+  parseOmpDiscoveredCommands,
+  parseOmpCompactCommand,
+  withOmpBuiltinSlashCommands,
+} from "./commands.ts";
 
 it("maps current Omp skill metadata to T3's user and project skill scopes", () => {
   expect(
@@ -61,4 +65,23 @@ it("preserves OMP native command hints and exact thinking metadata", () => {
       ],
     }).slashCommands,
   ).toEqual([{ name: "switch", description: "Switch model", input: { hint: "[model]" } }]);
+});
+
+it.each([
+  "soft",
+  "remote",
+  "snapcompact",
+  "soft retain goals",
+  "remote retain goals",
+  "snapcompact retain goals",
+])("leaves native compact mode %s to the native command dispatcher", (mode) => {
+  expect(parseOmpCompactCommand(`/compact ${mode}`)).toBeNull();
+});
+it("retains custom compaction instructions and the native advertised mode hints", () => {
+  expect(parseOmpCompactCommand("/compact")).toEqual({});
+  expect(parseOmpCompactCommand("/compact retain goals")).toEqual({
+    customInstructions: "retain goals",
+  });
+  const commands = [{ name: "compact", input: { hint: "soft|remote|snapcompact" } }];
+  expect(withOmpBuiltinSlashCommands(commands)).toEqual(commands);
 });

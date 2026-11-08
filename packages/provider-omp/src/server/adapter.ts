@@ -1906,6 +1906,39 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         const state = threadState;
         const turn = state?.activeTurn ?? null;
         switch (event["type"]) {
+          case "command_output": {
+            const text = recordString(event, "text");
+            if (turn !== null && text !== undefined) {
+              yield* emitSystemNotice(
+                turn,
+                `command:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
+                text,
+              );
+            }
+            return;
+          }
+          case "config_update": {
+            const model = recordField(event, "model");
+            const provider = recordString(model, "provider");
+            const modelId = recordString(model, "id");
+            appliedModel =
+              provider !== undefined && modelId !== undefined ? `${provider}/${modelId}` : null;
+            baselineModel =
+              provider !== undefined && modelId !== undefined ? { provider, modelId } : null;
+            baselineThinking = recordString(event, "thinkingLevel") ?? null;
+            appliedThinking = baselineThinking;
+            contextWindow = rememberModelContextWindow(model);
+            if (appliedModel !== null) {
+              const updatedAt = yield* DateTime.now;
+              sessionEntity = { ...sessionEntity, model: appliedModel, updatedAt };
+              yield* emit({
+                type: "provider_session.updated",
+                driver: OMP_PROVIDER,
+                providerSession: sessionEntity,
+              });
+            }
+            return;
+          }
           case "agent_start": {
             if (
               turn === null &&
@@ -3390,7 +3423,6 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               environment: options.environment,
               mcpSession: undefined,
               extensionPath: undefined,
-              shortLived: true,
               disableExtensions: true,
               disableTools: true,
             });

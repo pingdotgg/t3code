@@ -1094,6 +1094,79 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
+    it.effect("keeps two OMP profiles assigned to their own provider instances", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const home = yield* makeTempDir("t3code-omp-profile-home-");
+        const workspace = yield* makeTempDir("t3code-omp-profile-workspace-");
+        const nowMs = Date.parse("2026-08-24T12:00:00Z");
+        yield* TestClock.setTime(nowMs);
+        for (const profile of ["work", "personal", "default"]) {
+          yield* writeTranscript({
+            filePath: path.join(
+              home,
+              ".omp",
+              ...(profile === "default" ? [] : ["profiles", profile]),
+              "agent",
+              "sessions",
+              `${profile}.jsonl`,
+            ),
+            contents: [
+              {
+                type: "session",
+                version: 3,
+                id: profile,
+                cwd: workspace,
+                timestamp: "2026-08-24T11:00:00Z",
+              },
+              { type: "model_change", id: "m", parentId: null, model: "openai/gpt-4.1-mini" },
+              {
+                type: "message",
+                id: "u",
+                parentId: "m",
+                timestamp: "2026-08-24T11:00:00Z",
+                message: { role: "user", content: [{ type: "text", text: `From ${profile}` }] },
+              },
+            ]
+              .map((record) => encodeTranscriptRecord(record))
+              .join("\n"),
+            mtimeMs: nowMs,
+          });
+        }
+        const environment = [
+          { name: "HOME", value: home, sensitive: false },
+          { name: "OMP_PROFILE", value: "personal", sensitive: false },
+          { name: "PI_CODING_AGENT_SESSION_DIR", value: "", sensitive: false },
+          { name: "XDG_DATA_HOME", value: "", sensitive: false },
+          { name: "PI_CONFIG_DIR", value: ".omp", sensitive: false },
+        ];
+        const threads = yield* runRecentThreads({
+          claudeHomePath: home,
+          codexHomePath: home,
+          workspaceRoot: workspace,
+          providerInstances: {
+            [ProviderInstanceId.make("omp-work")]: {
+              driver: ProviderDriverKind.make("omp"),
+              enabled: true,
+              environment,
+              config: { launchArgs: "--profile=work" },
+            },
+            [ProviderInstanceId.make("omp-personal")]: {
+              driver: ProviderDriverKind.make("omp"),
+              enabled: true,
+              environment,
+              config: {},
+            },
+          },
+        });
+        expect(
+          threads.map((thread) => [thread.providerInstanceId, thread.providerSessionId]).sort(),
+        ).toEqual([
+          ["omp-personal", "personal"],
+          ["omp-work", "work"],
+        ]);
+      }),
+    );
     it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

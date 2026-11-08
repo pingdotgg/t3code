@@ -1,4 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Usage directory resolution has no FileSystem service; native OMP selects existing XDG roots synchronously.
 import * as Effect from "effect/Effect";
+import * as NodeFS from "node:fs";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -142,7 +144,7 @@ export const ompUsageReader: ProviderUsageReader<OmpSettings, Path.Path> = {
       ...(launchDir !== undefined && path.isAbsolute(launchDir)
         ? [{ dir: path.resolve(launchDir) }]
         : []),
-      { dir: resolveOmpSessionsDir(environment, home, path) },
+      { dir: resolveOmpSessionsDir(environment, launchHome, path, config?.launchArgs) },
     ];
   }),
 };
@@ -165,12 +167,35 @@ export function resolveOmpSessionsDir(
   environment: NodeJS.ProcessEnv,
   home: string,
   path: Path.Path,
+  launchArgs = "",
 ): string {
+  const launchHome = environment.HOME || environment.USERPROFILE || home;
   const sessionDir = environment.PI_CODING_AGENT_SESSION_DIR?.trim();
-  if (sessionDir) return path.resolve(expandHomePath(sessionDir, home));
-  const agentDir = environment.PI_CODING_AGENT_DIR?.trim();
-  return path.resolve(
-    agentDir ? expandHomePath(agentDir, home) : path.join(home, ".omp", "agent"),
-    "sessions",
-  );
+  if (sessionDir) return path.resolve(expandHomePath(sessionDir, launchHome));
+  const resolved = resolveOmpLaunchArgs(launchArgs);
+  let profile = environment.OMP_PROFILE ?? environment.PI_PROFILE;
+  if (resolved.ok) {
+    for (let index = 0; index < resolved.args.length; index += 1) {
+      const arg = resolved.args[index];
+      if (arg === undefined || !OMP_ARGUMENTS_WITH_VALUES.has(arg)) continue;
+      index += 1;
+      if (arg === "--profile") profile = resolved.args[index];
+    }
+  }
+  profile = profile?.trim();
+  if (profile === "default") profile = undefined;
+  const configRoot = path.join(launchHome, environment.PI_CONFIG_DIR || ".omp");
+  const defaultAgentDir = profile
+    ? path.join(configRoot, "profiles", profile, "agent")
+    : path.join(configRoot, "agent");
+  // Named profiles ignore agent-dir overrides; existing XDG profile roots own session data.
+  const agentOverride = profile ? undefined : environment.PI_CODING_AGENT_DIR?.trim();
+  const agentDir = agentOverride ? expandHomePath(agentOverride, launchHome) : defaultAgentDir;
+  if (agentDir === defaultAgentDir && environment.XDG_DATA_HOME) {
+    const dataRoot = profile
+      ? path.join(environment.XDG_DATA_HOME, "omp", "profiles", profile)
+      : path.join(environment.XDG_DATA_HOME, "omp");
+    if (NodeFS.existsSync(dataRoot)) return path.join(dataRoot, "sessions");
+  }
+  return path.resolve(agentDir, "sessions");
 }

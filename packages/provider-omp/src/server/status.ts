@@ -139,7 +139,6 @@ const makeOmpDiscoveryConnection = Effect.fnUntraced(function* (
     mcpSession: undefined,
     extensionPath: undefined,
     ephemeral: true,
-    shortLived: true,
   });
   const connection = yield* makeOmpRpcConnection({
     command: ompSettings.binaryPath || "omp",

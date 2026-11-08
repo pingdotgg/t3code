@@ -219,6 +219,84 @@ const startTurn = Effect.fnUntraced(function* (
 });
 
 describe("OmpAdapterV2", () => {
+  it.effect(
+    "renders command-only output and reapplies the selected model and thinking after native config changes",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeOmp;
+        const { runtime, takeEvent } = yield* openRuntime(fake, "openai/selected");
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("openai/selected"),
+          runtimePolicy,
+        });
+        const selection = {
+          ...modelSelection("openai/selected"),
+          options: [{ id: "thinking", value: "high" }],
+        };
+        yield* startTurn(runtime, providerThread, "openai/selected", [], "/model", selection);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "command_output", text: "Current model: openai/native" });
+        const notice = yield* takeEvent(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.message === "Current model: openai/native",
+        );
+        yield* fake.emit({
+          type: "config_update",
+          model: { provider: "openai", id: "native", contextWindow: 32000 },
+          thinkingLevel: "low",
+        });
+        yield* fake.emit({
+          type: "prompt_result",
+          status: "completed",
+          agentInvoked: false,
+          sessionSettled: true,
+        });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        yield* startTurn(runtime, providerThread, "openai/selected", [], "Next", selection, 2);
+        const setModel = yield* fake.takeRequest("set_model");
+        assert.equal(setModel["modelId"], "selected");
+        const setThinking = yield* fake.takeRequest("set_thinking_level");
+        assert.equal(setThinking["level"], "high");
+        yield* fake.takeRequest("prompt");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+  it.effect("sends native compaction modes as unchanged prompt commands", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeOmp;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      let ordinal = 0;
+      for (const mode of ["soft", "remote", "snapcompact"]) {
+        yield* startTurn(
+          runtime,
+          providerThread,
+          "default",
+          [],
+          `/compact ${mode}`,
+          undefined,
+          ++ordinal,
+        );
+        const prompt = yield* fake.takeRequest("prompt");
+        assert.equal(prompt["message"], `/compact ${mode}`);
+        yield* fake.emit({
+          type: "prompt_result",
+          status: "completed",
+          agentInvoked: false,
+          sessionSettled: true,
+        });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
   it.effect("keeps background work open until OMP reports session settlement", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeOmp;
