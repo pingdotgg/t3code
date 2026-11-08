@@ -1269,7 +1269,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["for-each-ref", "--format=%(refname:strip=2)", "refs/heads/"],
       { maxOutputBytes: 16 * 1024 * 1024 },
     );
-    const branches = new Set(stdout.split("\n").filter(Boolean));
+    // Reserve case variants too: loose refs can live on case-insensitive filesystems.
+    const branches = new Set(
+      stdout
+        .split("\n")
+        .filter(Boolean)
+        .map((name) => name.toLowerCase()),
+    );
     // A branch nested under a name (`t3-fix/child`) blocks it as surely as one with the name.
     const blockedNames = new Set(branches);
     for (const branch of branches) {
@@ -1281,13 +1287,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // An ancestor ref blocks every suffix beneath it, so flatten to a sibling.
     const segments = requestedBranch.split("/");
     const blockedByParent = segments.some(
-      (_, index) => index > 0 && branches.has(segments.slice(0, index).join("/")),
+      (_, index) => index > 0 && branches.has(segments.slice(0, index).join("/").toLowerCase()),
     );
     const desiredBranch = blockedByParent ? segments.join("-") : requestedBranch;
-    if (!blockedNames.has(desiredBranch)) return desiredBranch;
+    if (!blockedNames.has(desiredBranch.toLowerCase())) return desiredBranch;
     for (let suffix = 1; suffix <= 100; suffix += 1) {
       const candidate = `${desiredBranch}-${suffix}`;
-      if (!blockedNames.has(candidate)) return candidate;
+      if (!blockedNames.has(candidate.toLowerCase())) return candidate;
     }
 
     return yield* new GitCommandError({

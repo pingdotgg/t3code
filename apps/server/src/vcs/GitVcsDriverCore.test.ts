@@ -4319,13 +4319,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("flattens a generated name when a branch at its parent path blocks it", () =>
+    it.effect.each(["t3", "T3"])("flattens a generated name when parent %s blocks it", (parent) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         // A local `t3` branch is why launches start on the flat `t3-<hex>` temporary branch.
-        yield* git(cwd, ["branch", "t3"]);
+        yield* git(cwd, ["branch", parent]);
         yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
         yield* git(cwd, ["branch", "t3-fix-login"]);
 
@@ -4340,24 +4340,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("skips a flattened name that a nested branch blocks", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* git(cwd, ["branch", "t3"]);
-        yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
-        yield* git(cwd, ["branch", "t3-fix-login/child"]);
+    it.effect.each(["t3-fix-login/child", "T3-Fix-Login/child", "T3-FIX-LOGIN"])(
+      "skips a flattened name blocked by %s",
+      (occupied) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["branch", "t3"]);
+          yield* git(cwd, ["checkout", "-b", "t3-abcd1234"]);
+          yield* git(cwd, ["branch", occupied]);
 
-        const renamed = yield* driver.renameBranch({
-          cwd,
-          oldBranch: "t3-abcd1234",
-          newBranch: "t3/fix-login",
-        });
+          const renamed = yield* driver.renameBranch({
+            cwd,
+            oldBranch: "t3-abcd1234",
+            newBranch: "t3/fix-login",
+          });
 
-        assert.equal(renamed.branch, "t3-fix-login-1");
-        assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3-fix-login-1");
-      }),
+          assert.equal(renamed.branch, "t3-fix-login-1");
+          assert.equal(yield* git(cwd, ["branch", "--show-current"]), "t3-fix-login-1");
+        }),
     );
 
     it.effect("refuses exhausted automatic suffixes without changing existing branches", () =>
@@ -4377,6 +4379,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           .renameBranch({ cwd, oldBranch: initialBranch, newBranch: "topic" })
           .pipe(Effect.result);
         assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result))
+          assert.include(result.failure.detail, "Could not find an available branch name");
         assert.equal(yield* git(cwd, ["branch", "--show-current"]), initialBranch);
         assert.equal((yield* driver.listLocalBranchNames(cwd)).length, 102);
       }),
@@ -4388,7 +4392,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         Effect.gen(function* () {
           const cwd = yield* makeTmpDir();
           const { initialBranch } = yield* initRepoWithCommit(cwd);
-          const expected = yield* git(cwd, ["rev-parse", "HEAD"]);
+          const expected = yield* git(cwd, [
+            "commit-tree",
+            "HEAD^{tree}",
+            "-m",
+            "concurrent winner",
+          ]);
           const original = yield* GitVcsDriver.GitVcsDriver;
           const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
           let claimed = false;
@@ -5036,6 +5045,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.equal(
           pathService.dirname(created.worktree.path),
           pathService.join(worktreesDirectory, pathService.basename(cwd)),
+        );
+        assert.match(
+          pathService.basename(created.worktree.path),
+          /^feature-custom-dir-[0-9a-f]{16}$/,
         );
         assert.equal(yield* fileSystem.exists(created.worktree.path), true);
 
