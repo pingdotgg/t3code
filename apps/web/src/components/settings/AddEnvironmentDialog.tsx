@@ -63,7 +63,7 @@ import {
   parseManualDesktopSshTarget,
   parsePairingUrlFields,
   parseRemotePairingFields,
-  hostUsesGatewayPath,
+  shouldUseGatewayPairPrefill,
   formatDesktopSshConnectionError,
 } from "./ConnectionsSettings.logic";
 
@@ -245,8 +245,11 @@ export function AddEnvironmentDialog({
         : gatewayPairPrefill
           ? {
               expectedEnvironmentId: gatewayPairPrefill.expectedEnvironmentId,
-              // Prefill host id must not follow a user edit to a direct URL.
-              ...(hostUsesGatewayPath(remotePairingInput.host)
+              // Prefill hop id is bound to the prefill origin; path alone is not enough.
+              ...(shouldUseGatewayPairPrefill({
+                submittedHost: remotePairingInput.host,
+                prefillHost: gatewayPairPrefill.host,
+              })
                 ? { gatewayEnvironmentId: gatewayPairPrefill.gatewayEnvironmentId }
                 : {}),
             }
