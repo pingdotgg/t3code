@@ -128,18 +128,16 @@ export function createThreadTriageOutbox<R, E>(input: {
       const logFailure =
         (message: string) =>
         <A, R2>(effect: Effect.Effect<A, ThreadTriageOutboxStorageError, R2>) =>
-          effect.pipe(
-            Effect.tapError((error) => Effect.logWarning(message, { cause: String(error.cause) })),
-          );
+          effect.pipe(Effect.tapError(() => Effect.logWarning(message, { reason: "storage" })));
       switch (operation._tag) {
         case "refresh":
           return yield* outbox.load;
         case "load":
           outbox.subscribeCleared((environmentId) => clearLocal(registry, environmentId));
           return yield* outbox.load.pipe(
-            Effect.catch((error) =>
+            Effect.catch(() =>
               Effect.logWarning("Could not load offline thread changes.", {
-                cause: String(error.cause),
+                reason: "storage",
               }).pipe(Effect.as(EMPTY_DOCUMENT)),
             ),
           );
@@ -154,7 +152,7 @@ export function createThreadTriageOutbox<R, E>(input: {
               error._tag === "ThreadTriagePendingSettleError"
                 ? Effect.void
                 : Effect.logWarning("Could not save an offline thread change.", {
-                    cause: String(error.cause),
+                    reason: "storage",
                   }),
             ),
           );
@@ -179,13 +177,13 @@ export function createThreadTriageOutbox<R, E>(input: {
     label: "environment-data:thread-triage-outbox-cancel",
     execute: Effect.fn("ThreadTriageOutbox.cancel")(function* (entry: PendingThreadTriage) {
       const outbox = yield* ThreadTriageOutboxStore;
-      return yield* outbox.cancel(entry).pipe(
-        Effect.tapError((error) =>
-          Effect.logWarning("Could not cancel an offline thread change.", {
-            cause: String(error.cause),
-          }),
-        ),
-      );
+      return yield* outbox
+        .cancel(entry)
+        .pipe(
+          Effect.tapError(() =>
+            Effect.logWarning("Could not cancel an offline thread change.", { reason: "storage" }),
+          ),
+        );
     }),
   });
 

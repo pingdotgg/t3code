@@ -753,7 +753,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const timeLabel = pendingSync ? "Waiting to sync" : props.timeLabel;
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
+  const rowAccessibilityLabel = `${thread.title}${pendingSync ? ", waiting to sync" : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
 
   const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const handleAcknowledgeWoke = useCallback(() => {

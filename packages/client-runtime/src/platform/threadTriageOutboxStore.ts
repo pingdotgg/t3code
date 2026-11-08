@@ -122,13 +122,14 @@ export function makeThreadTriageOutboxStore(storage: {
   const clearedListeners = new Set<(environmentId: EnvironmentId) => void>();
   const parse = (raw: string | null) =>
     raw === null ? Exit.succeed(EMPTY_DOCUMENT) : decodeStored(raw);
-  const discardUnreadable = (cause: unknown) =>
-    Effect.logWarning("Discarding unreadable offline thread changes.", { cause: String(cause) });
+  const discardUnreadable = Effect.logWarning("Discarding unreadable offline thread changes.", {
+    reason: "decode",
+  });
   const load = storage.read.pipe(
     Effect.flatMap((raw) =>
       Exit.match(parse(raw), {
         onSuccess: Effect.succeed,
-        onFailure: (cause) => discardUnreadable(cause).pipe(Effect.as(EMPTY_DOCUMENT)),
+        onFailure: () => discardUnreadable.pipe(Effect.as(EMPTY_DOCUMENT)),
       }),
     ),
   );
@@ -146,11 +147,7 @@ export function makeThreadTriageOutboxStore(storage: {
             const next = transform(Exit.isSuccess(parsed) ? parsed.value : EMPTY_DOCUMENT);
             return next === null ? null : encodeStored(next);
           })
-          .pipe(
-            Effect.tap(() =>
-              Exit.isFailure(parsed) ? discardUnreadable(parsed.cause) : Effect.void,
-            ),
-          );
+          .pipe(Effect.tap(() => (Exit.isFailure(parsed) ? discardUnreadable : Effect.void)));
       }).pipe(Effect.ensuring(after)),
     );
   const updateEntries = (
