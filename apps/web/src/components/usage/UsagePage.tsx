@@ -700,11 +700,7 @@ function UsageOverview({
   );
   const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
 
-  if (
-    merged.sessions === 0 &&
-    sourceMessages.length === 0 &&
-    cursorAccessEnvironments.length === 0
-  ) {
+  if (merged.sessions === 0 && sourceMessages.length === 0) {
     // A kept empty answer says nothing about the newly requested period.
     return showingKept ? (
       <UsageSkeleton />
