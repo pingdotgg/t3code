@@ -27,6 +27,19 @@ Pushing a new commit to `custom` also builds and publishes a release.
 - `custom-next`: a rebased candidate that hasn't been published yet.
 - Release versions turn MT Code's `x.y.z` into `x.y.(z×100+n)`, where `n` counts rebuilds on that release. For example, MT Code 0.1.52 becomes 0.1.5200, the next rebuild 0.1.5201, and MT Code 0.1.53 becomes 0.1.5300. Each new version sorts above the last, so the updater always offers it.
 
+## Phone app (branch `ryan/mobile-parity`)
+
+The fork's desktop features, ported to the Android app (`apps/mobile`). It is sideloaded as a separate app named "T3 Code Fork" (the `preview` variant, package `com.t3tools.t3code.preview`), so it sits beside the official app.
+
+- **Next-prompt buttons:** 2–4 buttons above the message box after a run. A reply's `options` block shows as buttons and is hidden from the reply. With the Labs "Suggest next prompt" switch on, the provider's prediction and the small model's picks show too. A tap fills the empty box and never sends.
+- **Inline pages fill the message box:** a page's button can call `t3Compose(text)` to append to that thread's draft, only after a real tap (at most 4 requests and 20,000 characters per tap). It works inline and full screen.
+- **Move to project:** a No project thread's menu can file it under an existing project.
+- **New thread button:** a setting (Settings > General) that makes New thread start a No project thread without the picker.
+- **Folded turns** show their step count, **titles shimmer** while they regenerate, and **Markdown frontmatter** shows as a table.
+- **Read aloud:** a speaker button on replies plays Microsoft Edge's natural voices. They are made by a small service on the paired PC (port 3776 over Tailscale), not by the phone, whose own voices are poor. Pick the voice in Settings > Voice. It works only over a direct (Tailscale) connection, not a relay.
+
+The phone app needs `crypto.getRandomValues`, which Hermes lacks; `apps/mobile/src/lib/cryptoPolyfill.ts` provides it.
+
 ## Repository secrets
 
 - `CLAUDE_CODE_OAUTH_TOKEN`: from `claude setup-token`, used only to resolve merge conflicts.
