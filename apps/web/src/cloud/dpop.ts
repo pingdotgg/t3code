@@ -83,7 +83,8 @@ function writeStoredBrowserDpopKey(key: BrowserDpopKey): Effect.Effect<void, Bro
     (database) =>
       Effect.callback<void, BrowserDpopError>((resume) => {
         const transaction = database.transaction(DPOP_KEY_STORE_NAME, "readwrite");
-        transaction.addEventListener("error", () =>
+        // Commit failures can fire abort without error; every failed write fires abort.
+        transaction.addEventListener("abort", () =>
           resume(
             Effect.fail(dpopError("Could not write DPoP key.", transaction.error ?? undefined)),
           ),
