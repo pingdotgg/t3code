@@ -339,6 +339,8 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
     ...write,
     input: { ...write.input, content: "<p style=background:var(--card)>" },
   };
+  const sameFixed = { ...relative, input: { ...relative.input, content: fixed.input.content } };
+  assert.deepEqual(failed(expect, run([fixed, sameFixed, render])), []);
   assert.deepEqual(failed(expect, run([fixed, relative, render])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
     "page known html_render /tmp/v.html",
