@@ -1,5 +1,6 @@
 import {
   isProviderSendTurnSupportedImageMimeType,
+  MessageId,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
@@ -212,6 +213,11 @@ export function lessonCardFromToolItem(item: {
   const output = compactDynamicToolOutput(item.output);
   if (output?.isError) return undefined;
   return toolName === QUIZ_CARD_TOOL_NAME ? output?.quizCard : output?.questionCard;
+}
+
+/** A card's `reply` is also stored as this assistant message, so side chats can anchor on it. */
+export function lessonCardReplyMessageId(cardItemId: string) {
+  return MessageId.make(`${cardItemId}:reply`);
 }
 
 export function htmlRenderFromToolItem(item: {
