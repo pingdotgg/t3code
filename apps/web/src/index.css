@@ -2576,8 +2576,13 @@ code {
 
 /* Over the artwork the composer turns to monocode's thin glass. */
 :where(:has(> [data-chat-background-active])) [data-chat-composer-stack] {
-  --glass-opacity: 45%;
-  --glass-blur: 24px;
+  --glass-opacity: 70%;
+  --glass-blur: 40px;
+}
+
+/* The theme's solid toolbar would hide the artwork behind the breadcrumb. */
+html[data-theme-id] :has(> [data-chat-background-active]) [data-chat-header] {
+  background-color: transparent;
 }
 
 /*
@@ -2598,7 +2603,7 @@ code {
   );
 }
 
-:where(:has(> [data-chat-background-active])) [data-chat-header]::before {
+:where(:has(> [data-chat-background-active="thread"])) [data-chat-header]::before {
   content: "";
   position: absolute;
   inset: 0 0 -1.5rem;

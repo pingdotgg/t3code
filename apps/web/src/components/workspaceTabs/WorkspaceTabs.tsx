@@ -106,15 +106,18 @@ export function WorkspaceTabs() {
     closeTab(key);
   };
 
+  // A project keeps one draft, so from a draft "+" asks which project to start in.
   const startNewThread = () =>
-    void startNewThreadFromContext({
-      activeDraftThread: newThreadContext.activeDraftThread,
-      activeThread: newThreadContext.activeThread ?? undefined,
-      defaultProjectRef: newThreadContext.defaultProjectRef,
-      handleNewThread: newThreadContext.handleNewThread,
-    }).then((started) => {
-      if (!started) openCommandPalette({ open: "new-thread-in" });
-    });
+    routeTarget?.kind === "draft"
+      ? openCommandPalette({ open: "new-thread-in" })
+      : void startNewThreadFromContext({
+          activeDraftThread: newThreadContext.activeDraftThread,
+          activeThread: newThreadContext.activeThread ?? undefined,
+          defaultProjectRef: newThreadContext.defaultProjectRef,
+          handleNewThread: newThreadContext.handleNewThread,
+        }).then((started) => {
+          if (!started) openCommandPalette({ open: "new-thread-in" });
+        });
 
   return (
     <nav
