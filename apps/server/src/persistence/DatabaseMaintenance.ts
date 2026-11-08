@@ -299,12 +299,15 @@ const sqliteTempDirectory = Effect.gen(function* () {
     if (directory === undefined || directory === "") continue;
     const info = yield* fs.stat(directory).pipe(Effect.option);
     if (Option.isNone(info) || info.value.type !== "Directory") continue;
-    // SQLite skips directories it cannot write to.
-    const writable = yield* fs.access(directory, { writable: true }).pipe(
+    // SQLite skips directories it cannot write to and search: osAccess(zDir, 03).
+    const usable = yield* Effect.tryPromise({
+      try: () => NodeFSP.access(directory, NodeFSP.constants.W_OK | NodeFSP.constants.X_OK),
+      catch: (cause) => new DiskSpaceCheckError({ path: directory, cause }),
+    }).pipe(
       Effect.as(true),
       Effect.orElseSucceed(() => false),
     );
-    if (writable) return directory;
+    if (usable) return directory;
   }
   return ".";
 });

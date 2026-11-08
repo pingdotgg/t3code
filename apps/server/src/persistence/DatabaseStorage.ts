@@ -211,6 +211,7 @@ const make = Effect.gen(function* () {
     }
     yield* fs.remove(reclaimFiles.failure, { force: true });
     reclaimFailure = undefined;
+    yield* publishStatus;
     const requestedAt = yield* Clock.currentTimeMillis;
     // One step: a request interrupted between them would repair on some unrelated later exit.
     yield* Effect.uninterruptible(

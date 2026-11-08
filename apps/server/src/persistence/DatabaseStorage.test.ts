@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -160,7 +162,18 @@ it.effect(
       assert.isFalse(yield* fs.exists(files.request));
 
       yield* fs.writeFileString(files.failure, "an earlier failure");
-      yield* request.pipe(Effect.provide(reclaimLayer(restart)));
+      yield* Effect.gen(function* () {
+        const storage = yield* DatabaseStorage.DatabaseStorage;
+        const shownFailure = storage.status.pipe(
+          Stream.filter((status) => status !== null),
+          Stream.runHead,
+          Effect.map((status) => Option.getOrThrow(status)?.reclaimFailure),
+        );
+        assert.equal(yield* shownFailure, "an earlier failure");
+        yield* storage.requestReclaim;
+        // The retry clears it at once, so Settings shows the restart, not the old failure.
+        assert.isUndefined(yield* shownFailure);
+      }).pipe(Effect.provide(reclaimLayer(restart)));
       assert.isTrue(yield* fs.exists(files.request));
       assert.isFalse(yield* fs.exists(files.failure));
       assert.isFalse(yield* Deferred.isDone(restarted), "the reply must go out before the restart");
