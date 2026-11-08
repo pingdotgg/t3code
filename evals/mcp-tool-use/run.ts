@@ -2163,16 +2163,19 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       transcript.push(...response.raw);
     }
     messages.push({ role: "assistant", content: response.content });
-    // T3's Claude adapter shows a second consecutive thinking block as text, as Claude 5.1+ intends.
-    const texts = response.content.flatMap((block, index) =>
-      isText(block)
-        ? [block.text]
-        : isThinking(block) &&
-            isThinking(response.content[index - 1]) &&
-            isToolUse(response.content[index + 1])
-          ? [block.thinking]
-          : [],
-    );
+    // T3's Claude adapter shows a second consecutive thinking block before a tool call as text,
+    // unless it is a card whose reply already says it.
+    const texts = response.content.flatMap((block, index) => {
+      if (isText(block)) return [block.text];
+      const next = response.content[index + 1];
+      if (!isThinking(block) || !isThinking(response.content[index - 1]) || !isToolUse(next))
+        return [];
+      const reply = isRecord(next.input) ? next.input.reply : undefined;
+      const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+      return typeof reply === "string" && words(reply).includes(words(block.thinking))
+        ? []
+        : [block.thinking];
+    });
     said.push(...texts);
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));

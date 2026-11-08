@@ -73,6 +73,8 @@ import type {
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
+import { QUESTION_CARD_TOOL_NAME, QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/quizCard";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -2069,6 +2071,15 @@ function claudeWritesUpdatesAsThinking(model: string): boolean {
   if (match === null) return false;
   const major = Number(match[1]);
   return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 1);
+}
+
+// A lesson card whose reply already says this text shows it once, as the reply (APP-102).
+function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
+  const tool = resolveT3McpToolId(block.name);
+  if (tool !== QUIZ_CARD_TOOL_NAME && tool !== QUESTION_CARD_TOOL_NAME) return false;
+  const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
+  const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+  return typeof reply === "string" && words(reply).includes(words(text));
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -9071,7 +9082,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
-                  claudeWritesUpdatesAsThinking(message.message.model)
+                  claudeWritesUpdatesAsThinking(message.message.model) &&
+                  !cardReplyRepeats(block, update.text)
                 ) {
                   yield* emitAssistantTextArtifacts({
                     context,
