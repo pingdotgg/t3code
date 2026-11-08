@@ -1623,6 +1623,171 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       );
     }),
   );
+
+  it.effect("cancelling a queued completion wake keeps its other siblings", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const now = yield* DateTime.now;
+      const key = "sibling-queued-cancel";
+      const threadId = ThreadId.make(`${key}-parent`);
+      const originRunId = RunId.make(`${key}-origin`);
+      const originRootId = NodeId.make(`${key}-origin-root`);
+      const incomingTaskId = NodeId.make(`${key}-incoming`);
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId: ProjectId.make(`${key}-project`),
+        runId: originRunId,
+        rootNodeId: originRootId,
+        taskId: incomingTaskId,
+        deliveryState: "claimed",
+        deliveryTaskIds: [incomingTaskId],
+        completionWake: "always",
+        now,
+      });
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make(`event:${key}-origin-root`),
+            type: "node.updated",
+            threadId,
+            runId: originRunId,
+            nodeId: originRootId,
+            occurredAt: now,
+            payload: {
+              id: originRootId,
+              threadId,
+              runId: originRunId,
+              parentNodeId: null,
+              rootNodeId: originRootId,
+              kind: "root_turn",
+              status: "running",
+              countsForRun: true,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: now,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make(`${key}-sibling`),
+        parentThreadId: threadId,
+        parentRunId: originRunId,
+        parentNodeId: originRootId,
+        task: "Keep working",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+      });
+      const seeded = yield* orchestrator.getThreadProjection(threadId);
+      const origin = seeded.runs.find((run) => run.id === originRunId)!;
+      const sibling = seeded.subagents.find((task) => task.id !== incomingTaskId)!;
+      // The coordinator finished its spawning turn but is busy with another run, so the wake queues.
+      yield* sink.write({
+        events: [
+          {
+            ...runEvent({ threadId, runId: originRunId, ordinal: 1, status: "completed", now }),
+            payload: { ...origin, status: "completed", completedAt: now },
+          },
+          runEvent({
+            threadId,
+            runId: RunId.make(`${key}-busy`),
+            ordinal: 2,
+            status: "running",
+            now,
+          }),
+        ],
+      });
+      const delivery = origin.delegatedCompletion!.delivery!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "server",
+        commandId: CommandId.make(`${key}-wake`),
+        threadId,
+        messageId: delivery.messageId,
+        text: "Delegated task completed",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "queue_after_active" },
+        delegatedCompletion: {
+          parentRunId: originRunId,
+          generation: delivery.generation,
+          taskIds: delivery.taskIds,
+        },
+      });
+      const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.userMessageId === delivery.messageId,
+      )!;
+      assert.equal(wake.status, "queued");
+
+      const cancelled = yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`${key}-cancel`),
+        threadId,
+        runId: wake.id,
+      });
+      const cancelDelivery = new Map(
+        cancelled.storedEvents.flatMap(({ event }) =>
+          event.type === "subagent.updated"
+            ? [[event.payload.id, event.payload.completionDelivery?.state] as const]
+            : [],
+        ),
+      );
+      assert.equal(cancelDelivery.get(incomingTaskId), "disposed");
+      assert.notEqual(
+        cancelDelivery.get(sibling.id),
+        "disposed",
+        "cancelling the wake must not dispose a still-running sibling it did not carry",
+      );
+      const afterCancel = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        afterCancel.runs.find((run) => run.id === originRunId)?.delegatedCompletion?.disposition,
+        "open",
+      );
+
+      const childRun = (yield* orchestrator.getThreadProjection(sibling.childThreadId!)).runs[0]!;
+      const afterSequence = yield* sink.latestSequence();
+      yield* sink.write({
+        events: [
+          {
+            ...runEvent({
+              threadId: sibling.childThreadId!,
+              runId: childRun.id,
+              ordinal: childRun.ordinal,
+              status: "completed",
+              now,
+            }),
+            payload: { ...childRun, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "subagent.updated" &&
+            stored.event.payload.id === sibling.id &&
+            stored.event.payload.completionDelivery?.state === "claimed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+      );
+      const successor = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === originRunId,
+      )?.delegatedCompletion?.delivery;
+      assert.deepEqual(successor?.taskIds, [sibling.id]);
+      assert.notEqual(successor?.messageId, delivery.messageId);
+    }),
+  );
 });
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
