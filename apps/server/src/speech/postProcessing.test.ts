@@ -9,12 +9,14 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as SpeechCleanupApi from "./SpeechCleanupApi.ts";
 import * as PostProcessing from "./postProcessing.ts";
 
-it.effect.each(["agent", "openai", "compatible", "anthropic", "openrouter"] as const)(
+it.effect.each(["agent", "openai", "compatible", "anthropic", "openrouter", "opencode"] as const)(
   "routes %s cleanup once, preserving the shared prompt and alias correction",
   (provider) =>
     Effect.gen(function* () {
       const api = vi.fn((_prompt: string) => Effect.succeed("hello Acme corp"));
-      const agent = vi.fn(() => Effect.succeed({ transcription: "hello Acme corp" }));
+      const agent = vi.fn((_input: TextGeneration.TranscriptionPostProcessingInput) =>
+        Effect.succeed({ transcription: "hello Acme corp" }),
+      );
       const service = yield* PostProcessing.SpeechPostProcessing.pipe(
         Effect.provide(
           PostProcessing.layer.pipe(
@@ -38,9 +40,11 @@ it.effect.each(["agent", "openai", "compatible", "anthropic", "openrouter"] as c
         },
       };
       expect(yield* service.process(input)).toEqual({ text: "hello AcmeCorp" });
-      expect(api).toHaveBeenCalledTimes(provider !== "agent" ? 1 : 0);
-      expect(agent).toHaveBeenCalledTimes(provider === "agent" ? 1 : 0);
-      if (provider !== "agent") {
+      const agentPath = provider === "agent" || provider === "opencode";
+      expect(api).toHaveBeenCalledTimes(agentPath ? 0 : 1);
+      expect(agent).toHaveBeenCalledTimes(agentPath ? 1 : 0);
+      if (provider === "opencode") expect(agent.mock.calls[0]?.[0].direct).toBe(true);
+      if (!agentPath) {
         expect(api.mock.calls[0]?.[0]).toContain(DEFAULT_SPEECH_POST_PROCESSING_PROMPT);
         expect(api.mock.calls[0]?.[0]).toContain("Deployment");
       }

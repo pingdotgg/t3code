@@ -89,6 +89,15 @@ export const getCloudSpeechModels = (prepared: PreparedConnection) =>
     run: ({ client, headers }) => client.cloudModels({ headers }),
   });
 
+export const getSpeechCleanupModels = (prepared: PreparedConnection) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "GET",
+    path: (urls) => urls.cleanupModels(),
+    run: ({ client, headers }) => client.cleanupModels({ headers }),
+  });
+
 export const requireCloudSpeechKey = (
   prepared: PreparedConnection,
   provider: CloudSpeechProvider,

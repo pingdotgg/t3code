@@ -7,18 +7,86 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { TestClock } from "effect/testing";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCode2AdapterV2Testkit from "../orchestration-v2/Adapters/OpenCode2AdapterV2.testkit.ts";
 import * as OpenCode2Server from "@t3tools/provider-opencode/server/v2/OpenCode2Server";
+import * as OpenCode2Client from "@t3tools/provider-opencode/server/v2/OpenCode2Client";
 import * as OpenCode2TextGeneration from "@t3tools/provider-opencode/server/v2/textGeneration";
 import { OPENCODE2_TITLE_GENERATION } from "./OpenCode2TextGeneration.fixture.ts";
 
 const layer = TestProviderHost.layer().pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(layer)("OpenCode2TextGeneration", (it) => {
+  it.effect("cleans through the raw endpoint with no session, tools or event subscription", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      let refused = false;
+      const transport = HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push(request.url);
+          assert.equal(request.url, "http://localhost:4096/api/experimental/generate/text");
+          assert.equal(request.method, "POST");
+          assert.equal(
+            request.headers.authorization,
+            `Basic ${Buffer.from("opencode:test-password").toString("base64")}`,
+          );
+          assert.equal(request.body._tag, "Uint8Array");
+          if (request.body._tag === "Uint8Array")
+            assert.deepEqual(JSON.parse(new TextDecoder().decode(request.body.body)), {
+              prompt: "Clean this transcript",
+              model: { providerID: "openai", id: "gpt-6-luna", variant: "low" },
+            });
+          return HttpClientResponse.fromWeb(
+            request,
+            refused
+              ? Response.json({ message: "private upstream credential" }, { status: 403 })
+              : Response.json({ data: { text: "Cleaned transcript." } }),
+          );
+        }),
+      );
+      const opencode = yield* OpenCode2Client.make.pipe(
+        Effect.provideService(HttpClient.HttpClient, transport),
+      );
+      const connection = {
+        ...(yield* opencode.connect({
+          baseUrl: "http://localhost:4096",
+          password: "test-password",
+        })),
+        url: "http://localhost:4096",
+        version: "2.0.28",
+        external: true,
+      };
+      const service = yield* OpenCode2TextGeneration.make().pipe(
+        Effect.provideService(OpenCode2Server.OpenCode2Server, {
+          withConnection: (use) => use(connection),
+        }),
+      );
+      const input = {
+        cwd: process.cwd(),
+        prompt: "Clean this transcript",
+        direct: true,
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-6-luna",
+          options: [{ id: "variant", value: "low" }],
+        },
+      };
+      assert.deepEqual(yield* service.generateTranscriptionPostProcessing(input), {
+        transcription: "Cleaned transcript.",
+      });
+      assert.lengthOf(requests, 1);
+      refused = true;
+      const error = yield* service.generateTranscriptionPostProcessing(input).pipe(Effect.flip);
+      assert.include(error.detail, "raw text generation failed");
+      assert.notInclude(error.detail, "private upstream credential");
+      assert.lengthOf(requests, 2);
+    }),
+  );
   it.effect.each([false, true] as const)(
     "generates a title in a temporary session on the free tier and removes it (external: %s)",
     (external) =>

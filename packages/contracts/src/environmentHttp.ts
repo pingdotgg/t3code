@@ -54,6 +54,7 @@ import {
   CloudSpeechKeys,
   CloudSpeechModelId,
   CloudSpeechModels,
+  SpeechCleanupModels,
   CloudSpeechProvider,
   EnvironmentSpeechAccelerationRequest,
   EnvironmentSpeechModelRequest,
@@ -782,6 +783,13 @@ export class EnvironmentVoiceBodyLimit extends HttpApiMiddleware.Service<Environ
 ) {}
 
 export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
+  .add(
+    HttpApiEndpoint.get("cleanupModels", "/api/voice/cleanup/models", {
+      headers: OptionalBearerHeaders,
+      success: SpeechCleanupModels,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
   .add(
     HttpApiEndpoint.get("cloudKeys", "/api/voice/cloud/keys", {
       headers: OptionalBearerHeaders,

@@ -61,6 +61,7 @@ import {
   SpeechModelUnloadTimeout,
   SpeechPostProcessingPromptSettings,
   SpeechPostProcessingProvider,
+  SpeechCleanupReasoning,
 } from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
@@ -1328,6 +1329,15 @@ export const ServerSettings = Schema.Struct({
   speechPostProcessingProvider: SpeechPostProcessingProvider.pipe(
     Schema.withDecodingDefault(Effect.succeed("agent")),
   ),
+  speechPostProcessingCompatiblePreset: Schema.Literals(["custom", "openrouter"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("custom")),
+  ),
+  speechPostProcessingOpenAIReasoning: Schema.NullOr(SpeechCleanupReasoning).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  speechPostProcessingAnthropicReasoning: Schema.NullOr(SpeechCleanupReasoning).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   speechPostProcessingApiEndpoints: SpeechPostProcessingApiEndpoints.pipe(
     Schema.withDecodingDefault(
       Effect.succeed(Schema.decodeSync(SpeechPostProcessingApiEndpoints)({})),
@@ -1766,6 +1776,11 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   speechPostProcessingProvider: Schema.optionalKey(SpeechPostProcessingProvider),
+  speechPostProcessingCompatiblePreset: Schema.optionalKey(
+    Schema.Literals(["custom", "openrouter"]),
+  ),
+  speechPostProcessingOpenAIReasoning: Schema.optionalKey(Schema.NullOr(SpeechCleanupReasoning)),
+  speechPostProcessingAnthropicReasoning: Schema.optionalKey(Schema.NullOr(SpeechCleanupReasoning)),
   speechPostProcessingApiEndpoints: Schema.optionalKey(
     Schema.Struct({
       compatible: Schema.optionalKey(SpeechPostProcessingApiEndpointPatch),

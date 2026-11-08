@@ -1,9 +1,26 @@
-import { SpeechPostProcessingProvider } from "@t3tools/contracts";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { getSpeechCleanupModels } from "@t3tools/client-runtime/voice-input";
+import { SpeechPostProcessingProvider, SpeechCleanupReasoning } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useState } from "react";
+import { inEnvironmentSpeechRuntime } from "../../speech/runEnvironmentSpeech";
+import { usePreparedConnection } from "../../state/session";
 import { Button } from "../ui/button";
+import {
+  Combobox,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxPopup,
+  useComboboxFilter,
+} from "../ui/combobox";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SecretInput } from "./SecretInput";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -12,105 +29,276 @@ import {
   useScopedSettingsWriteAllowed,
 } from "./useScopedSettings";
 
-const CLEANUP_PROVIDER_LABELS: Record<SpeechPostProcessingProvider, string> = {
+const LABELS: Record<SpeechPostProcessingProvider, string> = {
   agent: "Agent provider",
   openai: "OpenAI API (BYOK)",
   compatible: "OpenAI-compatible endpoint",
   anthropic: "Anthropic API",
   openrouter: "OpenRouter",
+  opencode: "OpenCode (raw generation)",
 };
+const CREDENTIALS = {
+  openai: "openaiPostProcessing",
+  compatible: "compatiblePostProcessing",
+  anthropic: "anthropicPostProcessing",
+  openrouter: "openrouterPostProcessing",
+} as const;
+type ApiProvider = keyof typeof CREDENTIALS;
 
-function CleanupApiForm({
-  provider,
-}: {
-  provider: Exclude<SpeechPostProcessingProvider, "agent">;
-}) {
+function CleanupApiForm({ provider }: { provider: ApiProvider }) {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const canManage = useScopedSettingsWriteAllowed();
+  const { environment } = useSettingsScope();
+  const prepared = Option.getOrNull(usePreparedConnection(environment?.environmentId ?? null));
   const [key, setKey] = useState("");
-  const credential = {
-    openai: "openaiPostProcessing",
-    compatible: "compatiblePostProcessing",
-    anthropic: "anthropicPostProcessing",
-    openrouter: "openrouterPostProcessing",
-  } as const;
-  const slot = credential[provider];
+  const [keyStatus, setKeyStatus] = useState<"idle" | "saving" | "failed">("idle");
+  const slot = CREDENTIALS[provider];
+  const configured = Boolean(settings.voiceApiCredentials[slot]);
   const config = provider === "openai" ? null : settings.speechPostProcessingApiEndpoints[provider];
   const model = config?.model ?? settings.speechPostProcessingOpenAIModel;
-  const label = CLEANUP_PROVIDER_LABELS[provider];
+  const label = LABELS[provider];
+  const { contains } = useComboboxFilter();
+  const canLoadModels =
+    (provider === "openai" || Boolean(config?.endpoint)) &&
+    (configured || provider === "compatible");
+  const makeRead = (connection: typeof prepared) => ({
+    connection,
+    endpoint: config?.endpoint,
+    configured,
+    atom: Atom.make(
+      connection && canLoadModels
+        ? inEnvironmentSpeechRuntime(getSpeechCleanupModels(connection))
+        : Effect.succeed(null),
+    ),
+  });
+  const [read, setRead] = useState(() => makeRead(prepared));
+  if (
+    read.connection !== prepared ||
+    read.endpoint !== config?.endpoint ||
+    read.configured !== configured
+  )
+    setRead(makeRead(prepared));
+  const catalog = useAtomValue(read.atom);
+  const refresh = useAtomRefresh(read.atom);
+  const models = AsyncResult.isSuccess(catalog) ? (catalog.value?.models ?? []) : [];
   const saveModel = (value: string) => {
     if (!value || value === model) return;
     if (provider === "openai") update({ speechPostProcessingOpenAIModel: value });
     else update({ speechPostProcessingApiEndpoints: { [provider]: { model: value } } });
   };
+  const reasoning =
+    provider === "openai"
+      ? settings.speechPostProcessingOpenAIReasoning
+      : settings.speechPostProcessingAnthropicReasoning;
+  const levels =
+    provider === "anthropic"
+      ? (models.find((entry) => entry.id === model)?.reasoningLevels ?? [
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "max",
+        ])
+      : SpeechCleanupReasoning.literals;
   return (
     <SettingsRow
       serverScoped
       settingKeys={[
-        provider === "openai"
-          ? "speechPostProcessingOpenAIModel"
-          : "speechPostProcessingApiEndpoints",
+        "speechPostProcessingOpenAIModel",
+        "speechPostProcessingApiEndpoints",
         "voiceApiCredentials",
+        "speechPostProcessingOpenAIReasoning",
+        "speechPostProcessingAnthropicReasoning",
       ]}
       title={`${label} cleanup`}
       description={
         provider === "compatible"
-          ? "Sends the transcript and nearby draft text to your Chat Completions endpoint. The API key is optional for servers that do not require one."
-          : `Sends the transcript and nearby draft text directly to ${label} without starting an agent. Each provider keeps its own key and model.`
+          ? "Sends text to your Chat Completions endpoint. The API key is optional for servers that do not require one."
+          : `Sends text directly to ${label} without starting an agent. Each endpoint keeps its own key and model.`
       }
     >
       <div className="grid gap-3 py-3">
         {config && (
+          <div className="grid gap-1.5">
+            <span className="text-sm">API base URL</span>
+            <Input
+              key={config.endpoint}
+              disabled={!canManage}
+              aria-label="Cleanup API base URL"
+              defaultValue={config.endpoint}
+              placeholder="http://127.0.0.1:1234/v1"
+              maxLength={2048}
+              onBlur={(event) => {
+                const value = event.target.value.trim();
+                if (value !== config.endpoint && provider !== "openai")
+                  update({ speechPostProcessingApiEndpoints: { [provider]: { endpoint: value } } });
+              }}
+            />
+          </div>
+        )}
+        <div className="grid gap-1.5">
+          <span className="text-sm">Model ID</span>
           <Input
-            key={config.endpoint}
+            key={model}
             disabled={!canManage}
-            aria-label="Cleanup API base URL"
-            defaultValue={config.endpoint}
-            placeholder="http://127.0.0.1:1234/v1"
-            maxLength={2048}
-            onBlur={(event) => {
-              const value = event.target.value.trim();
-              if (value !== config.endpoint && provider !== "openai")
-                update({ speechPostProcessingApiEndpoints: { [provider]: { endpoint: value } } });
+            aria-label={`${label} cleanup model`}
+            defaultValue={model}
+            placeholder="Enter a model ID or choose below"
+            maxLength={200}
+            onBlur={(event) => saveModel(event.target.value.trim())}
+          />
+          <div className="flex gap-2">
+            <div className="min-w-0 flex-1">
+              <Combobox
+                items={models}
+                value={models.find((entry) => entry.id === model) ?? null}
+                itemToStringLabel={(entry) => entry.name}
+                itemToStringValue={(entry) => entry.id}
+                filter={(entry, query) => contains(entry.name, query) || contains(entry.id, query)}
+                onValueChange={(entry) => {
+                  if (entry) saveModel(entry.id);
+                }}
+                disabled={!canManage || models.length === 0}
+              >
+                <ComboboxInput
+                  aria-label="Available cleanup models"
+                  placeholder="Search available models"
+                />
+                <ComboboxPopup>
+                  <ComboboxEmpty>No matching models.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(entry) => (
+                      <ComboboxItem key={entry.id} value={entry}>
+                        {entry.name} · {entry.id}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxPopup>
+              </Combobox>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!prepared || !canLoadModels || catalog.waiting}
+              onClick={refresh}
+            >
+              {catalog.waiting ? "Loading…" : "Refresh models"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground" role="status">
+            {AsyncResult.isFailure(catalog)
+              ? "Could not load models. Check the saved key and endpoint, or enter a model ID manually."
+              : !configured && provider !== "compatible"
+                ? "Save an API key to load available models."
+                : models.length > 0
+                  ? `${models.length} models available. You can also enter any model ID above.`
+                  : "You can enter a model ID manually if this endpoint does not list models."}
+          </p>
+        </div>
+        {(provider === "openai" || provider === "anthropic") && (
+          <div className="grid gap-1.5">
+            <span className="text-sm">Reasoning level</span>
+            <Select
+              value={reasoning ?? "default"}
+              disabled={!canManage}
+              onValueChange={(value) => {
+                const effort =
+                  value === "default"
+                    ? null
+                    : SpeechCleanupReasoning.literals.find((entry) => entry === value);
+                if (effort !== undefined)
+                  update(
+                    provider === "openai"
+                      ? { speechPostProcessingOpenAIReasoning: effort }
+                      : { speechPostProcessingAnthropicReasoning: effort },
+                  );
+              }}
+            >
+              <SelectTrigger aria-label="Cleanup reasoning level">
+                <SelectValue>{reasoning ?? "Provider default"}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="default">Provider default</SelectItem>
+                {levels.map((level) => (
+                  <SelectItem key={level} value={level}>
+                    {level}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              Supported levels depend on the model. Provider default sends no reasoning override.
+            </p>
+          </div>
+        )}
+        <div className="grid gap-1.5">
+          <span className="text-sm">API key</span>
+          <SecretInput
+            aria-label={`${label} cleanup API key`}
+            disabled={!canManage || keyStatus === "saving"}
+            configured={configured}
+            placeholder={provider === "compatible" ? "API key (optional)" : "API key"}
+            value={key}
+            onChange={(event) => {
+              setKey(event.target.value);
+              setKeyStatus("idle");
             }}
           />
-        )}
-        <Input
-          key={model}
-          disabled={!canManage}
-          aria-label={provider === "openai" ? "OpenAI cleanup model" : `${label} cleanup model`}
-          defaultValue={model}
-          placeholder={provider === "openai" ? "gpt-4.1-mini" : "Model ID"}
-          maxLength={200}
-          onBlur={(event) => saveModel(event.target.value.trim())}
-        />
-        <SecretInput
-          aria-label={`${label} cleanup API key`}
-          disabled={!canManage}
-          configured={Boolean(settings.voiceApiCredentials[slot])}
-          placeholder={provider === "compatible" ? "API key (optional)" : "API key"}
-          value={key}
-          onChange={(event) => setKey(event.target.value)}
-        />
+          <p className="text-xs text-muted-foreground" role="status">
+            {keyStatus === "saving"
+              ? "Saving API key…"
+              : keyStatus === "failed"
+                ? configured
+                  ? "Could not save the change. Your previously saved key is still in use."
+                  : "API key was not saved. Try again."
+                : key.trim()
+                  ? "New key entered. Save it to use it."
+                  : configured
+                    ? `API key saved on ${environment?.label ?? "this environment"}.`
+                    : "No API key saved for this endpoint."}
+          </p>
+        </div>
         <div className="flex gap-2">
           <Button
             size="sm"
-            disabled={!canManage || !key.trim()}
+            disabled={!canManage || !key.trim() || keyStatus === "saving"}
             onClick={() => {
-              const value = key.trim();
-              update({ voiceApiCredentials: { [slot]: value } }, { onFailed: () => setKey(value) });
-              setKey("");
+              setKeyStatus("saving");
+              update(
+                { voiceApiCredentials: { [slot]: key.trim() } },
+                {
+                  onFailed: () => setKeyStatus("failed"),
+                  onSaved: () => {
+                    setKey("");
+                    setKeyStatus("idle");
+                    refresh();
+                  },
+                },
+              );
             }}
           >
             Save API key
           </Button>
-          {settings.voiceApiCredentials[slot] && (
+          {configured && (
             <Button
               size="sm"
               variant="outline"
-              disabled={!canManage}
-              onClick={() => update({ voiceApiCredentials: { [slot]: "" } })}
+              disabled={!canManage || keyStatus === "saving"}
+              onClick={() => {
+                setKeyStatus("saving");
+                update(
+                  { voiceApiCredentials: { [slot]: "" } },
+                  {
+                    onFailed: () => setKeyStatus("failed"),
+                    onSaved: () => {
+                      setKey("");
+                      setKeyStatus("idle");
+                      refresh();
+                    },
+                  },
+                );
+              }}
             >
               Remove API key
             </Button>
@@ -125,7 +313,12 @@ export function CleanupApiSettings() {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
   const canManage = useScopedSettingsWriteAllowed();
-  const provider = settings.speechPostProcessingProvider;
+  const legacyOpenRouter = settings.speechPostProcessingProvider === "openrouter";
+  const provider = legacyOpenRouter ? "compatible" : settings.speechPostProcessingProvider;
+  const preset = legacyOpenRouter ? "openrouter" : settings.speechPostProcessingCompatiblePreset;
+  const hasOpenCode = Object.values(settings.providerInstances).some(
+    (entry) => entry.driver === "opencode",
+  );
   return (
     <>
       <SettingsRow
@@ -142,23 +335,71 @@ export function CleanupApiSettings() {
               const next = SpeechPostProcessingProvider.literals.find(
                 (candidate) => candidate === value,
               );
-              if (next) update({ speechPostProcessingProvider: next });
+              if (next)
+                update({
+                  speechPostProcessingProvider: next,
+                  ...(legacyOpenRouter
+                    ? { speechPostProcessingCompatiblePreset: "openrouter" }
+                    : {}),
+                });
             }}
           >
             <SelectTrigger size="sm" aria-label="Cleanup provider">
-              <SelectValue>{CLEANUP_PROVIDER_LABELS[provider]}</SelectValue>
+              <SelectValue>{LABELS[provider]}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end">
-              {SpeechPostProcessingProvider.literals.map((value) => (
-                <SelectItem key={value} value={value}>
-                  {CLEANUP_PROVIDER_LABELS[value]}
-                </SelectItem>
-              ))}
+              {SpeechPostProcessingProvider.literals
+                .filter(
+                  (value) =>
+                    value !== "openrouter" &&
+                    (value !== "opencode" || hasOpenCode || provider === "opencode"),
+                )
+                .map((value) => (
+                  <SelectItem key={value} value={value}>
+                    {LABELS[value]}
+                  </SelectItem>
+                ))}
             </SelectPopup>
           </Select>
         }
       />
-      {provider !== "agent" && <CleanupApiForm key={provider} provider={provider} />}
+      {provider === "compatible" && (
+        <SettingsRow
+          serverScoped
+          settingKeys={["speechPostProcessingCompatiblePreset"]}
+          title="Compatible endpoint"
+          description="OpenRouter and custom endpoints keep separate keys and models."
+          control={
+            <Select
+              value={preset}
+              disabled={!canManage}
+              onValueChange={(value) => {
+                if (value === "custom" || value === "openrouter")
+                  update({
+                    speechPostProcessingProvider: "compatible",
+                    speechPostProcessingCompatiblePreset: value,
+                  });
+              }}
+            >
+              <SelectTrigger size="sm" aria-label="Compatible endpoint preset">
+                <SelectValue>
+                  {preset === "openrouter" ? "OpenRouter" : "Custom endpoint"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="custom">Custom endpoint</SelectItem>
+                <SelectItem value="openrouter">OpenRouter</SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+      )}
+      {provider !== "agent" && provider !== "opencode" && (
+        <CleanupApiForm
+          key={`${provider}:${preset}`}
+          provider={provider === "compatible" && preset === "openrouter" ? "openrouter" : provider}
+        />
+      )}
     </>
   );
 }

@@ -161,6 +161,23 @@ export function resolveSpeechPostProcessingModelSelection(
   settings: ServerSettings,
   providers?: ReadonlyArray<ServerProvider>,
 ): ModelSelection {
+  if (settings.speechPostProcessingProvider === "opencode") {
+    const selected =
+      settings.speechPostProcessingModelSelection ?? settings.textGenerationModelSelection;
+    const isOpenCode = (id: ProviderInstanceId) =>
+      settings.providerInstances[id]?.driver === "opencode" &&
+      resolveProviderInstanceEnabled(settings.providerInstances[id]!);
+    if (isOpenCode(selected.instanceId)) return selected;
+    const instanceId = Object.keys(settings.providerInstances)
+      .map((id) => ProviderInstanceId.make(id))
+      .find(isOpenCode);
+    if (instanceId)
+      return createModelSelection(
+        instanceId,
+        defaultTextGenerationModel(ProviderDriverKind.make("opencode")),
+      );
+    return selected;
+  }
   const selection = settings.speechPostProcessingModelSelection;
   if (!selection || !isModelSelectionProviderEnabled(settings, selection)) {
     return settings.textGenerationModelSelection;

@@ -580,7 +580,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Transcript cleanup provider and API keys",
     to: "/settings/voice",
     searchTerms: [
-      "postprocessing post-processing cleanup byok openai compatible anthropic claude openrouter direct api key model agent endpoint",
+      "postprocessing post-processing cleanup byok openai compatible anthropic claude openrouter opencode direct raw generation api key saved model catalog endpoint reasoning effort",
     ],
   },
   {

@@ -124,14 +124,28 @@ transcript is inserted.
 Cleanup uses the environment's text generation model unless you pick a
 **Cleanup model** for that environment, for example a cheaper or faster one.
 For a direct API call, choose **OpenAI API (BYOK)**, **Anthropic API**,
-**OpenRouter**, or **OpenAI-compatible endpoint** under **Cleanup provider**.
-Save that provider's API key and model ID. Anthropic and OpenRouter start with
+or **OpenAI-compatible endpoint** under **Cleanup provider**. For OpenRouter,
+choose its preset inside **OpenAI-compatible endpoint**.
+Save that endpoint's API key and choose a model from its catalog, or enter a model
+ID manually. **Refresh models** reloads the catalog using the saved key.
+The key status confirms whether a key is saved on this environment; a newly typed
+key only takes effect after saving. Anthropic and OpenRouter start with
 their API base URLs filled in; a custom endpoint uses Chat Completions and needs
 its base URL, including `/v1` when required. Leave the key empty for a custom
 server that needs no authentication. Each provider keeps its own model, endpoint,
 and key when you switch. These paths send text directly without starting a coding
 agent, and keys are stored on the environment. Switch back to **Agent provider**
 to use your existing text generation provider.
+
+OpenAI and Anthropic expose a **Reasoning level** setting. **Provider default**
+omits the override; other levels must be supported by the selected model.
+Anthropic's catalog supplies the supported levels when available.
+
+If OpenCode is configured, **OpenCode (raw generation)** uses its configured
+server and credentials with a separate cleanup model choice. This calls OpenCode
+2's experimental text generation API without starting an agent session or tools.
+The server and account must support that API; it does not fall back to an agent
+when the API refuses the request. Cleanup failures preserve the raw transcript.
 
 If cleanup misses the way you correct yourself, set a **Correction cue**: the
 word or phrase you say to flag a correction, such as "scratch that". Cleanup

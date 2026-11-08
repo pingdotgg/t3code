@@ -1,4 +1,4 @@
-import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
+import { ProviderDriverKind, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -159,7 +159,15 @@ function selectOpenCodeRuntimeTextGeneration(
       }),
     generateTranscriptionPostProcessing: (input) =>
       byOpenCodeRuntime(probe.get, {
-        v1: v1.generateTranscriptionPostProcessing(input),
+        v1: input.direct
+          ? Effect.fail(
+              new TextGenerationError({
+                operation: "generateTranscriptionPostProcessing",
+                detail:
+                  "Direct transcript cleanup requires OpenCode 2. Update the configured OpenCode provider.",
+              }),
+            )
+          : v1.generateTranscriptionPostProcessing(input),
         v2: v2.generateTranscriptionPostProcessing(input),
       }),
   };

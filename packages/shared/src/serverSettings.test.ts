@@ -995,6 +995,27 @@ describe("synchronized model preferences", () => {
 });
 
 describe("resolveSpeechPostProcessingModelSelection", () => {
+  it("selects an enabled OpenCode instance for raw cleanup and preserves its model options", () => {
+    const codex = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
+    const instanceId = ProviderInstanceId.make("opencode-remote");
+    const base = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      speechPostProcessingProvider: "opencode",
+      textGenerationModelSelection: codex,
+      providerInstances: {
+        [instanceId]: { driver: ProviderDriverKind.make("opencode"), config: {}, enabled: true },
+      },
+    });
+    expect(resolveSpeechPostProcessingModelSelection(base).instanceId).toBe(instanceId);
+    const dedicated = createModelSelection(instanceId, "openai/gpt-6-luna", [
+      { id: "variant", value: "low" },
+    ]);
+    expect(
+      resolveSpeechPostProcessingModelSelection({
+        ...base,
+        speechPostProcessingModelSelection: dedicated,
+      }),
+    ).toEqual(dedicated);
+  });
   it("follows the text generation model until a usable cleanup model is set", () => {
     const textGeneration = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
     const cleanup = createModelSelection(ProviderInstanceId.make("claudeAgent"), "claude-haiku", [

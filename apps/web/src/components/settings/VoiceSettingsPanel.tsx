@@ -463,7 +463,9 @@ function CleanupModelRow() {
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
   const textGenerationProviders = providers.filter(
-    (provider) => provider.supportsTextGeneration !== false,
+    (provider) =>
+      provider.supportsTextGeneration !== false &&
+      (settings.speechPostProcessingProvider !== "opencode" || provider.driver === "opencode"),
   );
   const instanceEntries = providerInstanceEntriesFor(textGenerationProviders, settings, null);
   const hasProvider = instanceEntries.some((entry) => entry.enabled && entry.isAvailable);
@@ -501,9 +503,11 @@ function CleanupModelRow() {
       {...searchableSetting("speech-post-processing-model")}
       title="Cleanup model"
       description={
-        dedicated
-          ? `Drafts on ${environment?.label ?? "this environment"} use this model for cleanup instead of the environment’s text generation model.`
-          : `Cleanup currently uses the text generation model on ${environment?.label ?? "this environment"}. Pick another model if you want a cheaper or faster one.`
+        settings.speechPostProcessingProvider === "opencode"
+          ? "Uses OpenCode 2’s raw text generation API with this model. No agent session or tools are started. Your OpenCode account must support this API."
+          : dedicated
+            ? `Drafts on ${environment?.label ?? "this environment"} use this model for cleanup instead of the environment’s text generation model.`
+            : `Cleanup currently uses the text generation model on ${environment?.label ?? "this environment"}. Pick another model if you want a cheaper or faster one.`
       }
       resetAction={
         dedicated ? (
@@ -1190,7 +1194,9 @@ export function VoiceSettingsPanel() {
           cleanupEnabled && settingsScope !== null ? undefined : "speech-post-processing",
         "speech-post-processing-model":
           cleanupEnabled && settingsScope
-            ? settingsScope.target?.settings.speechPostProcessingProvider !== "agent"
+            ? !["agent", "opencode"].includes(
+                settingsScope.target?.settings.speechPostProcessingProvider ?? "",
+              )
               ? "speech-cleanup-provider"
               : undefined
             : "speech-post-processing",
@@ -1596,7 +1602,9 @@ export function VoiceSettingsPanel() {
         {cleanupEnabled && settingsScope !== null ? <CleanupApiSettings /> : null}
         {cleanupEnabled &&
         settingsScope !== null &&
-        settingsScope.target?.settings.speechPostProcessingProvider === "agent" ? (
+        ["agent", "opencode"].includes(
+          settingsScope.target?.settings.speechPostProcessingProvider ?? "",
+        ) ? (
           <CleanupModelRow />
         ) : null}
         {cleanupEnabled ? (

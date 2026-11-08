@@ -101,6 +101,7 @@ export interface TranscriptionPostProcessingInput {
   cwd: string;
   prompt: string;
   modelSelection: ModelSelection;
+  direct?: boolean;
 }
 
 export interface TranscriptionPostProcessingResult {

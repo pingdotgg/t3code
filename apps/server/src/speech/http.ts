@@ -22,6 +22,7 @@ import {
 } from "../auth/http.ts";
 import * as SpeechPostProcessing from "./postProcessing.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
+import * as SpeechCleanupApi from "./SpeechCleanupApi.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
@@ -60,6 +61,7 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
     const speech = yield* SpeechService.SpeechService;
     const cloud = yield* CloudSpeech.CloudSpeech;
     const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
+    const cleanup = yield* SpeechCleanupApi.SpeechCleanupApi;
     const guard = Effect.fnUntraced(function* (
       endpoint: string,
       scope: AuthEnvironmentScope = AuthOrchestrationOperateScope,
@@ -68,6 +70,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
       yield* requireEnvironmentScope(scope);
     });
     return handlers
+      .handle(
+        "cleanupModels",
+        Effect.fn("environment.voice.cleanupModels")(function* (args) {
+          yield* guard(args.endpoint.name);
+          return yield* cleanup.models.pipe(
+            Effect.catch((error) => failEnvironmentInternal("internal_error", error)),
+          );
+        }),
+      )
       .handle(
         "cloudKeys",
         Effect.fn("environment.voice.cloudKeys")(function* (args) {

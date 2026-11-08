@@ -204,10 +204,17 @@ export const make = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   return OpenCode2Client.of({
     connect: Effect.fn("OpenCode2Client.connect")(function ({ baseUrl, password }) {
-      const authenticated = HttpClient.mapRequest(
-        httpClient,
-        HttpClientRequest.setHeader("Authorization", basicAuthorization(password)),
-      );
+      const authenticated = HttpClient.mapRequest(httpClient, (request) => {
+        // The SDK still targets the legacy alias for raw text generation.
+        const canonical = request.url.endsWith("/api/experimental/generate")
+          ? HttpClientRequest.setUrl(request, `${request.url}/text`)
+          : request;
+        return HttpClientRequest.setHeader(
+          canonical,
+          "Authorization",
+          basicAuthorization(password),
+        );
+      });
       return OpenCode.make({ baseUrl }).pipe(
         Effect.provideService(HttpClient.HttpClient, fillCompactionRecents(authenticated)),
         Effect.map((client) => ({

@@ -155,6 +155,20 @@ export const make = Effect.gen(function* () {
     generateTranscriptionPostProcessing: Effect.fn(
       "TextGeneration.generateTranscriptionPostProcessing",
     )(function (input) {
+      if (input.direct) {
+        return registry.getInstance(input.modelSelection.instanceId).pipe(
+          Effect.flatMap((instance) =>
+            instance?.driverKind === "opencode" && instance.enabled
+              ? instance.textGeneration.generateTranscriptionPostProcessing(input)
+              : Effect.fail(
+                  new TextGenerationError({
+                    operation: "generateTranscriptionPostProcessing",
+                    detail: "Choose an enabled OpenCode provider for direct transcript cleanup.",
+                  }),
+                ),
+          ),
+        );
+      }
       return generate(
         "generateTranscriptionPostProcessing",
         input.modelSelection,

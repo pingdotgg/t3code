@@ -10,6 +10,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderInstanceId,
   ProviderSessionId,
+  type ResolvedProviderInstanceEnvironment,
   ThreadId,
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
@@ -70,11 +71,15 @@ const layer = Layer.mergeAll(
   Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, openCode2Runtime),
 ).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
-const create = (config: Partial<OpenCodeSettings>, http: HttpClient.HttpClient) =>
+const create = (
+  config: Partial<OpenCodeSettings>,
+  http: HttpClient.HttpClient,
+  environment: ResolvedProviderInstanceEnvironment = [],
+) =>
   OpenCodeDriver.create({
     instanceId: ProviderInstanceId.make("opencode-test"),
     displayName: undefined,
-    environment: [],
+    environment,
     enabled: true,
     config: { ...OpenCodeDriver.defaultConfig(), ...config },
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
@@ -665,7 +670,10 @@ it.layer(layerUpdate)("OpenCodeDriver updates", (it) => {
     () =>
       Effect.gen(function* () {
         versionOutput.current = "1.18.18\n";
-        const instance = yield* create({}, noHttp);
+        const instance = yield* create({}, noHttp, [
+          { name: "OPENCODE_AUTH_CONTENT", value: "{}", sensitive: false },
+          { name: "OPENCODE_API_KEY", value: "", sensitive: false },
+        ]);
         // Let the startup status check claim the refresh permit, then wait behind it so it
         // cannot probe after the upgrade below.
         yield* Effect.yieldNow;

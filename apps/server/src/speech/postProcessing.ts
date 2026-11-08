@@ -44,7 +44,8 @@ const make = Effect.gen(function* () {
           input.draft,
           input.options.speechCorrectionWord,
         );
-        const text = (yield* settings.speechPostProcessingProvider !== "agent"
+        const direct = settings.speechPostProcessingProvider === "opencode";
+        const text = (yield* settings.speechPostProcessingProvider !== "agent" && !direct
           ? api.postProcess(prompt)
           : Effect.gen(function* () {
               // Providers run in a working directory; cleanup must not read a checkout.
@@ -55,6 +56,7 @@ const make = Effect.gen(function* () {
                 cwd,
                 prompt,
                 modelSelection: resolveSpeechPostProcessingModelSelection(settings),
+                ...(direct ? { direct: true } : {}),
               });
               return generated.transcription;
             })).trim();

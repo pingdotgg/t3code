@@ -1,4 +1,4 @@
-// Generate endpoints return 403 on the free tier; use and remove a temporary prompt session.
+// Session generation also supports accounts without access to the raw generate API.
 import { AbsolutePath, Location, Model, Provider, Session } from "@opencode/client/effect";
 import { TextGenerationError } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
@@ -14,6 +14,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import type { TranscriptionPostProcessingInput } from "@t3tools/provider-core/server/textGeneration";
 
 const isTextGenerationError = Schema.is(TextGenerationError);
 
@@ -206,8 +207,53 @@ export const make = Effect.fn("OpenCode2TextGeneration.make")(function* () {
         ),
         Effect.flatMap((raw) => TextGenerationOperations.decodeJsonReply(input, "OpenCode", raw)),
       );
-  return TextGenerationOperations.fromRunner(
+  const operations = TextGenerationOperations.fromRunner(
     "OpenCode2TextGeneration",
     TextGenerationOperations.withoutInvestigation("OpenCode", run),
   );
+  const direct = Effect.fn("OpenCode2TextGeneration.directCleanup")(function* (
+    input: TranscriptionPostProcessingInput,
+  ) {
+    const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
+    if (!parsed)
+      return yield* new TextGenerationError({
+        operation: "generateTranscriptionPostProcessing",
+        detail: "OpenCode model selection must use the 'provider/model' format.",
+      });
+    const variant = getModelSelectionStringOptionValue(input.modelSelection, "variant");
+    const result = yield* server
+      .withConnection(({ client }) =>
+        client.generate.text({
+          prompt: input.prompt,
+          model: Model.Ref.make({
+            providerID: Provider.ID.make(parsed.providerID),
+            id: Model.ID.make(parsed.modelID),
+            ...(variant === undefined ? {} : { variant: Model.VariantID.make(variant) }),
+          }),
+        }),
+      )
+      .pipe(
+        Effect.timeout("2 minutes"),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "generateTranscriptionPostProcessing",
+              detail:
+                "OpenCode raw text generation failed. Check that your OpenCode server and account support /api/experimental/generate/text.",
+              cause,
+            }),
+        ),
+      );
+    if (!result.text.trim())
+      return yield* new TextGenerationError({
+        operation: "generateTranscriptionPostProcessing",
+        detail: "OpenCode returned empty output.",
+      });
+    return { transcription: result.text.trim() };
+  });
+  return {
+    ...operations,
+    generateTranscriptionPostProcessing: (input: TranscriptionPostProcessingInput) =>
+      input.direct ? direct(input) : operations.generateTranscriptionPostProcessing(input),
+  };
 });

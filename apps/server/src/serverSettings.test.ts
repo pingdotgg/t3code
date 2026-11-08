@@ -1852,11 +1852,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         voiceApiCredentials: { compatiblePostProcessing: "local-key" },
       });
       yield* service.updateSettings({
-        speechPostProcessingProvider: "openrouter",
+        speechPostProcessingProvider: "compatible",
+        speechPostProcessingCompatiblePreset: "openrouter",
+        speechPostProcessingOpenAIReasoning: "low",
+        speechPostProcessingAnthropicReasoning: "medium",
         speechPostProcessingApiEndpoints: { openrouter: { model: "acme/cleanup" } },
         voiceApiCredentials: { openrouterPostProcessing: "router-key" },
       });
-      const saved = yield* service.updateSettings({ speechPostProcessingProvider: "compatible" });
+      const saved = yield* service.updateSettings({
+        speechPostProcessingCompatiblePreset: "custom",
+      });
+      assert.equal(saved.speechPostProcessingCompatiblePreset, "custom");
+      assert.equal(saved.speechPostProcessingOpenAIReasoning, "low");
+      assert.equal(saved.speechPostProcessingAnthropicReasoning, "medium");
       assert.deepEqual(saved.speechPostProcessingApiEndpoints, {
         compatible: { endpoint: "http://127.0.0.1:1234/v1", model: "local-cleanup" },
         anthropic: { endpoint: "https://api.anthropic.com/v1", model: "" },

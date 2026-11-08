@@ -16,8 +16,28 @@ export const SpeechPostProcessingProvider = Schema.Literals([
   "compatible",
   "anthropic",
   "openrouter",
+  "opencode",
 ]);
 export type SpeechPostProcessingProvider = typeof SpeechPostProcessingProvider.Type;
+export const SpeechCleanupReasoning = Schema.Literals([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
+export const SpeechCleanupModels = Schema.Struct({
+  models: Schema.Array(
+    Schema.Struct({
+      id: TrimmedNonEmptyString,
+      name: Schema.String,
+      reasoningLevels: Schema.optionalKey(Schema.Array(SpeechCleanupReasoning)),
+    }),
+  ),
+});
+export type SpeechCleanupModels = typeof SpeechCleanupModels.Type;
 export const CLOUD_SPEECH_LABELS = {
   openai: "OpenAI",
   xai: "Grok Voice Transcribe",
