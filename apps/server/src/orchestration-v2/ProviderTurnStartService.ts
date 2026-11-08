@@ -1943,6 +1943,7 @@ export const layer: Layer.Layer<
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
+        lesson: projection.thread.lesson !== undefined || projection.thread.sideChat !== undefined,
         providerSessionId,
         session: deliverySession,
         run: runningRun,

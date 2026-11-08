@@ -876,6 +876,9 @@ type Sample = {
   readonly said: Array<string>;
   /** Real tutor text shown since the learner's last message. */
   shownSinceLastUser: number;
+  /** Root Claude text held until the next tool in lesson cases. */
+  readonly heldLessonText: Array<string>;
+  lessonCardSeen: boolean;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -922,6 +925,8 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     priorResults: new Map(),
     said: [],
     shownSinceLastUser: 0,
+    heldLessonText: [],
+    lessonCardSeen: false,
   };
 };
 
@@ -2249,24 +2254,60 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       transcript.push(...response.raw);
     }
     messages.push({ role: "assistant", content: response.content });
-    // T3's Claude adapter shows a second consecutive thinking block before a tool call as text,
-    // unless it is a card whose reply already says it.
-    const texts = response.content.flatMap((block, index) => {
-      if (isText(block)) return [block.text];
+    const lesson =
+      testCase.id.startsWith("learn-") ||
+      testCase.setup.sideChat !== undefined ||
+      testCase.setup.sideChatOpening !== undefined;
+    const words = (value: string) => value.replace(/\s+/gu, " ").trim();
+    const firstSentence = (value: string) =>
+      /^(.*?(?:[.!?](?=\s|$)|$))/u.exec(value)?.[1]?.trim().toLocaleLowerCase() ?? "";
+    const repeats = (use: typeof ToolUse.Type, text: string) => {
+      if (!isRecord(use.input)) return false;
+      const reply = use.input.reply;
+      if (typeof reply !== "string") return false;
+      return (
+        words(reply).includes(words(text)) ||
+        (firstSentence(reply).length > 0 && firstSentence(reply) === firstSentence(text))
+      );
+    };
+    const texts: Array<string> = [];
+    for (const [index, block] of response.content.entries()) {
+      if (isText(block)) {
+        if (lesson) sample.heldLessonText.push(block.text);
+        else texts.push(block.text);
+        continue;
+      }
+      if (isToolUse(block)) {
+        const held = sample.heldLessonText.splice(0);
+        const isCard =
+          normalizeToolName(block.name) === "quiz_card" ||
+          normalizeToolName(block.name) === "question_card";
+        const isT3Mcp = block.name.startsWith("mcp__t3-code__");
+        if (lesson && held.length > 0) {
+          if (!isT3Mcp && held.join("").length <= 300) {
+            // The adapter keeps short narration as a Thought, so it is not visible text.
+          } else if (isCard) {
+            for (const text of held) if (!repeats(block, text)) texts.push(text);
+          } else {
+            texts.push(...held);
+          }
+        } else if (!lesson) {
+          // Non-lesson turns have no held text in the adapter.
+        }
+        if (isCard) sample.lessonCardSeen = true;
+        continue;
+      }
+      if (lesson || !isThinking(block) || !isThinking(response.content[index - 1])) continue;
       const next = response.content[index + 1];
-      if (!isThinking(block) || !isThinking(response.content[index - 1]) || !isToolUse(next))
-        return [];
-      const reply = isRecord(next.input) ? next.input.reply : undefined;
-      const words = (value: string) => value.replace(/\s+/gu, " ").trim();
-      return typeof reply === "string" && words(reply).includes(words(block.thinking))
-        ? []
-        : [block.thinking];
-    });
+      if (!isToolUse(next)) continue;
+      if (!repeats(next, block.thinking)) texts.push(block.thinking);
+    }
+    if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
+      if (!sample.lessonCardSeen) texts.push(...sample.heldLessonText);
+      sample.heldLessonText.length = 0;
+    }
     said.push(...texts);
-    sample.shownSinceLastUser += response.content.reduce(
-      (total, block) => (isText(block) ? total + block.text.length : total),
-      0,
-    );
+    sample.shownSinceLastUser += texts.reduce((total, text) => total + text.length, 0);
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));
     if (response.stop_reason !== "tool_use") {
