@@ -941,6 +941,28 @@ const taskResult = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>, ta
       ),
     );
 
+const captureThreadReads = (nativeFetch: typeof globalThis.fetch) => {
+  const reads: Array<OrchestratorMcpThreadReadInput> = [];
+  const fetch: typeof globalThis.fetch = (input, init) => {
+    const body = init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : null;
+    if (body?.startsWith("{")) {
+      const rpc: {
+        method?: string;
+        params?: { name?: string; arguments?: OrchestratorMcpThreadReadInput };
+      } = JSON.parse(body);
+      if (
+        rpc.method === "tools/call" &&
+        rpc.params?.name === "t3_thread_read" &&
+        rpc.params.arguments !== undefined
+      ) {
+        reads.push(rpc.params.arguments);
+      }
+    }
+    return nativeFetch(input, init);
+  };
+  return { reads, fetch };
+};
+
 it.effect("a task delegated to the box wakes the laptop's parent when it ends there", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1621,25 +1643,7 @@ it.effect.each(["tail-error", "middle-error", "reply-fallback", "cancel-refill"]
   "reads a failed task through full activity pages (%s)",
   (scenario) =>
     Effect.gen(function* () {
-      const reads: Array<OrchestratorMcpThreadReadInput> = [];
-      const nativeFetch = yield* FetchHttpClient.Fetch;
-      const fetch: typeof globalThis.fetch = (input, init) => {
-        const body = init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : null;
-        if (body?.startsWith("{")) {
-          const rpc: {
-            method?: string;
-            params?: { name?: string; arguments?: OrchestratorMcpThreadReadInput };
-          } = JSON.parse(body);
-          if (
-            rpc.method === "tools/call" &&
-            rpc.params?.name === "t3_thread_read" &&
-            rpc.params.arguments !== undefined
-          ) {
-            reads.push(rpc.params.arguments);
-          }
-        }
-        return nativeFetch(input, init);
-      };
+      const { reads, fetch } = captureThreadReads(yield* FetchHttpClient.Fetch);
       return yield* Effect.scoped(
         Effect.gen(function* () {
           const thread = yield* makeBoxThread;
@@ -1720,25 +1724,7 @@ it.effect.each([
   "interrupted",
 ] as const)("reads a successful task with an aligned tail probe (%s)", (scenario) =>
   Effect.gen(function* () {
-    const reads: Array<OrchestratorMcpThreadReadInput> = [];
-    const nativeFetch = yield* FetchHttpClient.Fetch;
-    const fetch: typeof globalThis.fetch = (input, init) => {
-      const body = init?.body instanceof Uint8Array ? new TextDecoder().decode(init.body) : null;
-      if (body?.startsWith("{")) {
-        const rpc: {
-          method?: string;
-          params?: { name?: string; arguments?: OrchestratorMcpThreadReadInput };
-        } = JSON.parse(body);
-        if (
-          rpc.method === "tools/call" &&
-          rpc.params?.name === "t3_thread_read" &&
-          rpc.params.arguments !== undefined
-        ) {
-          reads.push(rpc.params.arguments);
-        }
-      }
-      return nativeFetch(input, init);
-    };
+    const { reads, fetch } = captureThreadReads(yield* FetchHttpClient.Fetch);
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const thread = yield* makeBoxThread;
