@@ -1117,6 +1117,14 @@ function deriveTurnFolds(input: {
     }
   }
 
+  // The text that sets up a card is what the card tests, so it stays beside it.
+  const cardLeadIds = new Set(
+    input.timelineEntries.flatMap((entry, index) =>
+      entry.kind === "message" && input.timelineEntries[index + 1]?.kind === "quiz-card"
+        ? [entry.id]
+        : [],
+    ),
+  );
   const foldsByAnchorEntryId = new Map<string, TurnFold>();
   for (const [runId, group] of groupsByRunId) {
     if (
@@ -1156,6 +1164,7 @@ function deriveTurnFolds(input: {
       }
       if (entry.kind === "work" && entry.entry.itemType === "notification") continue;
       if (entry.kind === "work" && entry.entry.questionAnswer !== undefined) continue;
+      if (cardLeadIds.has(entry.id)) continue;
       hiddenEntryIds.add(entry.id);
     }
     if (hiddenEntryIds.size === 0) {

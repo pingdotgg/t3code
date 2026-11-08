@@ -128,6 +128,7 @@ it.effect("creates a lesson with persisted answers, opening text, and source con
       topic: "event sourcing",
       depth: "working" as const,
       purpose: "prerequisite" as const,
+      history: "didnt-stick" as const,
       goal: "build a durable app",
       source: { threadId: sourceThreadId, excerpt: "Events are facts.\nState is derived." },
     };
@@ -170,7 +171,10 @@ it.effect("creates a lesson with persisted answers, opening text, and source con
     assert.equal(request?.projectId, ProjectId.make("project:source"));
     assert.include(request?.initialMessage?.text ?? "", "event sourcing");
     assert.include(request?.initialMessage?.text ?? "", "Working knowledge");
-    assert.include(request?.initialMessage?.text ?? "", "for build a durable app");
+    assert.include(
+      request?.initialMessage?.text ?? "",
+      "for build a durable app\nHistory: Seen it, didn't stick\n",
+    );
     assert.include(request?.initialMessage?.text ?? "", "> Events are facts.");
     assert.include(request?.initialMessage?.text ?? "", "> State is derived.");
     const sourceRecord = request?.initialMessage?.context?.records.find(

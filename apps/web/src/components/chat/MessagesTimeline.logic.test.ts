@@ -1074,6 +1074,29 @@ describe("deriveMessagesTimelineRows", () => {
     expect(
       expandedRows.find((row) => row.kind === "turn-fold" && row.expanded === true),
     ).toBeDefined();
+
+    // Teaching right before a lesson card stays visible beside it.
+    const card = {
+      kind: "quiz-card" as const,
+      id: "card-entry",
+      createdAt: "2026-01-01T00:00:07Z",
+      runId: RunId.make("turn-1"),
+      quizCard: { question: "Explain it." },
+    };
+    const withCard = deriveMessagesTimelineRows({
+      timelineEntries: [...timelineEntries.slice(0, 2), card, ...timelineEntries.slice(2)],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(withCard.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "card-entry",
+      "assistant-final-entry",
+    ]);
   });
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {

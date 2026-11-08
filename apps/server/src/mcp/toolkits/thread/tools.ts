@@ -92,6 +92,7 @@ const LessonCreateTool = Tool.make("lesson_create", {
     topic: OrchestrationV2Lesson.fields.topic,
     depth: OrchestrationV2Lesson.fields.depth,
     purpose: OrchestrationV2Lesson.fields.purpose,
+    history: OrchestrationV2Lesson.fields.history,
     goal: OrchestrationV2Lesson.fields.goal,
     excerpt: Schema.optional(
       TrimmedNonEmptyString.check(Schema.isMaxLength(SIDE_CHAT_EXCERPT_MAX_CHARS)),

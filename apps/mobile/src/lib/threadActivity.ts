@@ -1164,11 +1164,13 @@ function deriveThreadFeedRunFolds(
     const hiddenEntryIds = new Set(
       group.entries
         .filter(
-          (entry) =>
+          (entry, index) =>
             entry.id !== terminalAssistantId &&
             entry.type !== "html-render" &&
             entry.type !== "mcp-app" &&
             entry.type !== "quiz-card" &&
+            // The text that sets up a card is what the card tests, so it stays beside it.
+            !(entry.type === "message" && group.entries[index + 1]?.type === "quiz-card") &&
             !(entry.type === "activity-group" && isContextCompactionActivityGroup(entry)) &&
             !(
               entry.type === "activity-group" &&

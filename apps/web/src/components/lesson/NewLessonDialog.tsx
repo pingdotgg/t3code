@@ -98,6 +98,12 @@ const purposeOptions = [
   ["prerequisite", "Building prerequisites", "Groundwork for something I'll learn next"],
 ] as const;
 
+const historyOptions = [
+  ["new", "New to me", "Start from the ground up"],
+  ["didnt-stick", "Seen it, didn't stick", "Find the gap and fill it"],
+  ["want-depth", "Know it, want depth", "Skip the basics"],
+] as const;
+
 export function NewLessonDialogHost() {
   const request = useLessonDialog((state) => state.request);
   const close = () => useLessonDialog.setState({ request: null });
@@ -111,6 +117,7 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
   const [topic, setTopic] = useState(request.source?.excerpt ?? "");
   const [depth, setDepth] = useState<"overview" | "working" | "deep">("working");
   const [purpose, setPurpose] = useState<"outcome" | "prerequisite">("outcome");
+  const [history, setHistory] = useState<"new" | "didnt-stick" | "want-depth">("new");
   const [location, setLocation] = useState<"project" | "new">(
     request.source === undefined ? "new" : "project",
   );
@@ -175,6 +182,7 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
           topic: trimmed,
           depth,
           purpose,
+          history,
           ...(goal.trim() ? { goal: goal.trim() } : {}),
           ...(request.source
             ? { source: { ...request.source, threadId: ThreadId.make(request.source.threadId) } }
@@ -286,6 +294,12 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                   </div>
                 </div>
               ) : null}
+              <ChoiceGroup
+                label="What's your history with this?"
+                value={history}
+                options={historyOptions}
+                onChange={setHistory}
+              />
               <ChoiceGroup
                 label="How deep?"
                 value={depth}

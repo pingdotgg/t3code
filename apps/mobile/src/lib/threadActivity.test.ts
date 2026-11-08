@@ -916,6 +916,27 @@ describe("buildThreadFeed", () => {
       label: "Worked for 2s",
     });
 
+    // Teaching right before a lesson card stays visible beside it.
+    const card: OrchestrationV2TurnItem = {
+      ...base("item-card", "2026-06-20T00:00:02.700Z", 2),
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__question_card",
+      status: "completed",
+      input: {},
+      output: { questionCard: { question: "Why?" } },
+    };
+    const withCard = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(opening, 1),
+      projected(command(), 2),
+      projected(middle, 3),
+      projected(card, 4),
+      projected(assistantMessage(), 5),
+    ]);
+    expect(
+      deriveThreadFeedPresentation(withCard, latestRun, new Set()).map((entry) => entry.id),
+    ).toEqual(["message-user", "run-fold:run-1", "message-middle", card.id, "message-assistant"]);
+
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
