@@ -1815,6 +1815,7 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
           {},
           yield* ServerBrowser.ServerBrowser,
           () => Effect.void,
+          { secretReferences: true },
         ).pipe(
           Layer.provide(services),
           Layer.merge(
