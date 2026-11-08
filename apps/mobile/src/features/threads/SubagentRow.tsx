@@ -41,19 +41,16 @@ export function SubagentRow(props: {
   readonly elapsed: ReactNode;
   /** The task runs in a linked environment this app is connected to. */
   readonly canOpenRemote?: boolean;
-  /** When false, the open-thread chevron is omitted so a parent can place it after trailing actions. */
-  readonly showOpenChevron?: boolean;
+  /** Actions after elapsed on the title row, before the open-thread chevron. */
+  readonly trailing?: ReactNode;
 }) {
   const presentation = resolveSubagentRowPresentation(props.subagent, props.canOpenRemote);
   const detail = subagentCardDetail(presentation.detail);
-  const showOpenChevron = props.showOpenChevron ?? true;
   return (
-    <View className="flex-row gap-3">
-      <View className="h-5 justify-center">
+    <View className="gap-1">
+      <View className="flex-row items-center gap-3">
         <SubagentStatusDot tone={presentation.tone} placement="sheet" />
-      </View>
-      <View className="min-w-0 flex-1 gap-1">
-        <View className="min-h-5 flex-row items-center gap-2">
+        <View className="min-w-0 flex-1 flex-row items-center gap-2">
           <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
             <Text
               numberOfLines={1}
@@ -83,10 +80,13 @@ export function SubagentRow(props: {
             ) : null}
           </View>
           {props.elapsed}
-          {showOpenChevron && presentation.canOpenThread ? (
+          {props.trailing}
+          {presentation.canOpenThread ? (
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
           ) : null}
         </View>
+      </View>
+      <View className="gap-1 pl-5">
         <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
         {detail ? (
           <Text

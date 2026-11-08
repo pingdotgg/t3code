@@ -21,7 +21,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
-import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentThreadDetails } from "../../state/threads";
 import { useEnvironments } from "../../state/environments";
 import { SubagentRow } from "./SubagentRow";
@@ -152,17 +151,16 @@ function AgentRow(props: {
         environmentId={props.environmentId}
         subagent={subagent}
         canOpenRemote={target !== null}
-        showOpenChevron={false}
         elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
+        trailing={<SubagentStopButton environmentId={props.environmentId} subagent={subagent} />}
       />
     </View>
   );
 
-  const content =
-    target === null ? (
+  if (target === null) {
+    return (
       <View
         accessible
-        className="min-w-0 flex-1"
         accessibilityHint={
           subagent.remoteChild === undefined
             ? "Provider-managed agent. Its work appears in the transcript."
@@ -171,33 +169,18 @@ function AgentRow(props: {
       >
         {row}
       </View>
-    ) : (
-      <Pressable
-        accessibilityRole="link"
-        accessibilityHint="Opens this agent's thread"
-        onPress={() => props.onOpen(target)}
-        className="min-w-0 flex-1 active:opacity-70"
-      >
-        {row}
-      </Pressable>
     );
+  }
 
   return (
-    <View className="flex-row items-center gap-2">
-      {content}
-      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
-      {target === null ? null : (
-        <Pressable
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-          onPress={() => props.onOpen(target)}
-          className="active:opacity-70"
-          hitSlop={8}
-        >
-          <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-        </Pressable>
-      )}
-    </View>
+    <Pressable
+      accessibilityRole="link"
+      accessibilityHint="Opens this agent's thread"
+      onPress={() => props.onOpen(target)}
+      className="active:opacity-70"
+    >
+      {row}
+    </Pressable>
   );
 }
 
