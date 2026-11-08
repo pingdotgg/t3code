@@ -93,13 +93,15 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     event.preventDefault();
     event.stopPropagation();
   });
-  const runExternalCommand = useEffectEvent((command: KeybindingCommand) => {
-    if (!input.enabled) return;
-    input.commands[command]?.({
-      event: new KeyboardEvent("keydown"),
-      terminalFocusOwner: getTerminalFocusOwner(),
-    });
-  });
+  const runExternalCommand = useEffectEvent(
+    (detail: { command: KeybindingCommand; terminalFocusOwner?: TerminalFocusOwner }) => {
+      if (!input.enabled) return;
+      input.commands[detail.command]?.({
+        event: new KeyboardEvent("keydown"),
+        terminalFocusOwner: detail.terminalFocusOwner ?? getTerminalFocusOwner(),
+      });
+    },
+  );
   const dismissFind = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.key !== "Escape" ||
@@ -140,7 +142,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     const onKeyDown = (event: KeyboardEvent) => dismissFind(event);
     window.addEventListener("keydown", onKeyDownCapture, true);
     window.addEventListener("keydown", onKeyDown);
-    const offChatCommand = onChatCommand((command) => runExternalCommand(command));
+    const offChatCommand = onChatCommand((detail) => runExternalCommand(detail));
     return () => {
       offChatCommand();
       window.removeEventListener("keydown", onKeyDownCapture, true);

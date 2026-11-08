@@ -22,16 +22,7 @@ import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { runChatCommand } from "../chat/chatCommandBus";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuSeparator,
-  MenuSub,
-  MenuSubPopup,
-  MenuSubTrigger,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { cn } from "../../lib/utils";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useThreadShell } from "../../state/entities";
@@ -135,33 +126,31 @@ export function WorkspaceTabs() {
   );
 
   // A project keeps one draft, so from a draft without a provider pick "+" asks which project to start in.
-  const startNewThread = async (pick?: { instanceId: ProviderInstanceId; model: string }) => {
+  const startNewThread = async (instanceId?: ProviderInstanceId) => {
     const projectRef = resolveThreadActionProjectRef({
       activeDraftThread: newThreadContext.activeDraftThread,
       activeThread: newThreadContext.activeThread ?? undefined,
       defaultProjectRef: newThreadContext.defaultProjectRef,
       handleNewThread: newThreadContext.handleNewThread,
     });
-    if (!projectRef || (routeTarget?.kind === "draft" && !pick)) {
+    if (!projectRef || (routeTarget?.kind === "draft" && !instanceId)) {
       openCommandPalette({ open: "new-thread-in" });
       return;
     }
     const started = await newThreadContext.handleNewThread(projectRef);
-    if (!started || !pick) return;
+    if (!started || !instanceId) return;
+    // Like Orca's agent rows: start on the agent's last-used model, else its default.
+    const drafts = useComposerDraftStore.getState();
+    const provider = providers.find((entry) => entry.instanceId === instanceId);
     const model = resolveAppModelSelectionForInstance(
-      pick.instanceId,
+      instanceId,
       settings,
       providers,
-      pick.model,
+      drafts.stickyModelSelectionByProvider[instanceId]?.model ??
+        (provider?.models.find((entry) => entry.isDefault) ?? provider?.models[0])?.slug,
     );
     if (!model) return;
-    useComposerDraftStore
-      .getState()
-      .setModelSelection(
-        started.draftId,
-        { instanceId: pick.instanceId, model },
-        { explicit: true },
-      );
+    drafts.setModelSelection(started.draftId, { instanceId, model }, { explicit: true });
   };
 
   return (
@@ -209,7 +198,10 @@ export function WorkspaceTabs() {
             <SquarePenIcon />
             New thread
           </MenuItem>
-          <MenuItem disabled={!routeTarget} onClick={() => runChatCommand("terminal.new")}>
+          <MenuItem
+            disabled={!routeTarget}
+            onClick={() => runChatCommand("terminal.new", "right-panel")}
+          >
             <SquareTerminalIcon />
             New terminal
           </MenuItem>
@@ -219,31 +211,18 @@ export function WorkspaceTabs() {
           </MenuItem>
           {providers.length > 0 ? <MenuSeparator /> : null}
           {providers.map((provider) => (
-            <MenuSub key={provider.instanceId}>
-              <MenuSubTrigger>
-                <ProviderInstanceIcon
-                  driverKind={provider.driver}
-                  displayName={provider.displayName ?? provider.driver}
-                  accentColor={provider.accentColor}
-                  size="compact"
-                />
-                <span className="truncate">{provider.displayName ?? provider.driver}</span>
-              </MenuSubTrigger>
-              <MenuSubPopup className="max-w-72">
-                {provider.models
-                  .filter((model) => !model.isLegacy)
-                  .map((model) => (
-                    <MenuItem
-                      key={model.slug}
-                      onClick={() =>
-                        void startNewThread({ instanceId: provider.instanceId, model: model.slug })
-                      }
-                    >
-                      <span className="truncate">{model.name}</span>
-                    </MenuItem>
-                  ))}
-              </MenuSubPopup>
-            </MenuSub>
+            <MenuItem
+              key={provider.instanceId}
+              onClick={() => void startNewThread(provider.instanceId)}
+            >
+              <ProviderInstanceIcon
+                driverKind={provider.driver}
+                displayName={provider.displayName ?? provider.driver}
+                accentColor={provider.accentColor}
+                size="compact"
+              />
+              <span className="truncate">{provider.displayName ?? provider.driver}</span>
+            </MenuItem>
           ))}
           <MenuSeparator />
           <MenuItem onClick={() => void navigate({ to: "/settings/providers" })}>
