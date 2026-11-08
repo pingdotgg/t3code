@@ -1100,7 +1100,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     parseSideChatCommand(prompt) !== null &&
     (props.sideChatAvailable === true || (props.sideChatDisabledReason ?? null) !== null);
   const localComposerCommand: ComposerLocalCommand | null = sideChatHandlesDraft
-    ? "side-chat"
+    ? props.sideChatDisabledReason
+      ? "side-chat-unavailable"
+      : !composerHoldsOnlyText
+        ? "side-chat-text-only"
+        : "side-chat"
     : composerHoldsOnlyText && props.onUsageLimitsCommand && isUsageLimitsCommand(prompt)
       ? "usage-limits"
       : composerHoldsOnlyText &&

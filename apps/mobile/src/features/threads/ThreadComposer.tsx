@@ -224,6 +224,7 @@ export interface ThreadComposerProps {
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
+  readonly sideChatAvailable: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -469,7 +470,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const composerHoldsOnlyText = draftAttachments.length === 0 && draftContext === undefined;
   const localComposerCommand: ComposerLocalCommand | null =
     parseSideChatCommand(draftMessage) !== null
-      ? "side-chat"
+      ? !props.sideChatAvailable
+        ? "side-chat-unavailable"
+        : draftAttachments.length > 0 || (draftContext?.records.length ?? 0) > 0
+          ? "side-chat-text-only"
+          : "side-chat"
       : composerHoldsOnlyText &&
           props.onFreshSession !== undefined &&
           props.selectedThread.latestRun !== null &&

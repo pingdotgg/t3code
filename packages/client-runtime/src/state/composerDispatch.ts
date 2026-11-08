@@ -7,6 +7,8 @@ export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
  */
 export type ComposerLocalCommand =
   | "side-chat"
+  | "side-chat-unavailable"
+  | "side-chat-text-only"
   | "clear"
   | "plan"
   | "build"

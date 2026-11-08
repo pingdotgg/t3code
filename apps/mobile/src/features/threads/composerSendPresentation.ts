@@ -27,6 +27,8 @@ const ACTION_LABEL: Record<ActiveTurnComposerAction, string> = {
 
 const LOCAL_COMMAND_LABEL: Record<ComposerLocalCommand, string> = {
   "side-chat": "Start side chat",
+  "side-chat-unavailable": "Side chat unavailable",
+  "side-chat-text-only": "Side chat requires text only",
   clear: "Start fresh session",
   plan: "Switch to Plan",
   build: "Switch to Build",
@@ -55,8 +57,11 @@ export function resolveComposerSendPresentation(input: {
   }
   if (
     input.localCommand !== null &&
-    !(input.isDraft && (input.localCommand === "feedback" || input.localCommand === "side-chat")) &&
-    !(input.replyingToApproval && input.localCommand === "side-chat")
+    !(
+      input.isDraft &&
+      (input.localCommand === "feedback" || input.localCommand.startsWith("side-chat"))
+    ) &&
+    !(input.replyingToApproval && input.localCommand.startsWith("side-chat"))
   ) {
     return {
       label: LOCAL_COMMAND_LABEL[input.localCommand],

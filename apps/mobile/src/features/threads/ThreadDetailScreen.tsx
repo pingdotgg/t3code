@@ -1881,6 +1881,7 @@ function ThreadDetailBody(
                               onFreshSession: () => setFreshSessionPending(selectedThreadKey, true),
                             }
                           : {})}
+                        sideChatAvailable={props.offersSideChat}
                         offersSideChat={
                           props.offersSideChat &&
                           !props.draftMode &&

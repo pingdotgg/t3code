@@ -23,6 +23,8 @@ describe("resolveComposerSendPresentation", () => {
 
   it.each([
     ["side-chat", "Start side chat"],
+    ["side-chat-unavailable", "Side chat unavailable"],
+    ["side-chat-text-only", "Side chat requires text only"],
     ["clear", "Start fresh session"],
     ["feedback", "Submit feedback"],
     ["usage-limits", "Show usage limits"],
