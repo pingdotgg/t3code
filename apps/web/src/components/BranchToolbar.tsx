@@ -201,7 +201,10 @@ const RunContextSelector = memo(function RunContextSelector({
         ? resolveEnvModeLabel("worktree")
         : resolveCurrentWorkspaceLabel(activeWorktreePath);
   const isPanel = displayMode === "panel";
-  const isLocked = envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker));
+  // "Add to another machine" stays reachable on a started thread.
+  const isLocked =
+    addTargets.length === 0 &&
+    (envLocked || (envModeLocked && (!isPanel || !showEnvironmentPicker)));
   const workspacePath =
     forceNewWorktree || (effectiveEnvMode === "worktree" && !activeWorktreePath)
       ? null

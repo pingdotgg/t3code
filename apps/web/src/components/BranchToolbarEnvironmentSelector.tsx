@@ -63,9 +63,12 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
     ...(onAddToMachine ? [{ value: ADD_MACHINE_VALUE, label: "Add to another machine" }] : []),
   ];
 
+  // A started thread cannot move machines, but its project can still be added to another.
+  const canSwitch = !envLocked && onEnvironmentChange !== undefined;
+
   // Match the xs control's height and padding: the composer strip has no min-height,
   // and its glass seam assumes that height even when this label is the only control.
-  if (envLocked || (onEnvironmentChange === undefined && onAddToMachine === undefined)) {
+  if (!canSwitch && onAddToMachine === undefined) {
     const lockedRow = (
       <span
         className="inline-flex h-7 min-w-0 max-w-full items-center gap-1.5 border border-transparent px-1.75 font-normal text-muted-foreground/70 text-sm sm:h-6 sm:text-xs"
@@ -150,7 +153,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectItem
               key={env.environmentId}
               value={environmentValue(env.environmentId)}
-              disabled={onEnvironmentChange === undefined && env.environmentId !== environmentId}
+              disabled={!canSwitch && env.environmentId !== environmentId}
             >
               <span className="inline-flex items-center gap-1.5">
                 <EnvironmentMachineIcon kind={env.machine} className="size-3" />
