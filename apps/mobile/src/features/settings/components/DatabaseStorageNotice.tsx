@@ -3,8 +3,12 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { databaseReclaimMinutes, type DatabaseStorageStatus } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import {
+  databaseReclaimMinutes,
+  type DatabaseStorageStatus,
+  type EnvironmentId,
+} from "@t3tools/contracts";
+import { Atom, AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Alert } from "react-native";
 
@@ -18,17 +22,29 @@ import { SettingsSection } from "./SettingsSection";
 
 const formatGiB = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 
+// Keyed by a JSON array of environment ids, like the recommendations it pairs with.
+const reclaimPermissionsAtom = Atom.family((environmentIdsKey: string) =>
+  Atom.make((get) =>
+    (JSON.parse(environmentIdsKey) as EnvironmentId[]).map((environmentId) =>
+      get(serverEnvironment.reclaimDatabaseSpace.permissionAtom(environmentId)),
+    ),
+  ),
+);
+
 /** Offers to reclaim the space on every machine whose database still holds at least 1 GiB of freed pages. */
 export function DatabaseStorageNotice({
   targets,
 }: {
   readonly targets: readonly SettingsTarget[];
 }) {
+  const environmentIds = targets.map((target) => target.environmentId);
+  const environmentIdsKey = JSON.stringify(environmentIds);
   const recommendations = useAtomValue(
-    serverEnvironment.databaseCompactionRecommendations(
-      JSON.stringify(targets.map((target) => target.environmentId)),
-    ),
+    serverEnvironment.databaseCompactionRecommendations(environmentIdsKey),
   );
+  const permissions = useAtomValue(reclaimPermissionsAtom(environmentIdsKey));
+  const reclaimable = (environmentId: EnvironmentId, status: DatabaseStorageStatus) =>
+    status.canReclaim === true && permissions[environmentIds.indexOf(environmentId)] === true;
   const preferences = useAtomValue(mobilePreferencesAtom);
   const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
   const dismissed = AsyncResult.isSuccess(preferences)
@@ -42,14 +58,23 @@ export function DatabaseStorageNotice({
     <SettingsSection
       title="Reclaim database space"
       footer={`These databases still hold space freed by history cleanup.${
-        visible.every((recommendation) => recommendation.status.canReclaim === true)
+        visible.every((recommendation) =>
+          reclaimable(recommendation.environmentId, recommendation.status),
+        )
           ? ""
           : " Run the command on each machine to reclaim it. It restarts the background service. Quit the desktop app first if it hosts the environment."
       }`}
     >
       {visible.map(({ environmentId, status }) => {
         const target = targets.find((candidate) => candidate.environmentId === environmentId);
-        return target ? <DatabaseRow key={environmentId} target={target} status={status} /> : null;
+        return target ? (
+          <DatabaseRow
+            key={environmentId}
+            target={target}
+            status={status}
+            reclaimable={reclaimable(environmentId, status)}
+          />
+        ) : null;
       })}
       <SettingsActionRow
         icon="xmark"
@@ -74,18 +99,17 @@ export function DatabaseStorageNotice({
 function DatabaseRow({
   target,
   status,
+  reclaimable,
 }: {
   readonly target: SettingsTarget;
   readonly status: DatabaseStorageStatus;
+  readonly reclaimable: boolean;
 }) {
   const { environmentId, label } = target;
-  const allowed = useAtomValue(
-    serverEnvironment.reclaimDatabaseSpace.permissionAtom(environmentId),
-  );
   const reclaim = useAtomCommand(serverEnvironment.reclaimDatabaseSpace, { reportFailure: false });
   const [requested, setRequested] = useState(false);
   const amount = formatGiB(status.reclaimableBytes);
-  if (status.canReclaim !== true || !allowed) {
+  if (!reclaimable) {
     return (
       <SettingsActionRow
         icon="doc.on.doc"

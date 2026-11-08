@@ -298,7 +298,13 @@ const sqliteTempDirectory = Effect.gen(function* () {
   for (const directory of [env.SQLITE_TMPDIR, env.TMPDIR, "/var/tmp", "/usr/tmp", "/tmp"]) {
     if (directory === undefined || directory === "") continue;
     const info = yield* fs.stat(directory).pipe(Effect.option);
-    if (Option.isSome(info) && info.value.type === "Directory") return directory;
+    if (Option.isNone(info) || info.value.type !== "Directory") continue;
+    // SQLite skips directories it cannot write to.
+    const writable = yield* fs.access(directory, { writable: true }).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (writable) return directory;
   }
   return ".";
 });
