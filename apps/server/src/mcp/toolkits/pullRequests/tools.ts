@@ -62,12 +62,7 @@ export type PullRequestTargetInput = typeof PullRequestTargetInput.Type;
 
 export const WatchPullRequestInput = Schema.Struct({
   ...PullRequestTargetInput.fields,
-  events: Schema.optional(
-    ThreadPullRequestWatchEvents.annotate({
-      description:
-        "Only these changes wake you. Default: all. A closed PR or a watch T3 ends still wakes you.",
-    }),
-  ),
+  events: Schema.optional(ThreadPullRequestWatchEvents),
 });
 export type WatchPullRequestInput = typeof WatchPullRequestInput.Type;
 
@@ -386,7 +381,7 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestTool = Tool.make("watch_pull_request", {
   description:
-    "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+    "Watch an open PR, linking if needed. Wakes on each `events` kind (default all; checks_passed: required ones), close or watch end. Handle old comments, then end your turn. Don't re-call on wakes. A wake isn't merge approval.",
   parameters: WatchPullRequestInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
