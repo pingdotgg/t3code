@@ -24,11 +24,13 @@ const FINAL_STATUSES: ReadonlySet<string> = new Set([
   "interrupted",
 ]);
 
+const MAX_REPORTED_TASKS = 2048;
+
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const analytics = yield* AnalyticsService.AnalyticsService;
   const registry = yield* ProviderRegistry.ProviderRegistry;
-  // A task can be re-reported with the same final status; count it once per process.
+  // Final statuses can be re-emitted; dedupe them for the newest MAX_REPORTED_TASKS tasks.
   const reported = new Set<string>();
 
   // Runs for every subagent update; most return early, so avoid a span per event.
@@ -71,6 +73,10 @@ const make = Effect.gen(function* () {
       });
       // Only after recording: a failed lookup leaves the next final update to report it.
       reported.add(task.id);
+      if (reported.size > MAX_REPORTED_TASKS) {
+        const oldest = reported.values().next().value;
+        if (oldest !== undefined) reported.delete(oldest);
+      }
     },
     (effect) => effect.pipe(Effect.ignoreCause),
   );
