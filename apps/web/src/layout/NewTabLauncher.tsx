@@ -426,7 +426,7 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
         {siblingTabs.before.map((tab) => (
           <LayoutPaneTab key={tab.id} tab={tab} />
         ))}
-        <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-15")}>
+        <span className={LAYOUT_TAB_SLOT_CLASS}>
           <div
             className={PANE_TAB_CLASS}
             data-layout-launcher-tab=""
