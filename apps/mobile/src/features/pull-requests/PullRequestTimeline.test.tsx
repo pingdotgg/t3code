@@ -42,7 +42,7 @@ const activity: PullRequestActivity = {
   ],
   commentCount: 1,
   commentsTruncated: true,
-  commits: [{ oid: "older", messageHeadline: "older", committedDate: "2026-07-04T23:00:00Z" }],
+  commits: [{ oid: "older", messageHeadline: "older", committedDate: "2026-07-05T01:00:00+02:00" }],
   reviewThreads: [],
 };
 
