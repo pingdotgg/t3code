@@ -9,24 +9,52 @@ const PRESET = {
   snoozedUntil: "2099-01-01T15:00:00.000Z",
 } as const;
 
+const noop = () => undefined;
+
 const base = {
+  nested: false,
   settlementSupported: false,
   settled: false,
   snoozeSupported: false,
   snoozed: false,
   canSnoozeNow: false,
   presets: [] as const,
+  branch: null as string | null,
+  newBranchTitle: "New thread on branch",
+  pinned: false,
+  pinningSupported: false,
+  arrangeSupported: false,
+  titleRegenerationSupported: false,
+  regeneratingTitle: false,
+  canTurnIntoProject: false,
+  turnIntoProjectDisabled: false,
+  autoSettleOptOutSupported: false,
+  autoSettleEnabled: true,
   canRename: false,
-  onSettle: vi.fn(),
-  onUnsettle: vi.fn(),
-  onWake: vi.fn(),
-  onSnoozePreset: vi.fn(),
-  onCustomSnooze: vi.fn(),
-  onRename: vi.fn(),
+  onNewThreadOnBranch: noop,
+  onCopyThread: noop,
+  onCopyThreadId: noop,
+  onSettle: noop,
+  onUnsettle: noop,
+  onWake: noop,
+  onSnoozePreset: noop,
+  onCustomSnooze: noop,
+  onPin: noop,
+  onUnpin: noop,
+  onArrange: noop,
+  onRename: noop,
+  onRegenerateTitle: noop,
+  onTurnIntoProject: noop,
+  onSetAutoSettle: noop,
+  onArchive: noop,
+  onDelete: noop,
 };
 
+const ids = (items: ReturnType<typeof buildThreadLifecycleMenuItems>) =>
+  items.map((item) => item.id);
+
 describe("buildThreadLifecycleMenuItems", () => {
-  it("offers Settle, Snooze, and Rename for an active thread", () => {
+  it("offers the full active-thread menu with Settle, Snooze, and secondary actions", () => {
     const onSettle = vi.fn();
     const onSnoozePreset = vi.fn();
     const onRename = vi.fn();
@@ -36,26 +64,73 @@ describe("buildThreadLifecycleMenuItems", () => {
       snoozeSupported: true,
       canSnoozeNow: true,
       presets: [PRESET],
+      branch: "feat/menu",
+      pinningSupported: true,
+      arrangeSupported: true,
+      titleRegenerationSupported: true,
       canRename: true,
+      canTurnIntoProject: true,
+      autoSettleOptOutSupported: true,
       onSettle,
       onSnoozePreset,
       onRename,
     });
 
-    expect(items.map((item) => item.id)).toEqual(["settle", "snooze", "rename"]);
-    if (!("onPress" in items[0]!)) throw new Error("expected settle action");
-    items[0].onPress();
+    expect(ids(items)).toEqual([
+      "new-thread-on-branch",
+      "copy-thread",
+      "copy-thread-id",
+      "settle",
+      "snooze",
+      "pin",
+      "arrange",
+      "rename",
+      "regenerate-title",
+      "turn-into-project",
+      "auto-settle",
+      "archive",
+      "delete",
+    ]);
+    if (!("onPress" in items[3]!)) throw new Error("expected settle action");
+    items[3].onPress();
     expect(onSettle).toHaveBeenCalledOnce();
 
-    if (!("items" in items[1]!)) throw new Error("expected snooze submenu");
-    expect(items[1].items.map((item) => item.id)).toEqual(["snooze:after:60", "snooze:custom"]);
-    if (!("onPress" in items[1].items[0]!)) throw new Error("expected preset action");
-    items[1].items[0].onPress();
+    if (!("items" in items[4]!)) throw new Error("expected snooze submenu");
+    expect(items[4].items.map((item) => item.id)).toEqual(["snooze:after:60", "snooze:custom"]);
+    if (!("onPress" in items[4].items[0]!)) throw new Error("expected preset action");
+    items[4].items[0].onPress();
     expect(onSnoozePreset).toHaveBeenCalledWith("after:60");
 
-    if (!("onPress" in items[2]!)) throw new Error("expected rename action");
-    items[2].onPress();
+    const rename = items.find((item) => item.id === "rename");
+    if (!rename || !("onPress" in rename)) throw new Error("expected rename action");
+    rename.onPress();
     expect(onRename).toHaveBeenCalledOnce();
+  });
+
+  it("nests secondary actions under More on iOS", () => {
+    const items = buildThreadLifecycleMenuItems({
+      ...base,
+      nested: true,
+      settlementSupported: true,
+      snoozeSupported: true,
+      canSnoozeNow: true,
+      presets: [PRESET],
+      pinningSupported: true,
+      arrangeSupported: true,
+      canRename: true,
+    });
+
+    expect(ids(items)).toEqual([
+      "copy-thread",
+      "copy-thread-id",
+      "settle",
+      "snooze",
+      "pin",
+      "more",
+    ]);
+    const more = items.at(-1);
+    if (!more || !("items" in more)) throw new Error("expected More submenu");
+    expect(more.items.map((item) => item.id)).toEqual(["arrange", "rename", "archive", "delete"]);
   });
 
   it("offers Un-settle and Wake when the thread is settled or snoozed", () => {
@@ -65,6 +140,7 @@ describe("buildThreadLifecycleMenuItems", () => {
       ...base,
       settlementSupported: true,
       settled: true,
+      canRename: true,
       onUnsettle,
     });
     const snoozedItems = buildThreadLifecycleMenuItems({
@@ -72,30 +148,58 @@ describe("buildThreadLifecycleMenuItems", () => {
       snoozeSupported: true,
       snoozed: true,
       presets: [PRESET],
+      pinningSupported: true,
+      arrangeSupported: true,
+      canRename: true,
       onWake,
     });
 
-    expect(settledItems).toHaveLength(1);
-    expect(settledItems[0]).toMatchObject({ id: "unsettle", title: "Un-settle thread" });
-    if (!("onPress" in settledItems[0]!)) throw new Error("expected unsettle action");
-    settledItems[0].onPress();
+    expect(ids(settledItems)).toEqual([
+      "copy-thread",
+      "copy-thread-id",
+      "unsettle",
+      "rename",
+      "archive",
+      "delete",
+    ]);
+    expect(settledItems[2]).toMatchObject({ id: "unsettle", title: "Un-settle" });
+    if (!("onPress" in settledItems[2]!)) throw new Error("expected unsettle action");
+    settledItems[2].onPress();
     expect(onUnsettle).toHaveBeenCalledOnce();
 
-    expect(snoozedItems).toHaveLength(1);
-    expect(snoozedItems[0]).toMatchObject({ id: "unsnooze", title: "Wake thread" });
-    if (!("onPress" in snoozedItems[0]!)) throw new Error("expected wake action");
-    snoozedItems[0].onPress();
+    expect(ids(snoozedItems)).toEqual([
+      "copy-thread",
+      "copy-thread-id",
+      "unsnooze",
+      "rename",
+      "archive",
+      "delete",
+    ]);
+    expect(snoozedItems[2]).toMatchObject({ id: "unsnooze", title: "Wake thread" });
+    if (!("onPress" in snoozedItems[2]!)) throw new Error("expected wake action");
+    snoozedItems[2].onPress();
     expect(onWake).toHaveBeenCalledOnce();
+  });
+
+  it("puts Archive in the direct menu when settlement is unsupported", () => {
+    const items = buildThreadLifecycleMenuItems({
+      ...base,
+      canRename: true,
+    });
+
+    expect(ids(items)).toEqual(["copy-thread", "copy-thread-id", "archive", "rename", "delete"]);
   });
 
   it("disables snooze presets while snooze is gated", () => {
     const items = buildThreadLifecycleMenuItems({
       ...base,
+      settlementSupported: true,
       snoozeSupported: true,
       presets: [PRESET],
     });
 
-    if (!("items" in items[0]!)) throw new Error("expected snooze submenu");
-    expect(items[0].items.every((item) => !("items" in item) && item.disabled === true)).toBe(true);
+    const snooze = items.find((item) => item.id === "snooze");
+    if (!snooze || !("items" in snooze)) throw new Error("expected snooze submenu");
+    expect(snooze.items.every((item) => !("items" in item) && item.disabled === true)).toBe(true);
   });
 });
