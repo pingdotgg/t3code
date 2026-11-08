@@ -240,7 +240,7 @@ function chatSubject(
 function AddToChatButton({ onClick }: { onClick: () => void }) {
   return (
     <Button size="xs" variant="ghost" className="shrink-0" onClick={onClick}>
-      <MessageSquarePlusIcon className="size-3" />
+      <MessageSquarePlusIcon />
       Add to chat
     </Button>
   );
@@ -663,7 +663,7 @@ export function PullRequestSummaryTab({
               disabled={pendingFinding !== null && pendingFinding !== undefined}
               onClick={() => onFixFinding(finding)}
             >
-              <HammerIcon className="size-3 shrink-0" />
+              <HammerIcon />
               {pendingFinding === pullRequestFindingKey(finding)
                 ? "Preparing..."
                 : pullRequestFixFindingLabel(finding, fixInThisThread)}
@@ -915,7 +915,7 @@ export function PullRequestSummaryTab({
                         disabled={pendingFinding !== null && pendingFinding !== undefined}
                         onClick={() => onFixFinding(finding)}
                       >
-                        <HammerIcon className="size-3 shrink-0" />
+                        <HammerIcon />
                         {pendingFinding === pullRequestFindingKey(finding)
                           ? "Preparing..."
                           : fixCheckLabel}

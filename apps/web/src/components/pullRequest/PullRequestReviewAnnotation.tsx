@@ -264,7 +264,7 @@ export function ReviewThreadCard({
             disabled={pending || fixPending}
             onClick={onFix}
           >
-            <HammerIcon className="size-3 shrink-0" />
+            <HammerIcon />
             {fixPending ? "Preparing..." : fixLabel}
           </Button>
         ) : null}
