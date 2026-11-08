@@ -266,19 +266,27 @@ export const layer = Layer.effect(
             reason: current ? "key-changed" : "missing-key",
           });
         const response = yield* execute(request).pipe(Effect.mapError(unavailable));
-        if (response.status < 200 || response.status >= 300)
+        if (response.status < 200 || response.status >= 300) {
+          const rejected =
+            [401, 402, 403].includes(response.status) ||
+            (response.status === 400 &&
+              provider === "gemini" &&
+              (yield* response.text.pipe(
+                Effect.map((body) => body.includes("API_KEY_INVALID")),
+                Effect.orElseSucceed(() => false),
+              )));
           return yield* new CloudSpeechError({
             provider,
             reason:
               response.status === 429
                 ? "rate-limit"
-                : [401, 402, 403].includes(response.status) ||
-                    (response.status === 400 && provider === "gemini")
+                : rejected
                   ? "rejected-key"
                   : response.status === 404 && provider === "openrouter"
                     ? "model-unavailable"
                     : "unavailable",
           });
+        }
         const text =
           provider === "gemini"
             ? ((yield* HttpClientResponse.schemaBodyJson(GeminiTranscript)(response).pipe(
