@@ -8,6 +8,7 @@ import type {
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
+  VcsRef,
 } from "@t3tools/contracts";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
@@ -251,6 +252,22 @@ export function hasScheduledTaskDraftChanges(
   return draftSignature(initial) !== draftSignature(current);
 }
 
+/** An empty base is automatic: the project's default branch, else `main` or `master`. */
+export function scheduledTaskWorktreeBaseRef(
+  baseRef: string,
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
+): string {
+  const picked = baseRef.trim();
+  if (picked) return picked;
+  const defaultRef = refs.find((ref) => ref.isDefault);
+  if (defaultRef) return defaultRef.name;
+  for (const name of ["main", "master"]) {
+    const match = refs.find((ref) => ref.name === name || ref.name === `origin/${name}`);
+    if (match) return match.name;
+  }
+  return "main";
+}
+
 export function createDraft(
   projectId: ProjectId | null,
   modelSelection: ModelSelection | null,
@@ -265,7 +282,7 @@ export function createDraft(
     schedule: DEFAULT_SCHEDULE,
     threadMode: "new_thread",
     workspace: "worktree",
-    baseRef: "main",
+    baseRef: "",
     checkoutPath: "",
     enabled: true,
     startFromOrigin: true,
@@ -284,7 +301,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     schedule: scheduleDraftForTask(task),
     threadMode: scheduledTaskThreadMode(task),
     workspace: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
+    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     checkoutPath:
       task.workspaceStrategy.type === "existing_worktree"
         ? task.workspaceStrategy.worktreePath

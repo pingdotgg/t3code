@@ -12,6 +12,7 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
+  type VcsRef,
 } from "@t3tools/contracts";
 import {
   parseMaxDeliveryAge,
@@ -236,6 +237,22 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
   };
 }
 
+/** An empty base is automatic: the project's default branch, else `main` or `master`. */
+export function scheduledTaskWorktreeBaseRef(
+  baseRef: string,
+  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
+): string {
+  const picked = baseRef.trim();
+  if (picked) return picked;
+  const defaultRef = refs.find((ref) => ref.isDefault);
+  if (defaultRef) return defaultRef.name;
+  for (const name of ["main", "master"]) {
+    const match = refs.find((ref) => ref.name === name || ref.name === `origin/${name}`);
+    if (match) return match.name;
+  }
+  return "main";
+}
+
 export function taskToDraft(task: ScheduledTask): DraftState {
   const schedule = task.schedule;
   const filters = webhookFilterDrafts(schedule.type === "webhook" ? schedule.filters : undefined);
@@ -259,7 +276,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
     workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
+    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "",
     startFromOrigin:
       task.workspaceStrategy.type === "worktree"
         ? (task.workspaceStrategy.startFromOrigin ?? false)
