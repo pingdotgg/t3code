@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Scope from "effect/Scope";
@@ -932,6 +933,45 @@ describe("pullCurrentBranch", () => {
       assert.equal(result.status, "pulled");
       assert.equal(yield* git(cwd, ["rev-parse", "HEAD"]), remoteHead);
     }).pipe(Effect.scoped, Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
+  );
+
+  it.effect("runs at most four pulls with no deadline at once", () =>
+    Effect.gen(function* () {
+      const gate = yield* Deferred.make<void>();
+      const starts = yield* Queue.unbounded<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Queue.offer(starts, undefined).pipe(
+          Effect.as(
+            ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle("ok"),
+              exitCode: Deferred.await(gate).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            }),
+          ),
+        ),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      const pulls = yield* Effect.all(
+        Array.from({ length: 5 }, () =>
+          driver.execute({
+            operation: "test.pull",
+            cwd: "/repo",
+            args: ["pull", "--ff-only"],
+            timeoutMs: null,
+          }),
+        ),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* Effect.all(Array.from({ length: 4 }, () => Queue.take(starts)));
+      yield* TestClock.adjust("0 seconds");
+      assert.equal(yield* Queue.size(starts), 0);
+
+      yield* Deferred.succeed(gate, undefined);
+      yield* Fiber.join(pulls);
+      assert.equal(yield* Queue.size(starts), 1);
+    }).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(layerTest)))),
   );
 
   it.effect.each(["stdout", "stderr"] as const)(
