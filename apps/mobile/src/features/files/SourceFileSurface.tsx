@@ -443,7 +443,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
   return (
     <View className="relative flex-1 bg-sheet">
-      <SourceHighlightStatusView status={status} />
+      {usesWebSelection ? null : <SourceHighlightStatusView status={status} />}
       {usesLineList ? (
         codeWordBreak ? (
           list

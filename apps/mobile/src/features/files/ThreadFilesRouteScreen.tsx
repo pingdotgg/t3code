@@ -722,7 +722,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const fileData = fileQuery.data as ProjectReadFileResult | null;
   // Android numbered rows are separate text views, so a long-press opens the whole file as
   // one selectable text at that line. Back returns to the numbered rows at the same line.
-  const selectionScope = JSON.stringify([environmentId, cwd, relativePath, targetLine]);
+  const selectionScope = JSON.stringify([
+    environmentId,
+    cwd,
+    relativePath,
+    targetLine,
+    resolvedActiveMode,
+  ]);
   const [textSelection, setTextSelection] = useState<{
     readonly scope: string;
     readonly line: number;
@@ -732,9 +738,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const canSelectText =
     Platform.OS === "android" && resolvedActiveMode === "source" && fileData?.contents != null;
   const selectingText = canSelectText && scopedTextSelection?.active === true;
-  usePreventRemove(selectingText, () =>
-    setTextSelection((current) => current && { ...current, active: false }),
-  );
+  usePreventRemove(selectingText, ({ data }) => {
+    setTextSelection((current) => current && { ...current, active: false });
+    // The re-dispatched action skips this guard, so "Return to chat" still leaves in one tap.
+    if (data.action.type !== "GO_BACK" && data.action.type !== "POP") {
+      navigation.dispatch(data.action);
+    }
+  });
 
   const handleSelectFile = (path: string) => {
     const targetPath =
