@@ -102,13 +102,12 @@ function applySnooze(
   accepted: boolean,
 ): OrchestrationV2ThreadShell {
   return (!accepted &&
-    (thread.pendingRuntimeRequest !== null ||
+    ((thread.pendingRuntimeRequest !== null && thread.pendingRuntimeRequest.kind !== "user_input") ||
       ["preparing", "queued", "starting"].includes(thread.status))) ||
     !(Date.parse(snoozedUntil) > DateTime.toEpochMillis(now))
     ? thread
     : {
         ...thread,
-        pendingRuntimeRequest: null,
         snoozedUntil: DateTime.makeUnsafe(snoozedUntil),
         snoozedAt: now,
       };

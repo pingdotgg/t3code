@@ -4,12 +4,10 @@ import type { ResourceLike } from "./Resource.ts";
 // special runtime-only symbol for probing the Ref proxy for its metadata
 const RefMetadata = Symbol.for("alchemy/RefMetadata");
 
-export const isRef = (s: any): s is Ref<any> =>
-  s && s[RefMetadata] !== undefined;
+export const isRef = (s: any): s is Ref<any> => s && s[RefMetadata] !== undefined;
 
-export const getRefMetadata = <R extends ResourceLike>(
-  ref: Ref<R>,
-): RefMetadata<R> => (ref as any)[RefMetadata];
+export const getRefMetadata = <R extends ResourceLike>(ref: Ref<R>): RefMetadata<R> =>
+  (ref as any)[RefMetadata];
 
 export interface Ref<R extends ResourceLike = ResourceLike> {
   /** @internal phantom */

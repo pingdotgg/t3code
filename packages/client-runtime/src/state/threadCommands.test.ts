@@ -29,6 +29,7 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
+import { BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -143,7 +144,11 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* (optio
     options?.connected === false ? Option.none<RpcSession>() : Option.some(liveSession),
   );
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID, label: "Mac" },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Mac",
+      connectionId: "test",
+    }),
     session,
   } as EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
   const storage = options?.storage ?? { value: null };
@@ -600,15 +605,53 @@ describe("remote thread lifecycle commands", () => {
           input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
         });
         const request = yield* Queue.take(h.requests);
-        expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(stale.threads[0]);
+        if (action === "settle") {
+          expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(stale.threads[0]);
+        } else {
+          expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject({
+            snoozedUntil: FUTURE,
+            pendingRuntimeRequest: USER_INPUT,
+          });
+        }
         yield* Deferred.succeed(request.reply, { sequence: 2 });
         expect((yield* Effect.promise(() => result))._tag).toBe("Success");
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(
           action === "settle" ? { settledOverride: "settled" } : { snoozedUntil: FUTURE },
         );
-        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toEqual(
+          action === "settle" ? null : USER_INPUT,
+        );
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
+  );
+  it.effect("acknowledges a new question when snoozing again to the same wake time", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      const initial = {
+        ...SNAPSHOT,
+        threads: [
+          {
+            ...SNAPSHOT.threads[0]!,
+            pendingRuntimeRequest: USER_INPUT,
+            snoozedAt: DateTime.makeUnsafe("2026-09-12T09:00:00.000Z"),
+            snoozedUntil: FUTURE,
+          },
+        ],
+      };
+      h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
+      const result = h.commands.snooze.run(h.registry, {
+        environmentId: ENVIRONMENT_ID,
+        input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      });
+      const request = yield* Queue.take(h.requests);
+      const snoozed = h.registry.get(h.visibleAtom)?.threads[0];
+      expect(DateTime.toEpochMillis(snoozed!.snoozedAt!)).toBeGreaterThanOrEqual(
+        DateTime.toEpochMillis(USER_INPUT.createdAt),
+      );
+      expect(snoozed?.pendingRuntimeRequest).toEqual(USER_INPUT);
+      yield* Deferred.succeed(request.reply, { sequence: 2 });
+      expect((yield* Effect.promise(() => result))._tag).toBe("Success");
+    }),
   );
 });
 

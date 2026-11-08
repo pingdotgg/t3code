@@ -33,6 +33,10 @@ import {
   type OrchestrationEventStoreError,
 } from "./Errors.ts";
 
+/** Projection metadata rows: events at or below the pruned-through sequence may be gone. */
+export const EVENT_LOG_PRUNED_THROUGH = "event-log-pruned-through";
+export const EVENT_LOG_PRUNE_MARK = "event-log-prune-mark";
+
 export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer Event
   ? Event extends ApplicationProjectEvent
     ? Omit<Event, "sequence">
@@ -93,6 +97,9 @@ export class OrchestrationEventStore extends Context.Service<
     ) => Effect.Effect<number, OrchestrationEventStoreError>;
 
     readonly latestApplicationSequence: Effect.Effect<number, OrchestrationEventStoreError>;
+
+    /** Replay from a cursor below this misses pruned events; resync from a snapshot instead. */
+    readonly prunedThroughSequence: Effect.Effect<number, OrchestrationEventStoreError>;
 
     /** Unknown event types fail unless skipUnknownEventTypes logs and drops them; only client replay may opt in. */
     readonly readApplicationEvents: (input: {
@@ -451,7 +458,7 @@ const makeEventStore = Effect.gen(function* () {
           const promptKey = subagent === undefined ? undefined : `${event.type}:${subagent.id}`;
           const hint = promptKey === undefined ? undefined : promptHints.get(promptKey);
           const payloadJson = yield* encodeJson(encoded.payload);
-          // Deduplicate repeated progress prompts via anchor rows that ProjectionMaintenance never deletes.
+          // Deduplicate repeated progress prompts via anchor rows; pruning keeps anchors that retained rows reference.
           const storedPayload =
             hint !== undefined && subagent !== undefined
               ? sql`CASE WHEN EXISTS (
@@ -675,6 +682,15 @@ const makeEventStore = Effect.gen(function* () {
     ),
   );
 
+  const prunedThroughSequence = sql<{ readonly last_sequence: number }>`
+    SELECT last_sequence FROM orchestration_v2_projection_metadata
+    WHERE projection_name = ${EVENT_LOG_PRUNED_THROUGH}
+  `.pipe(
+    NodeSqliteClient.readOnly,
+    Effect.map((rows) => rows[0]?.last_sequence ?? 0),
+    Effect.mapError(toPersistenceSqlError("OrchestrationEventStore.prunedThroughSequence:query")),
+  );
+
   // Advance over raw rows so even a full page of unknown types cannot end replay early.
   const catchUpApplicationEvents = (input: {
     readonly afterSequence: number;
@@ -751,6 +767,7 @@ const makeEventStore = Effect.gen(function* () {
     getReplayStats,
     latestAgentSequence,
     latestApplicationSequence,
+    prunedThroughSequence,
     readApplicationEvents: catchUpApplicationEvents,
     publishCommitted: (events) => PubSub.publishAll(committedEvents, events).pipe(Effect.asVoid),
     streamApplicationEvents,
