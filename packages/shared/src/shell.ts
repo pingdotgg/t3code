@@ -769,6 +769,32 @@ const NPM_NODE_SHIM_BODY = [
   ")",
 ].join("\n");
 
+// cmd-shim 9, bundled with npm 12, moves that PATHEXT assignment onto the launch line.
+const NPM_NODE_SHIM_BODY_V9 = [
+  'IF EXIST "%dp0%\\node.exe" (',
+  '  SET "_prog=%dp0%\\node.exe"',
+  ") ELSE (",
+  '  SET "_prog=node"',
+  ")",
+].join("\n");
+
+const NPM_NODE_SHIM_LAUNCH =
+  /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"  "%dp0%\\([^"%]+)" %\*$/;
+const NPM_NODE_SHIM_LAUNCH_V9 =
+  /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & set PATHEXT=%PATHEXT:;\.JS;=;% & "%_prog%"  "%dp0%\\([^"%]+)" %\*$/;
+
+function npmNodeShimTarget(body: ReadonlyArray<string>): string | undefined {
+  const launch = body.at(-1);
+  if (launch === undefined) return undefined;
+  if (body.length === 7 && body.slice(0, -1).join("\n") === NPM_NODE_SHIM_BODY) {
+    return NPM_NODE_SHIM_LAUNCH.exec(launch)?.[1];
+  }
+  if (body.length === 6 && body.slice(0, -1).join("\n") === NPM_NODE_SHIM_BODY_V9) {
+    return NPM_NODE_SHIM_LAUNCH_V9.exec(launch)?.[1];
+  }
+  return undefined;
+}
+
 // Keep the shim directory's original prefix. win32.join turns a POSIX temp path into a drive-root path.
 function joinShimTarget(shimPath: string, target: string): string {
   const separatorIndex = Math.max(shimPath.lastIndexOf("/"), shimPath.lastIndexOf("\\"));
@@ -789,12 +815,7 @@ export function npmShimScript(
   if (!lines || NPM_EXECUTABLE_SHIM_PREFIX.some((expected, index) => lines[index] !== expected)) {
     return undefined;
   }
-  const body = lines.slice(NPM_EXECUTABLE_SHIM_PREFIX.length);
-  if (body.length !== 7 || body.slice(0, -1).join("\n") !== NPM_NODE_SHIM_BODY) return undefined;
-  const target =
-    /^endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & "%_prog%"  "%dp0%\\([^"%]+)" %\*$/.exec(
-      body.at(-1)!,
-    )?.[1];
+  const target = npmNodeShimTarget(lines.slice(NPM_EXECUTABLE_SHIM_PREFIX.length));
   if (!target) return undefined;
   const script = joinShimTarget(shimPath, target);
   return isFile(script) ? script : undefined;

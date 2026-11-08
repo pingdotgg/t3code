@@ -1252,4 +1252,30 @@ describe("npmShimScript", () => {
       ),
     ).toBeUndefined();
   });
+
+  it("resolves an npm 12 Node shim and rejects extra launch arguments", () => {
+    const npm12 =
+      '@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT /b\n:start\nSETLOCAL\nCALL :find_dp0\n\nIF EXIST "%dp0%\\node.exe" (\n  SET "_prog=%dp0%\\node.exe"\n) ELSE (\n  SET "_prog=node"\n)\n\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js" %*\n';
+    expect(
+      npmShimScript(
+        command,
+        () => npm12,
+        () => true,
+      ),
+    ).toBe("C:\\npm\\node_modules\\@deepseek-ai\\dsh\\lib\\bin.js");
+    expect(
+      npmShimScript(
+        command,
+        () => npm12.replace('"%_prog%"  "%dp0%', '"%_prog%" --experimental-strip-types "%dp0%'),
+        () => true,
+      ),
+    ).toBeUndefined();
+    expect(
+      npmShimScript(
+        command,
+        () => npm12 + "echo unsafe\n",
+        () => true,
+      ),
+    ).toBeUndefined();
+  });
 });
