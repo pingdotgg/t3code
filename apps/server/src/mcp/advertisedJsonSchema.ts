@@ -11,7 +11,7 @@ const isBareAnyOf = (value: Json): value is { anyOf: Array<Json> } =>
   Predicate.isObject(value) && Array.isArray(value.anyOf) && Object.keys(value).length === 1;
 
 // A `Schema.fromJsonString` fallback. Advertised beside object shapes, it invites stringified input.
-const isJsonStringSchema = (value: Json) =>
+export const isJsonStringSchema = (value: Json) =>
   Predicate.isObject(value) &&
   value.type === "string" &&
   value.contentMediaType === "application/json";

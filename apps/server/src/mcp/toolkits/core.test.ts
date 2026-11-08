@@ -26,7 +26,9 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as SchemaAST from "effect/SchemaAST";
 import { McpAttachmentInput } from "./attachment/input.ts";
 import { McpSchema, McpServer, Tool } from "effect/ai";
 import { FetchHttpClient } from "effect/http";
@@ -1050,67 +1052,100 @@ it.effect("only the caller that prepared a pending upload can discard it", () =>
   ),
 );
 
-import { OrchestratorToolkit } from "./orchestrator/tools.ts";
-import { PullRequestsToolkit } from "./pullRequests/tools.ts";
+import { advertisedJsonSchema, isJsonStringSchema } from "../advertisedJsonSchema.ts";
+import { AttachmentToolkit } from "./attachment/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
+import { EnvironmentToolkit } from "./environment/tools.ts";
+import { HtmlToolkit } from "./html/tools.ts";
+import { OrchestratorToolkit } from "./orchestrator/tools.ts";
+import { PreviewToolkit } from "./preview/tools.ts";
+import { PreviewControlsToolkit } from "./previewControls/tools.ts";
+import { ProjectToolkit } from "./project/tools.ts";
+import { PullRequestsToolkit } from "./pullRequests/tools.ts";
+import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
-interface ParameterSchema {
-  readonly description?: string;
-  readonly properties?: Readonly<Record<string, ParameterSchema>>;
-  readonly anyOf?: ReadonlyArray<ParameterSchema>;
-  readonly items?: ParameterSchema;
-}
+// advertisedJsonSchema drops `Schema.fromJsonString` union branches, and their text with them.
+const isJsonStringFallback = (ast: SchemaAST.AST) =>
+  isJsonStringSchema(Schema.toJsonSchemaDocument(Schema.make(ast)).schema);
 
-const parameterFields = (schema: ParameterSchema, field: string): ParameterSchema[] => [
-  ...(schema.properties?.[field] ? [schema.properties[field]] : []),
-  ...(schema.anyOf ?? []).flatMap((member) => parameterFields(member, field)),
-  ...(schema.items ? parameterFields(schema.items, field) : []),
-];
+// An outer description replaces the one on its encoded side, and on a union's only kept
+// branch, so only the outermost counts.
+const sourceDescriptions = (
+  ast: SchemaAST.AST,
+  path: string,
+  out: Array<readonly [path: string, text: string]>,
+  described = false,
+): void => {
+  const description = SchemaAST.resolveDescription(ast);
+  if (!described && description !== undefined) out.push([path, description]);
+  const covered = described || description !== undefined;
+  const end = ast.encoding?.at(-1)?.to;
+  if (end) return sourceDescriptions(end, path, out, covered);
+  if (SchemaAST.isObjects(ast)) {
+    for (const property of ast.propertySignatures)
+      sourceDescriptions(property.type, `${path}.${String(property.name)}`, out);
+    for (const index of ast.indexSignatures) sourceDescriptions(index.type, `${path}.*`, out);
+  } else if (SchemaAST.isUnion(ast)) {
+    const kept = ast.types.filter((member) => !isJsonStringFallback(member));
+    const branches = kept.filter(
+      (member) => !SchemaAST.isUndefined(member) && !SchemaAST.isNull(member),
+    );
+    for (const member of kept)
+      sourceDescriptions(member, path, out, branches.length === 1 && covered);
+  } else if (SchemaAST.isArrays(ast)) {
+    for (const item of ast.rest) sourceDescriptions(item, `${path}[]`, out);
+  }
+};
 
-it("advertises existing string parameter guidance to MCP clients", () => {
-  const tools = {
-    ...OrchestratorToolkit.tools,
-    ...PullRequestsToolkit.tools,
+const advertisedDescriptions = (schema: unknown, path: string, out: Set<string>): void => {
+  if (Array.isArray(schema)) {
+    for (const member of schema) advertisedDescriptions(member, path, out);
+    return;
+  }
+  if (!Predicate.isObject(schema)) return;
+  if (typeof schema.description === "string") out.add(`${path}: ${schema.description}`);
+  if (Predicate.isObject(schema.properties))
+    for (const [name, property] of Object.entries(schema.properties))
+      advertisedDescriptions(property, `${path}.${name}`, out);
+  advertisedDescriptions(schema.anyOf, path, out);
+  advertisedDescriptions(schema.items, `${path}[]`, out);
+  advertisedDescriptions(schema.additionalProperties, `${path}.*`, out);
+};
+
+// Restoring these is a context-budget call: about 3.6 KB on every thread's tool list.
+const awaitingBudgetCall = new Set([
+  "Linked environment to act in. Omit for this one. Ids are then that environment's.",
+  "Linked environment to run in. Provider and model default to yours; others come from `orchestrator_capabilities` with this `environmentId`.",
+  "With `environmentId`: its project to run in. Default: the one with this project's repository.",
+  "The linked environment to forget, from t3_environment_links.",
+]);
+
+it("advertises every parameter description written in the tool schemas", () => {
+  const tools: Record<string, Tool.Any> = {
+    ...AttachmentToolkit.tools,
     ...DeviceToolkit.tools,
+    ...EnvironmentToolkit.tools,
+    ...HtmlToolkit.tools,
+    ...OrchestratorToolkit.tools,
+    ...PreviewToolkit.tools,
+    ...PreviewControlsToolkit.tools,
+    ...ProjectToolkit.tools,
+    ...PullRequestsToolkit.tools,
+    ...ThreadToolkit.tools,
     ...WorktreeToolkit.tools,
   };
-  for (const [name, path] of [
-    ["delegate_task", "clientRequestId"],
-    ["delegate_task", "target.providerInstanceId"],
-    ["delegate_task", "target.driverKind"],
-    ["request_secret", "label"],
-    ["request_secret", "reason"],
-    ["schedule_task", "projectId"],
-    ["list_scheduled_tasks", "projectId"],
-    ["orchestrator_capabilities", "search"],
-    ["link_pull_request", "threadId"],
-    ["link_pull_request", "repository"],
-    ["link_pull_request", "host"],
-    ["list_thread_pull_requests", "threadId"],
-    ["t3_worktree_handoff", "baseRef"],
-    ["t3_worktree_handoff", "continuationPrompt"],
-    ["device_open", "deviceId"],
-    ["device_open", "hostId"],
-    ["device_screenshot", "deviceId"],
-    ["device_close", "deviceId"],
-    ["t3_thread_update", "title"],
-    ["t3_thread_update", "clientRequestId"],
-    ["schedule_task", "schedule.timeOfDay"],
-    ["schedule_task", "schedule.signature.header"],
-  ] as const) {
-    const schema = Tool.getJsonSchema(tools[name]) as ParameterSchema;
-    const fields = path
-      .split(".")
-      .reduce<ParameterSchema[]>(
-        (nodes, field) => nodes.flatMap((node) => parameterFields(node, field)),
-        [schema],
-      );
-    expect(fields.length, name + "." + path).toBeGreaterThan(0);
-    for (const field of fields) {
-      expect(field.description, name + "." + path).toEqual(expect.any(String));
-    }
+  const missing: string[] = [];
+  for (const [name, tool] of Object.entries(tools)) {
+    const source: Array<readonly [path: string, text: string]> = [];
+    sourceDescriptions(tool.parametersSchema.ast, name, source);
+    const advertised = new Set<string>();
+    advertisedDescriptions(advertisedJsonSchema(tool), name, advertised);
+    for (const [path, text] of source)
+      if (!awaitingBudgetCall.has(text) && !advertised.has(`${path}: ${text}`))
+        missing.push(`${path}: ${text}`);
   }
+  expect(missing).toEqual([]);
 });
 
 it.effect(
