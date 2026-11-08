@@ -90,7 +90,7 @@ export function isMomentumTail(deltas: readonly number[]): boolean {
 
 /**
  * Two-finger horizontal trackpad swipes go back and forward, like a browser.
- * macOS only: elsewhere a mouse tilt wheel arrives as the same pixel-mode wheel stream.
+ * macOS only: on Windows and Linux a mouse tilt wheel is indistinguishable from a trackpad swipe.
  */
 export function HistorySwipeNavigation() {
   const [swipe, setSwipe] = useState<SwipeIndicatorState | null>(null);
