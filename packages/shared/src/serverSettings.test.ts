@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -38,6 +39,36 @@ describe("fallbackTextGenerationModelSelection", () => {
       fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "opencode"),
     ).toEqual({ instanceId: "opencode", model: "opencode/big-pickle" });
   });
+
+  it.each(["acpRegistry", "claudeAgent"] as const)(
+    "uses the configured %s driver behind a default instance ID",
+    (driver) => {
+      const checkedDrivers: string[] = [];
+      const fallback = fallbackTextGenerationModelSelection(
+        {
+          [ProviderInstanceId.make("codex")]: {
+            driver: ProviderDriverKind.make(driver),
+            config: {},
+          },
+        },
+        (instanceId, candidateDriver) => {
+          if (instanceId !== "codex") return false;
+          checkedDrivers.push(candidateDriver);
+          return true;
+        },
+      );
+      expect(fallback).toEqual(
+        driver === "acpRegistry"
+          ? null
+          : {
+              instanceId: "codex",
+              model:
+                DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
+            },
+      );
+      expect(checkedDrivers).toEqual(driver === "acpRegistry" ? [] : ["claudeAgent"]);
+    },
+  );
 
   it("replaces and clears the fallback without carrying model options", () => {
     const fallbackModelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "new" };

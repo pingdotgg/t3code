@@ -162,6 +162,10 @@ describe("Copilot text generation", () => {
 
   it.live.each([
     ["tool_call", "Copilot attempted tool work during text generation."],
+    ["tool_call_completed", "Copilot attempted tool work during text generation."],
+    ["limit_exceeded", "Copilot text generation exceeded the output limit."],
+    ["empty", "Copilot returned empty text generation output."],
+    ["cancelled", "Copilot text generation was cancelled."],
     ["permission", "Copilot requested a tool permission during text generation."],
     ["read_file", "Copilot requested a client tool during text generation."],
     ["auth_required", "Sign in to GitHub Copilot in provider settings."],
@@ -187,6 +191,16 @@ describe("Copilot text generation", () => {
           );
         }
       }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("accepts output exactly at the cumulative limit", () =>
+    Effect.gen(function* () {
+      const { textGeneration, readLog } = yield* harness({ scenario: "limit_exact" });
+      assert.equal((yield* generateTitle(textGeneration, "default")).title, "Copilot title");
+      const { launch } = readLog()[0]!;
+      assert.isFalse(NodeFS.existsSync(launch!.cwd));
+      assert.isFalse(NodeFS.existsSync(launch!.copilotHome!));
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
   it.live(

@@ -48,9 +48,16 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
       respond({ sessionId });
       break;
     case "session/prompt":
-      // Each rejection scenario then hangs, so only the helper's own abort can settle it.
-      if (scenario === "tool_call") {
+      // Open-ended requests stay pending so rejection cannot wait for session/prompt.
+      if (scenario === "tool_call" || scenario === "tool_call_completed") {
         update({ sessionUpdate: "tool_call", toolCallId: "t1", title: "bash", status: "pending" });
+        if (scenario === "tool_call_completed") {
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: '{"title":"Copilot title"}' },
+          });
+          respond({ stopReason: "end_turn" });
+        }
       } else if (scenario === "permission") {
         write({
           jsonrpc: "2.0",
@@ -69,7 +76,17 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
           method: "fs/read_text_file",
           params: { sessionId, path: "/etc/hostname" },
         });
-      } else {
+      } else if (scenario === "empty" || scenario === "cancelled") {
+        respond({ stopReason: scenario === "cancelled" ? "cancelled" : "end_turn" });
+      } else if (scenario === "limit_exact" || scenario === "limit_exceeded") {
+        const reply = JSON.stringify({ title: "Copilot title" }).padEnd(
+          scenario === "limit_exact" ? 128000 : 128001,
+          " ",
+        );
+        for (const part of [reply.slice(0, 64000), reply.slice(64000)])
+          update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: part } });
+        respond({ stopReason: "end_turn" });
+      } else if (scenario === "reply") {
         update({
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "Info: Disabled tools: bash, view\n" },
@@ -79,6 +96,8 @@ for await (const line of NodeReadline.createInterface({ input: process.stdin }))
           content: { type: "text", text: JSON.stringify({ title: "Copilot title" }) },
         });
         respond({ stopReason: "end_turn" });
+      } else {
+        throw new Error("Unconfigured mock scenario: " + scenario);
       }
       break;
     default:

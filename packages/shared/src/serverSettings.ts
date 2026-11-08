@@ -80,9 +80,11 @@ export function fallbackTextGenerationModelSelection(
   },
 ): ModelSelection | null {
   const candidates = [
-    ...TEXT_GENERATION_FALLBACK_DRIVERS.map(
-      (driver) => [defaultInstanceIdForDriver(driver), driver] as const,
-    ),
+    ...TEXT_GENERATION_FALLBACK_DRIVERS.flatMap((defaultDriver) => {
+      const instanceId = defaultInstanceIdForDriver(defaultDriver);
+      const driver = providerInstances[instanceId]?.driver ?? defaultDriver;
+      return isAutomaticTextGenerationFallbackDriver(driver) ? [[instanceId, driver] as const] : [];
+    }),
     ...(options?.includeConfiguredInstances === true
       ? Object.entries(providerInstances).flatMap(([instanceId, instance]) =>
           TEXT_GENERATION_FALLBACK_DRIVERS.includes(instance.driver)
