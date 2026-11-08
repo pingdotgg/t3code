@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import type { InteractionUpdate } from "@cursor/sdk";
 import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import {
+  type OrchestrationV2ProviderTurn,
   CheckpointId,
   EnvironmentId,
   MessageId,
@@ -761,8 +762,9 @@ describe("CursorAdapterV2", () => {
         lastVisitedAt: null,
         deletedAt: null,
       };
-      // Starts at run 5: a conversation from before device instructions existed, now resumed.
+      // Resuming a conversation does not prove it ever received T3 instructions.
       let runOrdinal = 4;
+      let latestTurn: OrchestrationV2ProviderTurn | undefined;
       const send = Effect.fnUntraced(function* (compact = false) {
         runOrdinal += 1;
         const turnInput = {
@@ -785,10 +787,13 @@ describe("CursorAdapterV2", () => {
           },
         };
         yield* compact ? runtime.compactThread!(turnInput) : runtime.startTurn(turnInput);
-        yield* runtime.events.pipe(
-          Stream.filter((event) => event.type === "turn.terminal"),
-          Stream.runHead,
+        const events = yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
         );
+        latestTurn = events.findLast(
+          (event) => event.type === "provider_turn.updated",
+        )?.providerTurn;
         const sent = sentMessages.at(-1)!;
         return {
           orchestration: sent.includes("## T3 Code orchestration"),
@@ -798,7 +803,7 @@ describe("CursorAdapterV2", () => {
       const told = (orchestration: boolean, devices: boolean) => ({ orchestration, devices });
 
       yield* setDeviceAccess(true);
-      assert.deepEqual(yield* send(), told(false, true));
+      assert.deepEqual(yield* send(), told(true, true));
       assert.deepEqual(yield* send(), told(false, false));
       yield* send(true);
       assert.deepEqual(
@@ -858,6 +863,46 @@ describe("CursorAdapterV2", () => {
         told(false, false),
         "restarted sessions deliver instructions only once",
       );
+      yield* mcpSessions.clear(threadId);
+      yield* send(true);
+      assert.deepEqual(yield* send(), told(false, false));
+      const withoutInstructions = latestTurn;
+      if (withoutInstructions === undefined) throw new Error("Missing retained provider turn");
+      const retainedOrdinal = runOrdinal;
+      yield* setDeviceAccess(true);
+      assert.deepEqual(yield* send(), told(true, true));
+      for (const restart of [false, true]) {
+        const rolledBack = yield* runtime.rollbackThread({
+          providerThread,
+          providerThreadTurns: [withoutInstructions],
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("cursor-before-mcp"),
+            appRunOrdinal: retainedOrdinal,
+            providerTurn: withoutInstructions,
+          },
+        });
+        providerThread = { ...rolledBack.providerThread, lastRunOrdinal: retainedOrdinal };
+        if (restart) {
+          runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("cursor-retained-restarted"),
+            modelSelection,
+            runtimePolicy,
+          });
+          providerThread = yield* runtime.resumeThread({ providerThread });
+        }
+        assert.deepEqual(
+          yield* send(),
+          told(true, true),
+          "retained turns without MCP need instructions after rollback",
+        );
+        assert.deepEqual(
+          yield* send(),
+          told(false, false),
+          "retained-turn rollback delivers instructions only once",
+        );
+      }
     }).pipe(
       Effect.scoped,
       Effect.provide(

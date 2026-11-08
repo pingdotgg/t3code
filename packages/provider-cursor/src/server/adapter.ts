@@ -2401,12 +2401,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             const hasDeviceTools =
               mcpServers !== undefined && mcpSession?.capabilities?.has("device") === true;
             const known = yield* Ref.get(told);
-            // Rollback resets the retained ordinal; app run ordinals keep increasing.
+            // Unknown delivery is retried once: retained turns may predate T3 MCP access.
             const delivered =
               known?.agent === agent.nativeThreadId
                 ? known
                 : {
-                    orchestration: turnInput.providerThread.lastRunOrdinal !== null,
+                    orchestration: false,
                     device: false,
                   };
             const interrupted = yield* Ref.get(interruptedPrompt);
@@ -2858,16 +2858,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                 Effect.onError(() => agent.session.close.pipe(Effect.ignore)),
                 Effect.ensuring(Ref.set(liveAgent, null)),
               );
-              yield* Ref.set(
-                told,
-                target.type === "thread_start"
-                  ? {
-                      agent: agent.nativeThreadId,
-                      orchestration: false,
-                      device: false,
-                    }
-                  : null,
-              );
+              yield* Ref.set(told, null);
               return {
                 providerThread: {
                   ...rollbackInput.providerThread,
