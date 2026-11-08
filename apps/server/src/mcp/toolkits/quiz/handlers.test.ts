@@ -51,7 +51,7 @@ it.effect("folds source into both returned card replies", () =>
     );
     const quizResult = yield* toolkit
       .handle("quiz_card", {
-        reply: "x".repeat(250),
+        reply: "x".repeat(1990),
         source: "grader/bank/compose.py; docs/grading.md is out of date",
         purpose: "opening-check",
         answer: "A",
@@ -66,7 +66,7 @@ it.effect("folds source into both returned card replies", () =>
       .pipe(Stream.unwrap, Stream.runCollect);
     expect(quizResult.at(-1)?.result).toMatchObject({
       quizCard: {
-        reply: `${"x".repeat(250)}\n\nSource: grader/bank/compose.py; docs/grading.md is out of date`,
+        reply: `${"x".repeat(1990)}\n\nSource: grader/bank/compose.py; docs/grading.md is out of date`,
         source: "grader/bank/compose.py; docs/grading.md is out of date",
       },
     });

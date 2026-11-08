@@ -43,7 +43,11 @@ export const QuizCardInput = Schema.Struct({
 const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   description: T3_LEARN_QUIZ_RULES_FULL,
   parameters: QuizCardInput,
-  success: Schema.Struct({ quizCard: QuizCardInput, message: Schema.String }),
+  // The returned reply carries the folded source, so it may exceed the input cap.
+  success: Schema.Struct({
+    quizCard: Schema.Struct({ ...QuizCardInput.fields, reply: Schema.String }),
+    message: Schema.String,
+  }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [
@@ -91,7 +95,10 @@ export const QuestionCardInput = Schema.Struct({
 const QuestionCardTool = Tool.make(QUESTION_CARD_TOOL_NAME, {
   description: T3_LEARN_QUESTION_RULES,
   parameters: QuestionCardInput,
-  success: Schema.Struct({ questionCard: QuestionCardInput, message: Schema.String }),
+  success: Schema.Struct({
+    questionCard: Schema.Struct({ ...QuestionCardInput.fields, reply: Schema.String }),
+    message: Schema.String,
+  }),
   failure: OrchestratorMcpFailure,
   failureMode: "return",
   dependencies: [
