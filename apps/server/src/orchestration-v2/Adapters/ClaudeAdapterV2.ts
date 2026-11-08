@@ -59,6 +59,7 @@ import {
   type SpawnOptions as ClaudeSpawnOptions,
   type SpawnedProcess as ClaudeSpawnedProcess,
   type SDKAssistantMessage,
+  type SDKControlGetContextUsageResponse,
   type SDKAPIRetryMessage,
   type SDKMessage,
   type SDKRateLimitInfo,
@@ -91,6 +92,8 @@ import {
 } from "@t3tools/shared/claudeCompaction";
 import {
   type ChatAttachment,
+  type ContextBreakdown,
+  type ContextBreakdownKind,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
   TrimmedNonEmptyString,
@@ -313,6 +316,51 @@ export function claudeProviderTurnTokenUsage(
 }
 
 type ClaudeMessageUsage = Parameters<typeof claudeProviderTurnTokenUsage>[0];
+
+const CLAUDE_CONTEXT_CATEGORY_KINDS: Partial<
+  Record<
+    NonNullable<SDKControlGetContextUsageResponse["categories"][number]["id"]>,
+    ContextBreakdownKind
+  >
+> = {
+  system_prompt: "system_prompt",
+  system_tools: "system_tools",
+  mcp_tools: "mcp_tools",
+  memory_files: "memory_files",
+  skills: "skills",
+  custom_agents: "custom_agents",
+  messages: "messages",
+};
+
+/** The in-window rows of Claude's `/context`; a CLI that predates category ids reports none. */
+function claudeContextBreakdown(
+  usage: SDKControlGetContextUsageResponse,
+): ContextBreakdown | undefined {
+  if (!usage.categories.some((category) => category.id !== undefined)) return undefined;
+  const tokens = new Map<ContextBreakdownKind, number>();
+  const add = (kind: ContextBreakdownKind, count: number) =>
+    tokens.set(kind, (tokens.get(kind) ?? 0) + count);
+  for (const category of usage.categories) {
+    if (category.kind !== "used") continue;
+    const kind = category.id === undefined ? undefined : CLAUDE_CONTEXT_CATEGORY_KINDS[category.id];
+    add(kind ?? "other", Math.max(0, Math.round(category.tokens)));
+  }
+  const t3Tools = Math.min(
+    tokens.get("mcp_tools") ?? 0,
+    Math.round(
+      usage.mcpTools
+        .filter((tool) => tool.serverName === "t3-code" && tool.isLoaded !== false)
+        .reduce((sum, tool) => sum + tool.tokens, 0),
+    ),
+  );
+  if (t3Tools > 0) {
+    add("mcp_tools", -t3Tools);
+    add("t3_tools", t3Tools);
+  }
+  return Array.from(tokens, ([kind, count]) => ({ kind, tokens: count })).filter(
+    (category) => category.tokens > 0,
+  );
+}
 
 // message_delta usage is per-message cumulative; null or absent fields retain message_start values and zeros replace them.
 function mergeClaudeStreamUsage(
@@ -565,6 +613,10 @@ export interface ClaudeAgentSdkQuerySession {
   ) => Effect.Effect<boolean, ClaudeAgentSdkQueryRunnerError>;
   readonly mcpServerStatus: Effect.Effect<
     ReadonlyArray<ClaudeMcpServerStatus>,
+    ClaudeAgentSdkQueryRunnerError
+  >;
+  readonly getContextUsage: Effect.Effect<
+    SDKControlGetContextUsageResponse,
     ClaudeAgentSdkQueryRunnerError
   >;
   readonly readMcpResource: (input: {
@@ -1488,6 +1540,10 @@ export const layerQueryRunner: Layer.Layer<
             mcpServerStatus: Effect.tryPromise({
               try: () => queryRuntime.mcpServerStatus(),
               catch: (cause) => queryRunnerError(cause, "mcpServerStatus"),
+            }),
+            getContextUsage: Effect.tryPromise({
+              try: () => queryRuntime.getContextUsage({ detail: "summary" }),
+              catch: (cause) => queryRunnerError(cause, "getContextUsage"),
             }),
             readMcpResource: ({ server, uri }) =>
               Effect.tryPromise({
@@ -5457,6 +5513,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context: ActiveClaudeTurnContext,
           usage: ClaudeMessageUsage | number,
           requestStarted = false,
+          breakdown?: ContextBreakdown,
         ) {
           const now = yield* DateTime.now;
           // Only message_start marks the request start; an assistant snapshot
@@ -5500,7 +5557,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               status: "running",
               startedAt: context.startedAt,
               completedAt: null,
-              tokenUsage,
+              tokenUsage: breakdown === undefined ? tokenUsage : { ...tokenUsage, breakdown },
               ...(context.executedModel === undefined ? {} : { model: context.executedModel }),
             },
           });
@@ -10023,8 +10080,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (message.type === "result") {
             const contextUsage = context.streamUsage?.usage ?? context.compactionTokens;
-            if (resultsReportingNewContextWindow.has(message) && contextUsage !== undefined) {
-              yield* emitContextUsage(context, contextUsage);
+            if (contextUsage !== undefined) {
+              // "summary" answers from Claude's local state without a token-count API call.
+              const breakdown = yield* input.query.getContextUsage.pipe(
+                Effect.map(claudeContextBreakdown),
+                Effect.timeout("2 seconds"),
+                Effect.tapError((cause) =>
+                  Effect.logDebug("orchestration-v2.claude-context-usage-unavailable", { cause }),
+                ),
+                Effect.orElseSucceed(() => undefined),
+              );
+              if (breakdown !== undefined || resultsReportingNewContextWindow.has(message)) {
+                yield* emitContextUsage(context, contextUsage, false, breakdown);
+              }
             }
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
