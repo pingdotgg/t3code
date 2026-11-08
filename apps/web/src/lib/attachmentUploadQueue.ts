@@ -628,6 +628,7 @@ export async function refreshExpiredAttachmentUploads(input: {
         startAttachmentUpload({
           environmentId: input.environmentId,
           image,
+          force: true,
           ...(input.draftTarget !== undefined ? { draftTarget: input.draftTarget } : {}),
         });
         return;

@@ -250,6 +250,53 @@ describe("attachmentUploadQueue", () => {
     expect(TestXmlHttpRequest.requests).toHaveLength(3);
   });
 
+  it("reuploads local file bytes after its persisted upload is known to be missing", async () => {
+    const file = {
+      ...makeFile("expired-saved-file"),
+      uploadedAttachmentId: "pending-expired",
+      uploadEnvironmentId: firstEnvironment,
+    };
+    useAttachmentUploadStore.setState({
+      uploadsByImageId: {
+        [file.id]: {
+          status: "ready",
+          environmentId: firstEnvironment,
+          attachmentId: "pending-expired",
+        },
+      },
+    });
+    mocks.executeAtomQuery
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        error: { _tag: "AssetAttachmentNotFoundError" },
+      })
+      .mockResolvedValue({ _tag: "Failure", error: new Error("Connection interrupted") });
+    let uploadStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      uploadStarted = resolve;
+    });
+    const runCommand = mocks.runAtomCommand.getMockImplementation()!;
+    mocks.runAtomCommand.mockImplementation(async (...args) => {
+      const result = await runCommand(...args);
+      if (args[1] === mocks.createUploadUrl) uploadStarted();
+      return result;
+    });
+    const refresh = refreshExpiredAttachmentUploads({
+      environmentId: firstEnvironment,
+      images: [file],
+    });
+    expect(await Promise.race([started.then(() => "upload"), refresh.then(() => "settled")])).toBe(
+      "upload",
+    );
+    expect(TestXmlHttpRequest.requests).toHaveLength(1);
+    TestXmlHttpRequest.requests[0]!.complete();
+    await refresh;
+    expect(mocks.executeAtomQuery).toHaveBeenCalledTimes(1);
+    expect(
+      getUploadedAttachments({ environmentId: firstEnvironment, images: [file] }),
+    ).toMatchObject([{ id: "pending-environment-1-expired-saved-file.pdf" }]);
+  });
+
   it.each([false, true])(
     "retains cleanup identity after verification fails (retry: %s)",
     async (retry) => {
