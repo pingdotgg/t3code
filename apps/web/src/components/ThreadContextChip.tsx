@@ -30,6 +30,7 @@ export function ThreadContextChip(props: {
   const projectId = shell?.projectId ?? props.projectId ?? metadata?.projectId;
   const project = useProject(projectId ? scopeProjectRef(environmentId, projectId) : null);
   const title = shell?.title?.trim() || metadata?.title.trim() || props.record.title;
+  const settled = shell?.settledOverride === "settled";
   return (
     <Tooltip>
       <TooltipTrigger
@@ -44,9 +45,11 @@ export function ThreadContextChip(props: {
                 draggable={false}
               />
             }
-            aria-label={`Thread, ${title}`}
+            aria-label={`Thread, ${title}${settled ? ", settled" : ""}`}
             data-markdown-copy={props.copyMarkdown}
-            className="no-underline"
+            className={
+              settled ? "rounded-md bg-foreground/5 px-1.5 py-0.5 no-underline" : "no-underline"
+            }
           >
             {project ? (
               <ProjectFavicon project={project} className="size-[1em] self-center" />
@@ -54,13 +57,20 @@ export function ThreadContextChip(props: {
               <MessagesSquareIcon />
             )}
             <ContextChipLabel>{title}</ContextChipLabel>
+            {settled ? (
+              <span className="ms-1 shrink-0 border-s border-foreground/15 ps-1.5 text-xs font-normal text-muted-foreground">
+                Settled
+              </span>
+            ) : null}
           </ContextChip>
         }
       />
       <TooltipPopup side="top">
         {props.unreadable
           ? "On another machine, so this machine's agent can't read it. Remove it or switch back to send."
-          : "Open thread"}
+          : settled
+            ? "Open settled thread"
+            : "Open thread"}
       </TooltipPopup>
     </Tooltip>
   );
