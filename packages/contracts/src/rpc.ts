@@ -1,3 +1,4 @@
+import * as Linear from "./linear.ts";
 import {
   OrchestrationV2SearchThreadError,
   OrchestrationV2SearchThreadInput,
@@ -555,6 +556,20 @@ export const WS_METHODS = {
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
+  linearUpload: "linear.upload",
+  linearConnection: "linear.connection",
+  linearConfigure: "linear.configure",
+  linearWorkspace: "linear.workspace",
+  linearTeamContext: "linear.teamContext",
+  linearIssues: "linear.issues",
+  linearIssue: "linear.issue",
+  linearComments: "linear.comments",
+  linearProjects: "linear.projects",
+  linearProject: "linear.project",
+  linearDocuments: "linear.documents",
+  linearDocument: "linear.document",
+  linearInbox: "linear.inbox",
+  linearMutate: "linear.mutate",
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
   pullRequestsFilterOptions: "pullRequests.filterOptions",
@@ -1010,6 +1025,77 @@ const PullRequestRpcError = Schema.Union([
   PullRequestOperationError,
   EnvironmentAuthorizationError,
 ]);
+
+const WsLinearUploadRpc = Rpc.make(WS_METHODS.linearUpload, {
+  payload: Linear.LinearUploadInput,
+  success: Linear.LinearUploadResult,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearConnectionRpc = Rpc.make(WS_METHODS.linearConnection, {
+  payload: Schema.Struct({}),
+  success: Linear.LinearConnection,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearConfigureRpc = Rpc.make(WS_METHODS.linearConfigure, {
+  payload: Linear.LinearConfigureInput,
+  success: Linear.LinearConnection,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearWorkspaceRpc = Rpc.make(WS_METHODS.linearWorkspace, {
+  payload: Schema.Struct({}),
+  success: Linear.LinearWorkspace,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearTeamContextRpc = Rpc.make(WS_METHODS.linearTeamContext, {
+  payload: Linear.LinearIdInput,
+  success: Linear.LinearTeamContext,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearIssuesRpc = Rpc.make(WS_METHODS.linearIssues, {
+  payload: Linear.LinearIssuesInput,
+  success: Linear.LinearIssuePage,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearIssueRpc = Rpc.make(WS_METHODS.linearIssue, {
+  payload: Linear.LinearIdInput,
+  success: Linear.LinearIssueDetail,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearCommentsRpc = Rpc.make(WS_METHODS.linearComments, {
+  payload: Linear.LinearCommentsInput,
+  success: Linear.LinearCommentsPage,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearProjectsRpc = Rpc.make(WS_METHODS.linearProjects, {
+  payload: Linear.LinearProjectsInput,
+  success: Linear.LinearProjectPage,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearProjectRpc = Rpc.make(WS_METHODS.linearProject, {
+  payload: Linear.LinearIdInput,
+  success: Linear.LinearProjectDetail,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearDocumentsRpc = Rpc.make(WS_METHODS.linearDocuments, {
+  payload: Linear.LinearDocumentsInput,
+  success: Linear.LinearDocumentPage,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearDocumentRpc = Rpc.make(WS_METHODS.linearDocument, {
+  payload: Linear.LinearIdInput,
+  success: Linear.LinearDocument,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearInboxRpc = Rpc.make(WS_METHODS.linearInbox, {
+  payload: Linear.LinearInboxInput,
+  success: Linear.LinearInboxPage,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
+const WsLinearMutateRpc = Rpc.make(WS_METHODS.linearMutate, {
+  payload: Linear.LinearMutationInput,
+  success: Linear.LinearMutationResult,
+  error: Schema.Union([Linear.LinearError, EnvironmentAuthorizationError]),
+});
 
 const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
   payload: PullRequestListInput,
@@ -2077,6 +2163,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
+  WsLinearUploadRpc,
+  WsLinearConnectionRpc,
+  WsLinearConfigureRpc,
+  WsLinearWorkspaceRpc,
+  WsLinearTeamContextRpc,
+  WsLinearIssuesRpc,
+  WsLinearIssueRpc,
+  WsLinearCommentsRpc,
+  WsLinearProjectsRpc,
+  WsLinearProjectRpc,
+  WsLinearDocumentRpc,
+  WsLinearDocumentsRpc,
+  WsLinearInboxRpc,
+  WsLinearMutateRpc,
   WsPullRequestsListRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,

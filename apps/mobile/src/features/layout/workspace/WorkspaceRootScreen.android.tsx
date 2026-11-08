@@ -61,7 +61,7 @@ function WorkspaceRoot() {
             layout.usesSplitView
               ? insets
               : floatingTabsEnabled
-                ? tab === "usage"
+                ? tab === "usage" || tab === "linear"
                   ? { ...insets, bottom: context.bottomClearance }
                   : insets
                 : { ...insets, bottom: 0 }

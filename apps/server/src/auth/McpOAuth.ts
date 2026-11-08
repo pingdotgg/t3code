@@ -609,6 +609,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     "orchestration",
                     "worktree",
                     "pull-requests",
+                    "linear",
                   ]),
                   issuedAt,
                 })),

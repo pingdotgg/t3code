@@ -14,6 +14,7 @@ import {
   AuthRelayWriteScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
 } from "@t3tools/contracts";
@@ -72,6 +73,12 @@ export const AUTH_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthSourceControlWriteScope,
     title: "Change source control",
     description: "Commit, push, manage branches and repositories, and change pull requests.",
+  },
+  {
+    scope: AuthLinearWriteScope,
+    title: "Change Linear",
+    description:
+      "Create and update Linear issues, comments, projects, documents, and notifications.",
   },
   {
     scope: AuthFilesystemReadScope,

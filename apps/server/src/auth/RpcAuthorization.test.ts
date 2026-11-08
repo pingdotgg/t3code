@@ -12,6 +12,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   WS_METHODS,
@@ -407,3 +408,65 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+describe("Linear authorization", () => {
+  const tags = [
+    WS_METHODS.linearConfigure,
+    WS_METHODS.linearMutate,
+    WS_METHODS.linearUpload,
+  ] as const;
+  const group = WsRpcGroup.omit(
+    ...[...WsRpcGroup.requests.keys()].filter(
+      (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tags)[number]> =>
+        !(tags as ReadonlyArray<string>).includes(tag),
+    ),
+  );
+  it.effect.each([
+    AuthOrchestrationReadScope,
+    AuthSourceControlWriteScope,
+    AuthOrchestrationOperateScope,
+  ])("denies Linear writes without their explicit grants (%s)", (scope) =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const handlers = Layer.mergeAll(
+        group.toLayerHandler(WS_METHODS.linearConfigure, () =>
+          Effect.sync(() => {
+            calls++;
+            return { source: "disconnected" as const, connected: false };
+          }),
+        ),
+        group.toLayerHandler(WS_METHODS.linearMutate, () =>
+          Effect.sync(() => {
+            calls++;
+            return { success: true, id: null };
+          }),
+        ),
+        group.toLayerHandler(WS_METHODS.linearUpload, () =>
+          Effect.sync(() => {
+            calls++;
+            return { assetUrl: "https://uploads.linear.app/proof" };
+          }),
+        ),
+      );
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([scope]))),
+      );
+      expect(
+        yield* client[WS_METHODS.linearConfigure]({ kind: "disconnect" }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthSettingsWriteScope });
+      expect(
+        yield* client[WS_METHODS.linearMutate]({ kind: "issueArchive", id: "issue" }).pipe(
+          Effect.flip,
+        ),
+      ).toMatchObject({ requiredPermission: AuthLinearWriteScope });
+      expect(
+        yield* client[WS_METHODS.linearUpload]({
+          filename: "test",
+          contentType: "text/plain",
+          base64: "aGk=",
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthLinearWriteScope });
+      expect(calls).toBe(0);
+    }).pipe(Effect.scoped),
+  );
+});

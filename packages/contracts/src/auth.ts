@@ -37,6 +37,7 @@ export const AuthPreviewOperateScope = "preview:operate" as const;
 export const AuthDiagnosticsReadScope = "diagnostics:read" as const;
 export const AuthTerminalReadScope = "terminal:read" as const;
 export const AuthTerminalOperateScope = "terminal:operate" as const;
+export const AuthLinearWriteScope = "linear:write" as const;
 export const AuthSourceControlWriteScope = "source-control:write" as const;
 export const AuthFilesystemReadScope = "filesystem:read" as const;
 export const AuthFilesystemWriteScope = "filesystem:write" as const;
@@ -60,6 +61,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthFilesystemWriteScope,
   AuthReviewWriteScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayReadScope,
@@ -105,6 +107,7 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
   [AuthEnvironmentMaintainScope]: AuthOrchestrationOperateScope,
   [AuthPreviewOperateScope]: AuthOrchestrationOperateScope,
   [AuthSourceControlWriteScope]: AuthOrchestrationOperateScope,
+  [AuthLinearWriteScope]: AuthOrchestrationOperateScope,
   [AuthFilesystemWriteScope]: AuthOrchestrationOperateScope,
   [AuthTerminalReadScope]: AuthTerminalOperateScope,
 };
@@ -158,6 +161,7 @@ export const AuthStandardClientScopes = [
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
   AuthRelayReadScope,
@@ -419,6 +423,7 @@ export const mcpClientScopes = (access: AuthMcpClientAccess): ReadonlyArray<Auth
           AuthOrchestrationOperateScope,
           AuthSettingsWriteScope,
           AuthSourceControlWriteScope,
+          AuthLinearWriteScope,
         ]
       : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 

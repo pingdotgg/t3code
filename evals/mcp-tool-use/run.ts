@@ -50,6 +50,7 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
 import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { LinearToolkit } from "../../apps/server/src/mcp/toolkits/linear/tools.ts";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -433,6 +434,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
+  LinearToolkit,
   PreviewToolkit,
   DeviceToolkit,
   HtmlToolkit,
@@ -822,6 +824,7 @@ type Sample = {
   readonly shellUsage: Usage;
   readonly linked: Set<string>;
   readonly codeStore: Record<string, unknown>;
+  readonly mockCalls: Map<string, number>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
   readonly threads: Map<string, { readonly title: string; readonly brief: string }>;
@@ -871,6 +874,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
     codeStore: {},
+    mockCalls: new Map(),
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
     secretFiles: [],
@@ -1582,7 +1586,15 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
   }
-  const mock = testCase.setup.mocks?.[name];
+  const configuredMock = testCase.setup.mocks?.[name];
+  const callIndex = sample.mockCalls.get(name) ?? 0;
+  sample.mockCalls.set(name, callIndex + 1);
+  const mock =
+    isRecord(configuredMock) &&
+    Array.isArray(configuredMock.$sequence) &&
+    configuredMock.$sequence.length > 0
+      ? configuredMock.$sequence[Math.min(callIndex, configuredMock.$sequence.length - 1)]
+      : configuredMock;
   // T3 answers device calls from the world. A mock that is a T3 device error fails inside T3.
   const failure = deviceFailure(mock);
   const fromWorld = mock === undefined || mock === "default" || failure !== undefined;

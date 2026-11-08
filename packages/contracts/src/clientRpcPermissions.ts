@@ -8,6 +8,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   AuthTerminalOperateScope,
   type AuthEnvironmentScope,
 } from "./auth.ts";
@@ -23,6 +24,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
   [WS_METHODS.serverCheckOtlpEndpoint]: AuthSettingsWriteScope,
   [WS_METHODS.serverRefreshProviders]: AuthOrchestrationReadScope,
+  [WS_METHODS.linearConfigure]: AuthSettingsWriteScope,
+  [WS_METHODS.linearUpload]: AuthLinearWriteScope,
+  [WS_METHODS.linearMutate]: AuthLinearWriteScope,
   [WS_METHODS.pullRequestsRunAction]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsUpdate]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsComment]: AuthSourceControlWriteScope,

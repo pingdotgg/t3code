@@ -1597,6 +1597,17 @@ function OpenCommandPaletteDialog(props: {
 
   actionItems.push({
     kind: "action",
+    value: "action:linear",
+    searchTerms: ["linear", "issues", "triage", "cycles", "projects", "inbox"],
+    title: "Open Linear",
+    icon: <span aria-hidden>◉</span>,
+    run: async () => {
+      await navigate({ to: "/linear", search: { view: "mine" } });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
     value: "action:usage",
     searchTerms: ["usage", "use", "tokens", "cost", "spend", "limits", "stats", "analytics"],
     title: "Open usage",

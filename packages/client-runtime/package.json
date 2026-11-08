@@ -538,6 +538,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./state/linear": {
+      "types": "./src/state/linear.ts",
+      "default": "./src/state/linear.ts"
     }
   },
   "scripts": {

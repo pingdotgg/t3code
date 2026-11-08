@@ -4411,3 +4411,42 @@ it.each([
     [],
   );
 });
+
+it.effect("advances sequenced tool mocks independently for each sample", () =>
+  Effect.gen(function* () {
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const make = () =>
+      makeSample(
+        {
+          ...childCase,
+          setup: {
+            ...childCase.setup,
+            mocks: { linear_issue: { $sequence: [{ state: "started" }, { state: "done" }] } },
+          },
+        },
+        base,
+      );
+    const sample = make();
+    sample.tools.push({ name: "mcp__t3-code__linear_issue" });
+    const config = {
+      apiKey: "",
+      model: "claude-sonnet-5-5",
+      effort: "high",
+      maxSteps: 6,
+      shellModel: "claude-haiku-5-5",
+    } as const;
+    const call = (target: typeof sample) =>
+      answerToolCall(target, config, {
+        type: "tool_use",
+        id: "read",
+        name: "mcp__t3-code__linear_issue",
+        input: { id: "ACME-42" },
+      }).pipe(Effect.map((result) => JSON.parse(String(result.content))));
+    expect(yield* call(sample)).toEqual({ state: "started" });
+    expect(yield* call(sample)).toEqual({ state: "done" });
+    expect(yield* call(sample)).toEqual({ state: "done" });
+    const second = make();
+    second.tools.push({ name: "mcp__t3-code__linear_issue" });
+    expect(yield* call(second)).toEqual({ state: "started" });
+  }).pipe(Effect.provide(FetchHttpClient.layer)),
+);

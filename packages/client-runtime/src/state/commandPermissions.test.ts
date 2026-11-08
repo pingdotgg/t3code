@@ -15,6 +15,7 @@ import {
   AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
+  AuthLinearWriteScope,
   ThreadId,
   EnvironmentId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -591,4 +592,35 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(streamed._tag).toBe("EnvironmentAuthorizationError");
     expect(writes).toBe(0);
   }),
+);
+
+it.effect("separates Linear writes from Git writes and credential management", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const registry = yield* setup;
+      const mutation = createCommandPermissions(runtime, WS_METHODS.linearMutate);
+      const upload = createCommandPermissions(runtime, WS_METHODS.linearUpload);
+      const configure = createCommandPermissions(runtime, WS_METHODS.linearConfigure);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(false), permissions: [AuthSourceControlWriteScope] }),
+      );
+      expect(registry.get(mutation.permissionAtom(env))).toBe(false);
+      expect(registry.get(upload.permissionAtom(env))).toBe(false);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(false), permissions: [AuthLinearWriteScope] }),
+      );
+      expect(registry.get(mutation.permissionAtom(env))).toBe(true);
+      expect(registry.get(upload.permissionAtom(env))).toBe(true);
+      expect(registry.get(configure.permissionAtom(env))).toBe(false);
+      yield* mutation.authorize(registry, env);
+      registry.set(
+        sessions(env),
+        AsyncResult.success({ ...grant(false), permissions: [AuthSettingsWriteScope] }),
+      );
+      expect(registry.get(configure.permissionAtom(env))).toBe(true);
+      expect(registry.get(mutation.permissionAtom(env))).toBe(false);
+    }),
+  ),
 );

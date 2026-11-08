@@ -279,6 +279,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             />
           ) : null}
           <SidebarUtilityItem
+            icon={<span aria-hidden>◉</span>}
+            label="Linear"
+            onClick={() => {
+              closeMobileSidebar();
+              void navigate({ to: "/linear", search: { view: "mine" } });
+            }}
+          />
+          <SidebarUtilityItem
             icon={<ChartNoAxesColumnIcon />}
             label="Usage"
             onClick={handleUsageClick}

@@ -1,3 +1,4 @@
+import * as LinearService from "./linear/LinearService.ts";
 import { OrchestrationDispatchCommandError } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -1440,6 +1441,7 @@ export const layerWsRpc = (
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
+      const linear = yield* LinearService.LinearService;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -2754,6 +2756,20 @@ export const layerWsRpc = (
                 Effect.forkScoped,
               ),
           ),
+        [WS_METHODS.linearUpload]: (input) => linear.upload(input),
+        [WS_METHODS.linearConnection]: () => linear.connection(),
+        [WS_METHODS.linearConfigure]: (input) => linear.configure(input),
+        [WS_METHODS.linearWorkspace]: () => linear.workspace(),
+        [WS_METHODS.linearTeamContext]: (input) => linear.teamContext(input),
+        [WS_METHODS.linearIssues]: (input) => linear.issues(input),
+        [WS_METHODS.linearIssue]: (input) => linear.issue(input),
+        [WS_METHODS.linearComments]: (input) => linear.comments(input),
+        [WS_METHODS.linearProjects]: (input) => linear.projects(input),
+        [WS_METHODS.linearProject]: (input) => linear.project(input),
+        [WS_METHODS.linearDocuments]: (input) => linear.documents(input),
+        [WS_METHODS.linearDocument]: (input) => linear.document(input),
+        [WS_METHODS.linearInbox]: (input) => linear.inbox(input),
+        [WS_METHODS.linearMutate]: (input) => linear.mutate(input),
         [WS_METHODS.pullRequestsList]: (input) => pullRequests.list(input),
         [WS_METHODS.pullRequestsListStats]: (input) => pullRequests.listStats(input),
         [WS_METHODS.pullRequestsFilterOptions]: (input) => pullRequests.filterOptions(input),
