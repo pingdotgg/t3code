@@ -1967,29 +1967,31 @@ it.layer(
     }),
   );
 
-  it.effect.each([
-    {
-      name: "Codex home",
-      driver: "codex",
-      variable: "CODEX_HOME",
-      config: { homePath: "/configured/codex" },
-      expectedHome: "/configured/codex",
-    },
-    {
-      name: "Codex shadow home",
-      driver: "codex",
-      variable: "CODEX_HOME",
-      config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
-      expectedHome: "/configured/codex-shadow",
-    },
-    {
-      name: "Claude home",
-      driver: "claudeAgent",
-      variable: "CLAUDE_CONFIG_DIR",
-      config: { homePath: "/configured/claude" },
-      expectedHome: "/configured/claude",
-    },
-  ])("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
+  it.effect.each(
+    [
+      {
+        name: "Codex home",
+        driver: "codex",
+        variable: "CODEX_HOME",
+        config: { homePath: "/configured/codex" },
+        expectedHome: "/configured/codex",
+      },
+      {
+        name: "Codex shadow home",
+        driver: "codex",
+        variable: "CODEX_HOME",
+        config: { homePath: "/configured/codex", shadowHomePath: "/configured/codex-shadow" },
+        expectedHome: "/configured/codex-shadow",
+      },
+      {
+        name: "Claude home",
+        driver: "claudeAgent",
+        variable: "CLAUDE_CONFIG_DIR",
+        config: { homePath: "/configured/claude" },
+        expectedHome: "/configured/claude",
+      },
+    ].filter(({ config }) => symlinksSupported || !("shadowHomePath" in config)),
+  )("prefers $name over the instance environment", ({ driver, variable, config, expectedHome }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -2031,7 +2033,7 @@ it.layer(
     }),
   );
 
-  it.effect(
+  it.effect.skipIf(!symlinksSupported)(
     "materializes fresh Codex shadow terminals before selecting the shared SQLite home",
     () =>
       Effect.gen(function* () {
@@ -2074,40 +2076,42 @@ it.layer(
       }).pipe(Effect.provideService(HostProcess.Environment, {})),
   );
 
-  it.effect.each([
-    {
-      name: "host",
-      instanceEnvironment: undefined,
-      clientEnvironment: undefined,
-      hostEnvironment: { codex_sqlite_home: "/sqlite/host" },
-      expected: "/sqlite/host",
-    },
-    {
-      name: "client",
-      instanceEnvironment: undefined,
-      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
-      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
-      expected: "/sqlite/client",
-    },
-    {
-      name: "instance",
-      instanceEnvironment: [
-        { name: "CODEX_SQLITE_HOME", value: "/sqlite/instance", sensitive: false },
-      ],
-      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
-      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
-      expected: "/sqlite/instance",
-    },
-    {
-      name: "lowercase instance on Windows",
-      instanceEnvironment: [
-        { name: "codex_sqlite_home", value: "/sqlite/lowercase-instance", sensitive: false },
-      ],
-      clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
-      hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
-      expected: "/sqlite/lowercase-instance",
-    },
-  ])(
+  it.effect.each(
+    [
+      {
+        name: "host",
+        instanceEnvironment: undefined,
+        clientEnvironment: undefined,
+        hostEnvironment: { codex_sqlite_home: "/sqlite/host" },
+        expected: "/sqlite/host",
+      },
+      {
+        name: "client",
+        instanceEnvironment: undefined,
+        clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+        hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+        expected: "/sqlite/client",
+      },
+      {
+        name: "instance",
+        instanceEnvironment: [
+          { name: "CODEX_SQLITE_HOME", value: "/sqlite/instance", sensitive: false },
+        ],
+        clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+        hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+        expected: "/sqlite/instance",
+      },
+      {
+        name: "lowercase instance on Windows",
+        instanceEnvironment: [
+          { name: "codex_sqlite_home", value: "/sqlite/lowercase-instance", sensitive: false },
+        ],
+        clientEnvironment: { CODEX_SQLITE_HOME: "/sqlite/client" },
+        hostEnvironment: { CODEX_SQLITE_HOME: "/sqlite/host" },
+        expected: "/sqlite/lowercase-instance",
+      },
+    ].filter(() => symlinksSupported),
+  )(
     "uses the $name CODEX_SQLITE_HOME override for Codex shadow terminals",
     ({ instanceEnvironment, clientEnvironment, hostEnvironment, expected }) =>
       Effect.gen(function* () {
@@ -2149,47 +2153,49 @@ it.layer(
       ),
   );
 
-  it.effect("honors a Windows lowercase CODEX_SQLITE_HOME client override", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-terminal-codex-case-",
-      });
-      const customHome = path.join(root, "custom-sqlite");
-      const environment = yield* Effect.gen(function* () {
-        const serverSettings = yield* ServerSettings.ServerSettingsService;
-        return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
-          serverSettings,
-          fileSystem,
-          path,
-          rawProviderInstanceId: "codex_shadow",
-          env: { codex_sqlite_home: customHome },
+  it.effect.skipIf(!symlinksSupported)(
+    "honors a Windows lowercase CODEX_SQLITE_HOME client override",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-terminal-codex-case-",
         });
-      }).pipe(
-        Effect.provide(
-          ServerSettings.layerTest({
-            providerInstances: {
-              [ProviderInstanceId.make("codex_shadow")]: {
-                driver: ProviderDriverKind.make("codex"),
-                config: {
-                  homePath: path.join(root, "shared"),
-                  shadowHomePath: path.join(root, "shadow"),
+        const customHome = path.join(root, "custom-sqlite");
+        const environment = yield* Effect.gen(function* () {
+          const serverSettings = yield* ServerSettings.ServerSettingsService;
+          return yield* TerminalManager.resolveProviderInstanceTerminalEnvironment({
+            serverSettings,
+            fileSystem,
+            path,
+            rawProviderInstanceId: "codex_shadow",
+            env: { codex_sqlite_home: customHome },
+          });
+        }).pipe(
+          Effect.provide(
+            ServerSettings.layerTest({
+              providerInstances: {
+                [ProviderInstanceId.make("codex_shadow")]: {
+                  driver: ProviderDriverKind.make("codex"),
+                  config: {
+                    homePath: path.join(root, "shared"),
+                    shadowHomePath: path.join(root, "shadow"),
+                  },
                 },
               },
-            },
-          }),
-        ),
-      );
+            }),
+          ),
+        );
 
-      expect(environment.CODEX_SQLITE_HOME).toBe(customHome);
-      expect(
-        Object.keys(environment).filter((key) => key.toLowerCase() === "codex_sqlite_home"),
-      ).toEqual(["CODEX_SQLITE_HOME"]);
-    }).pipe(
-      Effect.provideService(HostProcess.Platform, "win32"),
-      Effect.provideService(HostProcess.Environment, { CODEX_SQLITE_HOME: "/sqlite/host" }),
-    ),
+        expect(environment.CODEX_SQLITE_HOME).toBe(customHome);
+        expect(
+          Object.keys(environment).filter((key) => key.toLowerCase() === "codex_sqlite_home"),
+        ).toEqual(["CODEX_SQLITE_HOME"]);
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(HostProcess.Environment, { CODEX_SQLITE_HOME: "/sqlite/host" }),
+      ),
   );
 
   it.effect("refuses a provider terminal with mixed shared and private SQLite state", () =>

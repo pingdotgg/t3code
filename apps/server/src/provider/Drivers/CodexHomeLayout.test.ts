@@ -606,7 +606,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
       }),
     );
 
-    it.effect(
+    it.effect.skipIf(!symlinksSupported)(
       "materialization honors an explicit SQLite override without deleting dormant sidecars",
       () =>
         Effect.gen(function* () {
