@@ -100,7 +100,7 @@ describe("subscription widget snapshots", () => {
     expect(snapshot.providers[0]?.name).toBe("Codex");
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
     const source = input.get(EnvironmentId.make("env"))!.serverConfig.usageLimitSources[0]!;
-    const failed = buildSubscriptionUsageSnapshot(
+    const failedInput = (windows: typeof limits.windows, includeHealthy = false) =>
       new Map([
         [
           EnvironmentId.make("env"),
@@ -111,22 +111,26 @@ describe("subscription widget snapshots", () => {
               usageLimitSources: [
                 {
                   ...source,
-                  accounts: source.accounts.map((account) => ({
-                    ...account,
-                    usageLimits: {
-                      checkedAt,
-                      windows: [],
-                      unavailable: { reason: "probeFailed" as const },
-                    },
-                  })),
+                  accounts: [
+                    ...(includeHealthy ? source.accounts : []),
+                    ...source.accounts.map((account) => ({
+                      ...account,
+                      id: "failed-account",
+                      email: "failed@example.com",
+                      usageLimits: {
+                        checkedAt,
+                        windows,
+                        unavailable: { reason: "probeFailed" as const },
+                      },
+                    })),
+                  ],
                 },
               ],
             },
           },
         ],
-      ]),
-      deepLink,
-    );
+      ]);
+    const failed = buildSubscriptionUsageSnapshot(failedInput([]), deepLink);
     expect(failed.providers).toEqual([
       {
         name: "Codex",
@@ -136,6 +140,17 @@ describe("subscription widget snapshots", () => {
         totalWindows: 0,
       },
     ]);
+    const partial = buildSubscriptionUsageSnapshot(failedInput([], true), deepLink);
+    expect(partial.providers[0]?.detail).toBe("Available subscription limits");
+    expect(partial.providers[0]?.windows[0]?.remaining).toBe(60);
+    const retained = buildSubscriptionUsageSnapshot(failedInput(limits.windows), deepLink);
+    expect(retained.providers[0]?.detail).toBe("Last known limits");
+    expect(retained.providers[0]?.windows[0]).toMatchObject({
+      label: "Stale · 5 hours",
+      remaining: 60,
+    });
+    expect(retained.checkedAt).toBe(now);
+    expect(retained.providers[0]?.expiresAt).toBe(now + 10 * 60_000);
   });
   it("bounds OS storage and puts the most constrained windows first", () => {
     const windows = Array.from({ length: 20 }, (_, index) => ({
