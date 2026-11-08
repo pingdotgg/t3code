@@ -1,11 +1,11 @@
 /**
- * Generate `packages/alchemy/src/AWS/IAM/actions.generated.ts` — a SHALLOW
+ * Generate `packages/aws/src/IAM/actions.generated.ts` — a SHALLOW
  * string-literal union type `IamAction` built from distilled's per-service
  * operation names.
  *
  * Coordinator-run (like generate-api-reference.ts):
  *
- *   bun scripts/generate-iam-actions.ts
+ *   node scripts/generate-iam-actions.ts
  *
  * Source of truth: `submodules/distilled/packages/aws/src/services/*.ts`. For each
  * service module we extract
@@ -28,14 +28,13 @@
  * question in dsl-abstractions.md. The escape hatch covers the gap.
  */
 
-const SERVICES_DIR = new URL(
-  "../submodules/distilled/packages/aws/src/services/",
-  import.meta.url,
-).pathname;
-const OUT_FILE = new URL(
-  "../packages/alchemy/src/AWS/IAM/actions.generated.ts",
-  import.meta.url,
-).pathname;
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Command } from "effect/cli";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 /**
  * sigv4 signing name -> IAM action service prefix, for the known cases where
@@ -51,67 +50,80 @@ const PREFIX_OVERRIDES: Record<string, string> = {
   "iot-jobs-data": "iot",
 };
 
-const { readdir } = await import("node:fs/promises");
-const { readFileSync, writeFileSync } = await import("node:fs");
-const { join } = await import("node:path");
+const command = Command.make(
+  "generate-iam-actions",
+  {},
+  Effect.fn(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = path.resolve(import.meta.dirname, "..");
+    const SERVICES_DIR = path.join(root, "submodules/distilled/packages/aws/src/services");
+    const OUT_FILE = path.join(root, "packages/aws/src/IAM/actions.generated.ts");
 
-const files = (await readdir(SERVICES_DIR)).filter(
-  (f) => f.endsWith(".ts") && f !== "index.ts",
-);
+    const files = (yield* fs.readDirectory(SERVICES_DIR)).filter(
+      (f) => f.endsWith(".ts") && f !== "index.ts",
+    );
 
-/** IAM action prefix -> operation names */
-const byPrefix = new Map<string, Set<string>>();
-let totalOps = 0;
-const skipped: string[] = [];
+    /** IAM action prefix -> operation names */
+    const byPrefix = new Map<string, Set<string>>();
+    let totalOps = 0;
+    const skipped: string[] = [];
 
-for (const file of files.sort()) {
-  const source = readFileSync(join(SERVICES_DIR, file), "utf8");
-  const nameMatch = source.match(/AwsAuthSigv[24]\(\{\s*name:\s*"([^"]+)"/);
-  if (!nameMatch) {
-    skipped.push(file);
-    continue;
-  }
-  const sigv4Name = nameMatch[1]!;
-  const prefix = (PREFIX_OVERRIDES[sigv4Name] ?? sigv4Name).toLowerCase();
-  const ops = byPrefix.get(prefix) ?? new Set<string>();
-  byPrefix.set(prefix, ops);
-  for (const match of source.matchAll(/operationName:\s*"([A-Za-z0-9_]+)"/g)) {
-    if (!ops.has(match[1]!)) {
-      ops.add(match[1]!);
-      totalOps++;
+    for (const file of files.sort()) {
+      const source = yield* fs.readFileString(path.join(SERVICES_DIR, file));
+      const nameMatch = source.match(/AwsAuthSigv[24]\(\{\s*name:\s*"([^"]+)"/);
+      if (!nameMatch) {
+        skipped.push(file);
+        continue;
+      }
+      const sigv4Name = nameMatch[1]!;
+      const prefix = (PREFIX_OVERRIDES[sigv4Name] ?? sigv4Name).toLowerCase();
+      const ops = byPrefix.get(prefix) ?? new Set<string>();
+      byPrefix.set(prefix, ops);
+      for (const match of source.matchAll(/operationName:\s*"([A-Za-z0-9_]+)"/g)) {
+        if (!ops.has(match[1]!)) {
+          ops.add(match[1]!);
+          totalOps++;
+        }
+      }
     }
-  }
-}
 
-const prefixes = [...byPrefix.keys()].sort();
-const lines: string[] = [
-  "// AUTO-GENERATED FILE — DO NOT EDIT.",
-  "//",
-  "// Regenerate with: bun scripts/generate-iam-actions.ts",
-  "//",
-  `// Source: submodules/distilled/packages/aws/src/services/*.ts (${files.length - skipped.length} service modules,`,
-  `// ${prefixes.length} IAM action prefixes, ${totalOps} operations).`,
-  "//",
-  "// A SHALLOW literal union (no template-literal type computation) of",
-  "// `service:Operation` IAM action names, plus `service:*` per service and a",
-  "// `(string & {})` escape hatch so arbitrary action strings always remain",
-  "// assignable. Exists purely for editor autocomplete on",
-  "// `PolicyStatement.Action`.",
-  "",
-  "export type IamAction =",
-];
-for (const prefix of prefixes) {
-  lines.push(`  | "${prefix}:*"`);
-  for (const op of [...byPrefix.get(prefix)!].sort()) {
-    lines.push(`  | "${prefix}:${op}"`);
-  }
-}
-lines.push("  | (string & {});", "");
+    const prefixes = [...byPrefix.keys()].sort();
+    const lines: string[] = [
+      "// AUTO-GENERATED FILE — DO NOT EDIT.",
+      "//",
+      "// Regenerate with: node scripts/generate-iam-actions.ts",
+      "//",
+      `// Source: submodules/distilled/packages/aws/src/services/*.ts (${files.length - skipped.length} service modules,`,
+      `// ${prefixes.length} IAM action prefixes, ${totalOps} operations).`,
+      "//",
+      "// A SHALLOW literal union (no template-literal type computation) of",
+      "// `service:Operation` IAM action names, plus `service:*` per service and a",
+      "// `(string & {})` escape hatch so arbitrary action strings always remain",
+      "// assignable. Exists purely for editor autocomplete on",
+      "// `PolicyStatement.Action`.",
+      "",
+      "export type IamAction =",
+    ];
+    for (const prefix of prefixes) {
+      lines.push(`  | "${prefix}:*"`);
+      for (const op of [...byPrefix.get(prefix)!].sort()) {
+        lines.push(`  | "${prefix}:${op}"`);
+      }
+    }
+    lines.push("  | (string & {});", "");
 
-writeFileSync(OUT_FILE, lines.join("\n"));
-console.log(
-  `wrote ${OUT_FILE}: ${prefixes.length} prefixes, ${totalOps} operations, ${lines.length} lines`,
+    yield* fs.writeFileString(OUT_FILE, lines.join("\n"));
+    yield* Console.log(
+      `wrote ${OUT_FILE}: ${prefixes.length} prefixes, ${totalOps} operations, ${lines.length} lines`,
+    );
+    if (skipped.length > 0) {
+      yield* Console.log(`skipped (no AwsAuthSigv4 name): ${skipped.join(", ")}`);
+    }
+  }),
+).pipe(Command.withDescription("Generate the IamAction union from distilled's AWS services"));
+
+Command.run(command, { version: "0.0.0" }).pipe(
+  Effect.provide(NodeServices.layer),
+  NodeRuntime.runMain,
 );
-if (skipped.length > 0) {
-  console.log(`skipped (no AwsAuthSigv4 name): ${skipped.join(", ")}`);
-}

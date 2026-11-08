@@ -1,5 +1,5 @@
 import JSZip from "jszip";
-import { checkZipDirectory } from "./zipDirectory";
+import { checkZipDirectory } from "@t3tools/client-runtime/zip/directory";
 import { SaxesParser } from "saxes";
 import { externalUrl } from "./office/links";
 

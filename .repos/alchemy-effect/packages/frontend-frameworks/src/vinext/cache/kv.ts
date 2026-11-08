@@ -17,9 +17,7 @@ export const DEFAULT_KV_BINDING = "VINEXT_KV_CACHE";
 
 export const kvAdapter = (options?: KvAdapterOptions) => {
   if (options?.binding !== undefined && typeof options.binding !== "string") {
-    throw new TypeError(
-      "[vinext] kvAdapter({ binding }) must be a string Worker binding name.",
-    );
+    throw new TypeError("[vinext] kvAdapter({ binding }) must be a string Worker binding name.");
   }
   return {
     adapter: fileURLToPath(new URL("./kv-runtime.js", import.meta.url)),
