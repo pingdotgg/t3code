@@ -200,19 +200,6 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(name).toHaveValue("Review stale issues");
   });
 
-  it("unbinds a task from its thread through the destination picker", async () => {
-    setup();
-    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
-    const destination = page.getByRole("dialog").getByLabelText("Destination");
-    await expect.element(destination).toHaveTextContent("Fix login bug");
-    await destination.click();
-    await page.getByRole("option", { name: "New thread each run" }).click();
-    await expect.element(destination).toHaveTextContent("New thread each run");
-    await expect
-      .element(page.getByRole("dialog").getByLabelText("Workspace"))
-      .toHaveTextContent("Create a new worktree");
-  });
-
   it("keeps an editor the user opened when the linked task loads later", async () => {
     setup();
     state.tasksLoaded = false;

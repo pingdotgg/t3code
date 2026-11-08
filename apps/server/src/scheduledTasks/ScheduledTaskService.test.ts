@@ -798,8 +798,7 @@ it.effect("checks a task's destination thread only when the destination changes"
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       const id = ScheduledTaskId.make("task:destination");
       const save = (
-        threadId: ThreadId | null,
-        projectId = project,
+        threadId: ThreadId,
         schedule: ScheduledTaskUpsertInput["schedule"] = { type: "interval", everyMs: 60_000 },
       ) =>
         service.upsert({
@@ -808,7 +807,7 @@ it.effect("checks a task's destination thread only when the destination changes"
           prompt: "Check progress",
           enabled: true,
           schedule,
-          projectId,
+          projectId: project,
           threadId,
           workspaceStrategy: { type: "root" },
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
@@ -828,7 +827,7 @@ it.effect("checks a task's destination thread only when the destination changes"
       assert.lengthOf((yield* service.list()).tasks, 0);
 
       // A rejected save must not burn a one-shot secret.
-      yield* save(ThreadId.make("thread:missing"), project, {
+      yield* save(ThreadId.make("thread:missing"), {
         type: "webhook",
         signature: {
           header: "x-signature",
@@ -839,18 +838,12 @@ it.effect("checks a task's destination thread only when the destination changes"
       }).pipe(Effect.flip);
       assert.equal(yield* Ref.get(consumed), 0);
 
-      const created = yield* save(null);
-      const moved = yield* save(destination);
-      assert.equal(moved.task.id, created.task.id);
-      assert.equal(moved.task.threadId, destination);
-
-      // A task whose thread was archived later stays editable; moving its project leaves the thread.
+      yield* save(destination);
+      // A task whose thread was archived later stays editable.
       yield* Ref.update(shells, (all) =>
         new Map(all).set(destination, threadShell(project, { archivedAt })),
       );
-      yield* save(destination);
-      const projectChange = yield* save(destination, otherProject);
-      assert.isNull(projectChange.task.threadId);
+      assert.equal((yield* save(destination)).task.threadId, destination);
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

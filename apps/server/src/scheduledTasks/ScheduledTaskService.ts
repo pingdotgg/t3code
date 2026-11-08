@@ -1316,13 +1316,7 @@ export const layer = Layer.effect(
         keptThreadId === existingTask.threadId;
       const threadId = threadMode === "new_thread" || movedOffThread ? null : keptThreadId;
       // An unchanged destination is not rechecked, so a task on an archived thread stays editable.
-      if (
-        threadId !== null &&
-        threadId === input.threadId &&
-        (existingTask === null ||
-          existingTask.threadId !== threadId ||
-          existingTask.projectId !== input.projectId)
-      ) {
+      if (threadId !== null && threadId !== existingTask?.threadId) {
         yield* requireDestinationThread(threadId, input.projectId, id);
       }
       // Refused on save rather than at run time; a disabled task can still be saved, so one

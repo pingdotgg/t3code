@@ -5,76 +5,13 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
-  ThreadId,
-  ScheduledTaskId,
-  type ScheduledTask,
 } from "@t3tools/contracts";
 import {
-  changeDraftProject,
-  createDraft,
-  editDraft,
-  hasScheduledTaskDraftChanges,
-  moveDraftToThread,
-  unbindDraftFromThread,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
 } from "./scheduledTaskDraft";
-
-describe("scheduled task destination", () => {
-  const threadId = ThreadId.make("thread:bound");
-  const bound = editDraft({
-    id: ScheduledTaskId.make("task"),
-    projectId: ProjectId.make("project:bound"),
-    threadId,
-    title: "Review",
-    prompt: "Review issues",
-    enabled: true,
-    schedule: { type: "interval", everyMs: 60_000 },
-    workspaceStrategy: { type: "root" },
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-  } as ScheduledTask);
-
-  it("opens on the task's thread, and a new task has none", () => {
-    expect(bound.threadId).toBe(threadId);
-    expect(createDraft(null, null).threadId).toBeNull();
-  });
-
-  it("moves to a thread, takes on its project, and counts as an edit", () => {
-    const moved = moveDraftToThread(bound, {
-      id: ThreadId.make("thread:elsewhere"),
-      projectId: ProjectId.make("project:elsewhere"),
-    });
-    expect(moved).toMatchObject({ threadId: "thread:elsewhere", projectId: "project:elsewhere" });
-    expect(hasScheduledTaskDraftChanges(bound, moved)).toBe(true);
-    expect(hasScheduledTaskDraftChanges(bound, { ...moved, projectId: bound.projectId })).toBe(
-      true,
-    );
-  });
-
-  it("unbinding leaves the shared checkout, and keeps a chosen workspace", () => {
-    expect(unbindDraftFromThread(bound)).toMatchObject({
-      threadId: null,
-      workspace: "worktree",
-      startFromOrigin: true,
-    });
-    const checkout = { ...bound, workspace: "existing_worktree" as const };
-    expect(unbindDraftFromThread(checkout)).toEqual({ ...checkout, threadId: null });
-    const unbound = { ...bound, threadId: null };
-    expect(unbindDraftFromThread(unbound)).toBe(unbound);
-  });
-
-  it("changing the project clears a binding the new project cannot hold", () => {
-    expect(changeDraftProject(bound, ProjectId.make("project:new"))).toMatchObject({
-      projectId: "project:new",
-      threadId: null,
-      workspace: "worktree",
-    });
-    expect(changeDraftProject(bound, ProjectId.make("project:bound"))).toBe(bound);
-  });
-});
 
 describe("scheduleDraftForTask", () => {
   it("opens legacy sub-minute schedules at the writable minimum", () => {

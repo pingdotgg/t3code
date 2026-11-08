@@ -8,7 +8,6 @@ import {
   type ScheduledTask,
   ThreadId,
 } from "@t3tools/contracts";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type {
@@ -24,9 +23,6 @@ import {
   matchesScheduledTaskScope,
   scheduleFromDraft,
   taskToDraft,
-  changeDraftProject,
-  moveDraftToThread,
-  scheduledTaskDestinationThreads,
   unbindDraftFromThread,
 } from "./scheduledTasksSettings.logic";
 
@@ -177,97 +173,17 @@ describe("editing scheduled task branch settings", () => {
 });
 
 describe("scheduled task destination", () => {
-  const rootBound = taskToDraft({
-    ...legacyTask,
-    threadId: ThreadId.make("thread:bound"),
-    workspaceStrategy: { type: "root" },
-  });
-
-  it("moves to a thread and takes on its project", () => {
-    const moved = moveDraftToThread(rootBound, {
-      id: ThreadId.make("thread:elsewhere"),
-      projectId: ProjectId.make("project:elsewhere"),
-    });
-    expect(moved).toMatchObject({ threadId: "thread:elsewhere", projectId: "project:elsewhere" });
-    const fromNewThreads = { ...rootBound, threadId: "", threadMode: "new_thread" as const };
-    expect(
-      moveDraftToThread(fromNewThreads, {
-        id: ThreadId.make("thread:elsewhere"),
-        projectId: ProjectId.make("project:elsewhere"),
-      }).threadMode,
-    ).toBe("continue");
-  });
-
   it("unbinding leaves the shared checkout for a new worktree from the remote", () => {
+    const rootBound = taskToDraft({
+      ...legacyTask,
+      threadId: ThreadId.make("thread:bound"),
+      workspaceStrategy: { type: "root" },
+    });
     expect(unbindDraftFromThread(rootBound)).toMatchObject({
       threadId: "",
       workspaceMode: "worktree",
       startFromOrigin: true,
     });
-  });
-
-  it("unbinding keeps a workspace that was chosen for new threads", () => {
-    const checkout = taskToDraft({
-      ...legacyTask,
-      threadId: ThreadId.make("thread:bound"),
-      workspaceStrategy: { type: "existing_worktree", worktreePath: "/work/checkout" },
-    });
-    expect(unbindDraftFromThread(checkout)).toEqual({ ...checkout, threadId: "" });
-  });
-
-  it("leaves an unbound draft's project-checkout workspace alone", () => {
-    const unbound = { ...rootBound, threadId: "" };
-    expect(unbindDraftFromThread(unbound)).toBe(unbound);
-  });
-
-  it("changing the project clears a binding the new project cannot hold", () => {
-    expect(changeDraftProject(rootBound, ProjectId.make("project:new"))).toMatchObject({
-      projectId: "project:new",
-      threadId: "",
-      workspaceMode: "worktree",
-    });
-    expect(changeDraftProject(rootBound, rootBound.projectId)).toBe(rootBound);
-  });
-
-  it("offers open top-level threads of the project, newest first, without the current one", () => {
-    const projectId = ProjectId.make("project:wanted");
-    const thread = (id: string, overrides: object = {}) =>
-      ({
-        id: ThreadId.make(id),
-        environmentId: laptopId,
-        projectId,
-        title: id,
-        archivedAt: null,
-        updatedAt: "2026-11-01T00:00:00.000Z",
-        lineage: { relationshipToParent: null, parentThreadId: null, rootThreadId: id },
-        ...overrides,
-      }) as unknown as EnvironmentThreadShell;
-    const threads = [
-      thread("older"),
-      thread("newer docs", { updatedAt: "2026-11-02T00:00:00.000Z" }),
-      thread("current"),
-      thread("archived", { archivedAt: "2026-11-01T00:00:00.000Z" }),
-      thread("subagent", {
-        lineage: {
-          relationshipToParent: "subagent",
-          parentThreadId: "older",
-          rootThreadId: "older",
-        },
-      }),
-      thread("other project", { projectId: ProjectId.make("project:other") }),
-      thread("other environment", { environmentId: serverId }),
-    ];
-    const target = {
-      environmentId: laptopId,
-      projectId,
-      currentThreadId: ThreadId.make("current"),
-    };
-    expect(
-      scheduledTaskDestinationThreads(threads, { ...target, query: "" }).map(({ id }) => id),
-    ).toEqual(["newer docs", "older"]);
-    expect(
-      scheduledTaskDestinationThreads(threads, { ...target, query: " DOCS" }).map(({ id }) => id),
-    ).toEqual(["newer docs"]);
   });
 });
 

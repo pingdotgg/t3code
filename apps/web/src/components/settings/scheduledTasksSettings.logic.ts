@@ -328,20 +328,15 @@ export function changeDraftProject(draft: DraftState, projectId: string): DraftS
 }
 
 /** Threads a task can move to. The current one is left out; the picker always shows it. */
-export function scheduledTaskDestinationThreads<
-  TThread extends Pick<
-    EnvironmentThreadShell,
-    "environmentId" | "id" | "projectId" | "title" | "lineage" | "archivedAt" | "updatedAt"
-  >,
->(
-  threads: ReadonlyArray<TThread>,
+export function scheduledTaskDestinationThreads(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
   target: {
     readonly environmentId: EnvironmentId;
     readonly projectId: string;
     readonly currentThreadId: ThreadId | null;
     readonly query: string;
   },
-): ReadonlyArray<TThread> {
+): ReadonlyArray<EnvironmentThreadShell> {
   const search = target.query.trim().toLocaleLowerCase();
   return threads
     .filter(
