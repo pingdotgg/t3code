@@ -24,7 +24,7 @@ Set it back to **Off** at any time; a recording in progress is discarded.
 If the chosen environment goes offline, voice input waits for it. T3 Code never
 substitutes another environment.
 
-For cloud dictation, choose **OpenAI** or **Grok Voice Transcribe** via the environment
+For cloud dictation, choose **OpenAI**, **Grok Voice Transcribe**, or **Soniox** via the environment
 you want to use. If it needs a key, enter one and choose **Save and enable**.
 You can also choose a [secret provider](secrets.md) instead of **Value** and enter a
 reference. Unlock the vault on that environment before dictating. Anyone with
@@ -35,6 +35,10 @@ the selected provider, which bills its API account. No local model download or c
 subscription is needed. Switch back to **This device** on mobile or **Off** on
 web and desktop to stop sharing. Removing the key stops that provider for everyone
 on the environment.
+
+**Soniox** uses asynchronous transcription after you stop recording. Use an API key
+from a US Soniox project. T3 requests deletion of the uploaded audio and transcription
+afterward; if cleanup fails, data remains subject to Soniox’s retention policy.
 
 **OpenRouter** works the same way but has no default model: pick one from its live
 speech-to-text catalog when you enable it, or later under **Manage OpenRouter**.

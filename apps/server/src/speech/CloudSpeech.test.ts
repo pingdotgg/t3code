@@ -2,6 +2,8 @@ import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as TestClock from "effect/testing/TestClock";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -49,7 +51,12 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
     yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
     expect((yield* Effect.flip(transcribe()))._tag).toBe("CloudSpeechError");
     yield* service.setKey(provider, Redacted.make("chosen"));
-    expect(yield* service.configured).toEqual({ openai: true, xai: true, openrouter: false });
+    expect(yield* service.configured).toEqual({
+      openai: true,
+      xai: true,
+      openrouter: false,
+      soniox: false,
+    });
     yield* Effect.flip(transcribe(new Uint8Array(3)));
     expect(upstream).not.toHaveBeenCalled();
     expect(yield* transcribe()).toBe("hello");
@@ -196,5 +203,150 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     const exit = yield* Fiber.await(job);
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
+  }),
+);
+
+it.effect("transcribes Soniox uploads with vocabulary hints and deletes temporary data", () =>
+  Effect.gen(function* () {
+    const polled = yield* Deferred.make<void>();
+    let polls = 0;
+    const upstream = vi.fn<typeof fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (path === "/v1/files") return Response.json({ id: "file-id" });
+      if (path === "/v1/transcriptions") return Response.json({ id: "job-id" });
+      if (path.endsWith("/transcript")) return Response.json({ text: " uh tea three " });
+      polls++;
+      if (polls === 1) {
+        Deferred.doneUnsafe(polled, Effect.void);
+        return Response.json({ status: "processing" });
+      }
+      return Response.json({ status: "completed" });
+    });
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const transcribe = (language = "en") =>
+      service
+        .transcribe("soniox", new Uint8Array(new Float32Array([0, 0.5]).buffer), {
+          ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+          speechLanguage: language,
+          speechCustomWords: [{ term: "T3", aliases: ["tea three"] }],
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    yield* service.setKey("openai", Redacted.make("other-key"));
+    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
+    expect(upstream).not.toHaveBeenCalled();
+    yield* service.setKey("soniox", Redacted.make("soniox-key"));
+    expect((yield* service.configured).soniox).toBe(true);
+    const fiber = yield* transcribe().pipe(Effect.forkChild);
+    yield* Deferred.await(polled);
+    yield* TestClock.adjust("1 second");
+    expect(yield* Fiber.join(fiber)).toBe("T3");
+    expect(polls).toBe(2);
+    expect(upstream.mock.calls.map(([url, init]) => `${init?.method} ${String(url)}`)).toEqual([
+      "POST https://api.soniox.com/v1/files",
+      "POST https://api.soniox.com/v1/transcriptions",
+      "GET https://api.soniox.com/v1/transcriptions/job-id",
+      "GET https://api.soniox.com/v1/transcriptions/job-id",
+      "GET https://api.soniox.com/v1/transcriptions/job-id/transcript",
+      "DELETE https://api.soniox.com/v1/transcriptions/job-id",
+      "DELETE https://api.soniox.com/v1/files/file-id",
+    ]);
+    for (const [, init] of upstream.mock.calls) {
+      expect(init?.redirect).toBe("error");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer soniox-key");
+    }
+    const form = upstream.mock.calls[0]![1]!.body as FormData;
+    const wav = new DataView(yield* Effect.promise(() => (form.get("file") as Blob).arrayBuffer()));
+    expect(wav.getUint32(24, true)).toBe(16_000);
+    expect(wav.getInt16(46, true)).toBe(16384);
+    const body = yield* Effect.promise(() => new Response(upstream.mock.calls[1]![1]!.body).json());
+    expect(body).toEqual({
+      model: "stt-async-v6",
+      file_id: "file-id",
+      language_hints: ["en"],
+      context: { terms: ["T3"] },
+    });
+    expect(yield* transcribe("auto")).toBe("T3");
+    const auto = yield* Effect.promise(() => new Response(upstream.mock.calls[8]![1]!.body).json());
+    expect(auto).not.toHaveProperty("language_hints");
+    yield* service.setKey("soniox", null);
+    expect((yield* service.configured).soniox).toBe(false);
+    expect(yield* Effect.flip(transcribe())).toMatchObject({ reason: "missing-key" });
+  }),
+);
+
+it.effect.each([
+  [401, "rejected-key"],
+  [403, "rejected-key"],
+  [429, "rate-limit"],
+  [500, "unavailable"],
+  ["error", "unavailable"],
+  ["malformed", "unavailable"],
+  ["cancel", "cancel"],
+  ["timeout", "unavailable"],
+] as const)("handles Soniox failure %s and releases uploaded data", ([failure, reason]) =>
+  Effect.gen(function* () {
+    const pending = yield* Deferred.make<void>();
+    const upstream = vi.fn<typeof fetch>(async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (path === "/v1/files") return Response.json({ id: "file-id" });
+      if (path === "/v1/transcriptions") {
+        if (typeof failure === "number")
+          return new Response("sensitive diagnostic", { status: failure });
+        return Response.json({ id: "job-id" });
+      }
+      Deferred.doneUnsafe(pending, Effect.void);
+      return Response.json({
+        status: failure === "cancel" || failure === "timeout" ? "processing" : failure,
+      });
+    });
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    yield* service.setKey("soniox", Redacted.make("fixture"));
+    const run = service
+      .transcribe(
+        "soniox",
+        new Uint8Array(new Float32Array([0.5]).buffer),
+        DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      )
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    if (failure === "cancel") {
+      const fiber = yield* run.pipe(Effect.forkChild);
+      yield* Deferred.await(pending);
+      yield* Fiber.interrupt(fiber);
+    } else if (failure === "timeout") {
+      const fiber = yield* Effect.flip(run).pipe(Effect.forkChild);
+      yield* Deferred.await(pending);
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* Fiber.join(fiber)).toMatchObject({ provider: "soniox", reason });
+    } else {
+      const error = yield* Effect.flip(run);
+      expect(error).toMatchObject({ provider: "soniox", reason });
+      expect(error.message).not.toContain("sensitive diagnostic");
+    }
+    expect(
+      upstream.mock.calls
+        .filter(([, init]) => init?.method === "DELETE")
+        .map(([url]) => String(url)),
+    ).toEqual([
+      ...(typeof failure === "number" ? [] : ["https://api.soniox.com/v1/transcriptions/job-id"]),
+      "https://api.soniox.com/v1/files/file-id",
+    ]);
   }),
 );

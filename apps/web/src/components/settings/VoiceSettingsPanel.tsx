@@ -123,6 +123,7 @@ import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings"
 
 const OFF = "off";
 function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
+  if (provider === "soniox") return <AudioLinesIcon aria-hidden className="size-4 shrink-0" />;
   if (provider === "openrouter")
     return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
   return (

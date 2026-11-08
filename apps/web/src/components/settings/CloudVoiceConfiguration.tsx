@@ -218,7 +218,7 @@ export function CloudVoiceConfiguration({
   const destination = (): CloudDestination =>
     routed && isModelId(model)
       ? { kind: "cloud", provider: "openrouter", environmentId: id, model }
-      : { kind: "cloud", provider: provider as "openai" | "xai", environmentId: id };
+      : { kind: "cloud", provider: provider as "openai" | "xai" | "soniox", environmentId: id };
   const enable = () => chooseAudioDestination(destination());
   const canSubmit = routed
     ? modelChosen && keyReady && (!active || modelChanged || keyChanged)
