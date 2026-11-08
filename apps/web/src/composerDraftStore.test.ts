@@ -840,6 +840,44 @@ describe("composerDraftStore context persistence", () => {
     expect((await openTab()).prompts()).toEqual(tabA.prompts());
   });
 
+  it("adopts a remote edit after a local edit is undone", async () => {
+    const { openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+    const ref = crossTabRef("deferred-edit");
+
+    tabA.store.getState().setPrompt(ref, "baseline");
+    tabA.write();
+    tabA.store.getState().setPrompt(ref, "local edit");
+    tabB.store.getState().setPrompt(ref, "remote edit");
+    tabB.write();
+    tabA.receive();
+    tabA.store.getState().setPrompt(ref, "baseline");
+    tabA.write();
+
+    expect(tabA.prompts()[crossTabKey("deferred-edit")]).toBe("remote edit");
+  });
+
+  it("adopts a remote deletion after a local edit is undone", async () => {
+    const { openTab } = openTabs();
+    const tabA = await openTab();
+    const tabB = await openTab();
+    const ref = crossTabRef("deferred-delete");
+    const key = crossTabKey("deferred-delete");
+
+    tabB.store.getState().setPrompt(ref, "remote baseline");
+    tabB.write();
+    tabA.receive();
+    tabA.store.getState().setPrompt(ref, "local edit");
+    tabB.store.getState().setPrompt(ref, "");
+    tabB.write();
+    tabA.receive();
+    tabA.store.getState().setPrompt(ref, "remote baseline");
+    tabA.write();
+
+    expect(tabA.prompts()[key]).toBeUndefined();
+  });
+
   it("does not take a draft thread rebuilt in another key order as an edit", async () => {
     const { openTab } = openTabs();
     const tabA = await openTab();

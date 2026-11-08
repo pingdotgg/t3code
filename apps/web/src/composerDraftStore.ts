@@ -229,10 +229,9 @@ interface ComposerDraftSync {
   /** Per entry: this tab's partialized value and storage's value at its last sync. */
   readonly local: ComposerDraftEntries;
   readonly stored: ComposerDraftEntries;
-  /** The storage text last written or read, its entries, and whether memory adopted them. */
+  /** The storage text last written or read and its entries. */
   readonly text?: string | null;
   readonly textEntries?: ComposerDraftEntries | null;
-  readonly adopted?: boolean;
 }
 const UNSYNCED: ComposerDraftSync = { local: new Map(), stored: new Map() };
 let sync = UNSYNCED;
@@ -243,9 +242,18 @@ function writeComposerDrafts(name: string, value: StorageValue<ComposerPersistSt
     composerDraftLocalStorage.setItem(name, JSON.stringify(value));
     return;
   }
-  const partialized = partializeComposerDraftStoreState(value.state.capturedState);
-  const local = entriesOf(partialized);
-  const changed = changedEntryIds(local, sync.local);
+  let partialized = partializeComposerDraftStoreState(value.state.capturedState);
+  let local = entriesOf(partialized);
+  let changed = changedEntryIds(local, sync.local);
+  const deferred = changedEntryIds(sync.textEntries ?? sync.stored, sync.local).filter((id) =>
+    jsonEquals(local.get(id), sync.local.get(id)),
+  );
+  if (deferred.length > 0) {
+    adoptStoredComposerDrafts();
+    partialized = partializeComposerDraftStoreState(composerDraftStore.getState());
+    local = entriesOf(partialized);
+    changed = changedEntryIds(local, sync.local);
+  }
   if (changed.length === 0) return;
   const text = readComposerDraftText();
   const parsed = sync.text === text ? undefined : readStoredComposerDrafts(text);
@@ -262,7 +270,6 @@ function writeComposerDrafts(name: string, value: StorageValue<ComposerPersistSt
     stored: stored ? withEntries(sync.stored, changed, local) : local,
     text: nextText,
     textEntries: merged,
-    adopted: false,
   };
 }
 
@@ -279,7 +286,7 @@ const composerPersistStorage: PersistStorage<ComposerPersistState> = {
     const stored = storedStateOf(value);
     const seen = stored && entriesOf(stored);
     // onRehydrateStorage sets `local` once the state is hydrated.
-    sync = { ...UNSYNCED, stored: seen ?? new Map(), text, textEntries: seen, adopted: true };
+    sync = { ...UNSYNCED, stored: seen ?? new Map(), text, textEntries: seen };
     return value;
   },
   setItem: (name, value) => composerDebouncedStorage.setItem(name, value),
@@ -351,18 +358,21 @@ function adoptStoredDraft(
 /** Takes in every entry another tab changed in storage that this tab has not changed itself. */
 function adoptStoredComposerDrafts(): void {
   const text = readComposerDraftText();
-  if (sync.adopted && sync.text === text) return;
   const stored = readStoredComposerDrafts(text);
   const entries = stored && entriesOf(stored);
   const fromStorage = entries ? changedEntryIds(entries, sync.stored) : [];
   // Shares unchanged entries with the baseline instead of keeping a second parsed copy.
   const seen = entries && withEntries(sync.stored, fromStorage, entries);
-  sync = { ...sync, text, textEntries: seen, adopted: true };
-  if (!stored || !seen || fromStorage.length === 0) return;
+  sync = { ...sync, text, textEntries: seen };
   const state = composerDraftStore.getState();
   const local = entriesOf(partializeComposerDraftStoreState(state));
-  const ids = new Set(fromStorage.filter((id) => jsonEquals(local.get(id), sync.local.get(id))));
-  if (ids.size === 0) return;
+  const deferred = changedEntryIds(seen ?? sync.stored, sync.local);
+  const ids = new Set(
+    [...new Set([...fromStorage, ...deferred])].filter((id) =>
+      jsonEquals(local.get(id), sync.local.get(id)),
+    ),
+  );
+  if (!stored || !seen || ids.size === 0) return;
   const keep = <T>(stored: T | undefined) => stored;
   composerDraftStore.setState({
     draftThreadsByThreadKey: adoptStoredRecord(
