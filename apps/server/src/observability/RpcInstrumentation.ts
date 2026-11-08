@@ -164,6 +164,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.filesystemGetMetadata]: "workspace",
   [WS_METHODS.notesList]: "workspace",
   [WS_METHODS.notesRead]: "workspace",
+  [WS_METHODS.notesWrite]: "workspace",
   [WS_METHODS.agentSessionsScan]: "workspace",
   [WS_METHODS.agentSessionsImport]: "workspace",
   [WS_METHODS.assetsCreateUrl]: "workspace",

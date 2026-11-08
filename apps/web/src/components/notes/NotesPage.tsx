@@ -1,10 +1,24 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, StickyNoteIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  FolderOpenIcon,
+  MessageSquarePlusIcon,
+  PencilIcon,
+  PlusIcon,
+  StickyNoteIcon,
+} from "lucide-react";
 import { useState } from "react";
 
+import { isElectron } from "../../env";
+import { readLocalApi } from "../../localApi";
 import { cn } from "../../lib/utils";
+import { usePendingComposerFilesStore } from "../../pendingComposerFilesStore";
 import { usePrimaryEnvironment } from "../../state/environments";
+import { serverEnvironment } from "../../state/server";
+import { useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { useDebouncedValue } from "../../state/queries";
 import { useEnvironmentQuery } from "../../state/query";
@@ -15,11 +29,24 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "
 import { Input } from "../ui/input";
 import { ScrollArea } from "../ui/scroll-area";
 import { Skeleton } from "../ui/skeleton";
+import { toastManager } from "../ui/toast";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "../WorkspaceBreadcrumb";
+
+/** Desktop picks the vault with the system folder dialog; elsewhere the path is typed in Settings. */
+function useChooseVaultFolder(environmentId: EnvironmentId | null) {
+  const update = useAtomCommand(serverEnvironment.updateSettings, "Choose notes folder");
+  if (!isElectron || environmentId === null) return null;
+  return async () => {
+    const folder = await readLocalApi()?.dialogs.pickFolder();
+    if (!folder) return;
+    await update({ environmentId, input: { patch: { notesVaultPath: folder } } });
+  };
+}
 
 export function NotesPage() {
   const environment = usePrimaryEnvironment();
   const settings = environment?.serverConfig?.settings;
+  const chooseFolder = useChooseVaultFolder(environment?.environmentId ?? null);
   return (
     <AppRouteModal label="Notes">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -29,15 +56,27 @@ export function NotesPage() {
               <h1>Notes</h1>
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
+          {chooseFolder && settings?.notesVaultPath ? (
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Change notes folder"
+              title={`Notes folder: ${settings.notesVaultPath}`}
+              onClick={() => void chooseFolder()}
+            >
+              <FolderOpenIcon />
+            </Button>
+          ) : null}
           <AppRouteModalClose />
         </header>
         {environment === null || settings === undefined ? (
           <NotesMessage title="Connect an environment to see notes." />
         ) : settings.notesVaultPath === "" ? (
           <NotesMessage
-            title="No vault folder"
-            description="Choose the folder of Markdown notes on this environment's machine."
+            title="No notes folder"
+            description="Choose an Obsidian vault or any folder of Markdown notes on this machine."
             showSettings
+            onChooseFolder={chooseFolder}
           />
         ) : (
           <NotesBrowser environmentId={environment.environmentId} />
@@ -51,10 +90,12 @@ function NotesMessage({
   title,
   description,
   showSettings = false,
+  onChooseFolder = null,
 }: {
   title: string;
   description?: string | null;
   showSettings?: boolean;
+  onChooseFolder?: (() => Promise<void>) | null;
 }) {
   const navigate = useNavigate();
   return (
@@ -64,7 +105,13 @@ function NotesMessage({
         {description ? <EmptyDescription>{description}</EmptyDescription> : null}
       </EmptyHeader>
       {showSettings ? (
-        <EmptyContent>
+        <EmptyContent className="flex-row justify-center">
+          {onChooseFolder ? (
+            <Button onClick={() => void onChooseFolder()}>
+              <FolderOpenIcon />
+              Choose folder
+            </Button>
+          ) : null}
           <Button variant="outline" onClick={() => void navigate({ to: "/settings/general" })}>
             Open settings
           </Button>
@@ -77,6 +124,10 @@ function NotesMessage({
 function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
   const [query, setQuery] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [newNoteName, setNewNoteName] = useState<string | null>(null);
+  const canWrite = useEnvironmentScope(environmentId, AuthFilesystemWriteScope);
+  const writeNote = useAtomCommand(filesystemEnvironment.writeNote, "Create note");
   const searchQuery = useDebouncedValue(query.trim(), 200);
   const list = useEnvironmentQuery(
     filesystemEnvironment.listNotes({
@@ -84,6 +135,22 @@ function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
       input: searchQuery === "" ? {} : { query: searchQuery },
     }),
   );
+
+  const createNote = async () => {
+    const name = (newNoteName ?? "").trim().replace(/\.md$/i, "");
+    if (name === "") return;
+    const path = `${name}.md`;
+    const title = name.split("/").at(-1) ?? name;
+    const result = await writeNote({
+      environmentId,
+      input: { path, content: `# ${title}\n\n`, createOnly: true },
+    });
+    if (result._tag !== "Success") return;
+    setNewNoteName(null);
+    list.refresh();
+    setSelectedPath(result.value.path);
+    setEditingPath(result.value.path);
+  };
 
   if (list.error !== null && list.data === null) {
     return <NotesMessage title="Notes unavailable" description={list.error} showSettings />;
@@ -97,16 +164,56 @@ function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
           selectedPath !== null && "max-sm:hidden",
         )}
       >
-        <div className="shrink-0 p-3">
-          <Input
-            type="search"
-            size="sm"
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search notes"
-            aria-label="Search notes"
-            spellCheck={false}
-          />
+        <div className="flex shrink-0 flex-col gap-2 p-3">
+          <div className="flex items-center gap-1.5">
+            <Input
+              type="search"
+              size="sm"
+              value={query}
+              onValueChange={setQuery}
+              placeholder="Search notes"
+              aria-label="Search notes"
+              spellCheck={false}
+            />
+            {canWrite ? (
+              <Button
+                size="icon-sm"
+                variant="outline"
+                aria-label="New note"
+                title="New note"
+                onClick={() => setNewNoteName("")}
+              >
+                <PlusIcon />
+              </Button>
+            ) : null}
+          </div>
+          {newNoteName !== null ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void createNote();
+              }}
+            >
+              <Input
+                size="sm"
+                autoFocus
+                value={newNoteName}
+                onValueChange={setNewNoteName}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    setNewNoteName(null);
+                  }
+                }}
+                onBlur={() => {
+                  if (newNoteName.trim() === "") setNewNoteName(null);
+                }}
+                placeholder="Note name, then Enter"
+                aria-label="New note name"
+                spellCheck={false}
+              />
+            </form>
+          ) : null}
         </div>
         <ScrollArea className="min-h-0 flex-1">
           {list.data === null ? (
@@ -125,7 +232,10 @@ function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
                 <li key={note.path}>
                   <button
                     type="button"
-                    onClick={() => setSelectedPath(note.path)}
+                    onClick={() => {
+                      setSelectedPath(note.path);
+                      setEditingPath(null);
+                    }}
                     aria-current={note.path === selectedPath ? "true" : undefined}
                     className="flex w-full min-w-0 flex-col gap-0.5 rounded-md px-2.5 py-1.5 text-start hover:bg-accent aria-current:bg-accent"
                   >
@@ -160,8 +270,13 @@ function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
           </Empty>
         ) : (
           <NoteView
+            key={selectedPath}
             environmentId={environmentId}
             path={selectedPath}
+            canWrite={canWrite}
+            editing={editingPath === selectedPath}
+            onEditingChange={(editing) => setEditingPath(editing ? selectedPath : null)}
+            onSaved={list.refresh}
             onBack={() => setSelectedPath(null)}
           />
         )}
@@ -173,15 +288,46 @@ function NotesBrowser({ environmentId }: { environmentId: EnvironmentId }) {
 function NoteView({
   environmentId,
   path,
+  canWrite,
+  editing,
+  onEditingChange,
+  onSaved,
   onBack,
 }: {
   environmentId: EnvironmentId;
   path: string;
+  canWrite: boolean;
+  editing: boolean;
+  onEditingChange: (editing: boolean) => void;
+  onSaved: () => void;
   onBack: () => void;
 }) {
   const note = useEnvironmentQuery(
     filesystemEnvironment.readNote({ environmentId, input: { path } }),
   );
+  const writeNote = useAtomCommand(filesystemEnvironment.writeNote, "Save note");
+  const addComposerFiles = usePendingComposerFilesStore((state) => state.add);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const content = draft ?? note.data?.content ?? "";
+
+  const save = async () => {
+    setSaving(true);
+    const result = await writeNote({ environmentId, input: { path, content } });
+    setSaving(false);
+    if (result._tag !== "Success") return;
+    setDraft(null);
+    note.refresh();
+    onSaved();
+    onEditingChange(false);
+  };
+
+  const addToChat = () => {
+    if (!note.data) return;
+    const fileName = path.split("/").at(-1) ?? path;
+    addComposerFiles([new File([note.data.content], fileName, { type: "text/markdown" })]);
+    toastManager.add({ type: "success", title: `Added ${fileName} to the chat` });
+  };
   return (
     <>
       <div className="flex shrink-0 items-center gap-2 border-b px-3 py-2 sm:px-6">
@@ -197,22 +343,81 @@ function NoteView({
             {note.data ? ` · ${new Date(note.data.modifiedAt).toLocaleString()}` : null}
           </p>
         </div>
+        {editing ? (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setDraft(null);
+                onEditingChange(false);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button size="sm" disabled={saving || draft === null} onClick={() => void save()}>
+              Save
+            </Button>
+          </>
+        ) : note.data ? (
+          <>
+            {canWrite ? (
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="Edit note"
+                title="Edit note"
+                onClick={() => onEditingChange(true)}
+              >
+                <PencilIcon />
+              </Button>
+            ) : null}
+            <DialogPrimitive.Close
+              render={<Button size="sm" variant="outline" />}
+              onClick={addToChat}
+            >
+              <MessageSquarePlusIcon />
+              Add to chat
+            </DialogPrimitive.Close>
+          </>
+        ) : null}
       </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8">
-          {note.data ? (
-            <ChatMarkdown text={note.data.content} cwd={undefined} environmentId={environmentId} />
-          ) : note.error ? (
-            <p className="text-sm text-muted-foreground">{note.error}</p>
-          ) : (
-            <div className="space-y-2">
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="h-4" />
-              <Skeleton className="h-4 w-5/6" />
-            </div>
-          )}
-        </div>
-      </ScrollArea>
+      {editing && note.data ? (
+        <textarea
+          autoFocus
+          value={content}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if ((event.metaKey || event.ctrlKey) && event.key === "s") {
+              event.preventDefault();
+              if (draft !== null) void save();
+            }
+          }}
+          aria-label="Note content"
+          spellCheck={false}
+          className="min-h-0 flex-1 resize-none bg-transparent px-4 py-6 font-mono text-sm leading-relaxed text-foreground outline-none sm:px-8"
+        />
+      ) : (
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="mx-auto max-w-3xl px-4 py-6 sm:px-8">
+            {note.data ? (
+              <ChatMarkdown
+                text={note.data.content}
+                cwd={undefined}
+                environmentId={environmentId}
+              />
+            ) : note.error ? (
+              <p className="text-sm text-muted-foreground">{note.error}</p>
+            ) : (
+              <div className="space-y-2">
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-4" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
     </>
   );
 }

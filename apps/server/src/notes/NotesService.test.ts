@@ -122,4 +122,52 @@ it.layer(layerTest)("NotesService", (it) => {
       }),
     );
   });
+
+  describe("write", () => {
+    it.effect("creates nested notes, refuses duplicates, and overwrites on save", () =>
+      Effect.gen(function* () {
+        const notes = yield* NotesService.NotesService;
+        yield* makeVault();
+
+        const created = yield* notes.write({
+          path: "Inbox/New.md",
+          content: "first",
+          createOnly: true,
+        });
+        expect(created.path).toBe("Inbox/New.md");
+        const duplicate = yield* notes
+          .write({ path: "Inbox/New.md", content: "again", createOnly: true })
+          .pipe(Effect.flip);
+        expect(duplicate.reason).toBe("already-exists");
+        yield* notes.write({ path: "Inbox/New.md", content: "second" });
+        expect((yield* notes.read({ path: "Inbox/New.md" })).content).toBe("second");
+      }),
+    );
+
+    it.effect("rejects writes outside the vault and non-Markdown names", () =>
+      Effect.gen(function* () {
+        const notes = yield* NotesService.NotesService;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { root, vault } = yield* makeVault();
+        yield* fileSystem.symlink(root, path.join(vault, "Escape"));
+
+        const reasons = yield* Effect.forEach(
+          ["../outside.md", "Escape/outside.md", path.join(root, "x.md"), "notes.txt"],
+          (notePath) =>
+            notes.write({ path: notePath, content: "x" }).pipe(
+              Effect.flip,
+              Effect.map((error) => error.reason),
+            ),
+        );
+
+        expect(reasons).toEqual([
+          "outside-vault",
+          "outside-vault",
+          "outside-vault",
+          "not-markdown",
+        ]);
+      }),
+    );
+  });
 });

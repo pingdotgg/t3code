@@ -415,6 +415,8 @@ import {
   NotesListResult,
   NotesReadInput,
   NotesReadResult,
+  NotesWriteInput,
+  NotesWriteResult,
 } from "./notes.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
@@ -436,6 +438,7 @@ export const WS_METHODS = {
   filesystemGetMetadata: "filesystem.getMetadata",
   notesList: "notes.list",
   notesRead: "notes.read",
+  notesWrite: "notes.write",
   agentSessionsScan: "agentSessions.scan",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
@@ -1414,6 +1417,12 @@ const WsNotesReadRpc = Rpc.make(WS_METHODS.notesRead, {
   error: Schema.Union([NotesError, EnvironmentAuthorizationError]),
 });
 
+const WsNotesWriteRpc = Rpc.make(WS_METHODS.notesWrite, {
+  payload: NotesWriteInput,
+  success: NotesWriteResult,
+  error: Schema.Union([NotesError, EnvironmentAuthorizationError]),
+});
+
 const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
@@ -2181,6 +2190,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemGetMetadataRpc,
   WsNotesListRpc,
   WsNotesReadRpc,
+  WsNotesWriteRpc,
   WsAgentSessionsScanRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,

@@ -39,6 +39,20 @@ export const NotesReadResult = Schema.Struct({
 });
 export type NotesReadResult = typeof NotesReadResult.Type;
 
+export const NotesWriteInput = Schema.Struct({
+  /** Relative to the vault, with `/` separators; must end in `.md`. */
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(1024)),
+  content: Schema.String.check(Schema.isMaxLength(NOTE_MAX_BYTES)),
+  /** Fail with `already-exists` instead of overwriting. */
+  createOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type NotesWriteInput = typeof NotesWriteInput.Type;
+
+export const NotesWriteResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+});
+export type NotesWriteResult = typeof NotesWriteResult.Type;
+
 export const NotesFailureReason = Schema.Literals([
   "unconfigured",
   "vault-missing",
@@ -47,6 +61,8 @@ export const NotesFailureReason = Schema.Literals([
   "too-large",
   "not-found",
   "read-failed",
+  "already-exists",
+  "write-failed",
 ]);
 export type NotesFailureReason = typeof NotesFailureReason.Type;
 
@@ -58,6 +74,8 @@ const NOTES_FAILURE_MESSAGES: Record<NotesFailureReason, string> = {
   "too-large": "That note is larger than 1 MB.",
   "not-found": "That note no longer exists.",
   "read-failed": "Could not read the vault.",
+  "already-exists": "A note with that name already exists.",
+  "write-failed": "Could not save the note.",
 };
 
 export class NotesError extends Schema.TaggedError<NotesError>()("NotesError", {

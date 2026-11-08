@@ -221,6 +221,7 @@ import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
 } from "../sidebarPendingFileDropStore";
+import { usePendingComposerFilesStore } from "../pendingComposerFilesStore";
 import {
   composerDraftHasUserContent,
   type ComposerFileAttachment,
@@ -3258,6 +3259,15 @@ export default function ChatView(props: ChatViewProps) {
     consumePendingFileDrop,
     pendingSidebarFileDrops,
   ]);
+
+  const pendingComposerFiles = usePendingComposerFilesStore((state) => state.files);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- hands files queued from the Notes page to the composer's imperative API once it mounts
+  useEffect(() => {
+    if (embedded || pendingComposerFiles.length === 0 || !activeThread || !composerRef.current) {
+      return;
+    }
+    composerRef.current.addDroppedFiles(usePendingComposerFilesStore.getState().take());
+  }, [activeThread, composerRef, embedded, pendingComposerFiles]);
 
   const addDroppedFilesToComposer = useStableCallback(
     (files: Parameters<ChatComposerHandle["addDroppedFiles"]>[0]) =>

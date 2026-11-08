@@ -3022,6 +3022,7 @@ export const layerWsRpc = (
         [WS_METHODS.filesystemGetMetadata]: (input) => workspaceFileSystem.getMetadata(input),
         [WS_METHODS.notesList]: (input) => notes.list(input),
         [WS_METHODS.notesRead]: (input) => notes.read(input),
+        [WS_METHODS.notesWrite]: (input) => notes.write(input),
         [WS_METHODS.filesystemBrowse]: (input) =>
           workspaceEntries.browse(input).pipe(
             Effect.mapError(

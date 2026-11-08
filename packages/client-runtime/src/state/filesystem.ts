@@ -20,7 +20,7 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
@@ -163,6 +163,10 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       label: "environment-data:filesystem:read-note",
       tag: WS_METHODS.notesRead,
       staleTimeMs: 15_000,
+    }),
+    writeNote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:filesystem:write-note",
+      tag: WS_METHODS.notesWrite,
     }),
   };
 }

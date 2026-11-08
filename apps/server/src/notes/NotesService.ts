@@ -6,6 +6,8 @@ import {
   type NotesListResult,
   type NotesReadInput,
   type NotesReadResult,
+  type NotesWriteInput,
+  type NotesWriteResult,
   type NoteSummary,
 } from "@t3tools/contracts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -25,6 +27,7 @@ export class NotesService extends Context.Service<
   {
     readonly list: (input: NotesListInput) => Effect.Effect<NotesListResult, NotesError>;
     readonly read: (input: NotesReadInput) => Effect.Effect<NotesReadResult, NotesError>;
+    readonly write: (input: NotesWriteInput) => Effect.Effect<NotesWriteResult, NotesError>;
   }
 >()("t3/notes/NotesService") {}
 
@@ -60,6 +63,16 @@ const make = Effect.gen(function* () {
     if (info.type !== "Directory") return yield* new NotesError({ reason: "vault-missing" });
     return vault;
   });
+
+  const isInsideVault = (vault: string, target: string) => {
+    const relative = path.relative(vault, target);
+    return !(
+      relative === "" ||
+      relative === ".." ||
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative)
+    );
+  };
 
   // Untraced: recursion runs once per folder inside NotesService.list's span.
   // Symlinks are skipped so the walk cannot leave the vault or loop.
@@ -128,15 +141,8 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
+    if (!isInsideVault(vault, real)) return yield* new NotesError({ reason: "outside-vault" });
     const relative = path.relative(vault, real);
-    if (
-      relative === "" ||
-      relative === ".." ||
-      relative.startsWith(`..${path.sep}`) ||
-      path.isAbsolute(relative)
-    ) {
-      return yield* new NotesError({ reason: "outside-vault" });
-    }
     // A note inside the vault can still be a symlink to a file that is not Markdown.
     if (!isMarkdown(real)) return yield* new NotesError({ reason: "not-markdown" });
     const info = yield* fileSystem
@@ -156,7 +162,32 @@ const make = Effect.gen(function* () {
     };
   });
 
-  return NotesService.of({ list, read });
+  const write = Effect.fn("NotesService.write")(function* (input: NotesWriteInput) {
+    const vault = yield* resolveVault();
+    if (!isMarkdown(input.path)) return yield* new NotesError({ reason: "not-markdown" });
+    if (path.isAbsolute(input.path)) return yield* new NotesError({ reason: "outside-vault" });
+    const target = path.join(vault, input.path);
+    if (!isInsideVault(vault, target)) return yield* new NotesError({ reason: "outside-vault" });
+    const writeFailed = (cause: unknown) => new NotesError({ reason: "write-failed", cause });
+    const parent = path.dirname(target);
+    yield* fileSystem.makeDirectory(parent, { recursive: true }).pipe(Effect.mapError(writeFailed));
+    // A symlinked folder inside the vault could still point outside it.
+    const realParent = yield* fileSystem.realPath(parent).pipe(Effect.mapError(writeFailed));
+    if (realParent !== vault && !isInsideVault(vault, realParent)) {
+      return yield* new NotesError({ reason: "outside-vault" });
+    }
+    const exists = yield* fileSystem.exists(target).pipe(Effect.mapError(writeFailed));
+    if (exists) {
+      if (input.createOnly === true) return yield* new NotesError({ reason: "already-exists" });
+      const real = yield* fileSystem.realPath(target).pipe(Effect.mapError(writeFailed));
+      if (!isInsideVault(vault, real)) return yield* new NotesError({ reason: "outside-vault" });
+      if (!isMarkdown(real)) return yield* new NotesError({ reason: "not-markdown" });
+    }
+    yield* fileSystem.writeFileString(target, input.content).pipe(Effect.mapError(writeFailed));
+    return { path: path.relative(vault, target).split(path.sep).join("/") };
+  });
+
+  return NotesService.of({ list, read, write });
 });
 
 export const layer = Layer.effect(NotesService, make);

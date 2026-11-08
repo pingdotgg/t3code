@@ -160,6 +160,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.filesystemGetMetadata]: AuthFilesystemReadScope,
   [WS_METHODS.notesList]: AuthFilesystemReadScope,
   [WS_METHODS.notesRead]: AuthFilesystemReadScope,
+  [WS_METHODS.notesWrite]: AuthFilesystemWriteScope,
   [WS_METHODS.agentSessionsScan]: AuthOrchestrationReadScope,
   [WS_METHODS.agentSessionsImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.assetsCreateUrl]: AuthOrchestrationReadScope,
