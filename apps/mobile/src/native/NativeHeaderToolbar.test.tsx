@@ -10,19 +10,14 @@ type HeaderOptions = {
   unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
 };
 
-const harness = vi.hoisted(() => ({
-  params: { path: ["first", "guide.pdf"] },
-  appliedOptions: {} as HeaderOptions,
-  renderedItems: [] as NativeStackHeaderItem[],
-  setOptionsCalls: 0,
-}));
-
 // Native headers retain the actions materialized when navigation applies options. Like React
 // Navigation, the header renders again only when the options are no longer shallowly equal.
-vi.mock("@react-navigation/native", async () => {
-  // vi.mock factories run before the file's imports.
-  const { createContext, use } = await vi.importActual<typeof import("react")>("react");
-  const navigation = {
+const harness = vi.hoisted(() => {
+  const harness = {
+    params: { path: ["first", "guide.pdf"] },
+    appliedOptions: {} as HeaderOptions,
+    renderedItems: [] as NativeStackHeaderItem[],
+    setOptionsCalls: 0,
     setOptions(options: HeaderOptions) {
       harness.setOptionsCalls += 1;
       const previous: Record<string, unknown> = harness.appliedOptions;
@@ -40,6 +35,13 @@ vi.mock("@react-navigation/native", async () => {
         [];
     },
   };
+  return harness;
+});
+
+vi.mock("@react-navigation/native", async () => {
+  // vi.mock factories run before the file's imports.
+  const { createContext, use } = await vi.importActual<typeof import("react")>("react");
+  const navigation = { setOptions: harness.setOptions };
   const navigationContext = createContext<typeof navigation | undefined>(navigation);
   return {
     // Outside a workspace tab slot the header writes to the route's navigation.
@@ -57,6 +59,7 @@ vi.mock("@react-navigation/native", async () => {
 
 import { NativeHeaderToolbar } from "./NativeHeaderToolbar";
 import { NativeStackScreenOptions } from "./StackHeader";
+import { NativeWorkspaceTabActivityContext } from "./v5-workspace-context";
 
 let root: Root | null = null;
 
@@ -258,4 +261,41 @@ it("isolates toolbar handlers and ignores retained actions after their toolbar u
   act(() => root!.render(null));
   second.onPress?.();
   expect(onPress).not.toHaveBeenCalled();
+});
+
+it.each([
+  [
+    "screen options writer",
+    (toolbar: ReactElement) => (
+      <NavigationContext value={{ setOptions: harness.setOptions } as never}>
+        {toolbar}
+      </NavigationContext>
+    ),
+  ],
+  [
+    "retained tab activity reader",
+    (toolbar: ReactElement) => (
+      <NativeWorkspaceTabActivityContext value={{ active: true, isActive: () => true }}>
+        {toolbar}
+      </NativeWorkspaceTabActivityContext>
+    ),
+  ],
+])("keeps right actions when the %s changes identity", (_trigger, provide) => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  const toolbar = (
+    <NativeHeaderToolbar placement="right">
+      <NativeHeaderToolbar.Button label="New chat" onPress={() => undefined} />
+    </NativeHeaderToolbar>
+  );
+  act(() => root!.render(provide(toolbar)));
+  expect(harness.renderedItems.map((item) => item.type === "button" && item.label)).toEqual([
+    "New chat",
+  ]);
+
+  act(() => root!.render(provide(toolbar)));
+
+  expect(harness.renderedItems.map((item) => item.type === "button" && item.label)).toEqual([
+    "New chat",
+  ]);
 });
