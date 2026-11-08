@@ -336,6 +336,34 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
+  it.effect("launches a relative local executable regardless of the spawn cwd", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-relative-" });
+      const commandPath = path.join(cacheDir, "relative-agent");
+      yield* fileSystem.writeFileString(commandPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(commandPath, 0o755);
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const resolved = yield* resolver.resolve(
+        decodeAcpRegistrySettings({
+          source: "local",
+          commandPath: path.relative(process.cwd(), commandPath),
+        }),
+        "/workspace",
+      );
+
+      expect(resolved.spawn.command).toBe(commandPath);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerResolver(() => Effect.die("unexpected registry request"))),
+    ),
+  );
+
   it.effect("reports missing or non-executable local commands without registry fallback", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

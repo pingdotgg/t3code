@@ -1835,13 +1835,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           });
         }
         const env = environment ?? hostEnvironment;
-        const command = resolveExecutable(executable, platform, env);
-        if (command === undefined) {
+        const resolvedExecutable = resolveExecutable(executable, platform, env);
+        if (resolvedExecutable === undefined) {
           return yield* new AcpRegistryError({
             reason: "runner_unavailable",
             detail: "Local ACP executable is not available on this environment's PATH.",
           });
         }
+        const command = path.resolve(resolvedExecutable);
         yield* validateLocalExecutable(command);
         return {
           distribution: "local",
@@ -1872,7 +1873,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             detail: `ACP Registry agent ${agent.id} requires '${commandOverride}', but it is not available on this provider instance's PATH.`,
           });
         }
-        command = resolvedOverride;
+        command = path.resolve(resolvedOverride);
         args = distribution.args;
       } else if (distribution.kind === "npx" || distribution.kind === "uvx") {
         const installed = yield* withInstallPermit(agent.id)(
