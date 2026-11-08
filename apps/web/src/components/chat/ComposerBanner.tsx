@@ -100,22 +100,15 @@ function Root({
   width?: "fill" | "content";
   surface?: "tint" | "popover" | "panel" | "card";
 }) {
-  // The icon starts on the composer's text line and actions end on the send pill's edge.
+  // The icon starts on the composer's text line and actions end where the tray row's text does.
   return (
     <Surface
       className={cn(
-        "min-w-0 ps-3.5 pe-2 py-(--composer-banner-padding-block) [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
+        "min-w-0 ps-3.5 pe-4.25 py-(--composer-banner-padding-block) [--composer-banner-icon-column:--spacing(3)] [--composer-banner-padding-block:--spacing(2.5)]",
         textSize === "body" ? "text-body font-medium" : "text-xs/4 font-medium",
         density === "comfortable" && "[--composer-banner-padding-block:--spacing(2.5)]",
         density === "spacious" && "[--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
-        // A corner button nests inside the banner's radius only when the padding
-        // is tight; spacious padding already leaves the default radius concentric.
-        density !== "spacious" && [
-          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
-          "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl",
-          "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
-        ],
         className,
       )}
       data-slot="composer-banner"
@@ -257,14 +250,23 @@ function ToggleIcon({ expanded }: { expanded: boolean }) {
   return (
     <ChevronDownIcon
       aria-hidden
-      className={cn("size-3 shrink-0 text-muted-foreground", !expanded && "rotate-180")}
+      className={cn(
+        "size-3 shrink-0 text-muted-foreground last:-me-[2.5px]",
+        !expanded && "rotate-180",
+      )}
     />
   );
 }
 
 function Dismiss({ className, children, ...props }: ComponentProps<typeof Button>) {
   return (
-    <Button size="icon-xs" variant="ghost-muted" className={className} {...props}>
+    // Always last in its row: the negative margin puts the x's ink, not its padding, on the row's edge.
+    <Button
+      size="icon-xs"
+      variant="ghost-muted"
+      className={cn("-me-2.5 sm:-me-2", className)}
+      {...props}
+    >
       {children ?? <XIcon className="size-3.5" />}
     </Button>
   );
