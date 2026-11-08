@@ -967,6 +967,7 @@ export function NewTaskDraftScreen(props: {
         onRemoveDraftImage={flow.removeAttachment}
         onStopThread={() => {}}
         onResumeQueue={null}
+        onContinueOn={null}
         onSendMessage={handleStart}
         offersSideChat={false}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}

@@ -208,7 +208,7 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
-import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
+import type { ModelSelection, OrchestrationV2ProviderSession } from "@t3tools/contracts";
 
 export interface ThreadDetailScreenProps {
   readonly header?: React.ReactNode;
@@ -290,6 +290,8 @@ export interface ThreadDetailScreenProps {
   readonly onStopThread: () => void;
   /** Present while the thread's queue is held. */
   readonly onResumeQueue: (() => Promise<void>) | null;
+  /** Present while a stopped run can continue on another provider instance. */
+  readonly onContinueOn: ((modelSelection: ModelSelection) => Promise<void>) | null;
   readonly offersSideChat: boolean;
   readonly onSendMessage: (
     followUp?: ActiveTurnComposerAction,
@@ -1679,6 +1681,8 @@ function ThreadDetailBody(
                       key={props.selectedThread.latestRun?.runId}
                       thread={props.selectedThread}
                       environmentId={props.environmentId}
+                      serverConfig={props.serverConfig}
+                      onContinueOn={props.onContinueOn}
                     />
                     <ChildThreadApprovals
                       threadRef={props.selectedThreadDetailRef}

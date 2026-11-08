@@ -1,7 +1,10 @@
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import {
+  resolveNewThreadModelSelection,
+  usageLimitContinuationTargets,
+} from "@t3tools/shared/usageLimits";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { ScrollToEndButton, WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -2568,6 +2571,27 @@ export default function ChatView(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          continueOn:
+            supportsProviderSwitchingViaHandoff && resumableRunId === limitRecoveryRun.runId
+              ? usageLimitContinuationTargets({
+                  current: activeThreadShell.modelSelection,
+                  providers: providerStatuses,
+                  now: Date.parse(`${nowMinute}:00Z`),
+                  settings,
+                  projectId: activeThreadShell.projectId,
+                }).map(({ provider, selection }) => ({
+                  instanceId: provider.instanceId,
+                  label: provider.displayName ?? provider.auth.email ?? provider.instanceId,
+                  onSelect: async () => {
+                    const resolved = onProviderModelSelectStable(
+                      selection.instanceId,
+                      selection.model,
+                      { focusComposer: false },
+                    );
+                    if (resolved) await onContinueOn(resolved);
+                  },
+                }))
+              : [],
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -2888,7 +2912,7 @@ export default function ChatView(props: ChatViewProps) {
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
   });
-  const { onResume, isResuming } = useComposerResume({
+  const { onResume, onContinueOn, isResuming } = useComposerResume({
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
