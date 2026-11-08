@@ -812,7 +812,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             title: filePreviewDelimiter({ name: relativePath }) ? "Table" : "Preview",
             icon: filePreviewDelimiter({ name: relativePath }) ? "tablecells" : "eye",
             inline: true,
-            onPress: () => setModeOverride({ path: relativePath, mode: "preview" }),
+            onPress: () => {
+              setTextSelection(null);
+              setModeOverride({ path: relativePath, mode: "preview" });
+            },
           } as const)
         : null,
       canToggleMode
@@ -821,7 +824,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             title: "Source",
             icon: "doc.text",
             inline: true,
-            onPress: () => setModeOverride({ path: relativePath, mode: "source" }),
+            onPress: () => {
+              setTextSelection(null);
+              setModeOverride({ path: relativePath, mode: "source" });
+            },
           } as const)
         : null,
       resolvedActiveMode === "source"
