@@ -1257,6 +1257,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     isWorking,
     runlessWorkActive,
+    lesson,
     toolCallVisibility,
     rows,
     contentInsetEndAdjustment,
