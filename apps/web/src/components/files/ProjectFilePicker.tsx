@@ -102,7 +102,10 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     ),
     icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
     run: async () => {
-      useRightPanelStore.getState().openFile(target.threadRef, match.path);
+      // Go to file reads as opening a tab: the code takes the whole content area.
+      const panel = useRightPanelStore.getState();
+      panel.openFile(target.threadRef, match.path);
+      panel.setMaximized(target.threadRef, true);
     },
   }));
 
