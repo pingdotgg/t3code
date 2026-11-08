@@ -2,6 +2,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isOfficialCommandCodeProvider,
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
@@ -10,6 +11,37 @@ import {
 
 const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
+
+describe("isOfficialCommandCodeProvider", () => {
+  it("uses the ACP agent ID before a user-editable display name", () => {
+    expect(
+      isOfficialCommandCodeProvider({
+        driverKind: acpRegistry,
+        agentId: "other-agent",
+        displayName: "Command Code",
+      }),
+    ).toBe(false);
+    expect(
+      isOfficialCommandCodeProvider({
+        driverKind: acpRegistry,
+        agentId: "command-code",
+        displayName: "My agent",
+      }),
+    ).toBe(true);
+    expect(
+      isOfficialCommandCodeProvider({
+        driverKind: acpRegistry,
+        displayName: "Command Code (Omarchy)",
+      }),
+    ).toBe(true);
+    expect(
+      isOfficialCommandCodeProvider({
+        driverKind: codex,
+        displayName: "Command Code",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("providerInstanceInitials", () => {
   it("treats punctuation as a word break but keeps apostrophes between letters", () => {

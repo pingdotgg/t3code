@@ -11,15 +11,19 @@ import {
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -27,6 +31,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
+import { readCommandCodeLimitSource } from "./commandCodeLimits.ts";
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -50,6 +55,23 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   }
 }
 
+/** Match the configured driver/ACP agent, not a user-editable instance ID. */
+export function hasConfiguredCommandCodeProvider(
+  instances: ServerSettings["providerInstances"],
+): boolean {
+  return Object.values(instances).some((instance) => {
+    if (instance.driver === "command-code") return true;
+    if (
+      instance.driver !== "acpRegistry" ||
+      !instance.config ||
+      typeof instance.config !== "object"
+    )
+      return false;
+    const agentId = "agentId" in instance.config ? instance.config.agentId : null;
+    return agentId === "command-code" || agentId === "command-code-omarchy";
+  });
+}
+
 function missingManagementKey(config: UsageLimitSourceConfig): string {
   return typeof config.managementKey === "string"
     ? "No management key configured."
@@ -59,6 +81,10 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const httpClient = yield* HttpClient.HttpClient;
+  const digest = yield* Digest.Digest;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -117,7 +143,18 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    const commandCodeConfigured = hasConfiguredCommandCodeProvider(
+      settings?.providerInstances ?? {},
+    );
+    const commandCode = commandCodeConfigured
+      ? yield* readCommandCodeLimitSource().pipe(
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Effect.provideService(Digest.Digest, digest),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        )
+      : null;
+    yield* publish(commandCode === null ? snapshots : [...snapshots, commandCode]);
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -149,7 +186,12 @@ export const make = Effect.gen(function* () {
   }, refreshLock.withPermits(1));
 
   yield* settingsService.streamChanges.pipe(
-    Stream.map((settings) => settings.usageLimitSources),
+    // Adding/removing a Command Code ACP instance changes providerInstances,
+    // even when the explicit usage-limit source configuration is unchanged.
+    Stream.map((settings) => ({
+      usageLimitSources: settings.usageLimitSources,
+      providerInstances: settings.providerInstances,
+    })),
     Stream.changes,
     Stream.runForEach(() => refresh),
     Effect.forkScoped,

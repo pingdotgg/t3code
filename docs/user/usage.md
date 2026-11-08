@@ -24,6 +24,11 @@ OpenCode reads its SQLite database and older JSON history. Antigravity reads loc
 databases, including T3-managed profiles. Set `OPENCODE_DATA_DIR` or `ANTIGRAVITY_DATA_DIR` on the
 server to read a different data directory; comma-separated paths read multiple directories.
 
+Command Code reads local `.jsonl` message history from `~/.commandcode/projects` to report
+input/output tokens, cache usage, and provider-reported USD costs. It deduplicates repeated
+transcript exports and forked messages using their message ID, timestamp, and model; checkpoint
+and prompt-history sidecars are ignored. These costs are usage records, not a subscription bill.
+
 Cursor reads account usage from Cursor's API for the account you signed in with in T3 or set as
 `CURSOR_API_KEY`. This includes headless T3 sessions and desktop usage across machines; the same
 account counts once across connected environments. T3 does not estimate missing tokens from
@@ -155,9 +160,24 @@ the environment. T3 cannot report limits for external OpenCode servers because t
 belong to the remote server. Limits need an OpenCode Go API key, or an OpenCode Console connected
 in OpenCode with an API key. A Console browser sign-in alone does not report them. You can also add
 your Go API key as `OPENCODE_API_KEY` in the OpenCode instance's **Environment variables**, then
-refresh provider status. Cursor reports
-its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN` when it is set,
-otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
+refresh provider status.
+
+Command Code reports its 5-hour and weekly usage when the Command Code provider is configured
+locally and `~/.commandcode/auth.json` contains an API key. Supported active subscription plans
+also report a **monthly plan-credit usage meter** and billing-cycle reset date when the API
+provides both a remaining plan-credit balance and consumed monthly credits for that same cycle.
+T3 reads the CLI's `/alpha/usage/summary` billing-period totals and derives the consumed
+percentage as `consumed / (remaining + consumed)`; purchased and free credits do not count.
+If the monthly summary is unavailable, belongs to a different cycle, or does not report
+monthly-credit consumption, the monthly percentage is withheld rather than estimated from
+published per-model usage values. The 5-hour and weekly windows remain independent.
+These readings use the local CLI's authenticated service API, which may change across Command Code
+versions. Unavailable or unrecognized quotas are omitted rather than guessed. The Command Code
+symbol shown in web and mobile Usage and for known ACP instances uses the official logomark from
+the [Command Code brand resources](https://commandcode.ai/brand).
+
+Cursor reports its monthly allowance, including separate Auto and API usage, for `CURSOR_AUTH_TOKEN`
+when it is set, otherwise for the account you signed in with in T3 or set as `CURSOR_API_KEY`.
 Sign-in and API keys report limits only with Cursor's default API endpoint. If you configure a custom
 Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 

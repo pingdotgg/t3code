@@ -1,6 +1,7 @@
 import { type CSSProperties, memo } from "react";
 
 import {
+  isOfficialCommandCodeProvider,
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
@@ -29,6 +30,15 @@ const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };
+
+/** Official Command Code logomark, used instead of a name-derived placeholder. */
+export function isOfficialCommandCodeIcon(input: {
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly agentId?: string | undefined;
+}): boolean {
+  return isOfficialCommandCodeProvider(input);
+}
 
 export function providerTextColor(driverKind: ProviderDriverKind): {
   readonly className?: string;
@@ -68,6 +78,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
+  /** Hide a redundant logo name when a visible provider label follows it. */
+  decorative?: boolean;
   badgeClassName?: string;
   indicatorBackground?: string;
 }) {
@@ -84,6 +96,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
+  const commandCodeIcon = isOfficialCommandCodeIcon({
+    driverKind: props.driverKind,
+    displayName: props.displayName,
+    agentId: props.acpRegistryAgentId,
+  });
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -99,7 +116,22 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {commandCodeIcon ? (
+        <>
+          <img
+            src="/assets/command-code-symbol-dark.svg"
+            alt={props.decorative ? "" : props.displayName}
+            aria-hidden={props.decorative || undefined}
+            className={cn("size-5 shrink-0 object-contain dark:hidden", iconClassName)}
+          />
+          <img
+            src="/assets/command-code-symbol-light.svg"
+            alt={props.decorative ? "" : props.displayName}
+            aria-hidden={props.decorative || undefined}
+            className={cn("hidden size-5 shrink-0 object-contain dark:block", iconClassName)}
+          />
+        </>
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"

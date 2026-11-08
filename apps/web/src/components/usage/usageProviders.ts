@@ -1,6 +1,8 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
+import { isCompatibleUsageContractVersion } from "@t3tools/shared/usageMerge";
 
 import type { UsageMetric } from "./usageShortcuts";
 
@@ -32,6 +34,11 @@ export const PROVIDER_PRESENTATION = {
     color: "#5b9bbd",
     driverKind: ProviderDriverKind.make("opencode"),
   },
+  "command-code": {
+    label: "Command Code",
+    color: "#a982e5",
+    driverKind: ProviderDriverKind.make("command-code"),
+  },
   antigravity: {
     label: "Antigravity",
     color: "#8c7bd1",
@@ -50,6 +57,20 @@ export const PROVIDER_PRESENTATION = {
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
+
+/** Exclude remote sources from summaries that mergeUsage cannot safely count. */
+export function compatibleUsageSources<T>(
+  environments: readonly {
+    readonly summary: { readonly contractVersion: number; readonly sources: readonly T[] } | null;
+  }[],
+): readonly T[] {
+  return environments.flatMap(({ summary }) =>
+    summary !== null &&
+    isCompatibleUsageContractVersion(summary.contractVersion, USAGE_CONTRACT_VERSION)
+      ? [...summary.sources]
+      : [],
+  );
+}
 
 export function providersWithUsage(
   totals: readonly {

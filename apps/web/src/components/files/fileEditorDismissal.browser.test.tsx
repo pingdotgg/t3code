@@ -26,8 +26,9 @@ describe("installFileEditorDismissal", () => {
       </>,
     );
     const shadowRoot = () => screen.container.querySelector("diffs-container")?.shadowRoot;
+    await expect.element(screen.getByText("const server = 1;")).toBeInTheDocument();
     const content = shadowRoot()?.querySelector<HTMLElement>("[data-content]");
-    expect(content).toBeTruthy();
+    if (!content) throw new Error("File editor content missing after code rendered");
 
     editor!.setSelections([
       { start: { line: 0, character: 8 }, end: { line: 0, character: 8 }, direction: "none" },

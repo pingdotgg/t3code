@@ -2,6 +2,7 @@ import { Image } from "expo-image";
 import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import {
+  isOfficialCommandCodeProvider,
   normalizeProviderAccentColor,
   providerAccentForegroundColor,
   providerInstanceInitials,
@@ -15,6 +16,8 @@ import { getProviderClient, openRouterIcon } from "@t3tools/client-runtime/provi
 
 type ProviderIconProps = {
   readonly provider: string | null | undefined;
+  readonly displayName?: string | undefined;
+  readonly agentId?: string | null | undefined;
   readonly iconUrl?: string | null | undefined;
   readonly size?: number;
 };
@@ -74,6 +77,26 @@ export function ProviderIcon(props: ProviderIconProps) {
   const gradientId = useId();
   const size = props.size ?? 16;
   const mono = isDarkMode ? "#e5e5e5" : "#171717";
+
+  if (
+    isOfficialCommandCodeProvider({
+      driverKind: props.provider,
+      displayName: props.displayName,
+      agentId: props.agentId,
+    })
+  ) {
+    return (
+      <Image
+        source={
+          isDarkMode
+            ? require("../../assets/command-code-symbol-light.png")
+            : require("../../assets/command-code-symbol-dark.png")
+        }
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
 
   if (props.provider?.trim().toLowerCase() === "antigravity") {
     return (
@@ -156,6 +179,7 @@ export function ProviderIcon(props: ProviderIconProps) {
 export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;
+  readonly agentId?: string | null | undefined;
   readonly size?: number;
   readonly displayName: string;
   readonly accentColor?: string;
@@ -166,7 +190,13 @@ export function ProviderInstanceIcon(props: {
   return (
     <View style={{ position: "relative" }}>
       <View style={{ opacity: 0.6 }}>
-        <ProviderIcon iconUrl={props.iconUrl} provider={props.provider} size={props.size} />
+        <ProviderIcon
+          iconUrl={props.iconUrl}
+          provider={props.provider}
+          displayName={props.displayName}
+          agentId={props.agentId}
+          size={props.size}
+        />
       </View>
       {props.showBadge ? (
         // An absolute badge alone is capped at icon width and clips initials.
