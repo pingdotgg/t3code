@@ -10,6 +10,7 @@ import FileBrowserPanel from "./FileBrowserPanel";
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
   { path: "README.md", kind: "file" },
+  { path: "src/FastFinder.tsx", kind: "file" },
 ];
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory = {
@@ -115,4 +116,29 @@ describe("FileBrowserPanel", () => {
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
   });
+});
+
+it("finds a loaded file by subsequence in a host folder", async () => {
+  await using screen = await render(
+    <FileBrowserPanel
+      environmentId={EnvironmentId.make("env-files")}
+      cwd="/repo"
+      projectName="repo"
+      selectedPath={null}
+      selectedPathRevealId={0}
+      onOpenFile={() => {}}
+      workspaceMutationId={null}
+      hostFolder
+    />,
+  );
+  await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+  findTreeRow("src/")!.focus();
+  await userEvent.keyboard("{ArrowRight}");
+  await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
+  const input = screen.getByRole("searchbox", { name: "Search repo files" });
+  await userEvent.type(input, "rdm");
+  await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
+  await expect.element(screen.getByText("No matching files.")).not.toBeInTheDocument();
+  await userEvent.clear(input);
+  await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
 });

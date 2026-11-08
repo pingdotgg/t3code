@@ -1,10 +1,11 @@
+import { scoreFilePathMatch } from "@t3tools/shared/searchRanking";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
-import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { FileTree, useFileTree, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -120,9 +121,31 @@ function buildTreeEntries(
       }
     }
   }
-  const entries = [...result.values()];
+  const normalizedQuery = query.trim();
+  const visiblePaths = new Set<string>();
+  if (normalizedQuery) {
+    for (const entry of result.values()) {
+      if (scoreFilePathMatch(entry.path, normalizedQuery) !== null) visiblePaths.add(entry.path);
+    }
+    if (!searchPending) {
+      for (const entry of searchEntries) visiblePaths.add(entry.path);
+    }
+    for (const matchedPath of visiblePaths) {
+      const segments = matchedPath.split("/");
+      for (let index = 1; index < segments.length; index++) {
+        const parentPath = segments.slice(0, index).join("/");
+        if (!parentPath) continue;
+        visiblePaths.add(parentPath);
+        if (!result.has(parentPath))
+          result.set(parentPath, { path: parentPath, kind: "directory" });
+      }
+    }
+  }
+  const entries = [...result.values()].filter(
+    (entry) => !normalizedQuery || visiblePaths.has(entry.path),
+  );
   const entryKinds: ReadonlyMap<string, ProjectEntry["kind"]> = new Map(
-    entries.map((entry) => [entry.path, entry.kind] as const),
+    [...result.values()].map((entry) => [entry.path, entry.kind] as const),
   );
   const treePaths = entries.map(treePath);
   const directories = entries.filter((entry) => entry.kind === "directory");
@@ -293,7 +316,9 @@ export default function FileBrowserPanel({
         ? { icon: "t3-tree-icon-loading", title: "Loading…" }
         : null,
     search: false,
-    onSearchChange: (value) => setQuery(value ?? ""),
+    onSearchChange: (value) => {
+      if (value === null) setQuery("");
+    },
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- makes the Pierre tree model re-render row decorations when loading directories change
@@ -302,9 +327,7 @@ export default function FileBrowserPanel({
     loadingDirectoriesRef.current = loadingDirectories;
     model.setComposition(model.getComposition());
   }, [loadingDirectories, model]);
-  const search = useFileTreeSearch(model);
-  // Pierre restores the unfiltered tree when a search has no matches.
-  const hasNoSearchMatches = search.value.trim().length > 0 && search.matchingPaths.length === 0;
+  const hasNoSearchMatches = query.trim().length > 0 && treePaths.length === 0;
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
     areAllDirectoriesExpanded(currentModel, expandableDirectoryPaths),
   );
@@ -319,7 +342,6 @@ export default function FileBrowserPanel({
   };
   const closeSearch = () => {
     setQuery("");
-    search.close();
   };
   const expandedPathsRef = useRef(new Set<string>());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the Pierre tree model to load directories as they are expanded
@@ -366,14 +388,6 @@ export default function FileBrowserPanel({
       controller.abort();
     };
   }, [load, selectedPath]);
-  const handleSearchValueChange = (value: string) => {
-    setQuery(value);
-    if (value.trim().length === 0) {
-      search.close();
-      return;
-    }
-    search.setValue(value);
-  };
   const handleRefresh = () => {
     refresh();
     if (query.trim()) pathSearch.refresh();
@@ -395,13 +409,17 @@ export default function FileBrowserPanel({
     entryKindsRef.current = entryKinds;
     const previousTreePaths = previousTreePathsRef.current;
     previousTreePathsRef.current = treePaths;
+    // Keep Pierre's expansion snapshot, while external matching owns the filtered paths.
+    if (query.trim() && !model.isSearchOpen()) model.openSearch("");
     if (previousTreePaths === null) {
       model.resetPaths(treePaths);
-      return;
+    } else {
+      const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
+      if (updates.length > 0) model.batch(updates);
     }
-    const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
-    if (updates.length > 0) model.batch(updates);
-  }, [ready, entryKinds, model, treePaths]);
+    if (query.trim()) setAllDirectoriesExpanded(model, directoryPaths, true);
+    else model.closeSearch();
+  }, [ready, entryKinds, model, treePaths, query, directoryPaths]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
   useEffect(() => {
@@ -431,7 +449,11 @@ export default function FileBrowserPanel({
     }
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
-    if (!selectedItem) return;
+    if (!selectedItem) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears filtering when an external reveal targets a row absent from the imperative tree model
+      if (query.trim()) setQuery("");
+      return;
+    }
 
     // Reveal only external selections; tree selections are visible and re-revealing would close search.
     const selectedInTree = model
@@ -447,7 +469,6 @@ export default function FileBrowserPanel({
 
     syncingSelectionRef.current = true;
     setQuery("");
-    model.closeSearch();
     for (const path of model.getSelectedPaths()) {
       model.getItem(path)?.deselect();
     }
@@ -470,7 +491,7 @@ export default function FileBrowserPanel({
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
-  }, [entryKinds, model, selectedPath, selectedPathRevealId]);
+  }, [entryKinds, model, selectedPath, selectedPathRevealId, query]);
 
   return (
     <div
@@ -492,8 +513,8 @@ export default function FileBrowserPanel({
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
-          value={search.value}
-          onValueChange={handleSearchValueChange}
+          value={query}
+          onValueChange={setQuery}
           onClose={closeSearch}
         />
         {directoryPaths.length > 0 && !hostFolder ? (

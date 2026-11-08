@@ -259,10 +259,7 @@ it("keeps the ZIP filter and archive open when native Back closes a selected ent
     '[aria-label="Filter files in ZIP"]',
   )!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-      filter,
-      "first",
-    );
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(filter, "frst");
     filter.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await act(async () =>
@@ -279,7 +276,7 @@ it("keeps the ZIP filter and archive open when native Back closes a selected ent
   expect(screen.container.querySelector('[aria-label="first.txt"]')).not.toBeNull();
   expect(
     screen.container.querySelector<HTMLInputElement>('[aria-label="Filter files in ZIP"]')?.value,
-  ).toBe("first");
+  ).toBe("frst");
 });
 
 it("explains why an encrypted ZIP cannot be browsed", async () => {

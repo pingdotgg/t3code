@@ -3,6 +3,7 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 
 import {
   createBrowseNavigationCoordinator,
+  filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -139,4 +140,20 @@ describe("browse navigation", () => {
     await expect(invalidatedRun).resolves.toBe(false);
     expect(commits).toEqual(["second"]);
   });
+});
+
+it("fuzzy-matches and ranks folder names for every folder browser", () => {
+  const entries = ["my-t3code", "t3code", "cotton", "T3Code-old", ".t3", "docs"].map((name) => ({
+    name,
+    fullPath: `/code/${name}`,
+  }));
+  expect(
+    filterFilesystemBrowseEntries(entries, "tcd").visibleEntries.map((entry) => entry.name),
+  ).toEqual(["t3code", "T3Code-old", "my-t3code"]);
+  expect(filterFilesystemBrowseEntries(entries, "t3code").exactEntry?.name).toBe("t3code");
+  expect(
+    filterFilesystemBrowseEntries(entries, "t3").visibleEntries.some(
+      (entry) => entry.name === ".t3",
+    ),
+  ).toBe(false);
 });

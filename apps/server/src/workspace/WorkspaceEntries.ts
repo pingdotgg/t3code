@@ -24,7 +24,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { scoreSubsequenceMatch, normalizeSearchQuery } from "@t3tools/shared/searchRanking";
+import { scoreFilePathMatch, normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -251,7 +251,7 @@ export const make = Effect.gen(function* () {
         const query = input.searchQuery.toLowerCase();
         const ranked = [...new Set(folders.flat())]
           .flatMap((fullPath) => {
-            const score = scoreSubsequenceMatch(path.basename(fullPath).toLowerCase(), query);
+            const score = scoreFilePathMatch(path.basename(fullPath), query);
             return score === null ? [] : [{ fullPath, score }];
           })
           .sort((a, b) => a.score - b.score || a.fullPath.localeCompare(b.fullPath));
@@ -294,7 +294,7 @@ export const make = Effect.gen(function* () {
       for (const dirent of dirents) {
         if (
           dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
+          scoreFilePathMatch(dirent.name, lowerPrefix) !== null &&
           (showHidden || !dirent.name.startsWith("."))
         ) {
           entries.push({
@@ -306,7 +306,12 @@ export const make = Effect.gen(function* () {
 
       return {
         parentPath,
-        entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        entries: entries.toSorted(
+          (left, right) =>
+            (scoreFilePathMatch(left.name, lowerPrefix) ?? Infinity) -
+              (scoreFilePathMatch(right.name, lowerPrefix) ?? Infinity) ||
+            left.name.localeCompare(right.name),
+        ),
       };
     },
   );

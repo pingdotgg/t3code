@@ -271,4 +271,7 @@ Search skips hidden folders, `node_modules`, `vendor`, and symlinks. It scans up
 20,000 folders per root, returns the best 100 matches, and caches each scan for 30 seconds.
 Use narrower base folders for large directory trees.
 
+Folder pickers, the Files tree, and mobile ZIP filters also accept fuzzy name queries.
+Content searches keep their existing matching options.
+
 Search folders belong to each environment, including when you connect remotely.

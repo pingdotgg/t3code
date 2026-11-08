@@ -828,6 +828,10 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           partialPath: `${cwdWithSeparator}.c`,
         });
 
+        const fuzzyResult = yield* workspaceEntries.browse({
+          partialPath: `${cwdWithSeparator}cnfg`,
+        });
+        expect(fuzzyResult.entries.map((entry) => entry.name)).toEqual(["config"]);
         expect(directoryResult.entries.map((entry) => entry.name)).toEqual([".config", "config"]);
         expect(hiddenPrefixResult).toEqual({
           parentPath: cwd,
