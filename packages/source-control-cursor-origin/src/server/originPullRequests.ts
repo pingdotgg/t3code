@@ -271,6 +271,7 @@ export function preparedMergeability(pullRequest: OriginPullRequest): PullReques
 
 export const OriginMergeabilitySchema = Schema.Struct({
   verdict: OptionalString,
+  headSha: OptionalString,
   blockers: Schema.optional(Schema.NullOr(Schema.Array(Schema.Struct({ kind: OptionalString })))),
 });
 
@@ -364,6 +365,7 @@ export function originFilesPatch(
       const oldPath = file.previousFilename || file.filename;
       const added = file.status === "added";
       const removed = file.status === "removed" || file.status === "deleted";
+      const action = file.status === "copied" ? "copy" : "rename";
       const before = quoteGitPatchPath(`a/${oldPath}`);
       const after = quoteGitPatchPath(`b/${file.filename}`);
       const header = [
@@ -372,8 +374,8 @@ export function originFilesPatch(
         ...(oldPath !== file.filename
           ? [
               `similarity index ${file.patch ? 0 : 100}%`,
-              `rename from ${quoteGitPatchPath(oldPath)}`,
-              `rename to ${quoteGitPatchPath(file.filename)}`,
+              `${action} from ${quoteGitPatchPath(oldPath)}`,
+              `${action} to ${quoteGitPatchPath(file.filename)}`,
             ]
           : []),
       ];

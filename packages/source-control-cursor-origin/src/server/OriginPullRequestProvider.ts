@@ -397,23 +397,30 @@ export const make = Effect.gen(function* () {
   // against the rate limit, so a definite answer is kept for that pair of commits.
   const mergeabilities = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = "", number = ""] = key.split("\n");
+      const [cwd = "", repository = "", number = "", head = ""] = key.split("\n");
       return cli
         .api(
           {
             cwd,
             operation: "getMergeability",
-            path: pullPath(repository, Number(number), "/mergeability"),
+            path: pullPath(
+              repository,
+              Number(number),
+              `/mergeability?${new URLSearchParams({ expectedHeadSha: head })}`,
+            ),
           },
           OriginMergeabilitySchema,
         )
         .pipe(
           Effect.map((answer): PullRequestMergeability =>
-            (answer.blockers ?? []).some((blocker) => blocker.kind === "merge_conflict")
-              ? "conflicting"
-              : answer.verdict === "mergeable"
-                ? "mergeable"
-                : "unknown",
+            // A head pushed since the key was made answers for other commits.
+            answer.headSha && answer.headSha !== head
+              ? "unknown"
+              : (answer.blockers ?? []).some((blocker) => blocker.kind === "merge_conflict")
+                ? "conflicting"
+                : answer.verdict === "mergeable"
+                  ? "mergeable"
+                  : "unknown",
           ),
         );
     },
