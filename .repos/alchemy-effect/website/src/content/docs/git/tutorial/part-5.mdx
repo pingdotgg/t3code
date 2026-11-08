@@ -3,7 +3,7 @@ title: "Part 5: Add your application's API"
 description: Add a typed /me endpoint beside Git and use the caller already supplied by your authentication middleware.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
 Your Git host already identifies callers. Add `/api/v1/me` to return the current
 user. This part introduces an application API as a sibling of the existing Git
@@ -117,20 +117,7 @@ Your application's API definition and handlers stay in `src/api.ts`.
 
 ## Deploy the application endpoint
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npx alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm alchemy deploy`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn alchemy deploy`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers run="alchemy deploy" />
 
 No new storage resource is needed for this change.
 

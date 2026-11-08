@@ -38,8 +38,8 @@
  * so this suite pins only the cheap ones on the CLI path.
  */
 import { afterAll, expect, test } from "bun:test";
-import { DevCli, fetchOk } from "alchemy-test/DevCli";
 import * as path from "node:path";
+import { DevCli, fetchOk } from "@alchemy.run/test/DevCli";
 import { WORKFLOW_SECRET_VALUE } from "../src/NotifyWorkflow.ts";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -89,22 +89,18 @@ test(
     expect(index).toContain("<h1>Hello, world!</h1>");
 
     // Plain-text vars, secrets, and the self_url binding.
-    const env = (await (
-      await fetchOk(new URL("/env", asyncWorker))
-    ).json()) as Record<string, unknown>;
+    const env = (await (await fetchOk(new URL("/env", asyncWorker))).json()) as Record<
+      string,
+      unknown
+    >;
     expect(env.MY_VARIABLE).toBe("my-variable-abc123");
     expect(env.MY_SECRET).toBe("my-secret-abc123");
     expect(env.PUBLIC_URL).toBe(asyncWorker.replace(/\/$/, ""));
 
     // Durable Object: state persists across requests.
-    const count = (body: string) =>
-      Number(body.match(/^Hello, world! (\d+)$/)?.[1]);
-    const first = await (
-      await fetchOk(new URL("/counter", asyncWorker))
-    ).text();
-    const second = await (
-      await fetchOk(new URL("/counter", asyncWorker))
-    ).text();
+    const count = (body: string) => Number(body.match(/^Hello, world! (\d+)$/)?.[1]);
+    const first = await (await fetchOk(new URL("/counter", asyncWorker))).text();
+    const second = await (await fetchOk(new URL("/counter", asyncWorker))).text();
     expect(count(second)).toBe(count(first) + 1);
 
     // R2: put/get/list against the local simulator.
@@ -155,26 +151,26 @@ test(
     // Cache API: per-run key — first miss, second hit.
     const cacheKey = crypto.randomUUID();
     const cacheOnce = async () =>
-      (await (
-        await fetchOk(new URL(`/cache?key=${cacheKey}`, asyncWorker))
-      ).json()) as { hit: boolean };
+      (await (await fetchOk(new URL(`/cache?key=${cacheKey}`, asyncWorker))).json()) as {
+        hit: boolean;
+      };
     expect((await cacheOnce()).hit).toBe(false);
     expect((await cacheOnce()).hit).toBe(true);
 
     // Rate limit: 2 per 10s per key — the third call is throttled.
     const rlKey = crypto.randomUUID();
     const limitOnce = async () =>
-      (await (
-        await fetchOk(new URL(`/ratelimit?key=${rlKey}`, asyncWorker))
-      ).json()) as { success: boolean };
+      (await (await fetchOk(new URL(`/ratelimit?key=${rlKey}`, asyncWorker))).json()) as {
+        success: boolean;
+      };
     expect((await limitOnce()).success).toBe(true);
     expect((await limitOnce()).success).toBe(true);
     expect((await limitOnce()).success).toBe(false);
 
     // Version metadata: locally stubbed with a random id.
-    const version = (await (
-      await fetchOk(new URL("/version", asyncWorker))
-    ).json()) as { id: string };
+    const version = (await (await fetchOk(new URL("/version", asyncWorker))).json()) as {
+      id: string;
+    };
     expect(typeof version.id).toBe("string");
     expect(version.id.length).toBeGreaterThan(0);
 
@@ -189,9 +185,9 @@ test(
     expect(service.url).toBe(effectWorker.replace(/\/$/, ""));
 
     // Secrets Store: the seeded value round-trips through the binding.
-    const secret = (await (
-      await fetchOk(new URL("/secret", mediaWorker))
-    ).json()) as { value: string };
+    const secret = (await (await fetchOk(new URL("/secret", mediaWorker))).json()) as {
+      value: string;
+    };
     expect(secret.value).toBe("store-secret-abc123");
 
     // KV via the Effect-style binding: EffectWorker's root route lists the
@@ -204,9 +200,7 @@ test(
     expect(typeof kv.list_complete).toBe("boolean");
 
     // self_url, Effect-style: `yield* Worker.URL` at init.
-    const self = (await (
-      await fetchOk(new URL("/url", effectWorker))
-    ).json()) as { url: string };
+    const self = (await (await fetchOk(new URL("/url", effectWorker))).json()) as { url: string };
     expect(self.url).toBe(effectWorker.replace(/\/$/, ""));
 
     // Workflow: start an instance and poll it to completion — pins the
@@ -221,18 +215,14 @@ test(
     const status = await cli.pollUntil(
       "workflow to settle",
       async () => {
-        const res = await fetch(
-          new URL(`/workflow/status/${started.instanceId}`, effectWorker),
-        );
+        const res = await fetch(new URL(`/workflow/status/${started.instanceId}`, effectWorker));
         if (!res.ok) return undefined;
         const s = (await res.json()) as {
           status: string;
           output?: { text?: string; secret?: string };
           error?: unknown;
         };
-        return s.status === "complete" || s.status === "errored"
-          ? s
-          : undefined;
+        return s.status === "complete" || s.status === "errored" ? s : undefined;
       },
       { tries: 60, delayMs: 2000 },
     );
@@ -250,9 +240,7 @@ test(
         delayMs: 1000,
       })
     ).text();
-    expect(sandbox).toBe(
-      "Hello from Sandbox container! GREETING=hello-from-env",
-    );
+    expect(sandbox).toBe("Hello from Sandbox container! GREETING=hello-from-env");
   },
   { timeout: 600_000 },
 );

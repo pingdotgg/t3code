@@ -10,10 +10,10 @@ downloads one folder, with
 expanded on the server, into the stack's
 [secret providers](/environments/secret-providers). It works exactly
 like [Doppler](/environments/doppler); this page covers only what
-differs.
+differs. It ships in the `@alchemy.run/infisical` package.
 
 ```typescript
-import * as Infisical from "alchemy/Infisical";
+import * as Infisical from "@alchemy.run/infisical";
 
 secrets: [
   Infisical.Secrets(({ stage }) => ({
