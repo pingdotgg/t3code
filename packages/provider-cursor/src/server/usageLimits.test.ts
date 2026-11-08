@@ -42,6 +42,41 @@ describe("Cursor usage limits", () => {
     );
   });
 
+  it("reports the billing-cycle length so pace can be computed", () => {
+    const planUsage = { totalPercentUsed: 40, autoPercentUsed: 30, apiPercentUsed: 20 };
+    const durations = (billingCycleStart: string | number | undefined, billingCycleEnd: string) =>
+      cursorUsageResponseToLimits(
+        { billingCycleStart, billingCycleEnd, planUsage },
+        checkedAt,
+      ).windows.map((window) => window.windowDurationMins);
+    // A 30-day cycle and a 31-day cycle, from real start and end timestamps.
+    expect(durations("1794045847072", "1796637847072")).toEqual([43_200, 43_200, 43_200]);
+    expect(durations(1_796_637_847_072, "1799316247072")).toEqual([44_640, 44_640, 44_640]);
+  });
+
+  it("omits the cycle length when the start is missing or invalid", () => {
+    for (const billingCycleStart of [undefined, "", "0", "not-a-number", "1796637847072"]) {
+      expect(
+        cursorUsageResponseToLimits(
+          {
+            billingCycleStart,
+            billingCycleEnd: "1796637847072",
+            planUsage: { totalPercentUsed: 40 },
+          },
+          checkedAt,
+        ).windows,
+      ).toEqual([
+        {
+          id: "totalPercentUsed",
+          kind: "monthly",
+          label: "Overall",
+          usedPercent: 40,
+          resetsAt: "2026-12-07T10:04:07.072Z",
+        },
+      ]);
+    }
+  });
+
   it("does not invent unused allowance for absent buckets", () => {
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt).unavailable?.reason).toBe(
       "unsupported",
