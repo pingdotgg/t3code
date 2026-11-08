@@ -136,6 +136,11 @@ const withDescriptorServer = <A, E, R>(
           response.end(JSON.stringify(descriptor));
           return;
         }
+        if (request.url === "/api/auth/clients/revoke") {
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ revoked: true }));
+          return;
+        }
         response.writeHead(404);
         response.end();
       });
@@ -631,12 +636,16 @@ const serveAuthRoutesWithWatchedSession = (baseDir: string) =>
     return { config, session, removed, persistRunningServer };
   });
 
-// The recorded server process is alive, but no server for this T3 home answers at its origin.
-const expectDatabaseOnlyRevoke = (origin: string) =>
+// The recorded server process is alive at `origin`; returns what the revoke printed to stderr.
+const revokeWithRecordedServer = (origin: string, homeEnvironmentId?: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-auth-revoke-local-test-" });
     const config = yield* resolveCliAuthConfig({ baseDir: Option.some(baseDir) }, Option.none());
+    if (homeEnvironmentId !== undefined) {
+      yield* fs.makeDirectory(config.stateDir, { recursive: true });
+      yield* fs.writeFileString(config.environmentIdPath, homeEnvironmentId);
+    }
     yield* persistServerRuntimeState({
       path: config.serverRuntimeStatePath,
       state: { ...baseState, pid: process.pid, origin },
@@ -656,14 +665,22 @@ const expectDatabaseOnlyRevoke = (origin: string) =>
       yield* captureStdout(runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"])),
     ) as ReadonlyArray<{ readonly sessionId: string }>;
 
-    expect(stderr).toContain(
-      `Could not reach the T3 Code server at ${origin}. Connections already open with this session stay open until they close.`,
-    );
     assert.notInclude(
       listed.map((entry) => entry.sessionId),
       issued.sessionId,
     );
+    return stderr;
   }).pipe(Effect.scoped, Effect.provide(layerCliRuntime));
+
+// No server for this T3 home answers at the recorded origin.
+const expectDatabaseOnlyRevoke = (origin: string) =>
+  revokeWithRecordedServer(origin).pipe(
+    Effect.map((stderr) =>
+      expect(stderr).toContain(
+        `Could not reach the T3 Code server at ${origin}. Connections already open with this session stay open until they close.`,
+      ),
+    ),
+  );
 
 describe("auth session revoke", () => {
   it.effect("signals the running server and cleans up its helper session", () =>
@@ -708,6 +725,19 @@ describe("auth session revoke", () => {
 
       yield* Deferred.await(server.removed);
     }).pipe(Effect.scoped, Effect.provide(layerCliRuntime)),
+  );
+
+  it.effect("revokes in this T3 home's database when the running server reports success", () =>
+    withDescriptorServer((origin, requests) =>
+      Effect.gen(function* () {
+        const stderr = yield* revokeWithRecordedServer(origin, testDescriptor.environmentId);
+        assert.deepEqual(stderr, []);
+        assert.include(
+          requests.map((request) => request.url),
+          "/api/auth/clients/revoke",
+        );
+      }),
+    ),
   );
 
   it.effect("still revokes in the database when the running server cannot be reached", () =>

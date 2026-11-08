@@ -283,7 +283,9 @@ const revokeSession = Effect.fn("auth.revokeSession")(function* (
       }).pipe(Effect.timeout(LIVE_SERVER_TIMEOUT)),
     );
     if (attempted._tag === "Success") {
-      return attempted.success.revoked;
+      // Also revoke this home's record; a no-op when the server already did.
+      const revokedLocally = yield* environmentAuth.revokeSession(sessionId);
+      return attempted.success.revoked || revokedLocally;
     }
     yield* Effect.logDebug("Failed to revoke the session through the running server.", {
       origin,
