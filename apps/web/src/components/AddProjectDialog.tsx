@@ -194,7 +194,10 @@ function MachineStep({
   useEffect(() => {
     if (hasDesktopBridge) refreshSshHosts();
   }, [hasDesktopBridge, refreshSshHosts]);
-  const newSshHosts = unsavedDesktopSshHosts(sshHosts.data ?? EMPTY_SSH_HOSTS, environments);
+  const newSshHosts = unsavedDesktopSshHosts(
+    (sshHosts.data ?? EMPTY_SSH_HOSTS).filter((host) => host.source === "ssh-config"),
+    environments,
+  );
   const sortedEnvironments = environments.toSorted((left, right) => {
     const leftPrimary = isPrimaryEnvironment(left);
     if (leftPrimary !== isPrimaryEnvironment(right)) return leftPrimary ? -1 : 1;
@@ -260,7 +263,7 @@ function MachineStep({
                       dotClassName={connectionPhaseDotClassName(environment.connection.phase)}
                     />
                     <span className="truncate">
-                      {isPrimaryEnvironment(environment) && connected
+                      {hasDesktopBridge && isPrimaryEnvironment(environment) && connected
                         ? "This computer"
                         : connectionStatusText(environment.connection)}
                     </span>
@@ -399,7 +402,7 @@ function FolderStep({
   };
 
   const onPathKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.nativeEvent.isComposing) return;
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return;
     if (event.key === "ArrowDown" && rows.length > 0) {
       event.preventDefault();
       moveHighlight(highlight === null ? 0 : Math.min(highlight + 1, rows.length - 1));
@@ -478,10 +481,10 @@ function FolderStep({
       </DialogHeader>
       <DialogPanel>{body}</DialogPanel>
       <DialogFooter>
-        <Button type="button" variant="ghost" onClick={openOtherSources}>
+        <Button type="button" variant="ghost" disabled={submitting} onClick={openOtherSources}>
           Clone or create new…
         </Button>
-        <Button type="button" variant="outline" onClick={onBack}>
+        <Button type="button" variant="outline" disabled={submitting} onClick={onBack}>
           Back
         </Button>
         <Button type="submit" disabled={!connected || submitting || path.trim().length === 0}>
