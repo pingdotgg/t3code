@@ -250,7 +250,9 @@ export type PreviewAutomationResizeInput = typeof PreviewAutomationResizeInput.T
 export const PreviewAutomationResizeResult = Schema.Struct({
   tabId: PreviewTabId,
   setting: PreviewViewportSetting,
-  viewport: Schema.optional(PreviewRenderedViewportSize),
+  viewport: Schema.optional(PreviewRenderedViewportSize).annotate({
+    description: "Viewport size after the resize. Omitted when it could not be measured.",
+  }),
 });
 export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
