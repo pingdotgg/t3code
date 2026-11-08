@@ -297,7 +297,7 @@ function PaneThumbnailHeader({
           {siblingTabs.before.map((sibling) => (
             <LayoutPaneTab key={sibling.id} tab={sibling} />
           ))}
-          <span className={cn(LAYOUT_TAB_SLOT_CLASS, "min-w-15 overflow-hidden")}>
+          <span className={LAYOUT_TAB_SLOT_CLASS}>
             <div className={PANE_TAB_CLASS}>
               <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
               <span className="min-w-0 truncate">{label.title}</span>
