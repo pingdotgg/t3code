@@ -109,7 +109,11 @@ export function collectServerUpdateTargets(
       continue;
     }
     if (selfUpdate === "desktop-managed" && !desktopAppUpdate) {
-      skip("needs a newer desktop app");
+      skip(
+        runsInWsl(config)
+          ? "runs in WSL, so update the T3 Code desktop app on that machine"
+          : "needs a newer desktop app",
+      );
       continue;
     }
     const serverVersion = config.environment.serverVersion;
@@ -324,6 +328,14 @@ function isOnTrack(version: string, channel: DesktopUpdateChannel): boolean {
   return cliReleaseChannelOf(version) !== "preview" && desktopUpdateChannelOf(version) === channel;
 }
 
+// A WSL backend can't receive the desktop app's update channel: wsl.exe drops the extra fds.
+// The server reports WSL as a Linux "linux" machine; DMI detection never yields that kind.
+function runsInWsl(config: NonNullable<UpdateEverythingMachine["serverConfig"]>): boolean {
+  return (
+    config.environment.platform.os === "linux" && config.environment.platform.machine === "linux"
+  );
+}
+
 /** How a switch moves a host, or why it never can from here, whatever the release. */
 function trackSwitchMove(
   config: NonNullable<UpdateEverythingMachine["serverConfig"]>,
@@ -336,7 +348,11 @@ function trackSwitchMove(
   if (selfUpdate === null) return { skip: "needs a manual update" };
   if (selfUpdate !== "desktop-managed") return { selfUpdate };
   if (config.environment.capabilities.desktopAppChannelSwitch !== true) {
-    return { skip: "needs a newer desktop app" };
+    return {
+      skip: runsInWsl(config)
+        ? "runs in WSL, so switch the T3 Code desktop app on that machine"
+        : "needs a newer desktop app",
+    };
   }
   // Squirrel.Mac renames the bundle for the new track and then cannot relaunch it.
   if (!sameTrack && config.environment.platform.os === "darwin") {

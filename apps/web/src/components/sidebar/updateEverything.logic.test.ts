@@ -45,6 +45,30 @@ function machine(
   };
 }
 
+/** A desktop-managed server that cannot drive its desktop app's update. */
+function desktopWithoutAppUpdate(
+  id: string,
+  serverVersion: string,
+  machineKind?: "linux" | "desktop",
+): UpdateEverythingMachine {
+  const base = machine(id, serverVersion, "desktop-managed");
+  const environment = base.serverConfig!.environment;
+  return {
+    ...base,
+    serverConfig: {
+      ...base.serverConfig!,
+      environment: {
+        ...environment,
+        platform: {
+          ...environment.platform,
+          ...(machineKind === undefined ? {} : { machine: machineKind }),
+        },
+        capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
+      },
+    },
+  };
+}
+
 describe("collectServerUpdateTargets", () => {
   it("updates remote servers that can move to the target and names every skipped one", () => {
     const { targets, skipped } = collectServerUpdateTargets(
@@ -67,6 +91,8 @@ describe("collectServerUpdateTargets", () => {
         machine("current", "0.0.50", "boot-service"),
         machine("current-offline", "0.0.50", "boot-service", { connected: false }),
         machine("manual", "0.0.40", undefined),
+        desktopWithoutAppUpdate("old-desktop", "0.0.40", "desktop"),
+        desktopWithoutAppUpdate("wsl-desktop", "0.0.40", "linux"),
       ],
       "0.0.50",
     );
@@ -82,6 +108,8 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
+      ["old-desktop", "needs a newer desktop app"],
+      ["wsl-desktop", "runs in WSL, so update the T3 Code desktop app on that machine"],
     ]);
   });
 
@@ -215,15 +243,8 @@ describe("collectChannelSwitchTargets", () => {
         host(machine("service", "0.1.2", "boot-service"), 70),
         // A Stable tag built a migration the latest Nightly does not have yet.
         host(machine("ahead", "0.1.3", "boot-service"), 73),
-        machine("old-desktop", "0.1.2", "desktop-managed", {
-          serverConfig: {
-            ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!,
-            environment: {
-              ...machine("old-desktop", "0.1.2", "desktop-managed").serverConfig!.environment,
-              capabilities: { repositoryIdentity: true, serverSelfUpdate: "desktop-managed" },
-            },
-          },
-        }),
+        desktopWithoutAppUpdate("old-desktop", "0.1.2"),
+        desktopWithoutAppUpdate("wsl-desktop", "0.1.2", "linux"),
         machine("current", NIGHTLY, "boot-service"),
         // The server refuses a track its policy rules out, so the dialog skips it up front.
         managedHost(host(machine("no-nightly", "0.1.2", "boot-service"), 70)),
@@ -240,6 +261,7 @@ describe("collectChannelSwitchTargets", () => {
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
       ["old-desktop", "needs a newer desktop app"],
+      ["wsl-desktop", "runs in WSL, so switch the T3 Code desktop app on that machine"],
       [
         "no-nightly",
         "Example Corp manages T3 Code updates. Only stable releases can be installed.",
