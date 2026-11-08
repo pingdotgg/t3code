@@ -133,6 +133,18 @@ function createResizeDrag<T extends HTMLElement>() {
     }
     event.preventDefault();
     event.stopPropagation();
+    // A press on the thumb reaches the scroller, which the chat timeline reads as the user taking
+    // over its scroll. The handle took this press, so pass it on.
+    thumb.scroller.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        button: event.button,
+        buttons: event.buttons,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      }),
+    );
     thumbDrag = {
       thumb,
       target: event.currentTarget,

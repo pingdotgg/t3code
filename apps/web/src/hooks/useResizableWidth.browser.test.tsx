@@ -72,6 +72,8 @@ describe("useResizableWidth", () => {
     }
 
     // A 10px thumb on a 100px track over 900px of scroll range moves 10px of content per pixel.
+    const scrollerPresses: EventTarget[] = [];
+    scroller.addEventListener("pointerdown", (event) => scrollerPresses.push(event.target!));
     await act(() => {
       handle.dispatchEvent(new PointerEvent("pointerdown", onThumb));
       handle.dispatchEvent(new PointerEvent("pointermove", { ...onThumb, clientY: top + 24 }));
@@ -79,6 +81,9 @@ describe("useResizableWidth", () => {
     });
     expect(scroller.scrollTop).toBe(200);
     expect(handle.parentElement!.style.getPropertyValue(RESIZABLE_WIDTH_PROPERTY)).toBe("");
+    // The chat timeline reads a press on its scroll node as the user taking over the scroll.
+    expect(scrollerPresses).toEqual([scroller]);
+
 
     await act(() => handle.dispatchEvent(new PointerEvent("pointerdown", belowThumb)));
     expect(document.body.style.cursor).toBe("col-resize");
