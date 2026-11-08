@@ -382,6 +382,9 @@ const ToolUse = Schema.Struct({
 });
 const isToolUse = Schema.is(ToolUse);
 const isText = Schema.is(Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }));
+const isThinking = Schema.is(
+  Schema.Struct({ type: Schema.Literal("thinking"), thinking: Schema.String }),
+);
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const Count = Schema.optional(Schema.NullOr(Schema.Number));
@@ -2160,7 +2163,14 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       transcript.push(...response.raw);
     }
     messages.push({ role: "assistant", content: response.content });
-    const texts = response.content.filter(isText).map((block) => block.text);
+    // T3's Claude adapter shows a second consecutive thinking block as text, as Claude 5.1+ intends.
+    const texts = response.content.flatMap((block, index) =>
+      isText(block)
+        ? [block.text]
+        : isThinking(block) && isThinking(response.content[index - 1])
+          ? [block.thinking]
+          : [],
+    );
     said.push(...texts);
     const uses = response.content.filter(isToolUse);
     calls.push(...ranCalls(sample, step, uses));

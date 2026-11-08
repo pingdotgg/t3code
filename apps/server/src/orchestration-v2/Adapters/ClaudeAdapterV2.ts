@@ -73,8 +73,6 @@ import type {
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
-import { QUESTION_CARD_TOOL_NAME, QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/quizCard";
-import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   claudeMcpToolName,
@@ -2071,12 +2069,6 @@ function claudeWritesUpdatesAsThinking(model: string): boolean {
   if (match === null) return false;
   const major = Number(match[1]);
   return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 1);
-}
-
-// A status line right before a card would sit beside it as the tutor's reply; the card's `reply` is that (APP-99).
-function isLessonCardTool(name: string): boolean {
-  const tool = resolveT3McpToolId(name);
-  return tool === QUIZ_CARD_TOOL_NAME || tool === QUESTION_CARD_TOOL_NAME;
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -9079,8 +9071,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
-                  claudeWritesUpdatesAsThinking(message.message.model) &&
-                  !isLessonCardTool(block.name)
+                  claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
                   yield* emitAssistantTextArtifacts({
                     context,

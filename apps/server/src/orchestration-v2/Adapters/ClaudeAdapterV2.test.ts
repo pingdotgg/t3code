@@ -3585,11 +3585,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  // Lessons: a progress update right before a card isn't the tutor's reply, so it stays reasoning.
+  // Lessons: text Claude writes right before a card is often the teaching the card tests, so it shows.
   it.effect.each([
     { tool: "Bash", expected: ["reasoning", "assistant_message"] },
-    { tool: "mcp__t3-code__quiz_card", expected: ["reasoning", "reasoning"] },
-    { tool: "mcp__t3-code__question_card", expected: ["reasoning", "reasoning"] },
+    { tool: "mcp__t3-code__quiz_card", expected: ["reasoning", "assistant_message"] },
+    { tool: "mcp__t3-code__question_card", expected: ["reasoning", "assistant_message"] },
   ] as const)("shows a second thinking block before $tool as $expected", ({ tool, expected }) =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
