@@ -1118,17 +1118,16 @@ describe("settle and snooze while the environment is offline", () => {
       });
       yield* Effect.promise(() => h.commands.settle.run(h.registry, settle));
       yield* h.reconnect();
-      const first = yield* Effect.raceFirst(
-        Deferred.await(markFailed).pipe(Effect.as("not sent" as const)),
-        Queue.take(h.requests).pipe(Effect.as("sent" as const)),
-      );
-      expect(first).toBe("not sent");
+      yield* Deferred.await(markFailed);
       failMark = false;
       // A second reconnect only replays after the first attempt finished.
       yield* h.disconnect;
       yield* h.reconnect();
       const request = yield* Queue.take(h.requests);
       expect(request.command.type).toBe("thread.settle");
+      // Only a send that follows a recorded mark finds the entry marked.
+      expect(stored(h.storage)).toMatchObject([{ attempted: true }]);
+      expect(yield* Queue.size(h.requests)).toBe(0);
     }),
   );
 
