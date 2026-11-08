@@ -96,8 +96,10 @@ it.each([
     await expect.element(link).toBeVisible();
     await expect.element(screen.getByRole("img", { name: "Essays project icon" })).toBeVisible();
     await link.click();
-    expect(screen.router?.state.location.pathname).toBe(
-      `/environment/${encodeURIComponent(threadId)}`,
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe(
+        `/environment/${encodeURIComponent(threadId)}`,
+      ),
     );
     if (encoded) {
       await act(() =>
@@ -111,14 +113,18 @@ it.each([
       const decoded = screen.getByRole("link", { name: "Thread, Decoded essay" });
       await expect.element(decoded).toBeVisible();
       await decoded.click();
-      expect(screen.router?.state.location.pathname).toBe("/environment/older-thread");
+      await vi.waitFor(() =>
+        expect(screen.router?.state.location.pathname).toBe("/environment/older-thread"),
+      );
     }
     await act(() => registry.set(reply, AsyncResult.success({})));
     if (legacy) {
       const remote = screen.getByRole("link", { name: "Thread, Remote thread" });
       await expect.element(remote).toBeVisible();
       await remote.click();
-      expect(screen.router?.state.location.pathname).toBe("/remote/older-thread");
+      await vi.waitFor(() =>
+        expect(screen.router?.state.location.pathname).toBe("/remote/older-thread"),
+      );
     } else {
       await expect
         .element(screen.getByText("Thread no longer available", { exact: true }))

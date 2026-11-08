@@ -244,13 +244,20 @@ export function resolveThreadLink(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
 ): ScopedThreadRef | null {
-  const known = threadLinkCandidates(link, messageEnvironmentId).find(
-    (ref) => read(threadTitleAtom(threadKey(ref))) !== null,
-  );
+  const known = threadLinkCandidates(link, messageEnvironmentId).find((ref) => {
+    if (read(environmentThreadShells.threadShellAtom(ref)) !== null) return true;
+    const metadata = read(
+      orchestrationEnvironment.threadLinkMetadata({
+        environmentId: ref.environmentId,
+        input: { threadIds: [ref.threadId] },
+      }),
+    );
+    return AsyncResult.getOrElse(metadata, () => null)?.[ref.threadId] !== undefined;
+  });
   if (known) return known;
   return link.environmentId === null
     ? guessThreadLinkRef(link, read(environmentThreadShells.threadRefsAtom))
-    : null;
+    : scopeThreadRef(link.environmentId, link.threadId);
 }
 
 export function useThreadChipIcons(
