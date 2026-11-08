@@ -147,7 +147,7 @@ export function verifyElectronZip(fileName, bytes, checksums) {
   }
 }
 
-function downloadElectronRuntime(electronDir, version) {
+export function downloadElectronRuntime(electronDir, version) {
   const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-electron-"));
   const zipPath = NodePath.join(tempDir, `electron-v${version}-${hostPlatform}-${hostArch}.zip`);
 
