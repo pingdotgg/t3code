@@ -31,6 +31,8 @@ import {
 } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { readCodexGitInstructions } from "./CodexGitInstructions.ts";
+import type * as TextGeneration from "./TextGeneration.ts";
 
 const CODEX_TIMEOUT_MS = 180_000;
 const CODEX_MCP_LIST_TIMEOUT_MS = 10_000;
@@ -411,5 +413,41 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     }).pipe(Effect.ensuring(cleanup));
   });
 
-  return TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
+  const operations = TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
+  const home = yield* HostProcess.HomeDirectory;
+  const gitSettingsHome = expandHomePath(
+    codexConfig.homePath.trim() ||
+      resolvedEnvironment.CODEX_HOME?.trim() ||
+      path.join(home, ".codex"),
+    home,
+  );
+  const withGitInstructions = Effect.fn("CodexTextGeneration.withGitInstructions")(function* (
+    policy: TextGeneration.CommitMessageGenerationInput["policy"],
+  ) {
+    const instructions = yield* readCodexGitInstructions(gitSettingsHome).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+    return {
+      kind: "default" as const,
+      inferRepositoryConventions: false,
+      ...policy,
+      commitInstructions: policy?.commitInstructions ?? instructions.commitInstructions,
+      changeRequestInstructions:
+        policy?.changeRequestInstructions ?? instructions.changeRequestInstructions,
+    };
+  });
+  return {
+    ...operations,
+    generateCommitMessage: Effect.fn("CodexTextGeneration.generateCommitMessage")(
+      function* (input) {
+        const policy = yield* withGitInstructions(input.policy);
+        return yield* operations.generateCommitMessage({ ...input, policy });
+      },
+    ),
+    generatePrContent: Effect.fn("CodexTextGeneration.generatePrContent")(function* (input) {
+      const policy = yield* withGitInstructions(input.policy);
+      return yield* operations.generatePrContent({ ...input, policy });
+    }),
+  } satisfies TextGeneration.TextGeneration["Service"];
 });

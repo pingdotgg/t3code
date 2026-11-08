@@ -29,6 +29,7 @@ import { makeProcessProbe, processProbeSource } from "../testUtils/processProbe.
 import * as TextGeneration from "./TextGeneration.ts";
 import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
@@ -174,6 +175,9 @@ function withFakeCodexEnv<A, E, R>(
     defaultModel?: string;
     customModels?: ReadonlyArray<string>;
     managedRuntime?: boolean;
+    homePath?: string;
+    desktopConfig?: string;
+    legacyState?: string;
   },
   effectFn: (textGeneration: TextGeneration.TextGeneration["Service"]) => Effect.Effect<A, E, R>,
 ) {
@@ -181,8 +185,16 @@ function withFakeCodexEnv<A, E, R>(
     const fs = yield* FileSystem.FileSystem;
     const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
     const codexPath = yield* makeFakeCodexBinary(tempDir, input);
+    const path = yield* Path.Path;
+    if (input.desktopConfig !== undefined) {
+      yield* fs.writeFileString(path.join(tempDir, "config.toml"), input.desktopConfig);
+    }
+    if (input.legacyState !== undefined) {
+      yield* fs.writeFileString(path.join(tempDir, ".codex-global-state.json"), input.legacyState);
+    }
     const config = decodeCodexSettings({
       binaryPath: codexPath,
+      homePath: input.homePath ?? tempDir,
       launchArgs: input.launchArgs,
       customModels: input.customModels,
     });
@@ -211,6 +223,126 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
+  it.effect.each(["environment", "default"] as const)(
+    "reads Git instructions from the %s Codex home",
+    (source) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fs.makeTempDirectoryScoped();
+        const codexHome = path.join(home, source === "default" ? ".codex" : "custom-codex");
+        yield* fs.makeDirectory(codexHome);
+        yield* fs.writeFileString(
+          path.join(codexHome, "config.toml"),
+          '[desktop]\ngit-commit-instructions = "Use the selected home instructions."',
+        );
+        yield* withFakeCodexEnv(
+          {
+            output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+            homePath: "",
+            environment: { CODEX_HOME: source === "environment" ? codexHome : "" },
+            stdinMustContain: "Use the selected home instructions.",
+          },
+          (generation) =>
+            generation.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "fix/settings",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            }),
+        ).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("uses explicit T3 commit instructions instead of desktop instructions", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+        desktopConfig: '[desktop]\ngit-commit-instructions = "Desktop format"',
+        stdinMustContain: "Use the team commit format.",
+        stdinMustNotContain: "Desktop format",
+      },
+      (generation) =>
+        generation.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "fix/settings",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          policy: {
+            kind: "custom",
+            inferRepositoryConventions: false,
+            commitInstructions: "Use the team commit format.",
+          },
+        }),
+    ),
+  );
+
+  it.effect.each(["config", "legacy"] as const)(
+    "uses Codex desktop %s commit instructions in the CLI prompt",
+    (source) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ subject: "fix: preserve settings", body: "" }),
+          stdinMustContain: "Include the issue number in each commit subject.",
+          stdinMustNotContain: "PR-only instruction",
+          ...(source === "config"
+            ? {
+                desktopConfig:
+                  '[desktop]\ngit-commit-instructions = "Include the issue number in each commit subject."\ngit-pr-instructions = "PR-only instruction"\n',
+              }
+            : {
+                legacyState: JSON.stringify({
+                  "git-commit-instructions": "Include the issue number in each commit subject.",
+                  "git-pr-instructions": "PR-only instruction",
+                }),
+              }),
+        },
+        (generation) =>
+          generation.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "fix/settings",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          }),
+      ),
+  );
+
+  it.effect.each([false, true])(
+    "applies PR instructions with an explicit T3 override: %s",
+    (override) =>
+      withFakeCodexEnv(
+        {
+          output: JSON.stringify({ title: "Preserve Git settings", body: "A description" }),
+          desktopConfig:
+            '[desktop]\ngit-pr-instructions = "Include a rollout section."\ngit-commit-instructions = "Commit-only instruction"\n',
+          stdinMustContain: override ? "Use the team PR format." : "Include a rollout section.",
+          stdinMustNotContain: override ? "Include a rollout section." : "Commit-only instruction",
+        },
+        (generation) =>
+          generation.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "fix/settings",
+            commitSummary: "Preserve Git settings",
+            diffSummary: "M README.md",
+            diffPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            ...(override
+              ? {
+                  policy: {
+                    kind: "custom",
+                    inferRepositoryConventions: false,
+                    changeRequestInstructions: "Use the team PR format.",
+                  },
+                }
+              : {}),
+          }),
+      ),
+  );
+
   it.effect.each(["exec", "mcp list"] as const)(
     "kills a stalled %s CLI when its request is interrupted",
     (command) =>
