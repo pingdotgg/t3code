@@ -62,8 +62,21 @@ describe("scoreThreadSearch", () => {
           activityAt: NOW,
           opens: { openedAt: NOW, score: 12, picks: [] },
         }),
+        thread("Fix sidebar input focus", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 6, picks: [] },
+        }),
       ]),
-    ).toEqual(["Fix crash in sidebar", "Fix sidebar"]);
+    ).toEqual(["Fix crash in sidebar", "Fix sidebar input focus", "Fix sidebar"]);
+    expect(
+      rankTitles("and", [
+        thread("Fix auth and sync", { activityAt: NOW - 200 * DAY }),
+        thread("Android build", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+      ]),
+    ).toEqual(["Android build", "Fix auth and sync"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {

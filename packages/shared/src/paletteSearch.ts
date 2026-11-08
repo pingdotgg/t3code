@@ -345,8 +345,8 @@ interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
   /**
-   * Every counted token matched a whole word at full weight before phrase bonuses.
-   * Tokens have at least three characters, except optional filler words.
+   * Every non-filler token has three or more characters and matched a whole word at full
+   * weight, before phrase bonuses. Optional filler words don't count either way.
    */
   readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
@@ -412,7 +412,7 @@ function matchSearchFields(
   const primaryRanges: SearchRange[] = [];
   let total = 0;
   let counted = 0;
-  let shortToken = false;
+  let notWhole = false;
   let strong = true;
   for (const token of tokens) {
     let best = 0;
@@ -439,8 +439,9 @@ function matchSearchFields(
     if (bestPrimary) primaryRanges.push(...(bestPrimary.letters ?? [bestPrimary]));
     total += best;
     counted += 1;
-    shortToken ||=
-      token.length < PICK_PREFIX_MIN_LENGTH && !(fillerOptional && FILLER_WORDS.has(token));
+    // Optional filler never decides the whole-word tier; a query of only filler never earns it.
+    if (FILLER_WORDS.has(token)) notWhole ||= !fillerOptional;
+    else notWhole ||= token.length < PICK_PREFIX_MIN_LENGTH || best < WHOLE_WORD;
   }
   let quality = total / counted;
   if (primary) {
@@ -449,7 +450,7 @@ function matchSearchFields(
   }
   return {
     quality,
-    wholeWords: !shortToken && total >= counted * WHOLE_WORD,
+    wholeWords: !notWhole,
     strong,
     primaryRanges: mergeRanges(primaryRanges),
   };
