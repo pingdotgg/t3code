@@ -51,6 +51,7 @@ import {
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
+  type CardPurpose,
   cardReplyProblem,
   quizCardProblem,
   readQuestionCard,
@@ -1731,10 +1732,7 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
       if (problem !== undefined) return failed(problem);
       const replyProblem = cardReplyProblem({
         reply,
-        purpose:
-          isRecord(input) && (input.purpose === "opening-check" || input.purpose === "explain-back")
-            ? input.purpose
-            : undefined,
+        purpose: CARD_PURPOSES.find((purpose) => isRecord(input) && input.purpose === purpose),
         shownBefore: sample.shownSinceLastUser,
       });
       if (replyProblem !== undefined) return failed(replyProblem);
@@ -1767,6 +1765,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     : toolResult(call.id, output);
 });
 
+const CARD_PURPOSES: ReadonlyArray<CardPurpose> = [
+  "opening-check",
+  "explain-back",
+  "practice",
+  "choice",
+];
 const BOUND = /^([<>]=)(-?\d+(?:\.\d+)?)$/;
 /**
  * Partial match: `~text` is a case-insensitive substring, `<=N` / `>=N` bound a number, and `null`
@@ -2359,17 +2363,6 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
     // Claude Code adds this text after a ToolSearch that loaded tools.
     const loaded = results.some((result) => Array.isArray(result.content));
     messages.push({ role: "user", content: [...results, ...(loaded ? [text(TOOL_LOADED)] : [])] });
-    if (
-      uses.some((use) => {
-        const call = calls.find((entry) => entry.id === use.id);
-        return (
-          (use.name === "mcp__t3-code__quiz_card" || use.name === "mcp__t3-code__question_card") &&
-          call?.failed !== true
-        );
-      })
-    ) {
-      sample.shownSinceLastUser = 0;
-    }
     if (
       failedEarly(
         testCase.expect,

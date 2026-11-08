@@ -73,7 +73,7 @@ const handlers = {
           message: problem ?? "Invalid quiz card.",
         });
       }
-      yield* refuseThinReply(input.reply, card.purpose);
+      yield* refuseThinReply(input.reply, input.purpose);
       return {
         quizCard: { ...card, reply: input.reply.trim() },
         message: QUIZ_CARD_SHOWN,
@@ -90,7 +90,7 @@ const handlers = {
             "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
         });
       }
-      yield* refuseThinReply(input.reply, card.purpose);
+      yield* refuseThinReply(input.reply, input.purpose);
       return {
         questionCard: { ...card, reply: input.reply.trim() },
         message: QUESTION_CARD_SHOWN,

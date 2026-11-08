@@ -2,7 +2,7 @@ export const QUIZ_CARD_TOOL_NAME = "quiz_card" as const;
 export const QUESTION_CARD_TOOL_NAME = "question_card" as const;
 export const MIN_CARD_REPLY_CHARS = 250;
 
-export type CardPurpose = "opening-check" | "explain-back";
+export type CardPurpose = "opening-check" | "explain-back" | "practice" | "choice";
 
 export function cardReplyProblem(input: {
   readonly reply: string;
@@ -15,13 +15,12 @@ export function cardReplyProblem(input: {
   ) {
     return undefined;
   }
-  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Write the verdict and the teaching this card tests in full in reply, then call the card again.";
+  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Write the verdict and the teaching this card tests in full in reply, then call the card again. If this card is the opening check, an explain-back request, a practice problem on something already taught or a choice of what comes next, set purpose instead.";
 }
 
 export interface QuestionCard {
   /** The tutor's reply to the learner's last answer, shown as its message text before the card. */
   readonly reply?: string;
-  readonly purpose?: CardPurpose;
   readonly question: string;
   readonly blanks?: ReadonlyArray<{ readonly answers: ReadonlyArray<string> }>;
   readonly number?: { readonly answer: number; readonly tolerance: number; readonly unit?: string };
@@ -31,7 +30,6 @@ export type QuizLevel = "remember" | "understand" | "apply" | "analyse";
 
 export interface QuizCard {
   readonly reply?: string;
-  readonly purpose?: CardPurpose;
   readonly answer: string;
   readonly explanation: string;
   readonly level: QuizLevel;
@@ -72,20 +70,12 @@ function readReply(record: Record<string, unknown>): { reply?: string } | undefi
   return reply === undefined ? undefined : { reply };
 }
 
-function readPurpose(record: Record<string, unknown>): { purpose?: CardPurpose } | undefined {
-  if (record.purpose === undefined) return {};
-  return record.purpose === "opening-check" || record.purpose === "explain-back"
-    ? { purpose: record.purpose }
-    : undefined;
-}
-
 export function readQuestionCard(value: unknown): QuestionCard | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const record = value as Record<string, unknown>;
   const question = boundedString(record.question, MAX_QUESTION);
   const reply = readReply(record);
-  const purpose = readPurpose(record);
-  if (question === undefined || reply === undefined || purpose === undefined) return undefined;
+  if (question === undefined || reply === undefined) return undefined;
   const hasBlanks = Object.hasOwn(record, "blanks");
   const hasNumber = Object.hasOwn(record, "number");
   if (hasBlanks && hasNumber) return undefined;
@@ -111,7 +101,7 @@ export function readQuestionCard(value: unknown): QuestionCard | undefined {
       blanks.push({ answers: parsed });
     }
     if ((question.match(/_{3,}/g) ?? []).length !== blanks.length) return undefined;
-    const card = { ...reply, ...purpose, question, blanks };
+    const card = { ...reply, question, blanks };
     return fitsCardBytes(card) ? card : undefined;
   }
   if (hasNumber) {
@@ -136,13 +126,12 @@ export function readQuestionCard(value: unknown): QuestionCard | undefined {
     }
     const card = {
       ...reply,
-      ...purpose,
       question,
       number: { answer: number.answer, tolerance: number.tolerance, ...(unit ? { unit } : {}) },
     };
     return fitsCardBytes(card) ? card : undefined;
   }
-  const card = { ...reply, ...purpose, question };
+  const card = { ...reply, question };
   return fitsCardBytes(card) ? card : undefined;
 }
 
@@ -195,13 +184,11 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   const explanation = boundedString(record.explanation, MAX_EXPLANATION);
   const question = boundedString(record.question, MAX_QUESTION);
   const reply = readReply(record);
-  const purpose = readPurpose(record);
   const level = record.level;
   const wrongOptions = record.wrongOptions;
   if (
     answer === undefined ||
     reply === undefined ||
-    purpose === undefined ||
     explanation === undefined ||
     question === undefined ||
     typeof level !== "string" ||
@@ -222,7 +209,6 @@ export function readQuizCard(value: unknown): QuizCard | undefined {
   if (parsed.some((entry) => entry === undefined)) return undefined;
   return {
     ...reply,
-    ...purpose,
     answer,
     explanation,
     level: level as QuizLevel,

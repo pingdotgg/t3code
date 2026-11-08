@@ -78,7 +78,7 @@ it("tells the model what a card's reply holds", () => {
       description: expect.stringContaining("teach what this card tests"),
     });
     expect(schema.properties.purpose, tool.name).toMatchObject({
-      description: expect.stringContaining("opening check"),
+      description: expect.stringContaining("practice problem"),
     });
   }
 });
