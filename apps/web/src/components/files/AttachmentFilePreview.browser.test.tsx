@@ -2498,13 +2498,36 @@ it("retries a failed workspace image when its URL is renewed for the same file",
 
   assetUrlState.mockReturnValue({
     _tag: "Success",
-    url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>#renewed',
+    url: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="4000" height="100"/>#renewed',
     expiresAt: 0,
     fileRevision: "one",
   });
   await screen.rerender(preview("second"));
   await expect.element(screen.getByRole("button", { name: "Zoom in" })).toBeEnabled();
   expect(screen.container.textContent).not.toContain("Unable to load image.");
+  const zoomLabel = () =>
+    [...screen.container.querySelectorAll("span")].find((span) => /^\d+%$/.test(span.textContent))
+      ?.textContent;
+  // The label must follow the live viewport, so the resize observer has to watch the new one.
+  const expectedFit = () => {
+    const viewport = screen.container.querySelector("img")?.closest("button")
+      ?.parentElement?.parentElement;
+    if (!viewport) return undefined;
+    const fit = Math.min(1, (viewport.clientWidth - 32) / 4000, (viewport.clientHeight - 32) / 100);
+    return `${Math.round(fit * 100)}%`;
+  };
+  Object.assign(screen.container.style, {
+    display: "flex",
+    flexDirection: "column",
+    height: "400px",
+  });
+  for (const width of ["600px", "300px"]) {
+    screen.container.style.width = width;
+    await vi.waitFor(() => {
+      expect(zoomLabel()).not.toBe("0%");
+      expect(zoomLabel()).toBe(expectedFit());
+    });
+  }
 });
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
