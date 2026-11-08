@@ -752,6 +752,49 @@ describe("instance-scoped model selection", () => {
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
   });
 
+  it("keeps a thread's stored options while the draft holds options for another provider", () => {
+    const codex = ProviderInstanceId.make("codex");
+    const claude = ProviderInstanceId.make("claudeAgent");
+    const providers = [
+      provider({ instanceId: "codex", models: ["gpt-5.5"] }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId: "claudeAgent",
+        models: ["claude-opus-5-5"],
+      }),
+    ];
+    const stored = createModelSelection(codex, "gpt-5.5", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+    const claudePick = createModelSelection(claude, "claude-opus-5-5", [
+      { id: "effort", value: "max" },
+    ]);
+    const optionsFor = (codexDraft: ReturnType<typeof createModelSelection>) =>
+      deriveEffectiveComposerModelState({
+        draft: {
+          activeProvider: codex,
+          modelSelectionByProvider: { [claude]: claudePick, [codex]: codexDraft },
+        },
+        providers,
+        selectedProvider: ProviderDriverKind.make("codex"),
+        selectedInstanceId: codex,
+        threadModelSelection: stored,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      }).modelOptions;
+
+    expect(optionsFor(createModelSelection(codex, "gpt-5.5"))).toEqual({
+      [claude]: claudePick.options,
+      [codex]: stored.options,
+    });
+    const fastOff = createModelSelection(codex, "gpt-5.5", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: false },
+    ]);
+    expect(optionsFor(fastOff)?.[codex]).toEqual(fastOff.options);
+  });
+
   it("keeps the default instance's draft model off a custom instance of the same driver", () => {
     const driver = ProviderDriverKind.make("opencode");
     const defaultInstanceId = ProviderInstanceId.make("opencode");
