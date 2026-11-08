@@ -659,6 +659,84 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   margin-left: var(--live-activity-focus-width);
 }
 
+/* Match the citation reveal's two pulses, hold, and fade without a running animation. */
+@keyframes composer-attachment-failure-reveal {
+  0%,
+  21.667%,
+  100% {
+    background-color: transparent;
+  }
+  10.833%,
+  32.5%,
+  85% {
+    background-color: var(--attachment-failure-tint);
+  }
+}
+
+[data-failed-attachment-id][data-slot="context-chip"],
+.composer-attachment-failure-highlight {
+  --attachment-failure-tint: color-mix(in oklab, var(--primary) 45%, transparent);
+  animation: composer-attachment-failure-reveal 3s ease-in-out;
+}
+
+.composer-attachment-failure-highlight {
+  --attachment-failure-tint: color-mix(in oklab, var(--destructive) 12%, transparent);
+}
+
+@keyframes composer-attachment-failure-glow {
+  0%,
+  21.667% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  10.833%,
+  32.5% {
+    box-shadow:
+      0 0 0 3px color-mix(in oklab, var(--destructive) 12%, transparent),
+      0 0 14px 3px color-mix(in oklab, var(--destructive) 24%, transparent);
+  }
+  85% {
+    box-shadow:
+      0 0 0 2px color-mix(in oklab, var(--destructive) 8%, transparent),
+      0 0 10px 1px color-mix(in oklab, var(--destructive) 18%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+[data-chat-composer-expanded-image][data-failed-attachment-id] {
+  animation: composer-attachment-failure-glow 3s ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-chat-composer-expanded-image][data-failed-attachment-id] {
+    animation: none;
+  }
+
+  [data-failed-attachment-id][data-slot="context-chip"],
+  .composer-attachment-failure-highlight {
+    animation-name: composer-attachment-failure-reveal-reduced;
+  }
+}
+
+@keyframes composer-attachment-failure-reveal-reduced {
+  0%,
+  85% {
+    background-color: var(--attachment-failure-tint);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (forced-colors: active) {
+  [data-failed-attachment-id] {
+    animation: none;
+    outline: 1px solid Mark;
+    outline-offset: -1px;
+  }
+}
+
 @property --assistant-citation-highlight-opacity {
   syntax: "<number>";
   inherits: true;

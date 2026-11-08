@@ -53,11 +53,11 @@ describe("orchestration V2 contracts", () => {
       attachmentId: "pending-2",
     });
     expect(
-      Schema.decodeUnknownSync(dispatch)(Schema.encodeSync(dispatch)(dispatchError)).attachmentId,
+      Schema.decodeSync(dispatch)(Schema.encodeSync(dispatch)(dispatchError)).attachmentId,
     ).toBe("pending-1");
-    expect(
-      Schema.decodeUnknownSync(launch)(Schema.encodeSync(launch)(launchError)).attachmentId,
-    ).toBe("pending-2");
+    expect(Schema.decodeSync(launch)(Schema.encodeSync(launch)(launchError)).attachmentId).toBe(
+      "pending-2",
+    );
   });
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(

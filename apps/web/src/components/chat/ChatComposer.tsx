@@ -1052,7 +1052,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerSurfaceRef.current?.querySelectorAll<HTMLElement>("[data-failed-attachment-id]") ??
         [],
     ).find((element) => newlyFailed.has(element.dataset.failedAttachmentId ?? ""));
-    target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    target?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
   }, [composerImages, composerFiles, uploadsByImageId]);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
