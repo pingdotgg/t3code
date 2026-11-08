@@ -997,9 +997,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             branch: null,
             worktreePath: "/repo",
             activeProviderThreadId: null,
-            lineage: {
-              ...testCase.lineage,
-            },
+            lineage: testCase.lineage,
             ...(testCase.lesson === undefined ? {} : { lesson: testCase.lesson }),
             ...(testCase.sideChat === undefined ? {} : { sideChat: testCase.sideChat }),
             forkedFrom: null,
