@@ -41,7 +41,7 @@ overriding it. Other models keep their Pi defaults when no level is selected. Th
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
 preserve the native conversation through the selected turn in the destination workspace.
 Switching providers uses portable conversation context. Extension
-dialogs appear in the T3 Code composer, and the composer context meter follows Pi's own usage
+dialogs appear in the T3 Code composer, and the thread details context window follows Pi's own usage
 reporting while a response streams and after it settles.
 
 Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
