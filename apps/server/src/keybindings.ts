@@ -220,7 +220,7 @@ export class Keybindings extends Context.Service<
 
     readonly streamChanges: Stream.Stream<KeybindingsChangeEvent>;
 
-    /** Acquire before reading a snapshot to buffer changes until the stream starts. */
+    
     readonly subscribeChanges: Effect.Effect<
       Stream.Stream<KeybindingsChangeEvent>,
       never,
