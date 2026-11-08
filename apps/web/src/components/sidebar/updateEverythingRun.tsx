@@ -283,6 +283,7 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
         appAtomRegistry.get(serverEnvironment.configValueAtom(server.environmentId))?.environment
           .serverVersion ?? server.targetVersion,
       targetVersion: server.targetVersion,
+      ...(server.updateId === undefined ? {} : { updateId: server.updateId }),
     });
     // Nothing observes the atom until the UI mounts, and the registry drops unobserved atoms.
     const releaseState = appAtomRegistry.mount(stateAtom);

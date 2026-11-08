@@ -97,6 +97,10 @@ describe("startDesktopUpdateLaunchNotice", () => {
         reason,
       });
     try {
+      expect(appAtomRegistry.get(stateAtom)).toMatchObject({
+        status: "running",
+        updateId: "update-2",
+      });
       appAtomRegistry.set(outcomeAtom, outcome("update-1", "an earlier attempt"));
       expect(appAtomRegistry.get(stateAtom)).toMatchObject({ status: "running" });
 
