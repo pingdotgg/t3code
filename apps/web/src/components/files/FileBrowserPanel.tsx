@@ -420,6 +420,10 @@ export default function FileBrowserPanel({
     }
     if (query.trim()) {
       // Only directories new to the results open, so one the user collapsed stays closed.
+      const currentDirectories = new Set(directoryPaths);
+      for (const path of searchExpandedRef.current) {
+        if (!currentDirectories.has(path)) searchExpandedRef.current.delete(path);
+      }
       const fresh = directoryPaths.filter((path) => !searchExpandedRef.current.has(path));
       for (const path of fresh) searchExpandedRef.current.add(path);
       setAllDirectoriesExpanded(model, fresh, true);

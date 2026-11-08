@@ -136,9 +136,14 @@ it("finds a loaded file by subsequence in a host folder", async () => {
   await userEvent.keyboard("{ArrowRight}");
   await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
   const input = screen.getByRole("searchbox", { name: "Search repo files" });
-  await userEvent.type(input, "rdm");
+  await userEvent.type(input, "fstf");
+  await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
+  await userEvent.fill(input, "rdm");
   await vi.waitFor(() => expect(findTreeRow("README.md")).not.toBeNull());
   await expect.element(screen.getByText("No matching files.")).not.toBeInTheDocument();
+  await vi.waitFor(() => expect(findTreeRow("src/")).toBeNull());
+  await userEvent.fill(input, "fstf");
+  await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
   await userEvent.clear(input);
   await vi.waitFor(() => expect(findTreeRow("src/FastFinder.tsx")).not.toBeNull());
 });
