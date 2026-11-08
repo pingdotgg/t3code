@@ -2455,6 +2455,8 @@ export default function ChatView(props: ChatViewProps) {
     !isServerThread ||
     !manualCompactionProviderAvailable ||
     isWorking ||
+    // Compact is a start_immediately send; do not offer it while awaited work still holds.
+    isWaitingOnBackgroundWork ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||
