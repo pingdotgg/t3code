@@ -2073,10 +2073,14 @@ function claudeWritesUpdatesAsThinking(model: string): boolean {
   return major > 5 || (major === 5 && Number(match[2] ?? 0) >= 1);
 }
 
+function isLessonCardTool(name: string): boolean {
+  const tool = resolveT3McpToolId(name);
+  return tool === QUIZ_CARD_TOOL_NAME || tool === QUESTION_CARD_TOOL_NAME;
+}
+
 // A lesson card whose reply already says this text shows it once, as the reply (APP-102).
 function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
-  const tool = resolveT3McpToolId(block.name);
-  if (tool !== QUIZ_CARD_TOOL_NAME && tool !== QUESTION_CARD_TOOL_NAME) return false;
+  if (!isLessonCardTool(block.name)) return false;
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
   const words = (value: string) => value.replace(/\s+/gu, " ").trim();
   return typeof reply === "string" && words(reply).includes(words(text));
@@ -4349,6 +4353,8 @@ interface ActiveClaudeTurnContext {
     fallbackText: string;
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
+    cardSeen: boolean;
+    heldText: Array<{ readonly nativeItemId: string; readonly text: string }>;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
   };
@@ -7900,6 +7906,30 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }),
         });
 
+        const emitHeldAssistantTextAsReasoning = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          if (context.assistant.heldText.length === 0) return;
+          const itemId = `assistant-card-trailing:${context.providerTurnId}`;
+          yield* ensureReasoningBlock(context, itemId);
+          yield* reasoningDeltas.complete({
+            turnId: context.nativeTurnId,
+            itemId,
+            finalText: context.assistant.heldText.map((item) => item.text).join("\n"),
+            emitEmpty: false,
+          });
+          context.assistant.heldText = [];
+        });
+
+        const flushHeldAssistantText = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+        ) {
+          for (const item of context.assistant.heldText) {
+            yield* emitAssistantTextArtifacts({ context, ...item });
+          }
+          context.assistant.heldText = [];
+        });
+
         const endToolCalls = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCalls: ReadonlyArray<ActiveClaudeToolCall>;
@@ -7960,6 +7990,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
+          yield* emitHeldAssistantTextAsReasoning(input.context);
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -9075,6 +9106,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // The SDK snapshots each completed block; count thinking blocks separately to preserve streamed ids.
             for (const block of message.message.content) {
               if (block.type !== "thinking") {
+                if (block.type === "tool_use" && message.parent_tool_use_id === null) {
+                  yield* flushHeldAssistantText(context);
+                }
                 const update = context.reasoning.lastThinking;
                 context.reasoning.lastThinking = null;
                 if (
@@ -9704,6 +9738,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
+            if (parentToolUseIdFromSdkMessage(message) === null) {
+              yield* flushHeldAssistantText(context);
+              if (isLessonCardTool(toolUse.name)) context.assistant.cardSeen = true;
+            }
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
               rememberClaudeSubagentLaunch(
@@ -9929,11 +9967,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
-            yield* emitAssistantTextArtifacts({
-              context,
-              nativeItemId: assistantText.nativeItemId,
-              text: assistantText.text,
-            });
+            if (context.assistant.cardSeen) {
+              if (
+                !context.assistant.emittedNativeItemIds.has(assistantText.nativeItemId) &&
+                !context.assistant.heldText.some(
+                  (item) => item.nativeItemId === assistantText.nativeItemId,
+                )
+              ) {
+                yield* resolveItemOrdinal(context, assistantText.nativeItemId);
+                context.assistant.heldText.push(assistantText);
+              }
+            } else {
+              yield* emitAssistantTextArtifacts({
+                context,
+                nativeItemId: assistantText.nativeItemId,
+                text: assistantText.text,
+              });
+            }
             return;
           }
 
@@ -9972,12 +10022,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
           }
 
-          const resultText =
+          let resultText =
             message.type === "result" &&
             ((message.subtype === "success" && message.is_error) ||
               terminalStatusFromResult(message) === "failed")
               ? null
               : resultTextFromSdkMessage(message);
+          // After a card the result text repeats the trailing text, so it only fills in when none was seen.
+          if (resultText !== null && context.assistant.cardSeen) {
+            if (
+              resultText.text.length > 0 &&
+              context.assistant.heldText.length === 0 &&
+              context.assistant.emittedNativeItemIds.size === 0
+            ) {
+              context.assistant.heldText.push(resultText);
+            }
+            resultText = null;
+          }
           if (
             // A /compact's result text reports the compaction ("Not enough messages to
             // compact."), which its compaction item already carries; it is not a reply.
@@ -10006,6 +10067,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+              yield* emitHeldAssistantTextAsReasoning(context);
+              context.assistant.cardSeen = false;
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
                 context.steeredLedgerUsage,
@@ -11213,6 +11276,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackText: "",
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
+                cardSeen: false,
+                heldText: [],
                 noticeTexts: new Set(),
               },
               reasoning: {
