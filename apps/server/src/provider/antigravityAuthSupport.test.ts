@@ -102,6 +102,20 @@ describe("Antigravity process environment", () => {
     });
   });
 
+  it("runs the agy CLI as `agy acp` without a harness", () => {
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
+    });
+
+    expect(spawn.command).toBe("/usr/bin/agy");
+    expect(spawn.args).toEqual(["acp"]);
+    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
+    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
+  });
+
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
