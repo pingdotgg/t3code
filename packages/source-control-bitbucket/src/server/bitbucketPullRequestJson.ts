@@ -20,8 +20,6 @@ import type {
 import { TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
-import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
-
 /** Unknown enum values must not fail the whole payload. */
 const RawUserSchema = Schema.Struct({
   /** Reviewer writes require UUIDs, not displayed handles. */
@@ -473,25 +471,26 @@ export function decodeCommitsJson(
   return Result.succeed({ items: commits.toReversed(), next: trimmed(decoded.success.next) });
 }
 
+interface BitbucketStatus {
+  readonly check: PullRequestCheck;
+  readonly workflowName: string | null;
+  readonly at: string | null;
+}
+
 export function decodeStatusesJson(
   raw: string,
-): Result.Result<BitbucketPage<PullRequestCheck>, DecodeFailure> {
+): Result.Result<BitbucketPage<BitbucketStatus>, DecodeFailure> {
   const decoded = decodePage(raw);
   if (!Result.isSuccess(decoded)) {
     return Result.fail(decoded.failure);
   }
-  const checks: Array<{
-    readonly check: PullRequestCheck;
-    readonly workflowName: string | null;
-    readonly at: string | null;
-  }> = [];
+  const checks: Array<BitbucketStatus> = [];
   for (const entry of decoded.success.values) {
     const decodedStatus = decodeStatusEntry(entry);
     if (Exit.isFailure(decodedStatus)) continue;
     const status = decodedStatus.value;
     const name = trimmed(status.name) ?? trimmed(status.key);
     if (name === null) continue;
-    // Reruns reuse keys; later entries win. Keys distinguish same-named pipelines.
     checks.push({
       check: {
         name,
@@ -503,7 +502,7 @@ export function decodeStatusesJson(
       at: null,
     });
   }
-  return Result.succeed({ items: dedupeChecks(checks), next: trimmed(decoded.success.next) });
+  return Result.succeed({ items: checks, next: trimmed(decoded.success.next) });
 }
 
 export interface BitbucketDiffStat {

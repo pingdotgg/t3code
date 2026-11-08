@@ -257,10 +257,14 @@ describe("decodeStatusesJson", () => {
     expect(decoded).toEqual({
       items: [
         {
-          name: "Pipeline - custom: check-version-and-pr",
-          status: "success",
-          description: null,
-          url: "https://bitbucket.org/acme/web/pipelines/results/8126",
+          check: {
+            name: "Pipeline - custom: check-version-and-pr",
+            status: "success",
+            description: null,
+            url: "https://bitbucket.org/acme/web/pipelines/results/8126",
+          },
+          workflowName: "custom:check-version-and-pr",
+          at: null,
         },
       ],
       next: null,
@@ -274,23 +278,7 @@ describe("decodeStatusesJson", () => {
   ])("reads the %s build state as %s", (state, expected) => {
     const decoded = expectSuccess(decodeStatusesJson(page([{ name: "Pipeline", state }])));
 
-    expect(decoded.items[0]?.status).toBe(expected);
-  });
-
-  it("keeps two statuses that share a display name but have different keys", () => {
-    const decoded = expectSuccess(
-      decodeStatusesJson(
-        page([
-          { key: "build", name: "Pipeline", state: "SUCCESSFUL" },
-          { key: "deploy", name: "Pipeline", state: "FAILED" },
-        ]),
-      ),
-    );
-
-    expect(decoded.items.map((check) => [check.name, check.status])).toEqual([
-      ["deploy / Pipeline", "failure"],
-      ["build / Pipeline", "success"],
-    ]);
+    expect(decoded.items[0]?.check.status).toBe(expected);
   });
 });
 

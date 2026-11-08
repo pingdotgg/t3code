@@ -26,7 +26,7 @@ import type {
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import { parseDiffFileRevisions } from "@t3tools/source-control-core/server/diffFileRevisions";
-import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
+import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 import {
   buildReviewThreads,
   decodeCommentsJson,
@@ -669,6 +669,7 @@ export const make = Effect.gen(function* () {
     }),
 
     listChecks: Effect.fn("BitbucketPullRequestApi.listChecks")(function (input) {
+      // Reruns reuse keys; later entries win. Keys distinguish same-named pipelines.
       return withRepository(input.repository, (path) =>
         itemPages({
           operation: "listChecks",
@@ -676,7 +677,7 @@ export const make = Effect.gen(function* () {
           decode: decodeStatusesJson,
           items: [],
           prepend: false,
-        }).pipe(Effect.map(sortChecks)),
+        }).pipe(Effect.map(dedupeChecks)),
       );
     }),
 

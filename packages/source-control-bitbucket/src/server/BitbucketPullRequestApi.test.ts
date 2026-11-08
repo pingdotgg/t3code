@@ -305,6 +305,45 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("applies the rerun and same-name rules across status pages", () =>
+    Effect.gen(function* () {
+      const next = "https://api.bitbucket.org/2.0/statuses?page=2";
+      mockedRequest
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              valuePage(
+                [
+                  { key: "ci", name: "Tests", state: "FAILED" },
+                  { key: "build", name: "Pipeline", state: "SUCCESSFUL" },
+                ],
+                next,
+              ),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            response(
+              valuePage([
+                { key: "ci", name: "Tests", state: "SUCCESSFUL" },
+                { key: "deploy", name: "Pipeline", state: "FAILED" },
+              ]),
+            ),
+          ),
+        );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const checks = yield* api.listChecks({ repository: "acme/web", number: 7 });
+
+      expect(checks.map((check) => [check.name, check.status])).toEqual([
+        ["deploy / Pipeline", "failure"],
+        ["Tests", "success"],
+        ["build / Pipeline", "success"],
+      ]);
+    }),
+  );
+
   it.effect("posts a comment as a JSON document, so the body stays text", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
