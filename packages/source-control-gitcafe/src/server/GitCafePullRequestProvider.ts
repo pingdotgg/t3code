@@ -882,6 +882,7 @@ export const make = Effect.gen(function* () {
             created < resume.created || (created === resume.created && pull.number < resume.number)
           );
         };
+        const seen = new Set<string>();
         let next: string | null = null;
         do {
           const page: typeof Json.GitCafePulls.Type = yield* readPage(
@@ -889,7 +890,9 @@ export const make = Effect.gen(function* () {
             next,
           );
           items.push(...page.items.filter(isNew));
-          next = page.items.length === 0 ? null : page.next;
+          next =
+            page.items.length === 0 || page.next === null || seen.has(page.next) ? null : page.next;
+          if (next !== null) seen.add(next);
         } while (next !== null && items.length < limit);
         const delivered = items.slice(0, limit);
         const last = delivered.at(-1);

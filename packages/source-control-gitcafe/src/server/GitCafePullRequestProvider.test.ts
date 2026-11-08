@@ -869,6 +869,36 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
+  it.effect("ends a continued listing when GitCafe hands back a page token it already gave", () => {
+    let pages = 0;
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls": () => {
+        pages += 1;
+        return pages > 20
+          ? { items: [], next: null }
+          : { items: [pull], next: pages % 2 === 1 ? "t1" : "t2" };
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...target,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 2,
+        cursor: {
+          updatedBefore: timestamp,
+          delivered: 2,
+          resumeAfter: `${pull.createdAt}~${pull.number}`,
+        },
+      });
+      assert.strictEqual(pages, 3);
+      assert.deepStrictEqual(page.items, []);
+      assert.isFalse(page.truncated);
+    }).pipe(Effect.provide(server.layer));
+  });
+
   it.effect("lists nothing for a viewer the token does not belong to", () => {
     const server = fakeGitCafe({
       "GET /auth/principal": { actorId: "act_two", handle: "bob" },
