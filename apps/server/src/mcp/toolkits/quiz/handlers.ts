@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import {
   type CardPurpose,
@@ -20,11 +21,20 @@ const QUIZ_CARD_SHOWN = `Shown to the learner as a card. End your turn now, with
 const QUESTION_CARD_SHOWN =
   "Shown to the learner as a card. End your turn now without repeating the question; their answer arrives as their next message. For blanks and numbers, the app already marked each answer right or wrong; confirm and explain. Grade open text strictly against the answer you wrote before asking: say plainly what holds and what is missing or wrong, never soften a wrong idea.";
 
+// Card replies are appended after other messages and queued sends sit in delivery order, so sort by time.
 export const shownTutorText = (
-  messages: ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>,
+  messages: ReadonlyArray<{
+    readonly id: string;
+    readonly role: string;
+    readonly text: string;
+    readonly createdAt: DateTime.Utc;
+  }>,
 ) => {
-  const lastUser = messages.findLastIndex((message) => message.role === "user");
-  return messages
+  const ordered = messages.toSorted(
+    (a, b) => DateTime.toEpochMillis(a.createdAt) - DateTime.toEpochMillis(b.createdAt),
+  );
+  const lastUser = ordered.findLastIndex((message) => message.role === "user");
+  return ordered
     .slice(lastUser + 1)
     .filter(
       (message) => message.role === "assistant" && !/(?::|%3A)thinking(?::|%3A)/iu.test(message.id),
