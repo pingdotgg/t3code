@@ -13,6 +13,7 @@ import {
   useManagedRelayEnvironments,
   useManagedTunnelUsage,
 } from "../../cloud/managedRelayState";
+import { relayFailureReason } from "../../cloud/relayFailureReason";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { T3CHAT_SUBSCRIPTION_URL, TunnelUsageMeter, tunnelUpgradeCopy } from "../cloud/TunnelUsage";
@@ -225,22 +226,17 @@ export function T3ConnectUserProfilePage() {
       stackedThreadToast({
         type: "error",
         title: "Could not deregister server",
-        description: "Could not remove this server. Try again.",
+        description: relayFailureReason(cause) ?? message,
         ...(traceId
           ? {
               actionProps: {
                 children: "Copy trace ID",
                 onClick: () => void navigator.clipboard?.writeText(traceId),
               },
+              actionVariant: "outline",
             }
           : {}),
-        actionVariant: "outline",
-        data: {
-          copyErrorText: message,
-          expandableContent: message,
-          expandableDescriptionTrigger: true,
-          expandableLabels: { expand: "Show more", collapse: "Show less" },
-        },
+        data: { hideCopyButton: true },
       }),
     );
   };

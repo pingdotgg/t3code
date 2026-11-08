@@ -19,6 +19,7 @@ import { useState } from "react";
 
 import { toastManager } from "../components/ui/toast";
 import { stackedThreadToast } from "../components/ui/toastHelpers";
+import { relayFailureReason } from "./relayFailureReason";
 import { relayEnvironmentDiscovery } from "../state/relay";
 import { readEnvironmentScope } from "../state/session";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -85,10 +86,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
-  const reportUpdateFailure = (
-    cause: unknown,
-    description = "Could not save this change. Try again.",
-  ) => {
+  const reportUpdateFailure = (cause: unknown) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
@@ -97,22 +95,17 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       stackedThreadToast({
         type: "error",
         title: "Could not update T3 Connect",
-        description,
+        description: relayFailureReason(cause) ?? message,
         ...(traceId
           ? {
               actionProps: {
                 children: "Copy trace ID",
                 onClick: () => void navigator.clipboard?.writeText(traceId),
               },
+              actionVariant: "outline",
             }
           : {}),
-        actionVariant: "outline",
-        data: {
-          copyErrorText: message,
-          expandableContent: message,
-          expandableDescriptionTrigger: true,
-          expandableLabels: { expand: "Show more", collapse: "Show less" },
-        },
+        data: { hideCopyButton: true },
       }),
     );
   };
@@ -170,10 +163,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       refreshManagedTunnelUsage();
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
-          reportUpdateFailure(
-            squashAtomCommandFailure(unlinkResult),
-            "Could not finish disconnecting. Try again.",
-          );
+          reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
         }
         cloudLinkState.refresh();
         await refreshRelayEnvironments();

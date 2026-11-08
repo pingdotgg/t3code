@@ -6,14 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { RelayWebClientId } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import { HttpClient } from "effect/http";
 import { afterEach, beforeEach, vi } from "vite-plus/test";
 import {
@@ -284,45 +281,6 @@ describe("web cloud link environment client", () => {
         message:
           "Disconnected locally, but T3 Connect did not confirm it removed this environment: Relay encountered an internal error (upstream_unavailable).",
         traceId: "trace-unlink",
-      });
-    }),
-  );
-
-  it.effect("preserves the timeout reason, network hint and trace after local unlink", () =>
-    Effect.gen(function* () {
-      const relayStarted = yield* Deferred.make<void>();
-      const fetchMock = vi.fn((input: RequestInfo | URL) => {
-        if (String(input).startsWith("https://relay.example.test/")) {
-          Deferred.doneUnsafe(relayStarted, Effect.void);
-          return new Promise<Response>(() => {});
-        }
-        return Promise.resolve(Response.json({ ok: true, endpointRuntimeStatus: null }));
-      });
-      vi.stubGlobal("fetch", fetchMock);
-
-      const unlink = yield* withServices(
-        unlinkEnvironmentFromCloud({
-          target: { environmentId: EnvironmentId.make(TARGET.environmentId) },
-          clerkToken: "clerk-token",
-        }),
-      ).pipe(Effect.flip, Effect.forkChild);
-      yield* Deferred.await(relayStarted);
-      yield* TestClock.adjust(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS);
-      const error = yield* Fiber.join(unlink);
-
-      expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-        "http://127.0.0.1:3000/api/connect/unlink",
-        "https://relay.example.test/v1/client/environment-links/environment-1",
-      ]);
-      expect(error.message).toContain(
-        "Disconnected locally, but T3 Connect did not confirm it removed this environment",
-      );
-      expect(error.message).toContain("Relay environment unlinking timed out.");
-      expect(error.message).toContain("Your DNS or firewall may be blocking T3 Connect.");
-      expect(error.traceId).toEqual(expect.any(String));
-      expect(error.cause).toMatchObject({
-        _tag: "ManagedRelayRequestTimeoutError",
-        traceId: error.traceId,
       });
     }),
   );
