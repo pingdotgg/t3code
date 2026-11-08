@@ -97,7 +97,7 @@ describe("collectServerUpdateTargets", () => {
       ["no-scope", "no permission"],
       ["busy", "already updating"],
       ["manual", "needs a manual update"],
-      ["wsl-backend", "update it on that machine"],
+      ["wsl-backend", "update T3 Code on that machine"],
     ]);
   });
 
@@ -249,8 +249,8 @@ describe("collectChannelSwitchTargets", () => {
         "ahead",
         `its database has changes ${NIGHTLY} does not support yet; stay on Stable until Nightly has them`,
       ],
-      ["old-desktop", "switch its channel on that machine"],
-      ["behind-desktop", "update it on that machine"],
+      ["old-desktop", "change the update track on that machine"],
+      ["behind-desktop", "update T3 Code on that machine"],
       [
         "no-nightly",
         "Example Corp manages T3 Code updates. Only stable releases can be installed.",
