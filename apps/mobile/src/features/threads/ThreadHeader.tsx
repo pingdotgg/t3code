@@ -21,7 +21,10 @@ export function ThreadHeader(props: {
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const backCount = useIdleThreadCount(props.gitControls.threadId);
+  const backCount = useIdleThreadCount({
+    environmentId: String(props.gitControls.environmentId),
+    threadId: String(props.gitControls.threadId),
+  });
   const { panes, toggleAuxiliaryPane, composerKeyboardActive, startNewTask } =
     useAdaptiveWorkspaceLayout();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);

@@ -132,9 +132,16 @@ const InspectorHeaderShownContext = createContext(false);
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   const goBack = useWorkspaceBackNavigation("threads");
-  const routeParams = useRoute().params as { readonly threadId?: string | string[] } | undefined;
-  const routeThreadId = firstRouteParam(routeParams?.threadId) ?? undefined;
-  const backCount = useIdleThreadCount(routeThreadId);
+  const routeParams = useRoute().params as
+    | { readonly environmentId?: string | string[]; readonly threadId?: string | string[] }
+    | undefined;
+  const routeEnvironmentId = firstRouteParam(routeParams?.environmentId);
+  const routeThreadId = firstRouteParam(routeParams?.threadId);
+  const backCount = useIdleThreadCount(
+    routeEnvironmentId !== null && routeThreadId !== null
+      ? { environmentId: routeEnvironmentId, threadId: routeThreadId }
+      : undefined,
+  );
   const inspectorHeaderShown = use(InspectorHeaderShownContext);
   return (
     <ThreadScreenFallback

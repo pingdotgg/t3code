@@ -261,9 +261,18 @@ describe("countIdleThreads", () => {
     expect(countIdleThreads([ready, snoozed], { now: "2026-06-03T00:00:00.000Z" })).toBe(2);
   });
 
-  it("can exclude the open thread", () => {
+  it("can exclude the open thread in its environment only", () => {
     const ready = idle();
-    expect(countIdleThreads([ready], { now: NOW, excludeThreadId: ready.id })).toBe(0);
+    const otherEnvironment = {
+      ...ready,
+      environmentId: EnvironmentId.make("environment-2"),
+    };
+    expect(
+      countIdleThreads([ready, otherEnvironment], {
+        now: NOW,
+        excludeThread: { environmentId: ready.environmentId, threadId: ready.id },
+      }),
+    ).toBe(1);
   });
 
   it("formats the back-button glyphs like Messages", () => {

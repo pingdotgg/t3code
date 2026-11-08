@@ -276,6 +276,7 @@ export function countIdleThreads(
     Pick<
       EnvironmentThreadShell,
       | "id"
+      | "environmentId"
       | "archivedAt"
       | "lineage"
       | "settledOverride"
@@ -291,11 +292,20 @@ export function countIdleThreads(
       | "latestRun"
     >
   >,
-  options: { readonly now: string; readonly excludeThreadId?: string },
+  options: {
+    readonly now: string;
+    readonly excludeThread?: { readonly environmentId: string; readonly threadId: string };
+  },
 ): number {
   let count = 0;
   for (const thread of threads) {
-    if (options.excludeThreadId !== undefined && thread.id === options.excludeThreadId) continue;
+    if (
+      options.excludeThread !== undefined &&
+      thread.id === options.excludeThread.threadId &&
+      thread.environmentId === options.excludeThread.environmentId
+    ) {
+      continue;
+    }
     if (isIdleThread(thread, options)) count += 1;
   }
   return count;
