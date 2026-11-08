@@ -344,7 +344,10 @@ interface WeightedSearchField {
 interface SearchFieldsMatch {
   /** Roughly 0.3 (inside a word) to 1.5 (exact title). */
   readonly quality: number;
-  /** Every counted token matched a whole word at full weight, before phrase bonuses. */
+  /**
+   * Every counted token matched a whole word at full weight, before phrase
+   * bonuses, and has three or more letters: "a" or "ui" is too little to go on.
+   */
   readonly wholeWords: boolean;
   /** Every token matched at a word start, without a typo. */
   readonly strong: boolean;
@@ -409,6 +412,7 @@ function matchSearchFields(
   const primaryRanges: SearchRange[] = [];
   let total = 0;
   let counted = 0;
+  let shortToken = false;
   let strong = true;
   for (const token of tokens) {
     let best = 0;
@@ -435,6 +439,7 @@ function matchSearchFields(
     if (bestPrimary) primaryRanges.push(...(bestPrimary.letters ?? [bestPrimary]));
     total += best;
     counted += 1;
+    shortToken ||= token.length < PICK_PREFIX_MIN_LENGTH;
   }
   let quality = total / counted;
   if (primary) {
@@ -443,7 +448,7 @@ function matchSearchFields(
   }
   return {
     quality,
-    wholeWords: total >= counted * WHOLE_WORD,
+    wholeWords: !shortToken && total >= counted * WHOLE_WORD,
     strong,
     primaryRanges: mergeRanges(primaryRanges),
   };

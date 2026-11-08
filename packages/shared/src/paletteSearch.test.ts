@@ -49,6 +49,12 @@ describe("scoreThreadSearch", () => {
         thread("Auth across worktrees to share", { activityAt: NOW - 90 * DAY }),
       ]),
     ).toEqual(["Auth across worktrees to share", "Share authentication cleanup"]);
+    expect(
+      rankTitles("ui", [
+        thread("Parse ui tokens", { activityAt: NOW - 200 * DAY }),
+        thread("Polish UIs", { activityAt: NOW, opens: { openedAt: NOW, score: 12, picks: [] } }),
+      ]),
+    ).toEqual(["Polish UIs", "Parse ui tokens"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {
