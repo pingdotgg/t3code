@@ -32,7 +32,8 @@ suspension's probe that times out also replaces the socket regardless of the
 network report. The web and desktop foreground probe skips the fresh request,
 because a busy host can answer it before a queued probe. Foregrounding also
 wakes a pending retry immediately. A long suspension restarts an in-flight
-attempt; a short one leaves it alone.
+attempt, and so does a web or desktop tab returning to view during a reconnect;
+a short mobile suspension and a first attempt leave it alone.
 
 The [registry](../../packages/client-runtime/src/connection/registry.ts) scopes
 connections by environment. An involuntary disconnect retains the registration
