@@ -152,6 +152,10 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/provider-acp-registry": {
+      "includeEntryExports": true,
+      "entry": ["src/server/testFixtures/*.mjs"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],

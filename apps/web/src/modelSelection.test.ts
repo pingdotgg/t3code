@@ -849,6 +849,28 @@ describe("instance-scoped model selection", () => {
       NO_PROVIDER_MODEL_SELECTION,
     );
   });
+
+  it("previews only providers the server falls back to, but keeps an explicit Copilot choice", () => {
+    // The server never picks an ACP Registry agent on its own because each request spends quota.
+    const copilot = provider({
+      provider: ProviderDriverKind.make("acpRegistry"),
+      instanceId: "acpRegistry_copilot",
+      models: ["gpt-6-luna"],
+      supportsTextGeneration: true,
+    });
+    const settings = settingsWithProviderInstances();
+
+    expect(resolveAppModelSelectionState(settings, [copilot])).toEqual(NO_PROVIDER_MODEL_SELECTION);
+    expect(
+      resolveAppModelSelectionState(
+        {
+          ...settings,
+          textGenerationModelSelection: createModelSelection(copilot.instanceId, "gpt-6-luna"),
+        },
+        [copilot],
+      ),
+    ).toEqual(createModelSelection(copilot.instanceId, "gpt-6-luna"));
+  });
 });
 
 describe("resolveAppModelSelectionState with the opencode plan agent", () => {

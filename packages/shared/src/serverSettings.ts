@@ -66,6 +66,10 @@ const TEXT_GENERATION_FALLBACK_DRIVERS = [
   "antigravity",
 ].map((driver) => ProviderDriverKind.make(driver));
 
+/** Other drivers run text generation only when the user selects them. */
+export const isAutomaticTextGenerationFallbackDriver = (driver: ProviderDriverKind): boolean =>
+  TEXT_GENERATION_FALLBACK_DRIVERS.includes(driver);
+
 /** Only project-scoped callers may include configured instances when falling back; machine-level callers leave it unset. */
 export function fallbackTextGenerationModelSelection(
   providerInstances: ServerSettings["providerInstances"],

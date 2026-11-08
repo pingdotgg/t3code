@@ -19,7 +19,10 @@ import {
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
-import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
+import {
+  isAutomaticTextGenerationFallbackDriver,
+  resolveModelPreferences,
+} from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
@@ -386,7 +389,13 @@ export function resolveAppModelSelectionState(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );
   const entry =
-    selectedEntry ?? entries.find((candidate) => candidate.enabled && candidate.isAvailable);
+    selectedEntry ??
+    entries.find(
+      (candidate) =>
+        candidate.enabled &&
+        candidate.isAvailable &&
+        isAutomaticTextGenerationFallbackDriver(candidate.driverKind),
+    );
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.

@@ -781,6 +781,50 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       ).pipe(Effect.provide(layerServerSettings())),
   );
 
+  it.effect(
+    "keeps an enabled Copilot text generation selection but replaces other ACP agents",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const driver = ProviderDriverKind.make("acpRegistry");
+        const cases = [
+          { id: "acpRegistry_copilot", config: { agentId: "github-copilot-cli" }, kept: true },
+          {
+            id: "acpRegistry_local",
+            config: { source: "local", commandPath: "C:\\tools\\copilot.CMD" },
+            kept: true,
+          },
+          { id: "acpRegistry_kilo", config: { agentId: "kilo" }, kept: false },
+          {
+            id: "acpRegistry_off",
+            config: { agentId: "github-copilot-cli" },
+            enabled: false,
+            kept: false,
+          },
+        ];
+        yield* serverSettings.updateSettings({
+          providerInstances: Object.fromEntries(
+            cases.map(({ id, config, enabled }) => [
+              ProviderInstanceId.make(id),
+              { driver, config, ...(enabled === undefined ? {} : { enabled }) },
+            ]),
+          ),
+        });
+
+        for (const { id, kept } of cases) {
+          const selection = { instanceId: ProviderInstanceId.make(id), model: "gpt-6-luna" };
+          const next = yield* serverSettings.updateSettings({
+            textGenerationModelSelection: selection,
+          });
+          assert.equal(
+            next.textGenerationModelSelection.instanceId === selection.instanceId,
+            kept,
+            id,
+          );
+        }
+      }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("skips explicitly disabled default instances when choosing a fallback", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
