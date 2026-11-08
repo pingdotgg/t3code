@@ -277,7 +277,7 @@ it.layer(layerTest)("PiDriver workspace discovery", (it) => {
         const capabilities = yield* instance.snapshot.resolveMaintenance();
         assert.isNotNull(capabilities.update);
         assert.equal(capabilities.update?.executable, binaryPath);
-        assert.deepEqual(capabilities.update?.args, ["update", "--all"]);
+        assert.deepEqual(capabilities.update?.args, ["update", "--self", "--extensions"]);
         assert.equal(capabilities.update?.lockKey, "pi-native");
         assert.equal(capabilities.update?.env?.PI_CODING_AGENT_DIR, "/isolated-pi");
       }).pipe(Effect.scoped),

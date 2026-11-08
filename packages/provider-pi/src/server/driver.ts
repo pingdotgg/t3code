@@ -47,7 +47,7 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   npmPackageName: "@earendil-works/pi-coding-agent",
   mise: { tool: "pi" },
   nativeUpdate: {
-    args: ["update", "--all"],
+    args: ["update", "--self", "--extensions"],
     env: (context) => context.env,
   },
 });

@@ -87,7 +87,7 @@ Native installer layouts and the global directories of pnpm, Bun, Yarn, and Vite
 either the resolved path or its real target, since those installers place real files or their own
 symlinks there. Volta is proven by its `volta-shim` link plus the package's image directory. When
 nothing is proven, the provider's own updater (`claude update`, `codex update`, `opencode upgrade`,
-`pi update --all`, `grok update`) runs instead, because each one detects its installer itself;
+`pi update --self --extensions`, `grok update`) runs instead, because each one detects its installer itself;
 the runner's version check catches an updater that exits 0 without updating. Mise is checked
 first, since a `mise x` wrapper can sit at a native installer's path, and `MISE_DATA_DIR` can put
 installs anywhere, so `mise which` is asked whenever mise is on `PATH`. Each driver names its fixed
