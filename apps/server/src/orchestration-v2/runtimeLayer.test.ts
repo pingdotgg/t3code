@@ -3446,6 +3446,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let headSha = "ad70160aaa";
+      let state: PullRequestDetail["state"] = "open";
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -3458,6 +3459,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 at: "2026-10-02T12:00:00.000Z",
               }),
               headSha,
+              state,
               checks: ["lint", "test"].map((name) => ({
                 name,
                 status: "success" as const,
@@ -3500,7 +3502,17 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
-      yield* watch(false, "end");
+
+      state = "merged";
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      yield* restarted.sweep;
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed",
+        "#12: checks passed",
+        "#12: merged, stopped watching",
+      ]);
+      assert.isUndefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
     }),
   );
 
