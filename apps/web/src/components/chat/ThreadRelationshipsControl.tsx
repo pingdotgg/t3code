@@ -272,6 +272,7 @@ function currentSubagent<Agent extends RuntimeSubagent>(
 function RemoteSubagentRow(props: {
   readonly agent: RemoteSubagent;
   readonly provider: ServerProvider | undefined;
+  readonly inMenu?: boolean;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.agent.remoteChild.environmentId);
@@ -294,6 +295,7 @@ function RemoteSubagentRow(props: {
               part="row"
               className="h-9 min-h-9 sm:min-h-9"
               aria-disabled={environment === null || undefined}
+              render={props.inMenu ? <MenuItem /> : undefined}
               onClick={() => {
                 if (environment === null) return;
                 void navigate({
@@ -1102,7 +1104,7 @@ export function ThreadRelationshipsPanel(props: {
       </li>
     );
   };
-  const renderLineageRow = (row: LineageRow) =>
+  const renderLineageRow = (row: LineageRow, inMenu = false) =>
     "remote" in row ? (
       <RemoteSubagentRow
         key={row.remote.id}
@@ -1111,6 +1113,7 @@ export function ThreadRelationshipsPanel(props: {
         provider={providersByEnvironment
           .get(row.remote.remoteChild.environmentId)
           ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
+        inMenu={inMenu}
       />
     ) : (
       renderRelationshipRow(row)
@@ -1170,7 +1173,7 @@ export function ThreadRelationshipsPanel(props: {
                 .map((group) => (
                   <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
                     <ThreadLineageGroup {...group}>
-                      {(visibleRows) => visibleRows.map(renderLineageRow)}
+                      {(visibleRows) => visibleRows.map((row) => renderLineageRow(row, true))}
                     </ThreadLineageGroup>
                   </div>
                 ))}
