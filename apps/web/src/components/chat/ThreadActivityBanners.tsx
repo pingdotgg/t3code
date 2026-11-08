@@ -40,6 +40,7 @@ export function extensionStatusBannerItem(
     id: "pi-extension-status",
     variant: "default",
     icon: <span>▸</span>,
+    // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's Pi extension status line; the redesign restyles it later.
     title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
   };
 }

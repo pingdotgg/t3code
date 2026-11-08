@@ -76,7 +76,7 @@ export function ChatGptAccountPicker({
           </RadioGroup>
         </div>
         {error ? (
-          <p role="alert" className="px-6 pb-3 text-sm text-destructive">
+          <p role="alert" className="px-6 pb-3 text-body text-destructive">
             {error}
           </p>
         ) : null}
