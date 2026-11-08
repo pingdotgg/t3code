@@ -3131,6 +3131,62 @@ it.layer(
       ),
     );
 
+    it.effect.each([
+      {
+        name: "its own home path",
+        homePath: "/srv/claude-personal",
+        environment: { ANTHROPIC_BASE_URL: "" },
+        configDir: "/srv/claude-personal",
+      },
+      {
+        name: "an inherited CLAUDE_CONFIG_DIR",
+        homePath: "",
+        environment: { ANTHROPIC_BASE_URL: "", CLAUDE_CONFIG_DIR: "/srv/claude-work" },
+        configDir: "/srv/claude-work",
+      },
+      {
+        name: "the default config dir",
+        homePath: "",
+        environment: { ANTHROPIC_BASE_URL: "" },
+        configDir: undefined,
+      },
+    ])(
+      "tells a logged-out instance on $name where to sign in",
+      ({ homePath, environment, configDir }) =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath },
+            claudeCapabilities({
+              tokenSource: "none",
+              apiKeySource: "none",
+              apiProvider: "firstParty",
+            }),
+            environment,
+          );
+          assert.strictEqual(status.auth.status, "unauthenticated");
+          if (configDir === undefined) {
+            assert.strictEqual(
+              status.message,
+              "Claude Code is not authenticated. Run `claude auth login` and try again.",
+            );
+          } else {
+            assert.match(
+              status.message ?? "",
+              new RegExp(`CLAUDE_CONFIG_DIR.*${configDir}`),
+              "a bare `claude auth login` signs in ~/.claude, not this instance's config dir",
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            layerMockSpawner((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+    );
+
     it.effect("tells a logged-out CLI which models need a Claude Code update", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus(
