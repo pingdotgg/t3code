@@ -15,9 +15,9 @@ function progress(animation: Animation) {
 export function createSidebarListMotion(parent: HTMLUListElement) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
-  const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
-    "(prefers-reduced-motion: reduce)",
-  );
+  const document = parent.ownerDocument;
+  const window = document.defaultView;
+  const reducedMotion = window?.matchMedia("(prefers-reduced-motion: reduce)");
   const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
@@ -98,6 +98,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     positions = null;
     released = null;
   };
+  // Window switches invalidate layout snapshots and must not replay background motion on return.
+  document.addEventListener("visibilitychange", suspend);
+  window?.addEventListener("blur", suspend);
+  window?.addEventListener("focus", suspend);
+  window?.addEventListener("resize", suspend);
   const move = (node: HTMLElement, offset: number) => {
     cancel(node);
     const entry = entering.get(node);
@@ -120,6 +125,10 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   return {
     update(animate: boolean) {
       if (disposed) return;
+      if (document.hidden || !document.hasFocus()) {
+        suspend();
+        return;
+      }
       const next = new Map(
         Array.from(parent.children)
           .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
@@ -239,6 +248,10 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     },
     suspend,
     dispose() {
+      document.removeEventListener("visibilitychange", suspend);
+      window?.removeEventListener("blur", suspend);
+      window?.removeEventListener("focus", suspend);
+      window?.removeEventListener("resize", suspend);
       suspend();
       disposed = true;
     },
