@@ -434,20 +434,18 @@ function DeviceHolderNotice(props: {
             title: "another thread",
           }}
         />
-        {running ? ", which is running." : ", which isn't running."}
+        {running ? ", which is running." : shell ? ", which isn't running." : "."}
       </span>
-      {running ? null : (
-        <Button
-          size="xs"
-          disabled={takingOver}
-          onClick={() => {
-            setTakingOver(true);
-            void props.onTakeOver().finally(() => setTakingOver(false));
-          }}
-        >
-          {takingOver ? "Taking over…" : "Take over"}
-        </Button>
-      )}
+      <Button
+        size="xs"
+        disabled={takingOver}
+        onClick={() => {
+          setTakingOver(true);
+          void props.onTakeOver().finally(() => setTakingOver(false));
+        }}
+      >
+        {takingOver ? "Taking over…" : "Take over"}
+      </Button>
     </div>
   );
 }

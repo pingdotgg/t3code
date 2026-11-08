@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   list: vi.fn<(request: unknown) => Promise<CommandResult>>(),
   openDevice: vi.fn(),
   closeSurface: vi.fn(),
-  holderStatus: "idle" as "idle" | "running",
 }));
 const phone = {
   hostId: "local",
@@ -98,7 +97,7 @@ vi.mock("~/rightPanelStore", () => ({
   selectThreadRightPanelState: () => ({ isOpen: false, activeSurfaceId: null, surfaces: [] }),
 }));
 vi.mock("~/state/entities", () => ({
-  useThreadShell: () => ({ runtime: { status: mocks.holderStatus } }),
+  useThreadShell: () => ({ runtime: { status: "running" } }),
 }));
 vi.mock("~/components/ThreadContextChip", () => ({
   ThreadContextChip: ({ record }: { record: { threadId: string } }) => (
@@ -163,7 +162,6 @@ const errors = () => container.querySelectorAll('[role="alert"]');
 function setup() {
   vi.resetAllMocks();
   mocks.list.mockResolvedValue({ _tag: "Success", value: { hostId: "local", deviceId: "" } });
-  mocks.holderStatus = "idle";
   currentState = deviceState;
   container = document.createElement("div");
   container.style.width = "480px";
@@ -231,7 +229,7 @@ describe("DevicePanel takeover", () => {
     target: { ...phoneTarget, platform: "ios" },
   };
 
-  it("closes the idle holder's session so this thread's agent can claim the device", async () => {
+  it("closes the holder's session, even mid-run, so this thread's agent can claim the device", async () => {
     setup();
     currentState = shared;
     mocks.close.mockResolvedValue(opened);
@@ -248,18 +246,6 @@ describe("DevicePanel takeover", () => {
         },
       ],
     ]);
-  });
-
-  it("offers no takeover while the holder is running", async () => {
-    setup();
-    currentState = shared;
-    mocks.holderStatus = "running";
-    await using screen = await render(devicePanel(threadA, openPhone), { container });
-
-    await expect
-      .element(screen.getByRole("status"))
-      .toHaveTextContent("Busy in thread-holder, which is running.");
-    await expect.element(screen.getByRole("button", { name: "Take over" })).not.toBeInTheDocument();
   });
 });
 

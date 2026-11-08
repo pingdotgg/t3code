@@ -434,21 +434,19 @@ function DeviceHolderBanner(props: {
       >
         <AppText numberOfLines={2} className="text-sm text-foreground-muted">
           Busy in <AppText className="font-t3-medium text-sm text-foreground">{title}</AppText>
-          {running ? ", which is running." : ", which isn't running."}
+          {running ? ", which is running." : shell ? ", which isn't running." : "."}
         </AppText>
       </Pressable>
-      {running ? null : (
-        <Button
-          label="Take over"
-          tone="primary"
-          size="compact"
-          loading={takingOver}
-          onPress={() => {
-            setTakingOver(true);
-            void props.onTakeOver().finally(() => setTakingOver(false));
-          }}
-        />
-      )}
+      <Button
+        label="Take over"
+        tone="primary"
+        size="compact"
+        loading={takingOver}
+        onPress={() => {
+          setTakingOver(true);
+          void props.onTakeOver().finally(() => setTakingOver(false));
+        }}
+      />
     </GlassSurface>
   );
 }
