@@ -33,6 +33,7 @@ import {
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import { MarkdownFrontmatterTable } from "./MarkdownFrontmatterTable";
 
 interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
@@ -235,6 +236,7 @@ export function FileMarkdownPreview(props: {
       }
     >
       <View className="mx-auto w-full max-w-[760px]">
+        <MarkdownFrontmatterTable markdown={props.markdown} textStyle={styles.nativeTextStyle} />
         <SelectableMarkdownText
           markdown={maskMarkdownFrontmatter(props.markdown)}
           fileEmbedLabel={(href) =>
