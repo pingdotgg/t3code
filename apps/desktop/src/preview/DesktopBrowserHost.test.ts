@@ -169,6 +169,22 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("announces a first page that never comes up, but never a tab closed first", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      const closed = { ...key, tabId: "tab-2" };
+      const reader = yield* takeEvents(host, 1).pipe(Effect.forkScoped);
+
+      yield* Effect.yieldNow;
+      host.attach(closed, makeDebuggee({ loading: true }).tab);
+      host.detach(closed);
+      host.attach(key, makeDebuggee({ loading: true }).tab);
+      yield* TestClock.adjust("5 seconds");
+
+      expect(yield* Fiber.join(reader)).toEqual([{ type: "attached", ...key }]);
+    }),
+  );
+
   it.effect("re-sends shown to a backend that starts later and when a tab attaches again", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
