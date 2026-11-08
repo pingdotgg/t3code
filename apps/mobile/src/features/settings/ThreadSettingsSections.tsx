@@ -26,6 +26,10 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
+  DEFAULT_NEW_THREAD_BUTTON_TARGET,
+  NEW_THREAD_BUTTON_TARGET_OPTIONS,
+} from "../threads/new-thread-button-target";
+import {
   managedSettingReason,
   resolveMobileSettingsTargets,
   uniformMobileSetting,
@@ -235,6 +239,36 @@ export function NewThreadSettingsSection() {
         onValueChange={(value) => savePreferences({ useLastProjectForNewThreads: value })}
       />
     </SettingsSection>
+  );
+}
+
+/** Phone-local, like desktop's own client setting of the same name. */
+export function NewThreadButtonSettingsSection() {
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const selected = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.newThreadButtonTarget ?? DEFAULT_NEW_THREAD_BUTTON_TARGET)
+    : null;
+
+  return (
+    <View className="gap-3">
+      <SettingsSection title="New thread button">
+        {NEW_THREAD_BUTTON_TARGET_OPTIONS.map((option, index) => (
+          <ListChoiceRow
+            key={option.value}
+            label={option.label}
+            selected={selected === option.value}
+            separated={index > 0}
+            disabled={selected === null}
+            onPress={() => savePreferences({ newThreadButtonTarget: option.value })}
+          />
+        ))}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        What New thread starts on this device. With No project, tap No project at the top of the new
+        thread to pick a project instead. Servers without No project folders still show the picker.
+      </Text>
+    </View>
   );
 }
 

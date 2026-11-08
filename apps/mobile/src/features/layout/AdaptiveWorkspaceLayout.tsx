@@ -84,6 +84,11 @@ import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
 import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
+import { newTaskFlowKey, readNewTaskFlowState } from "../threads/new-task-flow-state";
+import {
+  readNewThreadButtonScratchEnvironment,
+  startNoProjectThread,
+} from "../threads/startNoProjectThread";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -609,6 +614,30 @@ function AdaptiveWorkspaceLayoutContent(
         : undefined;
     const preferences = appAtomRegistry.get(mobilePreferencesAtom);
     const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
+    // "New thread button: No project" skips the picker; the draft's No project control reopens it.
+    // An open draft keeps its machine, including one picked in its machine picker (No project
+    // drafts don't update the remembered project).
+    const draftFlowKey = currentRoute ? newTaskFlowKey(currentRoute) : undefined;
+    const draftEnvironmentId =
+      (draftFlowKey ? readNewTaskFlowState(draftFlowKey).environmentId : null) ??
+      first(params?.draft?.environmentId);
+    const scratchEnvironmentId = readNewThreadButtonScratchEnvironment([
+      draftEnvironmentId,
+      environmentId,
+      saved?.lastThreadProject?.environmentId,
+    ]);
+    if (scratchEnvironmentId !== null) {
+      void startNoProjectThread(scratchEnvironmentId, (project) =>
+        handleSelectThreadRoute({
+          draft: {
+            requestId: uuidv4(),
+            environmentId: String(project.environmentId),
+            projectId: String(project.id),
+          },
+        }),
+      );
+      return;
+    }
     handleSelectThreadRoute(
       newTaskDestination({
         projects,
