@@ -381,6 +381,29 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
+  it.effect("sends a dialog's answer without waiting on a focus change the dialog blocks", () =>
+    Effect.gen(function* () {
+      const host = yield* DesktopBrowserHost.make;
+      // The renderer answers focus emulation, and an open dialog blocks it.
+      const debuggee = makeDebuggee({ deferFocus: true });
+      host.attach(key, debuggee.tab);
+
+      yield* command(host, 1, "Page.handleJavaScriptDialog");
+      yield* settle;
+      expect(debuggee.sent).toEqual([1]);
+      expect(debuggee.focusEmulation).toEqual([]);
+
+      yield* command(host, 2, "Runtime.evaluate");
+      yield* command(host, 3, "Page.handleJavaScriptDialog");
+      yield* settle;
+      expect(debuggee.sent).toEqual([1, 3]);
+      const sent = debuggee.nextSend();
+      debuggee.settleFocus();
+      yield* Effect.promise(() => sent);
+      expect(debuggee.sent).toEqual([1, 3, 2]);
+    }),
+  );
+
   it.effect("keeps a guest focused when its turn starts after the agent's first command", () =>
     Effect.gen(function* () {
       const host = yield* DesktopBrowserHost.make;
