@@ -714,6 +714,20 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   * {
     @apply border-border outline-ring/50;
   }
+  /* Each text block takes its own base direction from its first strong letter, so Hebrew and
+     Arabic titles read right to left anywhere. Blocks under an explicit dir (majority-based
+     prose), code and editors keep their own handling. */
+  :where(p, span, div, li, h1, h2, h3, h4, h5, h6, td, th, label, a, button, dt, dd):not(
+    [dir],
+    [dir] :is(p, div, li, h1, h2, h3, h4, h5, h6, td, th, dt, dd),
+    pre *,
+    code,
+    code *,
+    [contenteditable] *,
+    .xterm *
+  ) {
+    unicode-bidi: plaintext;
+  }
   /* The app's 2px outlines stay inside controls at clipped and scrollport edges. */
   *,
   ::before,
