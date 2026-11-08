@@ -683,6 +683,41 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("restarts connection setup that stalled while a web tab was hidden", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        prepare: (attempt) => (attempt === 2 ? Effect.never : Effect.succeed(PREPARED_CONNECTION)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connecting" && state.attempt === 2,
+      );
+
+      yield* harness.wake("application-active");
+      yield* TestClock.adjust("1 second");
+
+      expect(
+        yield* Ref.get(harness.prepareCount),
+        "a visible tab should start a fresh attempt instead of waiting out the stalled one",
+      ).toBe(3);
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("probes the active session without reconnecting on application activation", () =>
     Effect.gen(function* () {
       const probeCount = yield* Ref.make(0);
