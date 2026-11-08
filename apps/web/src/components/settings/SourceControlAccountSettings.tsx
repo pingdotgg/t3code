@@ -6,6 +6,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
+import { RefreshIcon } from "../ui/refresh-icon";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { groupHostAccounts, nextHostAccountChoices } from "./SourceControlAccountSettings.logic";
@@ -42,12 +43,16 @@ export function SourceControlAccountSettings({
   credentials,
   auth,
   onSaved,
+  onRescan,
+  rescanning,
 }: {
   readonly environmentId: EnvironmentId;
   readonly definition: SourceControlDefinition;
   readonly credentials: SourceControlHostCredentials;
   readonly auth: SourceControlProviderAuth;
   readonly onSaved: () => void;
+  readonly onRescan: () => void;
+  readonly rescanning: boolean;
 }) {
   const { hosts } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
@@ -82,11 +87,24 @@ export function SourceControlAccountSettings({
 
   if (groups.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground">
-        Sign in with{" "}
-        <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.loginCommand}</code> on
-        the server host, then rescan to choose accounts here.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+          No {credentials.cliLabel} login on this server yet. Run{" "}
+          <code className="rounded bg-muted px-1 py-px text-2xs">{credentials.loginCommand}</code>{" "}
+          on the server host, then rescan to choose accounts here. A token saved above is an
+          alternative.
+        </p>
+        <Button
+          size="xs"
+          variant="outline"
+          className="shrink-0"
+          disabled={rescanning}
+          onClick={onRescan}
+        >
+          <RefreshIcon refreshing={rescanning} />
+          Rescan
+        </Button>
+      </div>
     );
   }
 
