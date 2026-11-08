@@ -52,7 +52,6 @@ import {
   GitForkIcon,
   HistoryIcon,
   MessagesSquareIcon,
-  MessageSquareIcon,
   PlusIcon,
   SquareIcon,
   UnplugIcon,
@@ -746,12 +745,17 @@ export function ThreadRelationshipsPanel(props: {
 
   const delegatedFrom = currentThread?.delegatedFrom;
 
-  const lineageVisible = (props.showLineage ?? true) && currentThread !== undefined;
+  // The card lists this thread's relatives, never the thread itself. Its menu keeps a card with
+  // none, since disconnecting the agent session lives only there.
+  const hasRelatives =
+    delegatedFrom !== undefined ||
+    groups.some((group) => group.rows.length > 0) ||
+    remoteSubagents.length > 0 ||
+    unlinkedRunningCount > 0;
+  const lineageVisible =
+    (props.showLineage ?? true) && currentThread !== undefined && (hasRelatives || canDetach);
   const sideChatsVisible = (props.showSideChats ?? true) && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
-  const currentProviderEntry = providerEntries.find(
-    (entry) => entry.instanceId === currentThread?.modelSelection.instanceId,
-  );
 
   if (!lineageVisible && !sideChatsVisible) {
     return null;
@@ -1081,81 +1085,55 @@ export function ThreadRelationshipsPanel(props: {
           }
           data-thread-relationships-panel
         >
-          {delegatedFrom === undefined ? null : (
-            <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
-              <DelegatedFromRow
-                delegatedFrom={delegatedFrom}
-                fallbackLabel={currentThread?.linkOrigin?.label}
-              />
-            </ThreadLineageRowList>
-          )}
-          {groups
-            .filter((group) => group.id !== "previous")
-            .map((group) => (
-              <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-                {(visibleRows) => visibleRows.map(renderRelationshipRow)}
-              </ThreadLineageGroup>
-            ))}
-          {currentThread ? (
-            <div
-              className="flex min-h-10 items-center gap-2.5 rounded-md bg-foreground/4 ps-2.5 pe-1 py-0.5"
-              aria-current="true"
-            >
-              {currentProviderEntry ? (
-                <ProviderInstanceIcon
-                  driverKind={currentProviderEntry.driverKind}
-                  displayName={currentProviderEntry.displayName}
-                  accentColor={currentProviderEntry.accentColor}
-                  acpRegistryAgentId={currentProviderEntry.acpRegistryAgentId}
-                  acpRegistryIconUrl={currentProviderEntry.acpRegistryIconUrl}
-                  showBadge={shouldShowInstanceBadge(currentProviderEntry, providerEntries)}
-                  size="compact"
-                  iconClassName="size-4"
-                  className="z-auto"
-                />
-              ) : (
-                <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
+          {hasRelatives ? (
+            <>
+              {delegatedFrom === undefined ? null : (
+                <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
+                  <DelegatedFromRow
+                    delegatedFrom={delegatedFrom}
+                    fallbackLabel={currentThread?.linkOrigin?.label}
+                  />
+                </ThreadLineageRowList>
               )}
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="truncate text-label leading-4">{currentThread.title}</span>
-                <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
-                  <span className="shrink-0">This thread</span>
-                  <span className="min-w-0 truncate">
-                    {lineageModelLabel(currentThread.modelSelection.model, currentProviderEntry)}
-                  </span>
-                </span>
-              </span>
-            </div>
-          ) : null}
-          {groups
-            .filter((group) => group.id === "previous" && group.rows.length > 0)
-            .map((group) => (
-              <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
-                <ThreadLineageGroup {...group}>
-                  {(visibleRows) => visibleRows.map(renderRelationshipRow)}
-                </ThreadLineageGroup>
-              </div>
-            ))}
-          {remoteSubagents.length > 0 ? (
-            <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
-              {remoteSubagents.map((agent) => (
-                <RemoteSubagentRow
-                  key={agent.id}
-                  agent={agent}
-                  // Its provider instance belongs to the environment it runs in.
-                  provider={providersByEnvironment
-                    .get(agent.remoteChild.environmentId)
-                    ?.find((entry) => entry.instanceId === agent.providerInstanceId)}
-                />
-              ))}
-            </ThreadLineageRowList>
-          ) : null}
-          {unlinkedRunningCount > 0 ? (
-            <div className="flex items-center gap-2 px-2 py-1 text-caption text-muted-foreground">
-              <Spinner size="xs" tone="muted" />
-              {unlinkedRunningCount}{" "}
-              {unlinkedRunningCount === 1 ? "running agent" : "running agents"} preparing threads
-            </div>
+              {groups
+                .filter((group) => group.id !== "previous")
+                .map((group) => (
+                  <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+                    {(visibleRows) => visibleRows.map(renderRelationshipRow)}
+                  </ThreadLineageGroup>
+                ))}
+              {groups
+                .filter((group) => group.id === "previous" && group.rows.length > 0)
+                .map((group) => (
+                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
+                    <ThreadLineageGroup {...group}>
+                      {(visibleRows) => visibleRows.map(renderRelationshipRow)}
+                    </ThreadLineageGroup>
+                  </div>
+                ))}
+              {remoteSubagents.length > 0 ? (
+                <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
+                  {remoteSubagents.map((agent) => (
+                    <RemoteSubagentRow
+                      key={agent.id}
+                      agent={agent}
+                      // Its provider instance belongs to the environment it runs in.
+                      provider={providersByEnvironment
+                        .get(agent.remoteChild.environmentId)
+                        ?.find((entry) => entry.instanceId === agent.providerInstanceId)}
+                    />
+                  ))}
+                </ThreadLineageRowList>
+              ) : null}
+              {unlinkedRunningCount > 0 ? (
+                <div className="flex items-center gap-2 px-2 py-1 text-caption text-muted-foreground">
+                  <Spinner size="xs" tone="muted" />
+                  {unlinkedRunningCount}{" "}
+                  {unlinkedRunningCount === 1 ? "running agent" : "running agents"} preparing
+                  threads
+                </div>
+              ) : null}
+            </>
           ) : null}
         </ThreadDetailsSection>
       ) : null}
