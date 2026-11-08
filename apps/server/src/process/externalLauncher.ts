@@ -429,16 +429,23 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
+// Editors and the file manager open on the desktop session, so a boot-started
+// server discovers and launches them with that session's display.
+const readEditorEnv = Effect.fn("externalLauncher.readEditorEnv")(function* () {
+  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  return hasGraphicalLinuxSession(env) ? env : { ...env, ...(yield* readGraphicalSessionEnv()) };
+});
+
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readEditorEnv();
   return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
   function* () {
     const platform = yield* HostProcess.Platform;
-    const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+    const env = yield* readEditorEnv();
     return yield* fileManagerRevealKindForPlatform(platform, env);
   },
 );
@@ -464,7 +471,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   const platform = yield* HostProcess.Platform;
-  const env = { ...(yield* readBrowserLaunchEnv), ...(yield* readCommandLookupEnv) };
+  const env = yield* readEditorEnv();
   yield* Effect.annotateCurrentSpan({
     "externalLauncher.editor": input.editor,
     "externalLauncher.cwd": input.cwd,
