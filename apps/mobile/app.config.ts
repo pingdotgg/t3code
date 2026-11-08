@@ -18,6 +18,21 @@ const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
 
+// Sideloaded builds need a rising versionCode to install over the previous one.
+const androidVersionCode = repoEnv.T3CODE_ANDROID_VERSION_CODE?.trim()
+  ? Number(repoEnv.T3CODE_ANDROID_VERSION_CODE)
+  : undefined;
+if (
+  androidVersionCode !== undefined &&
+  !(
+    Number.isInteger(androidVersionCode) &&
+    androidVersionCode > 0 &&
+    androidVersionCode <= 2100000000
+  )
+) {
+  throw new Error("T3CODE_ANDROID_VERSION_CODE must be a positive integer up to 2100000000.");
+}
+
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
@@ -304,6 +319,7 @@ const config: ExpoConfig = {
   android: {
     icon: variant.assets.appIcon,
     package: repoEnv.T3CODE_ANDROID_PACKAGE ?? variant.androidPackage,
+    ...(androidVersionCode ? { versionCode: androidVersionCode } : {}),
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
