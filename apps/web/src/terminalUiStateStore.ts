@@ -19,7 +19,6 @@ interface ThreadTerminalUiState {
   activeTerminalGroupId: string;
 }
 
-// Keep the old storage key so existing drawer layout preferences migrate.
 const TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
 interface PersistedTerminalUiStateStoreState {
@@ -414,9 +413,15 @@ function closeThreadTerminal(
   }
 
   const closedTerminalIndex = normalized.terminalIds.indexOf(terminalId);
+  const groupTerminalIds =
+    normalized.terminalGroups.find((group) => group.terminalIds.includes(terminalId))
+      ?.terminalIds ?? [];
+  const groupIndex = groupTerminalIds.indexOf(terminalId);
   const nextActiveTerminalId =
     normalized.activeTerminalId === terminalId
-      ? (remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
+      ? (groupTerminalIds[groupIndex + 1] ??
+        groupTerminalIds[groupIndex - 1] ??
+        remainingTerminalIds[Math.min(closedTerminalIndex, remainingTerminalIds.length - 1)] ??
         remainingTerminalIds[0] ??
         "")
       : normalized.activeTerminalId;

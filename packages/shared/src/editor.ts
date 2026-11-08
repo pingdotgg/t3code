@@ -19,9 +19,7 @@ const installNames: Partial<Record<Editor["id"], ReadonlyArray<string>>> = {
   rider: ["Rider", "JetBrains Rider"],
 };
 
-/**
- * A plain prefix match would let one editor steal another's bundle, e.g. stable VS Code resolving to
- * `Visual Studio Code - Insiders.app`. */
+// Prefix-only matches could select Insiders when resolving stable VS Code.
 const isVersionedBundle = (entry: string, name: string) => {
   if (!entry.startsWith(`${name} `) || !entry.endsWith(".app")) return false;
   return /^\d[\d.]*$/.test(entry.slice(name.length + 1, -".app".length));
@@ -34,10 +32,10 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   if (editor.commands === null) return Option.none();
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
   const platform = yield* HostProcess.Platform;
-  // OpenZFS also installs a `zed` executable. Prefer the macOS editor bundle
-  // so a PATH entry for the ZFS Event Daemon cannot take over editor opens.
+  // Prefer Zed's macOS bundle because OpenZFS also installs a zed executable.
   const preferBundle = platform === "darwin" && editor.id === "zed";
-  if (!preferBundle) {
+  const preferZeditor = platform === "linux" && editor.id === "zed";
+  if (!preferBundle && !preferZeditor) {
     for (const command of editor.commands) {
       if (yield* isCommandAvailable(command, { env })) return Option.some({ command, baseArgs });
     }
@@ -54,9 +52,7 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
     for (const root of roots) {
-      // JetBrains Toolbox installs bundles named after the app and its version
-      // (`IntelliJ IDEA 2026.1.4.app`), so list the directory and accept
-      // `<name> <version>.app` as well as the exact `<name>.app`.
+      // JetBrains Toolbox appends versions to bundle names; accept exact and versioned names.
       const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
       const bundles = new Set(names.map((name) => `${name}.app`));
       for (const entry of entries) {
@@ -134,8 +130,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
       const dataHome = env.XDG_DATA_HOME || (home ? path.join(home, ".local/share") : undefined);
       if (dataHome) dirs.push(path.join(dataHome, "JetBrains/Toolbox/scripts"));
     }
-    for (const dir of dirs) {
-      for (const name of editor.commands) candidates.push(path.join(dir, name));
+    if (preferZeditor) {
+      // Linux packages use zeditor because OpenZFS owns the zed command.
+      for (const name of ["zeditor", "zed"]) {
+        candidates.push(name, ...dirs.map((dir) => path.join(dir, name)));
+      }
+    } else {
+      for (const dir of dirs) {
+        for (const name of editor.commands) candidates.push(path.join(dir, name));
+      }
     }
   }
 

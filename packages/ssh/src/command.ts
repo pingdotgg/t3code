@@ -1,6 +1,6 @@
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -76,11 +76,12 @@ export function targetConnectionKey(target: DesktopSshEnvironmentTarget): string
 
 export const remoteStateKey = Effect.fn("ssh/command.remoteStateKey")(function* (
   target: DesktopSshEnvironmentTarget,
-): Effect.fn.Return<string, never, Crypto.Crypto> {
-  const crypto = yield* Crypto.Crypto;
-  const digest = yield* crypto
-    .digest("SHA-256", encoder.encode(targetConnectionKey(target)))
-    .pipe(Effect.orDie);
+): Effect.fn.Return<string, never, Digest.Digest> {
+  const digestService = yield* Digest.Digest;
+  const digest = yield* digestService.digest(
+    Digest.sha256,
+    encoder.encode(targetConnectionKey(target)),
+  );
   return Hex.encode(digest).slice(0, 16);
 });
 
@@ -185,7 +186,7 @@ function normalizeSshErrorMessage(input: {
   return cleanedStdout.length > 0 ? cleanedStdout : input.fallbackMessage;
 }
 
-function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
+export function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
   return {
     alias: target.alias,
     hostname: target.hostname,
@@ -227,6 +228,11 @@ const runSshCommandInScope = Effect.fn("ssh/command.runSshCommand.inScope")(func
     ...baseSshArgs(target, {
       batchMode: input.batchMode ?? (input.interactiveAuth ? "no" : "yes"),
     }),
+    // Cold installs need a long command budget; a lost connection must fail sooner.
+    "-o",
+    "ServerAliveInterval=15",
+    "-o",
+    "ServerAliveCountMax=3",
     ...(input.preHostArgs ?? []),
     "--",
     hostSpec,
@@ -333,22 +339,22 @@ export const runSshCommand = Effect.fn("ssh/command.runSshCommand")(function* (
     Effect.flatMap((result) =>
       Option.match(result, {
         onSome: Effect.succeed,
-        onNone: () =>
-          Effect.gen(function* () {
-            yield* Effect.logWarning("ssh.command.timedOut", {
-              ...sshTargetLogFields(target),
-              timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
-              remoteCommandArgs: input.remoteCommandArgs ?? [],
-              preHostArgs: input.preHostArgs ?? [],
-              hasStdin: input.stdin !== undefined,
-            });
-            return yield* new SshCommandError({
-              command: ["ssh"],
-              exitCode: null,
-              stderr: "",
-              message: `SSH command timed out after ${input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS}ms.`,
-            });
-          }),
+        // The enclosing operation owns the span for this inline handler.
+        onNone: Effect.fnUntraced(function* () {
+          yield* Effect.logWarning("ssh.command.timedOut", {
+            ...sshTargetLogFields(target),
+            timeoutMs: input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS,
+            remoteCommandArgs: input.remoteCommandArgs ?? [],
+            preHostArgs: input.preHostArgs ?? [],
+            hasStdin: input.stdin !== undefined,
+          });
+          return yield* new SshCommandError({
+            command: ["ssh"],
+            exitCode: null,
+            stderr: "",
+            message: `SSH command timed out after ${input.timeoutMs ?? DEFAULT_SSH_COMMAND_TIMEOUT_MS}ms.`,
+          });
+        }),
       }),
     ),
   );

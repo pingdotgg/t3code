@@ -24,6 +24,17 @@ const thread: PullRequestReviewThread = {
   comments: [],
 };
 describe("PR comments in continuous native diffs", () => {
+  it("returns unannotated data unchanged without reading or indexing rows", () => {
+    const unannotated = {
+      ...data,
+      get rows(): NativeReviewDiffData["rows"] {
+        throw new Error("Empty annotation must not read rows");
+      },
+    };
+    expect(annotatePullRequestDiff(unannotated, [], [], undefined)).toBe(unannotated);
+    expect(annotatePullRequestDiff(data, [], [], undefined).rows).toBe(data.rows);
+  });
+
   it("anchors old/new lines separately despite identical line numbers", () => {
     const annotated = annotatePullRequestDiff(
       data,
@@ -84,6 +95,22 @@ describe("PR comments in continuous native diffs", () => {
       "draft:draft",
     ]);
     expect(annotated.commentTargetsByRowId).toBe(data.commentTargetsByRowId);
+  });
+  it("counts a single-comment discussion in the singular", () => {
+    const annotated = annotatePullRequestDiff(
+      data,
+      [
+        { ...thread, commentCount: 1 },
+        { ...thread, id: "right", side: "right", commentCount: 2 },
+      ],
+      [],
+      "abc",
+    );
+    expect(
+      annotated.rows
+        .filter((row) => row.kind === "comment")
+        .map((row) => row.commentText?.split("\n").at(-1)),
+    ).toEqual(["1 comment · Tap to open", "2 comments · Tap to open"]);
   });
   it("uses the old line number for left-side context when the line numbers differ", () => {
     const position = { kind: "context" as const, side: "left" as const, oldLine: 7, newLine: 8 };

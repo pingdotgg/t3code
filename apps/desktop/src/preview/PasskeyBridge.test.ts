@@ -27,10 +27,6 @@ const illegalInvocation = (): never => {
   throw new TypeError("Illegal invocation");
 };
 
-/**
- * Installs the bridge over fresh stand-ins for the page's DOM classes. Like
- * Chromium's, their getters only work on objects the browser created itself.
- */
 const install = (respond: (channel: string) => unknown) => {
   const nativeCreate = vi.fn(async () => "native-create");
   const nativeGet = vi.fn(async () => "native-get");

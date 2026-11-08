@@ -1,19 +1,23 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { ServerSelfUpdateError, ThreadId } from "@t3tools/contracts";
+import type { ManagedPolicyDocument } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
@@ -23,15 +27,19 @@ interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
+  readonly preflightDuration?: Duration.Input;
+  readonly preflightStarted?: Deferred.Deferred<void>;
   readonly beforeDownload?: Effect.Effect<void>;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
+  readonly policy?: ManagedPolicyDocument;
 }
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[], beforeDownload?: Effect.Effect<void>) =>
+const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Effect.Effect<void>) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
+      urls.push(request.url);
       if (request.url.endsWith("/SHA256SUMS")) {
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
@@ -55,6 +63,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-self-update-test-" });
   const order: string[] = [];
+  const urls: string[] = [];
   const runner = ProcessRunner.ProcessRunner.of({
     run: (input) =>
       Effect.gen(function* () {
@@ -73,6 +82,21 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
             stdoutInvalidUtf8: false,
             stderrInvalidUtf8: false,
           };
+        }
+        if (options.preflightStarted) yield* Deferred.succeed(options.preflightStarted, undefined);
+        if (options.preflightDuration !== undefined) {
+          // Like the real runner, fail once the caller's timeout elapses.
+          const timeout = Duration.fromInputUnsafe(input.timeout ?? "60 seconds");
+          const finished = yield* Effect.sleep(options.preflightDuration).pipe(
+            Effect.timeoutOption(timeout),
+          );
+          if (finished._tag === "None") {
+            return yield* new ProcessRunner.ProcessTimeoutError({
+              command: input.command,
+              argumentCount: input.args.length,
+              timeoutMs: Duration.toMillis(timeout),
+            });
+          }
         }
         order.push("preflight");
         const result =
@@ -119,172 +143,23 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         run: () => Effect.die("unexpected desktop app update run"),
       },
     ),
-    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.beforeDownload)),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      releaseHttpClient(order, urls, options.beforeDownload),
+    ),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
-    Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
+    Effect.provide(
+      Layer.merge(
+        ServerConfig.layer({ ...config, mode: options.mode ?? "web" }),
+        ManagedPolicy.layerTest(options.policy),
+      ),
+    ),
   );
-  return { selfUpdate, order };
+  return { selfUpdate, order, urls };
 });
 
 it.layer(NodeServices.layer)("server self update", (it) => {
-  it.effect("marks running threads at the boot-service handoff", () =>
-    Effect.gen(function* () {
-      const events: string[] = [];
-      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: "web",
-        selfUpdate: {
-          update: (_input, reportProgress = () => Effect.void) =>
-            reportProgress("downloading").pipe(
-              Effect.andThen(reportProgress("installing")),
-              Effect.as({
-                targetVersion: "1.1.0",
-                method: "boot-service" as const,
-                updateId: "update-id",
-              }),
-            ),
-          commitDesktopUpdate: () => Effect.never,
-        },
-        prepare: Effect.sync(() => {
-          events.push("prepare");
-          return [ThreadId.make("thread-running")];
-        }),
-        clear: () => Effect.sync(() => void events.push("clear")),
-      });
-
-      yield* selfUpdate.update({ targetVersion: "1.1.0", continueRunningThreads: true }, (stage) =>
-        Effect.sync(() => void events.push(stage)),
-      );
-
-      expect(events).toEqual(["downloading", "prepare", "installing"]);
-    }),
-  );
-
-  it.effect("marks desktop threads only when the prepared update commits", () =>
-    Effect.gen(function* () {
-      const threadId = ThreadId.make("thread-running-desktop");
-      const events: string[] = [];
-      const commitError = new ServerSelfUpdateError({ reason: "install failed" });
-      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: "desktop",
-        selfUpdate: {
-          update: (_input, reportProgress = () => Effect.void) =>
-            reportProgress("installing").pipe(
-              Effect.as({
-                targetVersion: "1.2.0",
-                method: "desktop-app" as const,
-                desktopUpdateToken: "desktop-token",
-              }),
-            ),
-          commitDesktopUpdate: () =>
-            Effect.sync(() => events.push("commit")).pipe(Effect.andThen(Effect.fail(commitError))),
-        },
-        prepare: Effect.sync(() => {
-          events.push("prepare");
-          return [threadId];
-        }),
-        clear: (threadIds) => Effect.sync(() => void events.push(`clear:${threadIds.join(",")}`)),
-      });
-
-      yield* selfUpdate.update({ targetVersion: "1.2.0", continueRunningThreads: true }, (stage) =>
-        Effect.sync(() => void events.push(stage)),
-      );
-      expect(events).toEqual(["installing"]);
-      expect(yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).toBe(
-        commitError,
-      );
-      expect(events).toEqual(["installing", "prepare", "commit", `clear:${threadId}`]);
-      expect(yield* selfUpdate.commitDesktopUpdate("desktop-token").pipe(Effect.flip)).toBe(
-        commitError,
-      );
-      expect(events).toEqual([
-        "installing",
-        "prepare",
-        "commit",
-        `clear:${threadId}`,
-        "prepare",
-        "commit",
-        `clear:${threadId}`,
-      ]);
-    }),
-  );
-
-  it.effect("keeps continuation markers after the boot-service handoff is accepted", () =>
-    Effect.gen(function* () {
-      const events: string[] = [];
-      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: "web",
-        selfUpdate: {
-          update: (
-            _input,
-            reportProgress = () => Effect.void,
-            onHandoffAccepted = () => Effect.void,
-          ) =>
-            reportProgress("installing").pipe(
-              Effect.andThen(onHandoffAccepted()),
-              Effect.andThen(Effect.interrupt),
-            ),
-          commitDesktopUpdate: () => Effect.never,
-        },
-        prepare: Effect.sync(() => {
-          events.push("prepare");
-          return [ThreadId.make("thread-accepted-boot-handoff")];
-        }),
-        clear: () => Effect.sync(() => void events.push("clear")),
-      });
-
-      const exit = yield* selfUpdate
-        .update({ targetVersion: "1.1.0", continueRunningThreads: true })
-        .pipe(Effect.exit);
-
-      expect(exit._tag).toBe("Failure");
-      expect(events).toEqual(["prepare"]);
-    }),
-  );
-
-  it.effect("clears continuation markers for mixed failure and interrupt causes", () =>
-    Effect.gen(function* () {
-      const events: string[] = [];
-      const commitError = new ServerSelfUpdateError({ reason: "install failed" });
-      const selfUpdate = yield* ServerSelfUpdate.withRunningThreadContinuation({
-        mode: "desktop",
-        selfUpdate: {
-          update: () =>
-            Effect.succeed({
-              targetVersion: "1.2.0",
-              method: "desktop-app" as const,
-              desktopUpdateToken: "failed-desktop-token",
-            }),
-          commitDesktopUpdate: (_requestId, onHandoffAccepted = () => Effect.void) =>
-            onHandoffAccepted().pipe(
-              Effect.andThen(
-                Effect.failCause(
-                  Cause.fromReasons([
-                    Cause.makeFailReason(commitError),
-                    Cause.makeInterruptReason(),
-                  ]),
-                ),
-              ),
-            ),
-        },
-        prepare: Effect.sync(() => [ThreadId.make("thread-failed-desktop-install")]),
-        clear: () => Effect.sync(() => void events.push("clear")),
-      });
-
-      yield* selfUpdate.update({
-        targetVersion: "1.2.0",
-        continueRunningThreads: true,
-      });
-      const exit = yield* selfUpdate.commitDesktopUpdate("failed-desktop-token").pipe(Effect.exit);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
-        expect(Cause.hasInterrupts(exit.cause)).toBe(true);
-        expect(Cause.hasInterruptsOnly(exit.cause)).toBe(false);
-      }
-      expect(events).toEqual(["clear"]);
-    }),
-  );
-
   // regression: #5181 make remote updates rollback-safe
   it.effect("rejects invalid versions and desktop-managed servers before staging", () =>
     Effect.gen(function* () {
@@ -297,6 +172,64 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         (yield* desktop.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
       ).toContain("desktop app");
       expect([...web.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("refuses every update when the managed policy turns updates off", () =>
+    Effect.gen(function* () {
+      const policy: ManagedPolicyDocument = {
+        schemaVersion: 1,
+        organization: "Example Corp",
+        limits: { updates: { mode: "off" } },
+      };
+      const service = yield* makeHarness({ policy });
+      const desktop = yield* makeHarness({
+        mode: "desktop",
+        policy,
+        desktopAppUpdate: {
+          available: true,
+          run: () => Effect.die("unexpected desktop app update run"),
+          commit: () => Effect.never,
+        },
+      });
+      for (const harness of [service, desktop]) {
+        expect(
+          (yield* harness.selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason,
+        ).toBe("Example Corp manages T3 Code updates.");
+      }
+      expect([...service.order, ...desktop.order]).toEqual([]);
+    }),
+  );
+
+  it.effect("lets a user start an update, but only to stable without nightly", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order, urls } = yield* makeHarness({
+        policy: {
+          schemaVersion: 1,
+          organization: "Example Corp",
+          limits: {
+            updates: {
+              mode: "auto",
+              allowNightly: false,
+              feedUrl: "https://updates.example.com/t3code/",
+            },
+          },
+        },
+      });
+      expect(
+        (yield* selfUpdate.update({ targetVersion: "1.2.0-nightly.20261028.1" }).pipe(Effect.flip))
+          .reason,
+      ).toBe("Example Corp manages T3 Code updates. Only stable releases can be installed.");
+      expect(order).toEqual([]);
+      // The mirror lists only 1.1.0's archive.
+      expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
+        "Example Corp's update mirror has no t3@1.2.0 for this machine.",
+      );
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" })).updateId).toBe("launcher-id");
+      // The release comes from the policy's mirror, not GitHub.
+      expect(urls.length).toBeGreaterThan(0);
+      for (const url of urls)
+        expect(url).toMatch(/^https:\/\/updates\.example\.com\/t3code\/v1\.[12]\.0\//);
     }),
   );
 
@@ -344,6 +277,27 @@ it.layer(NodeServices.layer)("server self update", (it) => {
     }),
   );
 
+  // regression: #28198 a slow staged preflight on a loaded host no longer fails the update
+  it.effect("waits for a staged preflight that takes a minute on a loaded host", () =>
+    Effect.gen(function* () {
+      const preflightStarted = yield* Deferred.make<void>();
+      const { selfUpdate, order } = yield* makeHarness({
+        preflightDuration: "60 seconds",
+        preflightStarted,
+      });
+      const update = yield* Effect.forkChild(selfUpdate.update({ targetVersion: "1.1.0" }), {
+        startImmediately: true,
+      });
+      yield* Deferred.await(preflightStarted);
+      yield* TestClock.adjust("60 seconds");
+      const exit = yield* Fiber.await(update);
+      expect(exit._tag === "Failure" ? String(exit.cause) : "launcher handoff").toBe(
+        "launcher handoff",
+      );
+      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+    }),
+  );
+
   it.effect("keeps preparing after the progress stream closes", () =>
     Effect.gen(function* () {
       const releaseDownload = yield* Deferred.make<void>();
@@ -370,14 +324,12 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
 
       yield* Deferred.await(sawDownloading);
-      // The socket drop ends the stream. The download is still held.
       yield* Fiber.interrupt(consumed);
       expect((yield* selfUpdate.update({ targetVersion: "1.2.0" }).pipe(Effect.flip)).reason).toBe(
         "A server update is already in progress.",
       );
 
       yield* Deferred.succeed(releaseDownload, undefined);
-      // `installing` is offered only after the stream queue has shut down.
       yield* Deferred.await(accepted);
       expect(order).toEqual(["download", "extract", "preflight", "accept"]);
       expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
@@ -385,4 +337,123 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
     }),
   );
+});
+
+it.layer(NodeServices.layer)("pruning runtimes on start", (it) => {
+  const staleVersion = "0.0.1";
+  const otherProcesses = ProcessRunner.ProcessRunner.of({
+    run: () =>
+      Effect.succeed({
+        stdout: "p42\nftxt\nn/bin/sh\n",
+        stderr: "",
+        code: ChildProcessSpawner.ExitCode(0),
+        timedOut: false,
+        stdoutTruncated: false,
+        stderrTruncated: false,
+        stdoutInvalidUtf8: false,
+        stderrInvalidUtf8: false,
+      }),
+  });
+
+  const pruneOnStart = Effect.fn("test.prune_on_start")(function* (input: {
+    readonly executable: "own runtime" | "elsewhere";
+    readonly managed?: boolean;
+    readonly symlinkedHome?: boolean;
+  }) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-prune-on-start-" });
+    const realHome = path.join(tempDir, "home");
+    const baseDir = input.symlinkedHome ? path.join(tempDir, "linked-home") : realHome;
+    const versionsDir = path.join(baseDir, "runtime", "versions");
+    yield* TestClock.setTime(24 * 60 * 60 * 1000);
+    for (const version of [staleVersion, packageJson.version]) {
+      const directory = path.join(realHome, "runtime", "versions", version);
+      yield* fs.makeDirectory(directory, { recursive: true });
+      yield* fs.writeFileString(path.join(directory, "t3"), "");
+      const sentinel = path.join(directory, ".install-complete");
+      yield* fs.writeFileString(sentinel, `${version}\n`);
+      yield* fs.utimes(sentinel, 0, 0);
+    }
+    if (input.symlinkedHome) yield* fs.symlink(realHome, baseDir);
+    // Like `process.execPath`, the running runtime is reported by its real path.
+    const executablePath =
+      input.executable === "own runtime"
+        ? yield* fs.realPath(path.join(versionsDir, packageJson.version, "t3"))
+        : "/usr/local/bin/node";
+    const removed = yield* ServerSelfUpdate.pruneRuntimesOnStart({
+      baseDir,
+      managed: input.managed ?? false,
+    }).pipe(
+      Effect.provideService(HostProcess.ExecutablePath, executablePath),
+      Effect.provideService(HostProcess.Platform, "darwin"),
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provideService(ProcessRunner.ProcessRunner, otherProcesses),
+    );
+    return { removed, remaining: (yield* fs.readDirectory(versionsDir)).toSorted() };
+  });
+
+  // The SSH launcher runs `t3 serve` straight from the pinned runtime, with no boot service.
+  it.effect("prunes for a server started from its home's pinned runtime", () =>
+    Effect.gen(function* () {
+      const { removed, remaining } = yield* pruneOnStart({ executable: "own runtime" });
+      expect(removed).toEqual([staleVersion]);
+      expect(remaining).toEqual([packageJson.version]);
+    }),
+  );
+
+  it.effect("recognizes its runtime through a symlinked T3 home", () =>
+    Effect.gen(function* () {
+      const { removed } = yield* pruneOnStart({ executable: "own runtime", symlinkedHome: true });
+      expect(removed).toEqual([staleVersion]);
+    }),
+  );
+
+  it.effect("prunes for a boot-service server wherever it runs from", () =>
+    Effect.gen(function* () {
+      const { removed } = yield* pruneOnStart({ executable: "elsewhere", managed: true });
+      expect(removed).toEqual([staleVersion]);
+    }),
+  );
+
+  it.effect("leaves runtimes alone for an unmanaged server started elsewhere", () =>
+    Effect.gen(function* () {
+      const { removed, remaining } = yield* pruneOnStart({ executable: "elsewhere" });
+      expect(removed).toEqual([]);
+      expect(remaining).toEqual([staleVersion, packageJson.version].toSorted());
+    }),
+  );
+});
+
+it("a host crosses tracks only to a release that knows its whole database", () => {
+  const cross = (
+    serverVersion: string,
+    targetVersion: string,
+    targetDatabaseMigration: number | undefined,
+    databaseMigration = 72,
+  ) =>
+    ServerSelfUpdate.trackSwitchBlockReason({
+      serverVersion,
+      targetVersion,
+      targetDatabaseMigration,
+      databaseMigration: () => databaseMigration,
+    });
+  const nightly = "0.1.4-nightly.20261027.3796";
+
+  expect(cross(nightly, "0.1.4", 72)).toBeNull();
+  // Another client moved this host to a newer Nightly after the switch was planned.
+  expect(cross(nightly, "0.1.4", 72, 73)).toContain("does not support yet");
+  expect(cross(nightly, "0.1.4", undefined)).toContain("Cannot confirm");
+  // A Stable tag can carry a migration the latest Nightly lacks.
+  expect(cross("0.1.4", nightly, 72, 73)).toContain("does not support yet");
+  expect(cross("0.1.3", "0.1.4", undefined)).toBeNull();
+  // A database that exists but cannot be read proves nothing.
+  expect(
+    ServerSelfUpdate.trackSwitchBlockReason({
+      serverVersion: nightly,
+      targetVersion: "0.1.4",
+      targetDatabaseMigration: 72,
+      databaseMigration: () => undefined,
+    }),
+  ).toContain("Cannot confirm");
 });
