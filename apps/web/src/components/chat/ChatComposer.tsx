@@ -66,7 +66,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { flushSync } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
@@ -351,6 +351,8 @@ export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
   canOperateThread: boolean;
+  /** Custom build: where the next-prompt buttons render, above the composer card. */
+  nextPromptChipsSlot?: HTMLElement | null;
   attachmentUploadsCapabilityKnown: boolean;
   supportsAttachmentUploads: boolean;
   supportsQuestionAttachments: boolean;
@@ -501,6 +503,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerDraftTarget,
     environmentId,
     canOperateThread,
+    nextPromptChipsSlot = null,
     attachmentUploadsCapabilityKnown,
     supportsAttachmentUploads,
     supportsQuestionAttachments,
@@ -3327,19 +3330,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
-      <NextPromptSuggestionChips
-        chips={offeredNextPromptChips}
-        showTabHint
-        activeIndex={activeNextPromptChipIndex}
-        onPick={(chip) => {
-          const current = promptRef.current;
-          // Only an empty box or an untouched suggestion is replaced, never the person's own text.
-          if (current.length > 0 && !nextPromptChips.some((c) => c.insertText === current)) return;
-          applyPromptReplacement(0, current.length, chip.insertText, {
-            focusEditorAfterReplace: true,
-          });
-        }}
-      />
+      {nextPromptChipsSlot === null
+        ? null
+        : createPortal(
+            <NextPromptSuggestionChips
+              chips={offeredNextPromptChips}
+              showTabHint
+              activeIndex={activeNextPromptChipIndex}
+              onPick={(chip) => {
+                const current = promptRef.current;
+                // Only an empty box or an untouched suggestion is replaced, never the person's text.
+                if (current.length > 0 && !nextPromptChips.some((c) => c.insertText === current)) {
+                  return;
+                }
+                applyPromptReplacement(0, current.length, chip.insertText, {
+                  focusEditorAfterReplace: true,
+                });
+              }}
+            />,
+            nextPromptChipsSlot,
+          )}
       <ComposerBanner.Dock>
         <ComposerBanner.Column>
           <ComposerBannerStack items={shelfItems} />

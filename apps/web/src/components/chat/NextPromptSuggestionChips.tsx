@@ -145,8 +145,8 @@ export function useNextPromptChips(input: {
 }
 
 /**
- * Floats above the composer in a zero-height strip, so showing or hiding the buttons never moves
- * the conversation or the composer.
+ * Sits above the composer inside its overlay, so the measured composer height includes the
+ * buttons and the conversation leaves room for them instead of being covered.
  */
 export function NextPromptSuggestionChips(props: {
   readonly chips: ReadonlyArray<NextPromptChip>;
@@ -161,8 +161,8 @@ export function NextPromptSuggestionChips(props: {
   const tabTargetIndex =
     activeIndex === -1 ? 0 : props.chips.length > 1 ? (activeIndex + 1) % props.chips.length : -1;
   return (
-    <div className="relative h-0" data-next-prompt-suggestions="true">
-      <div className="absolute inset-x-0 bottom-full z-10 mb-2 flex flex-wrap justify-start gap-1.5 px-1">
+    <div data-next-prompt-suggestions="true">
+      <div className="mb-2 flex flex-wrap justify-start gap-1.5 px-1">
         {props.chips.map((chip, index) => (
           <button
             key={`${chip.kind}:${chip.label}`}
