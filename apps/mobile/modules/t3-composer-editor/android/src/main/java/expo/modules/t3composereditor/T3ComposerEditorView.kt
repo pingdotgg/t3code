@@ -132,7 +132,7 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
               tokens.firstOrNull {
                 (it.type == "context" || it.type == "mention" || it.type == "skill") &&
                   offset >= it.start &&
-                  (offset < it.end || (offset == it.end && chipContainsX(it, event.x)))
+                  (offset < it.end || (offset == it.end && chipContains(it, event.x, event.y)))
               }
                 ?: return false
             if (token.end <= editor.length() &&
@@ -451,10 +451,13 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   // A chip is one replacement span, so a tap on its right half reports the offset at its end.
-  private fun chipContainsX(token: ComposerToken, viewX: Float): Boolean {
+  // Taps below the last line clamp to it, so the drawn line's bounds are checked too.
+  private fun chipContains(token: ComposerToken, viewX: Float, viewY: Float): Boolean {
     val layout = editor.layout ?: return false
     val x = viewX - editor.totalPaddingLeft + editor.scrollX
+    val y = viewY - editor.totalPaddingTop + editor.scrollY
     val line = layout.getLineForOffset(token.start)
+    if (y < layout.getLineTop(line) || y > layout.getLineBottom(line)) return false
     val left = layout.getPrimaryHorizontal(token.start)
     val right =
       if (layout.getLineForOffset(token.end) == line) {
