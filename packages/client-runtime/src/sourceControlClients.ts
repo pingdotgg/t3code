@@ -4,7 +4,6 @@ import {
   HostCredentialSettings,
   readSourceControlHostSettings,
   changeRequestTerms,
-  PULL_REQUEST_TERMINOLOGY,
   type SourceControlAppSignIn,
   type SourceControlDefinition,
 } from "@t3tools/source-control-core/shared/definition";
@@ -48,16 +47,15 @@ export function currentChangeRequestTerms(): ChangeRequestTerminology {
 }
 
 export function formatChangeRequestText(text: string, terms = currentChangeRequestTerms()): string {
-  if (terms === PULL_REQUEST_TERMINOLOGY) return text;
   return text.replace(
-    /https?:\/\/[^\s<>"`]+|\ba PR\b|\bPRs?\b|\b[Pp]ull [Rr]equests?\b/gu,
+    /https?:\/\/[^\s<>"`]+|\b(?:a PR|an MR)\b|\b(?:PR|MR)s?\b|\b(?:[Pp]ull|[Mm]erge) [Rr]equests?\b/gu,
     (match) => {
       if (match.startsWith("http")) return match;
-      if (match === "a PR") return terms.shortLabelWithArticle;
-      if (match === "PR") return terms.shortLabel;
-      if (match === "PRs") return `${terms.shortLabel}s`;
+      if (match === "a PR" || match === "an MR") return terms.shortLabelWithArticle;
+      if (match === "PR" || match === "MR") return terms.shortLabel;
+      if (match === "PRs" || match === "MRs") return `${terms.shortLabel}s`;
       const label = match.endsWith("s") ? terms.plural : terms.singular;
-      if (match.startsWith("pull")) return label;
+      if (match.startsWith("pull") || match.startsWith("merge")) return label;
       return match.includes("Request")
         ? label.split(" ").map(capitalizeTerm).join(" ")
         : capitalizeTerm(label);

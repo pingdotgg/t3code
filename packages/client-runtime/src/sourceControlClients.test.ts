@@ -405,9 +405,11 @@ describe("currentChangeRequestTerms", () => {
     const text =
       "Pull Request / Pull requests / pull request / pull requests / a PR / PRs / PR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest";
     expect(formatChangeRequestText(text, PULL_REQUEST_TERMINOLOGY)).toBe(text);
-    expect(formatChangeRequestText(text, MERGE_REQUEST_TERMINOLOGY)).toBe(
-      "Merge Request / Merge requests / merge request / merge requests / an MR / MRs / MR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest",
-    );
+    const mergeText =
+      "Merge Request / Merge requests / merge request / merge requests / an MR / MRs / MR #42 / https://host/pull/42 / https://host/PR/42?q=PR / pullRequest";
+    expect(formatChangeRequestText(text, MERGE_REQUEST_TERMINOLOGY)).toBe(mergeText);
+    expect(formatChangeRequestText(mergeText, MERGE_REQUEST_TERMINOLOGY)).toBe(mergeText);
+    expect(formatChangeRequestText(mergeText, PULL_REQUEST_TERMINOLOGY)).toBe(text);
   });
 
   it("says pull request for every host until merge request terms are on", () => {

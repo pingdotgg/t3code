@@ -254,7 +254,12 @@ describe("vcsActionState", () => {
     try {
       for (const enabled of [false, true]) {
         setMergeRequestTerms(enabled);
-        for (const label of ["Preparing PR...", "Generating PR content..."]) {
+        for (const label of [
+          "Preparing PR...",
+          "Generating PR content...",
+          "Preparing MR...",
+          "Generating MR content...",
+        ]) {
           const prEvent = progress({
             ...event,
             actionId: transportActionId,
@@ -263,63 +268,73 @@ describe("vcsActionState", () => {
           });
           expect(
             normalizeVcsActionProgressEvent(target, transportActionId, actionId, prEvent),
-          ).toEqual({ ...prEvent, actionId, label: enabled ? label.replace("PR", "MR") : label });
+          ).toEqual({
+            ...prEvent,
+            actionId,
+            label: label.replace(/PR|MR/gu, enabled ? "MR" : "PR"),
+          });
         }
-        const url = "https://git.example.test/PR/pull/12";
-        const terminalResult: GitRunStackedActionResult = {
-          ...result,
-          commit: { ...result.commit, subject: "Fix PR rendering" },
-          pr: { status: "opened_existing", url, title: "Fix PR rendering" },
-          toast: {
-            title: "Opened PR #12",
-            description: "Fix PR rendering",
-            cta: { kind: "open_pr", label: "View PR", url },
-          },
-        };
-        expect(
-          normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
-            cwd,
-            action,
-            actionId: transportActionId,
-            kind: "action_finished",
-            result: terminalResult,
-          }),
-        ).toEqual({
-          cwd,
-          action,
-          actionId,
-          kind: "action_finished",
-          result: {
-            ...terminalResult,
+        for (const sourceTerm of ["PR", "MR"]) {
+          const url = `https://git.example.test/${sourceTerm}/pull/12`;
+          const terminalResult: GitRunStackedActionResult = {
+            ...result,
+            commit: { ...result.commit, subject: `Fix ${sourceTerm} rendering` },
+            pr: { status: "opened_existing", url, title: `Fix ${sourceTerm} rendering` },
             toast: {
-              ...terminalResult.toast,
-              title: enabled ? "Opened MR #12" : "Opened PR #12",
-              cta: { kind: "open_pr", label: enabled ? "View MR" : "View PR", url },
+              title: `Opened ${sourceTerm} #12`,
+              description: `Fix ${sourceTerm} rendering`,
+              cta: { kind: "open_pr", label: `View ${sourceTerm}`, url },
             },
-          },
-        });
-        expect(
-          normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+          };
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+              cwd,
+              action,
+              actionId: transportActionId,
+              kind: "action_finished",
+              result: terminalResult,
+            }),
+          ).toEqual({
             cwd,
             action,
-            actionId: transportActionId,
+            actionId,
             kind: "action_finished",
             result: {
-              ...result,
+              ...terminalResult,
               toast: {
-                title: "Pushed to feature/PR",
-                cta: { kind: "run_action", label: "Create PR", action: { kind: "create_pr" } },
+                ...terminalResult.toast,
+                title: enabled ? "Opened MR #12" : "Opened PR #12",
+                cta: { kind: "open_pr", label: enabled ? "View MR" : "View PR", url },
               },
             },
-          }),
-        ).toMatchObject({
-          result: {
-            toast: {
-              title: "Pushed to feature/PR",
-              cta: { label: enabled ? "Create MR" : "Create PR" },
+          });
+          expect(
+            normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+              cwd,
+              action,
+              actionId: transportActionId,
+              kind: "action_finished",
+              result: {
+                ...result,
+                toast: {
+                  title: `Pushed to feature/${sourceTerm}`,
+                  cta: {
+                    kind: "run_action",
+                    label: `Create ${sourceTerm}`,
+                    action: { kind: "create_pr" },
+                  },
+                },
+              },
+            }),
+          ).toMatchObject({
+            result: {
+              toast: {
+                title: `Pushed to feature/${sourceTerm}`,
+                cta: { label: enabled ? "Create MR" : "Create PR" },
+              },
             },
-          },
-        });
+          });
+        }
       }
     } finally {
       setMergeRequestTerms(false);
