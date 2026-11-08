@@ -1423,7 +1423,7 @@ const noteWrites = (call: SecretRun["calls"][number], scripts: Map<string, strin
       noteHeredoc(text, scripts);
 };
 /** The scripts the agent had written before each call. */
-const scriptsBefore = (calls: SecretRun["calls"]): Array<Scripts> => {
+export const scriptsBefore = (calls: SecretRun["calls"]): Array<Scripts> => {
   const scripts = new Map<string, string>();
   return calls.map((call) => {
     const before = new Map(scripts);

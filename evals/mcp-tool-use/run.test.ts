@@ -298,6 +298,38 @@ it("passes a good run and names every rule a bad run breaks", () => {
   ]);
 });
 
+it("grades a page passed by path on the file the agent last wrote there", () => {
+  const expect = {
+    calls: [{ tool: "html_render", args: { path: "/tmp/v.html", page: "~var(--" } }],
+    callsMustNot: [{ tool: "html_render", args: { page: "~#000" } }],
+  };
+  const run = (calls: SampleRun["calls"]): SampleRun => ({
+    calls,
+    text: "",
+    stopReason: "end_turn",
+  });
+  const write = {
+    step: 0,
+    tool: "Write",
+    input: { file_path: "/tmp/v.html", content: "<p style=background:#000>" },
+  };
+  const render = { step: 2, tool: "html_render", input: { path: "/tmp/v.html" } };
+  const fix = {
+    step: 1,
+    tool: "Edit",
+    input: { file_path: "/tmp/v.html", old_string: "#000", new_string: "var(--card)" },
+  };
+
+  assert.deepEqual(failed(expect, run([write, fix, render])), []);
+  assert.deepEqual(failed(expect, run([write, render])), [
+    'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
+    'callsMustNot html_render {"page":"~#000"}',
+  ]);
+  assert.deepEqual(failed(expect, run([render])), [
+    'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
+  ]);
+});
+
 it("bounds numbers and reads target.options in either schema form", () => {
   const expect = {
     calls: [

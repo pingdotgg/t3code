@@ -82,6 +82,7 @@ import {
 import {
   argvForm,
   gradeSecret,
+  scriptsBefore,
   scriptSources,
   SecretExpect,
   secretDiagnostics,
@@ -1692,11 +1693,22 @@ export const pastedText = ({ prompt, setup }: Pick<McpToolUseCase, "prompt" | "s
     prompt,
   ].join("\n");
 
+/** `page` is the HTML a page tool shows: its inline `html`, or the file the agent wrote at `path`. */
+const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, string>) => {
+  if ((tool !== "html_preview" && tool !== "html_render") || !isRecord(input)) return input;
+  const page = typeof input.html === "string" ? input.html : files.get(valueText(input.path));
+  return page === undefined ? input : { ...input, page };
+};
+
 /** `pasted` is the thread's user text (`pastedText`), for request_secret's `value`. */
 export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pasted = "") => {
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
-  const calls = run.calls.map((call) => ({ ...call, input: withOptionsObject(call.input) }));
+  const written = scriptsBefore(run.calls);
+  const calls = run.calls.map((call, index) => ({
+    ...call,
+    input: withPage(call.tool, withOptionsObject(call.input), written[index]!),
+  }));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
   const found = ({ tool, args = {} }: McpToolUseCall) =>
