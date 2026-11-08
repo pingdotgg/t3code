@@ -53,6 +53,7 @@ function isManagedTunnelActive(
 }
 
 const isManagedRelayRequestFailedError = Schema.is(ManagedRelay.ManagedRelayRequestFailedError);
+const isManagedRelayClientError = Schema.is(ManagedRelay.ManagedRelayClientError);
 
 /** The account's tunnel cap when the relay refused a new tunnel for being at it. */
 function tunnelLimitFromLinkFailure(cause: unknown): number | null {
@@ -86,7 +87,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
   const [operationError, setOperationError] = useState<string | null>(null);
   const [tunnelLimit, setTunnelLimit] = useState<number | null>(null);
 
-  const reportUpdateFailure = (cause: unknown) => {
+  const reportUpdateFailure = (cause: unknown, reason?: string) => {
     const message = cause instanceof Error ? cause.message : "Could not update T3 Connect access.";
     const traceId = findErrorTraceId(cause);
     console.error("[t3-connect] Could not update T3 Connect", { message, traceId, cause });
@@ -95,7 +96,7 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       stackedThreadToast({
         type: "error",
         title: "Could not update T3 Connect",
-        description: relayFailureReason(cause) ?? message,
+        description: reason ?? relayFailureReason(cause) ?? message,
         ...(traceId
           ? {
               actionProps: {
@@ -163,7 +164,16 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
       refreshManagedTunnelUsage();
       if (unlinkResult._tag === "Failure") {
         if (!isAtomCommandInterrupted(unlinkResult)) {
-          reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
+          const cause = squashAtomCommandFailure(unlinkResult);
+          // Only the relay delete fails with a relay error, and it runs after the local unlink.
+          const relayKeptLink =
+            isCloudEnvironmentLinkError(cause) && isManagedRelayClientError(cause.cause);
+          reportUpdateFailure(
+            cause,
+            relayKeptLink
+              ? "Disconnected here, but T3 Connect still lists it. Remove it in Account."
+              : undefined,
+          );
         }
         cloudLinkState.refresh();
         await refreshRelayEnvironments();
