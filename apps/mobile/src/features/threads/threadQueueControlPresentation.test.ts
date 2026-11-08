@@ -1,7 +1,10 @@
 import { formatAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadQueueRowControls } from "./threadQueueControlPresentation";
+import {
+  resolveAdmissionWaitReason,
+  resolveThreadQueueRowControls,
+} from "./threadQueueControlPresentation";
 
 describe("threadQueueControlPresentation", () => {
   it.each([
@@ -73,5 +76,26 @@ describe("threadQueueControlPresentation", () => {
 
     expect(guest.canEdit).toBe(false);
     expect(guest.canDismiss).toBe(true);
+  });
+
+  it("explains why a run waits for the host", () => {
+    const admission = {
+      runningTurns: 4,
+      maxRunningTurns: 4,
+      waitingTurns: 1,
+      pacing: null,
+      waitingThreadIds: [],
+    };
+    expect(resolveAdmissionWaitReason("capacity", admission)).toBe(
+      "Waiting for a free slot (4/4 running)",
+    );
+    expect(resolveAdmissionWaitReason("capacity", undefined)).toBe("Waiting for a free slot");
+    expect(resolveAdmissionWaitReason("host_load", { ...admission, pacing: "severe" })).toBe(
+      "Waiting for the host: memory is critically low",
+    );
+    expect(resolveAdmissionWaitReason("host_load", { ...admission, pacing: "paced" })).toBe(
+      "Starting turns one at a time while the host is busy",
+    );
+    expect(resolveAdmissionWaitReason(undefined, admission)).toBeNull();
   });
 });

@@ -505,6 +505,17 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Completed", pulse: false });
   });
 
+  it("shows a static Queued pill while the host holds the queued run", () => {
+    const queued = {
+      ...baseThread,
+      runtime: { ...baseThread.runtime, status: "queued" as const, activeRunId: null },
+    };
+    expect(resolveThreadStatusPill({ thread: queued })).toMatchObject({ label: "Connecting" });
+    expect(
+      resolveThreadStatusPill({ thread: { ...queued, waitingForHostAdmission: true } }),
+    ).toMatchObject({ label: "Queued", pulse: false });
+  });
+
   it("shows failed, not completed, when the unseen run failed", () => {
     expect(
       resolveThreadStatusPill({

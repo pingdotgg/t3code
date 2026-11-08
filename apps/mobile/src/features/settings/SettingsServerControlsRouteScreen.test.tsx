@@ -45,6 +45,8 @@ vi.mock("../../state/preferences", () => ({
   updateMobilePreferencesAtom: {},
 }));
 vi.mock("./components/AutoSettleDaysField", () => ({ AutoSettleDaysField: () => null }));
+vi.mock("./components/HostCapacityTurnsField", () => ({ HostCapacityTurnsField: () => null }));
+vi.mock("../../state/entities", () => ({ useServerConfigs: () => new Map() }));
 vi.mock("./components/SourceControlSignInSection", () => ({
   SourceControlSignInSection: () => null,
 }));

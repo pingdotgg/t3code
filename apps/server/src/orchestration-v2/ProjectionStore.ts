@@ -35,6 +35,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
+  OrchestrationV2AdmissionWait,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
@@ -168,6 +169,17 @@ export const ProjectionStoreV2Error = Schema.Union([
   ProjectionStoreReadError,
 ]);
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
+
+export interface HostAdmissionSnapshot {
+  readonly live: ReadonlyArray<{ readonly runId: RunId; readonly threadId: ThreadId }>;
+  readonly waiting: ReadonlyArray<{
+    readonly runId: RunId;
+    readonly threadId: ThreadId;
+    readonly wait: OrchestrationV2AdmissionWait;
+    /** The thread has no active run, so only host admission holds this run back. */
+    readonly ready: boolean;
+  }>;
+}
 
 export type ProjectionRecoveryKind =
   | "queued-runs"
@@ -736,6 +748,11 @@ export interface ProjectionStoreV2Shape {
   readonly getHeldQueuedRuns: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2Run>, ProjectionStoreV2Error>;
+  /** Live runs plus queued runs waiting on host admission, oldest request first. */
+  readonly getHostAdmissionSnapshot: () => Effect.Effect<
+    HostAdmissionSnapshot,
+    ProjectionStoreV2Error
+  >;
   readonly getRecoveryThreadIds: (
     kind: ProjectionRecoveryKind,
     projects?: {
@@ -5765,6 +5782,44 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getHostAdmissionSnapshot: ProjectionStoreV2Shape["getHostAdmissionSnapshot"] = () =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const live = yield* sql<{ readonly run_id: RunId; readonly thread_id: ThreadId }>`
+              SELECT run_id, thread_id FROM orchestration_v2_projection_runs
+              WHERE status IN ('preparing', 'starting', 'running')`;
+            const waiting = yield* sql<{
+              readonly run_id: RunId;
+              readonly thread_id: ThreadId;
+              readonly wait: OrchestrationV2AdmissionWait;
+              readonly ready: number;
+            }>`
+              SELECT run.run_id, run.thread_id,
+                json_extract(run.payload_json, '$.admissionWait') AS wait,
+                NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs AS other
+                  WHERE other.thread_id = run.thread_id
+                    AND other.status IN ('preparing', 'starting', 'running', 'waiting')) AS ready
+              FROM orchestration_v2_projection_runs AS run
+              JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = run.thread_id
+              WHERE run.status = 'queued'
+                AND json_extract(run.payload_json, '$.admissionWait') IS NOT NULL
+                AND json_extract(run.payload_json, '$.queueHeld') IS NOT 1
+                AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
+              ORDER BY run.requested_at ASC, run.run_id ASC`;
+            return {
+              live: live.map((row) => ({ runId: row.run_id, threadId: row.thread_id })),
+              waiting: waiting.map((row) => ({
+                runId: row.run_id,
+                threadId: row.thread_id,
+                wait: row.wait,
+                ready: row.ready === 1,
+              })),
+            } satisfies HostAdmissionSnapshot;
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(ThreadId.make("host-admission"))));
+
     const getHeldQueuedRuns: ProjectionStoreV2Shape["getHeldQueuedRuns"] = (threadId) =>
       sql<PayloadRow>`
         SELECT payload_json FROM orchestration_v2_projection_runs
@@ -7812,6 +7867,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getRun: readOnReader(getRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),
+      getHostAdmissionSnapshot: readOnReader(getHostAdmissionSnapshot),
       getPendingNativeUserInputs: readOnReader(getPendingNativeUserInputs),
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       isNodeStored: readOnReader(isNodeStored),

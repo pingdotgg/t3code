@@ -13,6 +13,7 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   usageLimitSources: true,
   memoryPressure: true,
+  hostAdmission: true,
   usageLimitsCommand: true,
   providerCatalogsOnDemand: true,
 });

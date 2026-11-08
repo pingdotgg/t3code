@@ -19,7 +19,7 @@ import {
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { useProject } from "../state/entities";
+import { useProject, useServerConfigs } from "../state/entities";
 import {
   pullRequestListLines,
   resolveThreadCurrentPullRequestLink,
@@ -668,6 +668,10 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   );
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
   const threadProject = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
+  const waitingForHostAdmission =
+    useServerConfigs()
+      .get(thread.environmentId)
+      ?.hostAdmission?.waitingThreadIds.includes(thread.id) === true;
   const threadProjectCwd = threadProject?.workspaceRoot ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const linkedPullRequest = useLinkedThreadPullRequest(
@@ -707,6 +711,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
     thread: {
       ...thread,
       lastVisitedAt,
+      waitingForHostAdmission,
     },
   });
 

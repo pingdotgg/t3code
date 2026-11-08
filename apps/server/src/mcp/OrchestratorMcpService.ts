@@ -132,6 +132,7 @@ import type {
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
 import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import * as HostAdmission from "../orchestration-v2/HostAdmission.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as TaskFolderService from "../workspace/TaskFolderService.ts";
@@ -1215,6 +1216,7 @@ function timelineItem(input: {
 const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const hostAdmission = yield* Effect.serviceOption(HostAdmission.HostAdmission);
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
@@ -1774,7 +1776,10 @@ const make = Effect.gen(function* () {
       childRunId: childRun?.id ?? null,
       childNodeId: task.id,
       status,
-      workState,
+      workState: status === "queued" && workState === "working" ? "queued" : workState,
+      ...(status === "queued" && childRun?.admissionWait !== undefined
+        ? { admissionWait: childRun.admissionWait }
+        : {}),
       hasPendingChildRuns: hasPendingChildRuns(childProjection, childRun),
       providerInstanceId: modelSelection.instanceId,
       model: modelSelection.model,
@@ -4007,12 +4012,25 @@ const make = Effect.gen(function* () {
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
         delivery: result.delivery,
+        ...(result.run.status === "queued" && result.run.admissionWait !== undefined
+          ? { admissionWait: result.run.admissionWait }
+          : {}),
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId, []);
-      const result = yield* threadManagement
-        .waitForThread({
+      const callerThreadId = scope.thread?.threadId;
+      // A turn blocked here must not hold a slot, or a parent waiting on its queued child deadlocks.
+      const freeingSlot = <A, E, R>(wait: Effect.Effect<A, E, R>) =>
+        hostAdmission._tag === "Some" && callerThreadId !== undefined
+          ? Effect.acquireUseRelease(
+              hostAdmission.value.threadWaitStarted(callerThreadId),
+              () => wait,
+              () => hostAdmission.value.threadWaitEnded(callerThreadId),
+            )
+          : wait;
+      const result = yield* freeingSlot(
+        threadManagement.waitForThread({
           projectId: target.thread.projectId,
           threadId: input.threadId,
           ...(input.runId === undefined ? {} : { runId: input.runId }),
@@ -4021,8 +4039,8 @@ const make = Effect.gen(function* () {
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
-        })
-        .pipe(Effect.mapError(threadManagementFailure));
+        }),
+      ).pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
       const taskId = result.run?.delegatedTaskId;
       const ownedTask =

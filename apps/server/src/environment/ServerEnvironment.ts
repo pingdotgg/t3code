@@ -247,6 +247,7 @@ export const make = Effect.gen(function* () {
       threadSnooze: true,
       threadForceStop: true,
       memoryPressure: true,
+      hostAdmission: true,
       environmentThemes: true,
       usageLimitSources: true,
       providerWorkspaceSnapshotsOnDemand: true,

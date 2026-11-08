@@ -112,3 +112,30 @@ describe("applyServerConfigProjection memoryPressureUpdated", () => {
     expect(Option.getOrThrow(ended).config.memoryPressure).toBeUndefined();
   });
 });
+
+describe("applyServerConfigProjection hostAdmissionUpdated", () => {
+  it("keeps the live counts across a reconnect snapshot from a server that sends them", () => {
+    const admission = {
+      runningTurns: 4,
+      maxRunningTurns: 4,
+      waitingTurns: 2,
+      pacing: null,
+      waitingThreadIds: [],
+    };
+    const snapshotFrom = (hostAdmission: boolean) =>
+      ({
+        type: "snapshot",
+        version: 1,
+        config: { environment: { capabilities: { hostAdmission } } },
+      }) as ServerConfigStreamEvent;
+    const live = applyServerConfigProjection(
+      applyServerConfigProjection(Option.none(), snapshotFrom(true)),
+      { type: "hostAdmissionUpdated", version: 1, payload: admission } as ServerConfigStreamEvent,
+    );
+    expect(Option.getOrThrow(live).config.hostAdmission?.waitingTurns).toBe(2);
+    const reconnected = applyServerConfigProjection(live, snapshotFrom(true));
+    expect(Option.getOrThrow(reconnected).config.hostAdmission?.runningTurns).toBe(4);
+    const olderServer = applyServerConfigProjection(live, snapshotFrom(false));
+    expect(Option.getOrThrow(olderServer).config.hostAdmission).toBeUndefined();
+  });
+});

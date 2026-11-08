@@ -366,6 +366,7 @@ export interface ServerConfigSubscriptionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
   readonly memoryPressure?: boolean;
+  readonly hostAdmission?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
 }
@@ -441,6 +442,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
         usageLimitSources: _sources,
         lastEventLoopStall: _stall,
         memoryPressure: _pressure,
+        hostAdmission: _admission,
         ...cacheable
       } = config;
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
@@ -490,6 +492,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
       ...(subscription.memoryPressure === true ? { memoryPressure: true } : {}),
+      ...(subscription.hostAdmission === true ? { hostAdmission: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
     }).pipe(
@@ -761,6 +764,7 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentThemes?: boolean;
     readonly usageLimitSources?: boolean;
     readonly memoryPressure?: boolean;
+    readonly hostAdmission?: boolean;
     readonly usageLimitsCommand?: boolean;
     readonly providerCatalogsOnDemand?: boolean;
   },
@@ -778,6 +782,7 @@ export function createServerEnvironmentAtoms<R, E>(
           ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
           ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
           ...(options.memoryPressure === true ? { memoryPressure: true } : {}),
+          ...(options.hostAdmission === true ? { hostAdmission: true } : {}),
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
           ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
         }),

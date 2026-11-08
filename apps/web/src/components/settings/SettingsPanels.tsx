@@ -17,7 +17,9 @@ import {
 import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
+  MAX_MAX_RUNNING_TURNS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_MAX_RUNNING_TURNS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
@@ -58,6 +60,7 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { useServerConfigs } from "../../state/entities";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { scopedIdleCompaction } from "./scopedSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
@@ -719,14 +722,86 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
+const DEFAULT_MAX_RUNNING_TURNS = 4;
+
+function HostCapacitySettings() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const { environment } = useSettingsScope();
+  const configs = useServerConfigs();
+  const admission = environment ? configs.get(environment.environmentId)?.hostAdmission : undefined;
+  return (
+    <SettingsSection id="host-capacity" title="Host capacity">
+      <SettingsRow
+        serverScoped
+        settingKeys={["paceNewTurnsByHostLoad"]}
+        title="Pace new turns by host load"
+        description="Holds new turns while memory is critically low and starts them one at a time while the host is busy."
+        control={
+          <ScopedSwitch
+            settingKeys={["paceNewTurnsByHostLoad"]}
+            checked={settings.paceNewTurnsByHostLoad}
+            onCheckedChange={(checked) =>
+              updateSettings({ paceNewTurnsByHostLoad: Boolean(checked) })
+            }
+            aria-label="Pace new turns by host load"
+          />
+        }
+      />
+      <SettingsRow
+        serverScoped
+        settingKeys={["maxRunningTurns"]}
+        title="Limit running turns"
+        description={
+          admission
+            ? `${admission.runningTurns} running \u00b7 ${admission.waitingTurns} waiting`
+            : "Further turns wait until a running one finishes. Running turns are never paused."
+        }
+        control={
+          <ScopedSwitch
+            settingKeys={["maxRunningTurns"]}
+            checked={settings.maxRunningTurns !== null}
+            onCheckedChange={(checked) =>
+              updateSettings({ maxRunningTurns: checked ? DEFAULT_MAX_RUNNING_TURNS : null })
+            }
+            aria-label="Limit running turns"
+          />
+        }
+      />
+      {settings.maxRunningTurns !== null ? (
+        <SettingsRow
+          serverScoped
+          settingKeys={["maxRunningTurns"]}
+          title="Maximum running turns"
+          control={
+            <BoundedIntegerInput
+              value={settings.maxRunningTurns}
+              min={MIN_MAX_RUNNING_TURNS}
+              max={MAX_MAX_RUNNING_TURNS}
+              label="Maximum running turns"
+              onCommit={(turns) => updateSettings({ maxRunningTurns: turns })}
+            />
+          }
+        />
+      ) : null}
+    </SettingsSection>
+  );
+}
+
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
-function AutoSettleDaysInput({
+function BoundedIntegerInput({
   value,
+  min,
+  max,
+  label,
   onCommit,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  min: number;
+  max: number;
+  label: string;
+  onCommit: (value: number) => void;
 }) {
   const [draft, setDraft] = useState(String(value));
   const [draftSource, setDraftSource] = useState(value);
@@ -739,23 +814,19 @@ function AutoSettleDaysInput({
     <Input
       size="sm"
       type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      min={min}
+      max={max}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
         setDraft(event.target.value);
         const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
           onCommit(parsed);
         }
       }}
       onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
+      aria-label={label}
     />
   );
 }
@@ -1821,8 +1892,11 @@ export function ThreadsSettingsPanel() {
               title={searchableSetting("days-before-auto-settle").title}
               description="Any new activity un-settles a thread automatically."
               control={
-                <AutoSettleDaysInput
+                <BoundedIntegerInput
                   value={settings.sidebarAutoSettleAfterDays}
+                  min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                  max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                  label="Days of inactivity before auto-settle"
                   onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                 />
               }
@@ -1848,6 +1922,8 @@ export function ThreadsSettingsPanel() {
           ) : null}
         </SettingsSection>
       ) : null}
+
+      {environment && !isProjectScope ? <HostCapacitySettings /> : null}
 
       <SettingsSection id="text-generation" title="Text generation">
         <SettingsRow

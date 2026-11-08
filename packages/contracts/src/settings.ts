@@ -97,6 +97,14 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
+export const MIN_MAX_RUNNING_TURNS = 1;
+export const MAX_MAX_RUNNING_TURNS = 64;
+export const MaxRunningTurns = Schema.Number.check(
+  Schema.isInt(),
+  Schema.isBetween({ minimum: MIN_MAX_RUNNING_TURNS, maximum: MAX_MAX_RUNNING_TURNS }),
+);
+export type MaxRunningTurns = typeof MaxRunningTurns.Type;
+
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
 export const MAX_SNOOZE_PRESETS = 8;
 export const SnoozePresetDay = Schema.Literals([
@@ -1443,6 +1451,12 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  /** Per environment. On, new turns wait while the host is short on memory or busy. */
+  paceNewTurnsByHostLoad: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Per environment. Null is unlimited; running turns are never paused. */
+  maxRunningTurns: Schema.NullOr(MaxRunningTurns).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   compactIdleThreads: LegacyCompactIdleThreads.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -1880,6 +1894,8 @@ export const ServerSettingsPatch = Schema.Struct({
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  paceNewTurnsByHostLoad: Schema.optionalKey(Schema.Boolean),
+  maxRunningTurns: Schema.optionalKey(Schema.NullOr(MaxRunningTurns)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),

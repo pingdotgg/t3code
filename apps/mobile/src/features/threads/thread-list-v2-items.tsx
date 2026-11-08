@@ -130,6 +130,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
+  queued: {
+    label: "Queued",
+    icon: "clock",
+    className: "text-foreground-muted",
+    iconTintClassName: "accent-foreground-muted",
+  },
   waiting: {
     label: null,
     icon: "circle.dashed.inset.filled",

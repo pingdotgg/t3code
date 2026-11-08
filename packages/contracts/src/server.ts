@@ -608,6 +608,17 @@ export const ServerEventLoopStall = Schema.Struct({
 });
 export type ServerEventLoopStall = typeof ServerEventLoopStall.Type;
 
+export const HostAdmissionState = Schema.Struct({
+  runningTurns: NonNegativeInt,
+  maxRunningTurns: Schema.NullOr(PositiveInt),
+  waitingTurns: NonNegativeInt,
+  /** Why new turns are being held back right now: "severe" holds all, "paced" admits one at a time. */
+  pacing: Schema.NullOr(Schema.Literals(["severe", "paced"])),
+  /** Threads with a turn waiting on admission, oldest request first. */
+  waitingThreadIds: Schema.Array(ThreadId),
+});
+export type HostAdmissionState = typeof HostAdmissionState.Type;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -667,6 +678,8 @@ export const ServerConfig = Schema.Struct({
   usageLimitSources: Schema.optional(UsageLimitSourceSnapshots),
   /** Stream-only and opt-in, like `usageLimitSources`; absent while there is none. */
   memoryPressure: Schema.optional(HostMemoryPressure),
+  /** Stream-only and opt-in, like `memoryPressure`. */
+  hostAdmission: Schema.optional(HostAdmissionState),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -796,6 +809,14 @@ export const ServerConfigStreamMemoryPressureUpdatedEvent = Schema.Struct({
 export type ServerConfigStreamMemoryPressureUpdatedEvent =
   typeof ServerConfigStreamMemoryPressureUpdatedEvent.Type;
 
+export const ServerConfigStreamHostAdmissionUpdatedEvent = Schema.Struct({
+  version: Schema.Literal(1),
+  type: Schema.Literal("hostAdmissionUpdated"),
+  payload: HostAdmissionState,
+});
+export type ServerConfigStreamHostAdmissionUpdatedEvent =
+  typeof ServerConfigStreamHostAdmissionUpdatedEvent.Type;
+
 export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamSnapshotEvent,
   ServerConfigStreamKeybindingsUpdatedEvent,
@@ -804,6 +825,7 @@ export const ServerConfigStreamEvent = Schema.Union([
   ServerConfigStreamEnvironmentThemesUpdatedEvent,
   ServerConfigStreamUsageLimitSourcesUpdatedEvent,
   ServerConfigStreamMemoryPressureUpdatedEvent,
+  ServerConfigStreamHostAdmissionUpdatedEvent,
 ]);
 export type ServerConfigStreamEvent = typeof ServerConfigStreamEvent.Type;
 

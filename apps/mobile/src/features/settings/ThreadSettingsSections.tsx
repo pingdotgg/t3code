@@ -13,7 +13,9 @@ import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, MAX_MAX_RUNNING_TURNS } from "@t3tools/contracts";
+import { useServerConfigs } from "../../state/entities";
+import { HostCapacityTurnsField } from "./components/HostCapacityTurnsField";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
@@ -62,6 +64,7 @@ export function SettingsLabsRouteScreen() {
   );
 }
 
+const DEFAULT_MAX_RUNNING_TURNS = Math.min(4, MAX_MAX_RUNNING_TURNS);
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 /**
@@ -92,6 +95,11 @@ export function AutoSettleSettingsRows(props: {
     );
   const reference = displayTargets[0] ?? null;
   const referenceSettings = reference?.settings ?? null;
+  const serverConfigs = useServerConfigs();
+  const hostAdmission =
+    reference === null
+      ? undefined
+      : serverConfigs.get(reference.environment.environmentId)?.hostAdmission;
 
   if (reference === null || referenceSettings === null) {
     return null;
@@ -101,6 +109,8 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
+      paceNewTurnsByHostLoad?: boolean;
+      maxRunningTurns?: number | null;
     },
   ) => props.write(patch);
 
@@ -122,6 +132,7 @@ export function AutoSettleSettingsRows(props: {
   const disabledFor = (...keys: string[]) =>
     disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
+  const maxRunningTurns = referenceSettings.maxRunningTurns;
 
   return (
     <View className="gap-6">
@@ -143,6 +154,45 @@ export function AutoSettleSettingsRows(props: {
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected ? (
+        <SettingsSection title="Host capacity">
+          <SettingsSwitchRow
+            icon="clock"
+            label="Pace new turns by host load"
+            subtitle="Holds new turns while memory is critically low and starts them one at a time while the host is busy."
+            value={referenceSettings.paceNewTurnsByHostLoad}
+            disabled={disabledFor("paceNewTurnsByHostLoad")}
+            onValueChange={(value) => writeToAll({ paceNewTurnsByHostLoad: value })}
+          />
+          <SettingsSwitchRow
+            icon="bolt.circle"
+            label="Limit running turns"
+            subtitle={
+              hostAdmission
+                ? `${hostAdmission.runningTurns} running \u00b7 ${hostAdmission.waitingTurns} waiting`
+                : undefined
+            }
+            value={maxRunningTurns !== null}
+            disabled={disabledFor("maxRunningTurns")}
+            onValueChange={(value) =>
+              writeToAll({ maxRunningTurns: value ? DEFAULT_MAX_RUNNING_TURNS : null })
+            }
+          />
+          {maxRunningTurns !== null ? (
+            <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+              <View className="w-[22px] android:w-6" />
+              <Text className="flex-1 text-foreground text-lg android:text-base">
+                Running turns
+              </Text>
+              <HostCapacityTurnsField
+                value={maxRunningTurns}
+                disabled={disabledFor("maxRunningTurns")}
+                onValueChange={(value) => writeToAll({ maxRunningTurns: value })}
+              />
+            </View>
+          ) : null}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">

@@ -427,6 +427,8 @@ export const make = Effect.gen(function* () {
           continue;
         }
         if (run.queueHeld === true && retryableRuns.length === 0) continue;
+        // Waiting on host admission is not a crash casualty; holding it would never drain.
+        if (run.admissionWait !== undefined && retryableRuns.length === 0) continue;
         events.push({
           id: yield* allocateEventId(),
           type: "run.updated",
