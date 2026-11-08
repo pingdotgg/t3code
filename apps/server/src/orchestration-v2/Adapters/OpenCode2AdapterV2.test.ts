@@ -945,19 +945,29 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     event("session.execution.started", { sessionID: SESSION }),
     ...shellLaunched(SESSION, shellID),
   ];
-  const shellReport = (sessionID: string, shellID: string, state: string, text: string) =>
-    event("session.inbox.enqueued", {
-      inboxID: `msg_${state}_${shellID}`,
-      sessionID,
-      item: {
-        type: "synthetic",
-        payload: {
-          text: `<shell id="${shellID}" state="${state}">${text}</shell>`,
-          metadata: { source: "shell", shellID, state },
+  const shellReport = (
+    sessionID: string,
+    shellID: string,
+    state: string,
+    text: string,
+    label?: string,
+  ) =>
+    event(
+      "session.inbox.enqueued",
+      {
+        inboxID: `msg_${state}_${shellID}`,
+        sessionID,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<shell id="${shellID}" state="${state}">${text}</shell>`,
+            metadata: { source: "shell", shellID, state },
+          },
+          delivery: "steer",
         },
-        delivery: "steer",
       },
-    });
+      label,
+    );
   const removeShell = (shellID: string) =>
     out("shell.remove", { id: shellID, "location[directory]": WORK });
   // OpenCode reports a removed shell to its session and wakes it before the remove returns.
@@ -1135,6 +1145,154 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       yield* watch.until(() => watch.state.variant === "drained");
       assert.deepEqual(watch.state.roster, []);
       assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  const heldVariant = (variant: string, label?: string) =>
+    event(
+      "session.model.selected",
+      { sessionID: SESSION, model: { providerID: "opencode", id: "big-pickle", variant } },
+      label,
+    );
+  // The wake holds the call that would name the subagent, so its shell arrives for an unknown session.
+  const heldSubagentShell = (): ReadonlyArray<ProviderReplayEntry> => [
+    event("session.execution.started", { sessionID: SESSION }),
+    ...backgroundLaunch(CHILD).slice(3),
+    returnedRunning("call-background"),
+    event("session.execution.started", { sessionID: CHILD }),
+    ...shellLaunched(CHILD, "sh_child"),
+    event("session.execution.succeeded", { sessionID: SESSION }),
+    heldVariant("held"),
+  ];
+  const recordOffers = (offers: Array<ProviderContinuationRequests.ProviderContinuationRequest>) =>
+    Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+      offer: (request) =>
+        Effect.sync(() => {
+          offers.push(request);
+        }),
+      take: Effect.never,
+    });
+
+  it.effect("lists a subagent's shell from a held wake under the subagent once the wake runs", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      const gate = makeProviderReplayGate(["after"]);
+      const { runtime, thread } = yield* resumed(
+        [...heldSubagentShell(), heldVariant("after", "after")],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      assert.lengthOf(offers, 1);
+      yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
+      gate.release("after");
+      yield* watch.until(() => watch.state.variant === "after");
+      const [subagent, shell] = watch.state.roster ?? [];
+      assert.include(subagent, { kind: "subagent", taskId: "call-background" });
+      assert.deepEqual(shell, {
+        taskId: "sh_child",
+        kind: "command",
+        description: SHELL_COMMAND,
+        parentTaskId: "call-background",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a subagent's shell from a held wake that Stop discards", () =>
+    Effect.gen(function* () {
+      const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+      // Released up front: it only records that the remove's report was emitted.
+      const gate = makeProviderReplayGate(["removing"]);
+      gate.release("removing");
+      const { runtime, thread } = yield* resumed(
+        [
+          ...heldSubagentShell(),
+          removeShell("sh_child"),
+          shellReport(CHILD, "sh_child", "error", "Shell.NotFoundError", "removing"),
+          event("session.execution.started", { sessionID: CHILD }),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: CHILD }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: CHILD }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(recordOffers(offers));
+      const watch = yield* watchCalls(runtime, thread);
+      yield* watch.until(() => watch.state.variant === "held");
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isTrue(gate.hasReached("removing"));
+      yield* watch.until(() => watch.state.variant === "drained");
+      assert.lengthOf(offers, 1);
+      assert.isFalse(watch.state.pending);
+      assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("removes a shell launched while Stop removes another", () =>
+    Effect.gen(function* () {
+      const offered = yield* Deferred.make<void>();
+      const gate = makeProviderReplayGate(["removed", "wake"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...backgroundShell("sh_1"),
+          removeShell("sh_1"),
+          shellReport(SESSION, "sh_1", "error", "Shell.NotFoundError"),
+          // The running turn launches another shell before the first remove returns.
+          ...shellLaunched(SESSION, "sh_2"),
+          // Gates hold only events; this one holds the reply until the test saw the launch.
+          heldVariant("launched", "removed"),
+          reply("shell.remove", null),
+          removeShell("sh_2"),
+          shellReport(SESSION, "sh_2", "error", "Shell.NotFoundError"),
+          reply("shell.remove", null),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          event("session.execution.started", { sessionID: SESSION }, "wake"),
+          out("session.interrupt", { sessionID: SESSION }),
+          reply("session.interrupt", { interrupted: true }),
+          event("session.execution.interrupted", { sessionID: SESSION }),
+          drained,
+        ],
+        { replayGate: gate },
+      ).pipe(
+        Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+          offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
+          take: Effect.never,
+        }),
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(turnInput(thread));
+      yield* watch.until(() => watch.state.roster?.length === 1);
+      const stop = yield* runtime
+        .interruptTurn({
+          providerThread: thread,
+          providerTurnId: yield* providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.forkScoped);
+      yield* watch.until(() =>
+        (watch.state.roster ?? []).some((task) => (task as { taskId: string }).taskId === "sh_2"),
+      );
+      gate.release("removed");
+      yield* Fiber.join(stop);
+      yield* watch.until(() => watch.terminals.length > 0);
+      assert.deepEqual(watch.terminals, ["interrupted"]);
+      assert.deepEqual(watch.state.roster, []);
+      assert.isFalse(watch.state.pending);
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("wake")));
+      gate.release("wake");
+      yield* Effect.raceFirst(
+        watch.until(() => watch.state.variant === "drained"),
+        Deferred.await(offered),
+      );
+      assert.isFalse(yield* Deferred.isDone(offered));
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.scoped),
   );

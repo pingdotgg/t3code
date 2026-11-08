@@ -735,6 +735,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const threads = new Map<string, ThreadState>();
     const childOwners = new Map<string, ThreadState>();
     const announced = new Map<string, EventOf<"session.created">["data"]>();
+    /** Held events whose session had no state yet, so their shells were not counted on arrival. */
+    const untracked = new WeakSet<OpenCode2Client.OpenCode2StreamEvent>();
     const strays = new Map<string, ThreadState>();
     const busy = new Set<string>();
     const pending = new Map<RuntimeRequestId, PendingRequest>();
@@ -2437,6 +2439,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const held = holder?.wakes.at(-1);
       if (holder !== undefined && held !== undefined) {
         held.events.push(event);
+        if (tracked === undefined) untracked.add(event);
         if (
           sessionId === holder.sessionId &&
           (event.type === "unreadable.execution.ended" || executionEnd(event.type))
@@ -3317,8 +3320,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     const replay = Effect.fnUntraced(function* (wake: Wake) {
       wake.dropped = true;
-      for (const event of wake.events) yield* route(event, sessionOfEvent(event), true);
+      for (const event of wake.events) {
+        const sessionId = sessionOfEvent(event);
+        // A subagent's state exists only once its held call is replayed.
+        const state = untracked.has(event) ? threads.get(sessionId ?? "") : undefined;
+        if (state !== undefined) trackShells(state, event);
+        yield* route(event, sessionId, true);
+      }
     });
+
+    // Shells a held wake started in sessions it had not named yet; replay would count them.
+    const heldShells = (caller: ThreadState) => {
+      const running = new Set<string>();
+      for (const event of caller.wakes.flatMap((wake) => wake.events)) {
+        if (!untracked.has(event)) continue;
+        if (
+          event.type === "session.tool.success" &&
+          event.data.metadata?.["status"] === "running"
+        ) {
+          const shellId = stringField(event.data.metadata, "shellID");
+          if (shellId !== undefined) running.add(shellId);
+        }
+        if (event.type === "session.inbox.enqueued" && event.data.item.type === "synthetic") {
+          const { metadata } = event.data.item.payload;
+          if (stringField(metadata, "source") === "shell") {
+            running.delete(stringField(metadata, "shellID") ?? "");
+          }
+        }
+      }
+      return running;
+    };
 
     const discardWakes = (caller: ThreadState, wakes: ReadonlyArray<Wake>) => {
       const retired = new Set<string>();
@@ -3419,23 +3450,43 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const children = new Map(
         calls.flatMap((call) => childrenOf(call).map((childId) => [childId, call.state] as const)),
       );
-      const shells = callers.flatMap((caller) =>
-        [...caller.shells].map(([id, shell]) => ({ caller, id, directory: shell.directory })),
-      );
-      // OpenCode reports and wakes the shell's session before the remove returns.
-      for (const { caller, id } of shells) caller.stopped.add(id);
-      const removed = yield* Effect.filter(shells, ({ id, directory }) =>
-        client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
-          // OpenCode declares no not-found error for remove; only the directory can be gone.
-          Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
-          Effect.timeout(INTERRUPT_TIMEOUT),
-          Effect.tapCause((cause) =>
-            Effect.logWarning("Could not stop an OpenCode background shell.", cause),
-          ),
-          Effect.exit,
-          Effect.map(Exit.isSuccess),
-        ),
-      );
+      const attempted = new Set<string>();
+      const unremoved = () =>
+        sessionsOf(state)
+          .flatMap((caller) => [
+            ...[...caller.shells].map(([id, shell]) => ({
+              caller,
+              id,
+              directory: shell.directory,
+            })),
+            ...[...heldShells(caller)].map((id) => ({ caller, id, directory: caller.directory })),
+          ])
+          .filter(({ id }) => !attempted.has(id));
+      const removed: Array<{ readonly caller: ThreadState; readonly id: string }> = [];
+      // Sessions still running can launch shells while a remove waits.
+      const removeShells = Effect.fnUntraced(function* () {
+        for (let shells = unremoved(); shells.length > 0; shells = unremoved()) {
+          // OpenCode reports and wakes the shell's session before the remove returns.
+          for (const { caller, id } of shells) {
+            attempted.add(id);
+            caller.stopped.add(id);
+          }
+          const reached = yield* Effect.filter(shells, ({ id, directory }) =>
+            client.shell.remove({ id: Shell.ID.make(id), location: { directory } }).pipe(
+              // OpenCode declares no not-found error for remove; only the directory can be gone.
+              Effect.catchTags({ LocationNotFoundError: () => Effect.void }),
+              Effect.timeout(INTERRUPT_TIMEOUT),
+              Effect.tapCause((cause) =>
+                Effect.logWarning("Could not stop an OpenCode background shell.", cause),
+              ),
+              Effect.exit,
+              Effect.map(Exit.isSuccess),
+            ),
+          );
+          removed.push(...reached);
+        }
+      });
+      yield* removeShells();
       const unreached = new Set<string>();
       for (const [childId, caller] of children) {
         caller.stopped.add(childId);
@@ -3461,30 +3512,36 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             Effect.ignore({ log: true }),
           );
       }
-      yield* lock.withPermit(
-        Effect.gen(function* () {
-          for (const call of calls) {
-            if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
-            yield* settleCall(call, "interrupted");
-          }
-          for (const caller of callers) {
-            for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
-          }
-          for (const { caller, id } of removed) caller.shells.delete(id);
-          for (const caller of new Set(removed.map(({ caller }) => caller))) {
-            yield* syncRosterAncestors(caller);
-          }
-          const running = state.wakes.some((wake) => wake.running);
-          discardWakes(state, state.wakes.splice(0));
-          yield* syncRosterAncestors(state);
-          if (running) {
-            markUnsettled(state);
-            yield* client.session
-              .interrupt({ sessionID: Session.ID.make(state.sessionId) })
-              .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
-          }
-        }),
-      );
+      // Checked under the lock, so no shell launched before Stop settles outlives it.
+      for (let settled = false; !settled;) {
+        yield* removeShells();
+        settled = yield* lock.withPermit(
+          Effect.gen(function* () {
+            if (unremoved().length > 0) return false;
+            for (const call of calls) {
+              if (childrenOf(call).some((childId) => unreached.has(childId))) continue;
+              yield* settleCall(call, "interrupted");
+            }
+            for (const caller of callers) {
+              for (const report of caller.reports.values()) caller.stopped.add(report.sourceId);
+            }
+            for (const { caller, id } of removed) caller.shells.delete(id);
+            for (const caller of new Set(removed.map(({ caller }) => caller))) {
+              yield* syncRosterAncestors(caller);
+            }
+            const running = state.wakes.some((wake) => wake.running);
+            discardWakes(state, state.wakes.splice(0));
+            yield* syncRosterAncestors(state);
+            if (running) {
+              markUnsettled(state);
+              yield* client.session
+                .interrupt({ sessionID: Session.ID.make(state.sessionId) })
+                .pipe(Effect.timeout(INTERRUPT_TIMEOUT), Effect.ignore({ log: true }));
+            }
+            return true;
+          }),
+        );
+      }
       yield* stopStrays(state);
     });
 
