@@ -48,7 +48,7 @@ const TITLE_BAR_MARGIN = 32;
 const TITLE_BAR_BUTTON = 44;
 /** Liquid-glass chrome extends past the 44pt hit target; trailing clusters need more. */
 const TITLE_LEADING_GLASS = 12;
-const TITLE_TRAILING_GLASS = 28;
+const TITLE_TRAILING_GLASS = 36;
 
 /** Custom title that long-presses open a menu without UIKit's title-menu chevron. */
 function AppBarTitleMenu(props: {
