@@ -2926,6 +2926,35 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generatedInstructions.endsWith(preference)).toBe(true);
         expect(generatedInstructions.length).toBeLessThanOrEqual(20_000);
         expect(generatedInstructions).toContain("[truncated]");
+
+        // A preference that alone fills the budget must stay within it (and keep its lead-in).
+        const oversizedPreference = `KEEP-PREF ${"Z".repeat(25_000)}`;
+        let oversizedInstructions = "";
+        const { manager: oversizedManager } = yield* makeManager({
+          serverSettings: {
+            changeRequestInstructions: oversizedPreference,
+          },
+          providerScenario: { prListSequence: [[], []] },
+          textGeneration: {
+            generatePrContent: (input) => {
+              oversizedInstructions = input.policy?.changeRequestInstructions ?? "";
+              return Effect.succeed({ title: "Feature PR", body: "Feature body" });
+            },
+          },
+        });
+        yield* runGit(repoDir, ["checkout", "-b", "feature/oversized-preference"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature-2.txt"), "feature-2\n");
+        yield* runGit(repoDir, ["add", "feature-2.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Add feature 2"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/oversized-preference"]);
+        const oversizedResult = yield* runStackedAction(oversizedManager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+        expect(oversizedResult.pr.status).toBe("created");
+        expect(oversizedInstructions.startsWith("KEEP-PREF")).toBe(true);
+        expect(oversizedInstructions.length).toBeLessThanOrEqual(20_000);
+        expect(oversizedInstructions).toContain("[truncated]");
       }),
   );
 

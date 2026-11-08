@@ -432,6 +432,7 @@ function limitContext(value: string, maxChars: number): string {
 
 /** Matches `policyInstruction` in textGenerationPrompts; keep configured preferences inside that budget. */
 const CHANGE_REQUEST_INSTRUCTION_LIMIT = 20_000;
+const CHANGE_REQUEST_INSTRUCTION_TRUNCATION = "\n\n[truncated]";
 
 function combineChangeRequestInstructions(
   styleInstructions: string | undefined,
@@ -439,17 +440,23 @@ function combineChangeRequestInstructions(
 ): string | undefined {
   const extra = extraInstructions.trim();
   const style = styleInstructions?.trim() ?? "";
-  if (!extra) return style || undefined;
-  if (!style) return extra;
+  const fitInstruction = (value: string) =>
+    value.length <= CHANGE_REQUEST_INSTRUCTION_LIMIT
+      ? value
+      : `${value.slice(0, CHANGE_REQUEST_INSTRUCTION_LIMIT - CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length)}${CHANGE_REQUEST_INSTRUCTION_TRUNCATION}`;
+  if (!extra) return style ? fitInstruction(style) : undefined;
+
+  // Prefer keeping the configured preference; truncate style first, and the preference only if it alone overflows.
+  const keptExtra = fitInstruction(extra);
+  if (!style) return keptExtra;
 
   const separator = "\n\n";
-  const styleBudget = CHANGE_REQUEST_INSTRUCTION_LIMIT - extra.length - separator.length;
-  if (styleBudget <= 0) return extra;
-  if (style.length <= styleBudget) return `${style}${separator}${extra}`;
-
-  const truncationMarker = "\n\n[truncated]";
-  const keep = Math.max(0, styleBudget - truncationMarker.length);
-  return `${style.slice(0, keep)}${truncationMarker}${separator}${extra}`;
+  const styleBudget = CHANGE_REQUEST_INSTRUCTION_LIMIT - keptExtra.length - separator.length;
+  if (styleBudget <= 0) return keptExtra;
+  if (style.length <= styleBudget) return `${style}${separator}${keptExtra}`;
+  if (styleBudget <= CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length) return keptExtra;
+  const keep = styleBudget - CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length;
+  return `${style.slice(0, keep)}${CHANGE_REQUEST_INSTRUCTION_TRUNCATION}${separator}${keptExtra}`;
 }
 
 // Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
