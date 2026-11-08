@@ -347,6 +347,8 @@ export const linkEnvironmentToCloud: (input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
+  /** Unlink the current link first, for a change the relay cannot make in place. */
+  readonly replaceLink?: boolean;
 }) => Effect.Effect<
   void,
   CloudEnvironmentLinkError,
@@ -355,6 +357,7 @@ export const linkEnvironmentToCloud: (input: {
   readonly target: CloudLinkTarget;
   readonly clerkToken: string;
   readonly mode?: CloudLinkMode;
+  readonly replaceLink?: boolean;
 }) {
   const configuredRelayUrl = relayUrl();
   if (!configuredRelayUrl) {
@@ -407,6 +410,10 @@ export const linkEnvironmentToCloud: (input: {
     },
     "Could not obtain environment link proof.",
   );
+  // The environment signs only over a direct connection, so the unlink cannot cut the route this link needs.
+  if (input.replaceLink) {
+    yield* unlinkEnvironmentFromCloud({ target: input.target, clerkToken: input.clerkToken });
+  }
   const link = yield* relayClient
     .linkEnvironment({
       clerkToken: input.clerkToken,

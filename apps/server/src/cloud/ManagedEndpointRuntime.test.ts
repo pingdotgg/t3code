@@ -499,6 +499,9 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* runtime.applyConfig(betaConfig, "http://[::1]:3781");
       expect(yield* Queue.take(gateway.stopped)).toBe(betaConfig.connectorToken);
       expect((yield* Queue.take(gateway.runs)).origin.port).toBe(3781);
+      yield* runtime.applyConfig(betaConfig, "http://127.0.0.1:80");
+      expect(yield* Queue.take(gateway.stopped)).toBe(betaConfig.connectorToken);
+      expect((yield* Queue.take(gateway.runs)).origin).toEqual({ host: "127.0.0.1", port: 80 });
       yield* runtime.applyConfig(null);
       expect(yield* Queue.take(gateway.stopped)).toBe(betaConfig.connectorToken);
       expect(yield* runtime.inspectConnector).toBeNull();

@@ -224,12 +224,13 @@ const BETA_HOSTNAME = /^[a-f0-9]{16}(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/u;
 function betaOrigin(config: BetaRuntimeConfig, localOrigin: string | undefined) {
   const origin = localOrigin ? URL.parse(localOrigin) : null;
   const gateway = URL.parse(config.gatewayUrl);
+  // URL drops the default port; the listener's origin always names it.
+  const port = origin?.port || "80";
   if (
     !origin ||
     origin.protocol !== "http:" ||
     !["127.0.0.1", "[::1]"].includes(origin.hostname) ||
-    !origin.port ||
-    localOrigin !== `http://${origin.hostname}:${origin.port}` ||
+    localOrigin !== `http://${origin.hostname}:${port}` ||
     !gateway ||
     gateway.protocol !== "wss:" ||
     gateway.username ||
@@ -242,7 +243,7 @@ function betaOrigin(config: BetaRuntimeConfig, localOrigin: string | undefined) 
   ) {
     return null;
   }
-  return { host: origin.hostname === "[::1]" ? "::1" : origin.hostname, port: Number(origin.port) };
+  return { host: origin.hostname === "[::1]" ? "::1" : origin.hostname, port: Number(port) };
 }
 
 const stopConnector = (connector: ActiveConnector | null) =>

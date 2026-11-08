@@ -193,18 +193,12 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         currentLinkState.linkRevoked !== true &&
         (relayProviderKind === "t3_relay") !== (mode === "beta");
       if (relink) {
-        if (replacesLink) {
-          const unlinkResult = await unlinkEnvironment({ target, clerkToken });
-          if (unlinkResult._tag === "Failure") {
-            if (!isAtomCommandInterrupted(unlinkResult)) {
-              reportUpdateFailure(squashAtomCommandFailure(unlinkResult));
-            }
-            cloudLinkState.refresh();
-            await refreshRelayEnvironments();
-            return false;
-          }
-        }
-        const linkResult = await linkEnvironment({ target, clerkToken, mode });
+        const linkResult = await linkEnvironment({
+          target,
+          clerkToken,
+          mode,
+          ...(replacesLink ? { replaceLink: true } : {}),
+        });
         // Any link attempt can change the account's tunnel count.
         refreshManagedTunnelUsage();
         if (linkResult._tag === "Failure") {

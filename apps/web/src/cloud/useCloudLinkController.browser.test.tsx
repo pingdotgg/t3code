@@ -271,13 +271,14 @@ describe("useCloudLinkController", () => {
     await using screen = await mountController();
 
     expect(await screen.reconcile({ managedTunnel: desired, publish: true })).toBe(true);
+    // Only a change to or from the beta replaces the link, which keeps the hold preference.
     expect(testState.link).toHaveBeenCalledExactlyOnceWith({
       target,
       clerkToken: "clerk-token",
       mode,
+      ...(mode === "managed" ? {} : { replaceLink: true }),
     });
-    // Only a change to or from the beta needs a fresh link, which keeps the hold preference.
-    expect(testState.unlink).toHaveBeenCalledTimes(mode === "managed" ? 0 : 1);
+    expect(testState.unlink).not.toHaveBeenCalled();
     expect(testState.preferences).toHaveBeenCalledExactlyOnceWith({
       target,
       publishAgentActivity: true,
