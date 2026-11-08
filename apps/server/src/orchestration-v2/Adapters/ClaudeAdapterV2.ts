@@ -2078,12 +2078,30 @@ function isLessonCardTool(name: string): boolean {
   return tool === QUIZ_CARD_TOOL_NAME || tool === QUESTION_CARD_TOOL_NAME;
 }
 
+// Lessons and their side chats show only the tutor's reply and cards, not narration (APP-108).
+function isLessonTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolean {
+  return input.appThread.lesson !== undefined || input.appThread.sideChat !== undefined;
+}
+
 // A lesson card whose reply already says this text shows it once, as the reply (APP-102).
 function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
   if (!isLessonCardTool(block.name)) return false;
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
   const words = (value: string) => value.replace(/\s+/gu, " ").trim();
   return typeof reply === "string" && words(reply).includes(words(text));
+}
+
+// Short lead text that opens with the reply's own first sentence is the reply drafted twice (APP-108).
+function leadRepeatsCardReply(
+  block: { readonly name: string; readonly input: unknown },
+  text: string,
+) {
+  const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
+  if (typeof reply !== "string" || text.length > 300) return false;
+  const opening = (value: string) =>
+    /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
+  // A bare "Right." opens most replies; only a sentence this long marks a repeat.
+  return opening(text).length >= 40 && opening(text) === opening(reply);
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -7930,6 +7948,56 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context.assistant.heldText = [];
         });
 
+        const emitHeldAssistantTextItemAsReasoning = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          item: { readonly nativeItemId: string; readonly text: string },
+        ) {
+          const itemId = `assistant-lesson:${item.nativeItemId}`;
+          if (!context.reasoning.blocks.has(itemId)) {
+            context.reasoning.blocks.set(itemId, {
+              startedAt: yield* DateTime.now,
+              ordinal: yield* resolveItemOrdinal(context, item.nativeItemId),
+              text: "",
+            });
+          }
+          yield* reasoningDeltas.complete({
+            turnId: context.nativeTurnId,
+            itemId,
+            finalText: item.text,
+            emitEmpty: false,
+          });
+        });
+
+        const flushHeldAssistantTextForTool = Effect.fnUntraced(function* (
+          context: ActiveClaudeTurnContext,
+          block: { readonly name: string; readonly input: unknown },
+        ) {
+          if (!isLessonTurn(context.input) || context.assistant.heldText.length === 0) {
+            yield* flushHeldAssistantText(context);
+            return;
+          }
+          const held = context.assistant.heldText;
+          context.assistant.heldText = [];
+          if (
+            resolveT3McpToolId(block.name) === null &&
+            held.reduce((total, item) => total + item.text.length, 0) <= 300
+          ) {
+            for (const item of held) yield* emitHeldAssistantTextItemAsReasoning(context, item);
+            return;
+          }
+          if (isLessonCardTool(block.name)) {
+            for (const item of held) {
+              if (cardReplyRepeats(block, item.text) || leadRepeatsCardReply(block, item.text)) {
+                yield* emitHeldAssistantTextItemAsReasoning(context, item);
+              } else {
+                yield* emitAssistantTextArtifacts({ context, ...item });
+              }
+            }
+            return;
+          }
+          for (const item of held) yield* emitAssistantTextArtifacts({ context, ...item });
+        });
+
         const endToolCalls = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext | null;
           readonly toolCalls: ReadonlyArray<ActiveClaudeToolCall>;
@@ -7990,7 +8058,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
-          yield* emitHeldAssistantTextAsReasoning(input.context);
+          if (input.context.assistant.cardSeen) {
+            yield* emitHeldAssistantTextAsReasoning(input.context);
+          } else {
+            yield* flushHeldAssistantText(input.context);
+          }
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.context.compaction?.status === "running") {
             const reason = input.result?.subtype === "success" ? input.result.result.trim() : "";
@@ -9107,7 +9179,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             for (const block of message.message.content) {
               if (block.type !== "thinking") {
                 if (block.type === "tool_use" && message.parent_tool_use_id === null) {
-                  yield* flushHeldAssistantText(context);
+                  yield* flushHeldAssistantTextForTool(context, block);
                 }
                 const update = context.reasoning.lastThinking;
                 context.reasoning.lastThinking = null;
@@ -9116,6 +9188,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
+                  !isLessonTurn(context.input) &&
                   claudeWritesUpdatesAsThinking(message.message.model) &&
                   !cardReplyRepeats(block, update.text)
                 ) {
@@ -9739,7 +9812,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const toolPresentations = claudeToolPresentationsFromAssistantMessage(message);
           for (const toolUse of claudeToolUseBlocksFromAssistantMessage(message)) {
             if (parentToolUseIdFromSdkMessage(message) === null) {
-              yield* flushHeldAssistantText(context);
+              const rootText = assistantTextFromSdkMessage(message);
+              if (
+                isLessonTurn(context.input) &&
+                rootText !== null &&
+                rootText.text.length > 0 &&
+                !context.assistant.heldText.some(
+                  (item) => item.nativeItemId === rootText.nativeItemId,
+                )
+              ) {
+                yield* resolveItemOrdinal(context, rootText.nativeItemId);
+                context.assistant.heldText.push(rootText);
+              }
+              yield* flushHeldAssistantTextForTool(context, toolUse);
               if (isLessonCardTool(toolUse.name)) context.assistant.cardSeen = true;
             }
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
@@ -9967,9 +10052,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
-            if (context.assistant.cardSeen) {
+            if (isLessonTurn(context.input) || context.assistant.cardSeen) {
               if (
                 !context.assistant.emittedNativeItemIds.has(assistantText.nativeItemId) &&
+                !context.reasoning.blocks.has(`assistant-lesson:${assistantText.nativeItemId}`) &&
                 !context.assistant.heldText.some(
                   (item) => item.nativeItemId === assistantText.nativeItemId,
                 )
@@ -10067,7 +10153,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
             if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
-              yield* emitHeldAssistantTextAsReasoning(context);
+              if (context.assistant.cardSeen) {
+                yield* emitHeldAssistantTextAsReasoning(context);
+              } else {
+                yield* flushHeldAssistantText(context);
+              }
               context.assistant.cardSeen = false;
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(

@@ -194,6 +194,7 @@ function makeClaudeTestAppThread(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly now: DateTime.Utc;
+  readonly lesson?: boolean | undefined;
 }): OrchestrationV2AppThread {
   return {
     createdBy: "user",
@@ -201,6 +202,9 @@ function makeClaudeTestAppThread(input: {
     id: input.threadId,
     projectId: ProjectId.make(`project-${input.threadId}`),
     title: "Claude attachment test",
+    ...(input.lesson
+      ? { lesson: { topic: "test lesson", depth: "working" as const, purpose: "outcome" as const } }
+      : {}),
     providerInstanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
     modelSelection: CLAUDE_TEST_MODEL_SELECTION,
     runtimeMode: "full-access",
@@ -237,6 +241,7 @@ function makeClaudeTestTurnInput(input: {
   readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly lesson?: boolean | undefined;
 }): ProviderAdapter.ProviderAdapterV2TurnInput {
   return {
     appThread: makeClaudeTestAppThread(input),
@@ -3592,6 +3597,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       tool: "mcp__t3-code__quiz_card",
       reply: "Try it.",
+      lesson: true,
+      expected: ["reasoning", "reasoning"],
+    },
+    {
+      tool: "mcp__t3-code__quiz_card",
+      reply: "Try it.",
       expected: ["reasoning", "assistant_message"],
     },
     {
@@ -3606,7 +3617,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
   ] as const)(
     "shows a second thinking block before $tool (reply $reply) as $expected",
-    ({ tool, reply, expected }) =>
+    ({ tool, reply, expected, lesson }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -3617,6 +3628,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: RunAttemptId.make("thinking-before-tool-attempt"),
             text: "Teach me",
             attachments: [],
+            lesson,
           }),
         );
         const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
@@ -3660,6 +3672,157 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         );
         assert.deepEqual([...latest.values()], [...expected]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    {
+      lead: "Right, and your reasoning separates all four cases correctly. You've now covered X.",
+      reply:
+        "Right, and your reasoning separates all four cases correctly. Here is the explain-back.",
+      expected: "reasoning",
+    },
+    {
+      lead: "Right. A closure keeps the variables it was created with, so the inner function still sees count after makeCounter returns. Right. A closure keeps the variables it was created with, so the inner function still sees count after makeCounter returns. Right. A closure keeps the variables it was created with, so the inner function still sees count after makeCounter returns.",
+      reply: "Right. Which line prints 3?",
+      expected: "assistant_message",
+    },
+  ] as const)(
+    "lesson card lead sharing the reply's opening shows as $expected",
+    ({ lead, reply, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("lesson-card-repeat-attempt"),
+            text: "Teach me",
+            attachments: [],
+            lesson: true,
+          }),
+        );
+        const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: { id: uuid, model: "claude-sonnet-5-5", content },
+          });
+        for (const frame of [
+          snapshot("lesson-card-text", [
+            {
+              type: "text",
+              text: lead,
+            },
+          ]),
+          snapshot("lesson-card-tool", [
+            {
+              type: "tool_use",
+              id: "lesson-card",
+              name: "mcp__t3-code__question_card",
+              input: {
+                reply,
+              },
+            },
+          ]),
+          makeResultFrame({ uuid: "lesson-card-result", result: "" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          items.map((item) => [item.type, item.text]),
+          [[expected, lead]],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each([
+    { lesson: true, combined: false, expected: ["reasoning", "assistant_message"] },
+    { lesson: true, combined: true, expected: ["reasoning", "assistant_message"] },
+    { lesson: false, combined: false, expected: ["assistant_message", "assistant_message"] },
+  ] as const)(
+    "lesson filters short pre-Read text but keeps final answers (combined $combined)",
+    ({ lesson, combined, expected }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`lesson-read-${lesson}-${combined}`),
+            text: "Teach me",
+            attachments: [],
+            lesson,
+          }),
+        );
+        const snapshot = (uuid: string, content: ReadonlyArray<unknown>) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: { id: uuid, model: "claude-sonnet-5-5", content },
+          });
+        for (const frame of [
+          ...(combined
+            ? [
+                snapshot("read-lead", [
+                  { type: "text", text: "I'll check the run code before teaching it." },
+                  { type: "tool_use", id: "read-1", name: "Read", input: {} },
+                ]),
+              ]
+            : [
+                snapshot("read-lead", [
+                  { type: "text", text: "I'll check the run code before teaching it." },
+                ]),
+                snapshot("read-tool", [
+                  { type: "tool_use", id: "read-1", name: "Read", input: {} },
+                ]),
+              ]),
+          snapshot("read-final", [{ type: "text", text: "The run code confirms it." }]),
+          makeResultFrame({ uuid: "read-result", result: "" }),
+        ]) {
+          yield* Queue.offer(harness.sdkMessages, frame);
+        }
+        yield* harness.awaitTerminal(1);
+        const items = harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+            ? [event.turnItem.type]
+            : [],
+        );
+        assert.deepEqual(items, [...expected]);
       }).pipe(
         Effect.scoped,
         Effect.provide(
