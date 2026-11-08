@@ -8307,7 +8307,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptSettled: false,
               promptSettledStatus: null,
               workAccepted: false,
-              continuationBufferLength: continuationWasRequested
+              continuationBufferLength: (yield* Ref.get(continuationRequested))
                 ? (yield* Ref.get(wakeBuffer)).length
                 : 0,
               promptAcceptanceText:
