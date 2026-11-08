@@ -6,13 +6,14 @@ import ImageViewing from "react-native-image-viewing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { openAttachmentInViewer } from "../lib/attachmentDownload";
+import { useMediaActions } from "../state/mediaActions";
 import type {
   ResolvedFilePreviewDocument,
   ResolvedFilePreviewSource,
 } from "./FilePreviewModal.types";
 import { imageViewingProps, MediaImagePreview } from "./MediaImagePreview";
 import { PdfPreview } from "./PdfPreview";
-import { ControlPill } from "./ui/ControlPill";
+import { SheetHeader } from "./ui/SheetHeader";
 import { AppText as Text } from "./ui/AppText";
 
 function PdfDocumentPreview(props: {
@@ -20,6 +21,8 @@ function PdfDocumentPreview(props: {
   readonly onRequestClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const media = useMediaActions(props.source.actionsSource);
+  const save = media.actions.find((action) => action.id === "save");
   return (
     <Modal
       animationType="slide"
@@ -31,12 +34,24 @@ function PdfDocumentPreview(props: {
         className="flex-1 bg-card"
         style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
       >
-        <View className="flex-row items-center gap-3 border-b border-border px-4 py-2">
-          <Text className="flex-1 font-t3-semibold text-foreground" numberOfLines={1}>
-            {props.source.name ?? "PDF"}
-          </Text>
-          <ControlPill label="Close" variant="pill" onPress={props.onRequestClose} />
-        </View>
+        <SheetHeader
+          presentation="inline"
+          title={props.source.name ?? "PDF"}
+          onClose={props.onRequestClose}
+          actions={
+            save
+              ? [
+                  {
+                    accessibilityLabel: "Save or share",
+                    icon: "square.and.arrow.up",
+                    disabled: save.disabled,
+                    loading: media.sharing,
+                    onPress: () => void save.run(),
+                  },
+                ]
+              : []
+          }
+        />
         <PdfPreview uri={props.source.uri} />
       </View>
     </Modal>
