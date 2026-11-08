@@ -1,6 +1,6 @@
 import type { DesktopUpdateChannel, DesktopUpdateReleaseNote } from "@t3tools/contracts";
 
-import { desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
+import { cliReleaseChannelOf, desktopUpdateChannelOf } from "@t3tools/shared/cliRelease";
 
 interface ElectronReleaseNoteInfo {
   readonly version: string;
@@ -184,7 +184,12 @@ export function normalizeDesktopUpdateReleaseNotes(
       : Array.isArray(releaseNotes)
         ? releaseNotes.filter(isElectronReleaseNoteInfo)
         : []
-  ).filter((entry) => desktopUpdateChannelOf(entry.version) === channel);
+  ).filter(
+    // Preview builds read as Stable but are never offered, and their feed notes are a warning.
+    (entry) =>
+      desktopUpdateChannelOf(entry.version) === channel &&
+      cliReleaseChannelOf(entry.version) !== "preview",
+  );
 
   const normalizedNotes = rawNotes.flatMap((entry) => {
     const note = extractReleaseNoteItems(entry.note);
