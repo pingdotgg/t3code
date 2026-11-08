@@ -822,6 +822,7 @@ export type SidebarThreadStatus =
   | "committing"
   | "pushing"
   | "submitting"
+  | "merging"
   | "waiting"
   | "failed"
   | "limited"
@@ -848,6 +849,7 @@ export function shouldRecedeSidebarThread(input: {
     input.status === "committing" ||
     input.status === "pushing" ||
     input.status === "submitting" ||
+    input.status === "merging" ||
     input.status === "waiting"
   ) {
     return true;
@@ -871,7 +873,7 @@ type SidebarThreadStatusInput = Pick<
 export function resolveSidebarThreadStatus(
   thread: SidebarThreadStatusInput,
   options?: {
-    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | null;
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | "merging" | null;
   },
 ): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -936,7 +938,8 @@ export function resolveSidebarFolderDot(
     statuses.has("preparing") ||
     statuses.has("committing") ||
     statuses.has("pushing") ||
-    statuses.has("submitting")
+    statuses.has("submitting") ||
+    statuses.has("merging")
   ) {
     return "working";
   }

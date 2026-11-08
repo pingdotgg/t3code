@@ -58,23 +58,27 @@ export interface VcsActionState {
   readonly error: string | null;
 }
 
-/** A thread whose commit / push / PR stacked action is still running on this client. */
+/** Client-local busy work that should keep a thread in the Working section. */
+export type SourceControlBusyAction = GitStackedAction | "merge";
+
+/** A thread whose commit / push / PR / merge action is still running on this client. */
 export interface VcsStackedActionThreadPresence {
   readonly environmentId: EnvironmentIdType;
   readonly threadId: ThreadId;
   readonly actionId: string;
-  readonly action: GitStackedAction;
+  readonly action: SourceControlBusyAction;
   readonly phase: GitActionProgressPhase | null;
   readonly startedAtMs: number;
 }
 
-/** Sidebar / home-list status while a stacked Git action owns the thread. */
-export type SourceControlThreadStatus = "committing" | "pushing" | "submitting";
+/** Sidebar / home-list status while a source-control action owns the thread. */
+export type SourceControlThreadStatus = "committing" | "pushing" | "submitting" | "merging";
 
 export function resolveSourceControlThreadStatus(
   presence: VcsStackedActionThreadPresence | null | undefined,
 ): SourceControlThreadStatus | null {
   if (presence === null || presence === undefined) return null;
+  if (presence.action === "merge") return "merging";
   if (presence.phase === "push") return "pushing";
   if (presence.phase === "pr") return "submitting";
   if (presence.phase === "commit" || presence.phase === "branch") return "committing";
@@ -230,7 +234,7 @@ export function isThreadStackedActionRunning(
   return running.has(vcsStackedActionThreadKey(thread.environmentId, thread.id));
 }
 
-function markStackedActionThread(
+export function markSourceControlThreadBusy(
   registry: AtomRegistry.AtomRegistry,
   presence: VcsStackedActionThreadPresence,
 ): void {
@@ -250,7 +254,7 @@ function markStackedActionThread(
   registry.set(vcsStackedActionThreadsAtom, next);
 }
 
-function clearStackedActionThread(
+export function clearSourceControlThreadBusy(
   registry: AtomRegistry.AtomRegistry,
   presence: Pick<VcsStackedActionThreadPresence, "environmentId" | "threadId" | "actionId">,
 ): void {
@@ -261,6 +265,40 @@ function clearStackedActionThread(
   next.delete(key);
   registry.set(vcsStackedActionThreadsAtom, next.size === 0 ? EMPTY_STACKED_ACTION_THREADS : next);
 }
+
+export function threadIdsLinkedToPullRequest(
+  shells: Iterable<{
+    readonly environmentId: EnvironmentIdType;
+    readonly id: ThreadId;
+    readonly pullRequests: ReadonlyArray<{
+      readonly host?: string | undefined;
+      readonly repository: string;
+      readonly number: number;
+    }>;
+  }>,
+  environmentId: EnvironmentIdType,
+  reference: {
+    readonly host?: string | undefined;
+    readonly repository: string;
+    readonly number: number;
+  },
+): ThreadId[] {
+  const ids: ThreadId[] = [];
+  for (const shell of shells) {
+    if (shell.environmentId !== environmentId) continue;
+    const linked = shell.pullRequests.some(
+      (link) =>
+        link.number === reference.number &&
+        link.repository === reference.repository &&
+        (reference.host === undefined || link.host === reference.host),
+    );
+    if (linked) ids.push(shell.id);
+  }
+  return ids;
+}
+
+const markStackedActionThread = markSourceControlThreadBusy;
+const clearStackedActionThread = clearSourceControlThreadBusy;
 
 function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {

@@ -311,7 +311,7 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("waiting");
   });
 
-  it("labels in-flight commit, push, or PR only when nothing else owns the row", () => {
+  it("labels in-flight commit, push, PR, or merge only when nothing else owns the row", () => {
     expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "committing" })).toBe(
       "committing",
     );
@@ -319,6 +319,7 @@ describe("resolveSidebarThreadStatus", () => {
     expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "submitting" })).toBe(
       "submitting",
     );
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "merging" })).toBe("merging");
     expect(
       resolveSidebarThreadStatus(
         { ...idle, hasPendingUserInput: true },

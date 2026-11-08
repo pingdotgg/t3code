@@ -71,6 +71,7 @@ export type ThreadListV2Status =
   | "committing"
   | "pushing"
   | "submitting"
+  | "merging"
   | "waiting"
   | "failed"
   | "limited"
@@ -271,7 +272,7 @@ export function resolveThreadListV2Status(
     | "blockedOnThreadWait"
   >,
   options?: {
-    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | null;
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | "merging" | null;
   },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {

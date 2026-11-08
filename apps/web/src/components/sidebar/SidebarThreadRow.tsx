@@ -735,7 +735,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isSelected,
   });
   const isSourceControlStatus =
-    status === "committing" || status === "pushing" || status === "submitting";
+    status === "committing" ||
+    status === "pushing" ||
+    status === "submitting" ||
+    status === "merging";
   const topStatus =
     status === "preparing" || status === "working" || isSourceControlStatus
       ? {
@@ -748,9 +751,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   ? "Pushing"
                   : status === "submitting"
                     ? "Submitting"
-                    : thread.goal?.status === "active"
-                      ? "Goal"
-                      : "Working",
+                    : status === "merging"
+                      ? "Merging"
+                      : thread.goal?.status === "active"
+                        ? "Goal"
+                        : "Working",
           icon: "working" as const,
           className: "text-info-foreground",
         }

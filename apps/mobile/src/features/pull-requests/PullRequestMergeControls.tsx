@@ -1,6 +1,11 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  clearSourceControlThreadBusy,
+  markSourceControlThreadBusy,
+  threadIdsLinkedToPullRequest,
+} from "@t3tools/client-runtime/state/vcs";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { PullRequestDetail, PullRequestMergeMethod } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -9,8 +14,10 @@ import { View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   allowedMergeMethods,
@@ -134,6 +141,36 @@ export function PullRequestMergeControls(props: {
       return;
     pending.current = true;
     setBusy(true);
+    const mergeThreadIds =
+      action === "merge"
+        ? threadIdsLinkedToPullRequest(
+            appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+            target.environmentId,
+            target.input,
+          )
+        : [];
+    const mergeActionId =
+      mergeThreadIds.length === 0
+        ? null
+        : `merge:${JSON.stringify([
+            target.environmentId,
+            target.input.host ?? null,
+            target.input.repository,
+            target.input.number,
+          ])}`;
+    const mergeStartedAtMs = Date.now();
+    if (mergeActionId !== null) {
+      for (const threadId of mergeThreadIds) {
+        markSourceControlThreadBusy(appAtomRegistry, {
+          environmentId: target.environmentId,
+          threadId,
+          actionId: mergeActionId,
+          action: "merge",
+          phase: null,
+          startedAtMs: mergeStartedAtMs,
+        });
+      }
+    }
     const response = await runAction({
       ...target,
       input: {
@@ -160,13 +197,23 @@ export function PullRequestMergeControls(props: {
               ? { mergeMethod: method }
               : {}),
       },
+    }).finally(() => {
+      if (mergeActionId !== null) {
+        for (const threadId of mergeThreadIds) {
+          clearSourceControlThreadBusy(appAtomRegistry, {
+            environmentId: target.environmentId,
+            threadId,
+            actionId: mergeActionId,
+          });
+        }
+      }
+      pending.current = false;
+      setBusy(false);
     });
     // A stack can partly merge before the provider reports a failure.
     if (!AsyncResult.isSuccess(response)) refreshDetail();
     refreshActivity();
     stack.refresh();
-    pending.current = false;
-    setBusy(false);
     if (AsyncResult.isFailure(response)) {
       const cause = squashAtomCommandFailure(response);
       Dialog.alert(

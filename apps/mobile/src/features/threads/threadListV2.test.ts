@@ -187,7 +187,7 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
-  it("labels in-flight commit, push, or PR only when nothing else owns the row", () => {
+  it("labels in-flight commit, push, PR, or merge only when nothing else owns the row", () => {
     const thread = presentThreadShell(
       environmentId,
       decodeThreadShell(makeRawThreadShell({ status: "completed" })),
@@ -199,6 +199,7 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(thread, { sourceControlStatus: "submitting" })).toBe(
       "submitting",
     );
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "merging" })).toBe("merging");
     expect(
       resolveThreadListV2Status(
         { ...thread, hasPendingUserInput: true },

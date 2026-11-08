@@ -4,6 +4,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  clearSourceControlThreadBusy,
+  markSourceControlThreadBusy,
+  threadIdsLinkedToPullRequest,
+} from "@t3tools/client-runtime/state/vcs";
 import type {
   EnvironmentId,
   ProjectId,
@@ -13,6 +18,7 @@ import type {
   PullRequestRef,
   PullRequestSummary,
   ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -30,12 +36,14 @@ import {
 import { buildPhysicalToLogicalProjectKeyMap } from "~/sidebarProjectGrouping";
 import { useProjects } from "~/state/entities";
 import { usePrimaryEnvironmentId } from "~/state/environments";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 import { pullRequestEnvironment } from "~/state/pullRequests";
+import { environmentThreadShells } from "~/state/threads";
 
 import { toastManager } from "../ui/toast";
 import { offHeadPullRequestCheckoutToast } from "./pullRequestCheckoutToast";
@@ -124,12 +132,57 @@ const actionFailureHints = (term: string): Record<PullRequestAction, string> => 
     "The host refused it. Check that you have Actions write access and that these workflow runs are still awaiting approval.",
 });
 
+export function beginPullRequestMergeBusy(
+  environmentId: EnvironmentId,
+  reference: Pick<PullRequestRef, "host" | "repository" | "number">,
+  actionKey: string,
+  threadIds?: ReadonlyArray<ThreadId>,
+): { readonly actionId: string; readonly threadIds: ReadonlyArray<ThreadId> } | null {
+  const linked =
+    threadIds !== undefined && threadIds.length > 0
+      ? threadIds
+      : threadIdsLinkedToPullRequest(
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          environmentId,
+          reference,
+        );
+  if (linked.length === 0) return null;
+  const actionId = `merge:${actionKey}`;
+  const startedAtMs = Date.now();
+  for (const threadId of linked) {
+    markSourceControlThreadBusy(appAtomRegistry, {
+      environmentId,
+      threadId,
+      actionId,
+      action: "merge",
+      phase: null,
+      startedAtMs,
+    });
+  }
+  return { actionId, threadIds: linked };
+}
+
+export function endPullRequestMergeBusy(
+  environmentId: EnvironmentId,
+  busy: { readonly actionId: string; readonly threadIds: ReadonlyArray<ThreadId> } | null,
+): void {
+  if (busy === null) return;
+  for (const threadId of busy.threadIds) {
+    clearSourceControlThreadBusy(appAtomRegistry, {
+      environmentId,
+      threadId,
+      actionId: busy.actionId,
+    });
+  }
+}
+
 export function usePullRequestActionRunner({
   environmentId,
   reference,
   terminology,
   onSuccess,
   resolveMergeMethod,
+  threadIds,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef | null;
@@ -137,6 +190,8 @@ export function usePullRequestActionRunner({
   onSuccess?: (action: PullRequestAction, reply: PullRequestSummary | undefined) => void;
   /** Resolve repository settings on click to avoid per-row reads. */
   resolveMergeMethod?: (detail: PullRequestDetail) => PullRequestMergeMethod;
+  /** Prefer when the caller already knows which threads link this PR. */
+  threadIds?: ReadonlyArray<ThreadId>;
 }) {
   const runAction = useAtomCommand(pullRequestEnvironment.runAction, {
     reportFailure: false,
@@ -158,6 +213,10 @@ export function usePullRequestActionRunner({
     if (actionKey === null || reference === null || pendingRef.current.has(actionKey)) return;
     pendingRef.current.add(actionKey);
     setPendingKeys(new Set(pendingRef.current));
+    const mergeBusy =
+      action === "merge"
+        ? beginPullRequestMergeBusy(environmentId, reference, actionKey, threadIds)
+        : null;
     const result = await runAction({
       environmentId,
       input: {
@@ -165,9 +224,11 @@ export function usePullRequestActionRunner({
         action,
         ...(method ? { mergeMethod: method } : resolveMergeMethod ? { resolveMergeMethod } : {}),
       },
+    }).finally(() => {
+      endPullRequestMergeBusy(environmentId, mergeBusy);
+      pendingRef.current.delete(actionKey);
+      setPendingKeys(new Set(pendingRef.current));
     });
-    pendingRef.current.delete(actionKey);
-    setPendingKeys(new Set(pendingRef.current));
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
@@ -179,7 +240,10 @@ export function usePullRequestActionRunner({
       });
       return;
     }
-    toastManager.add({ type: "success", title: actionSuccessLabels(terminology.singular)[action] });
+    toastManager.add({
+      type: "success",
+      title: actionSuccessLabels(terminology.singular)[action],
+    });
     onSuccess?.(action, result.value);
   };
 

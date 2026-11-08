@@ -8,7 +8,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestRef, ThreadId } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
   EyeIcon,
@@ -83,6 +83,7 @@ const isSettledWithoutChecks = (result: AsyncResult.AsyncResult<unknown, unknown
 
 export function ThreadDetailsPrRow({
   environmentId,
+  threadId,
   pr,
   number,
   reference: linkedReference,
@@ -95,6 +96,7 @@ export function ThreadDetailsPrRow({
   onStopWatching,
 }: {
   environmentId: EnvironmentId;
+  threadId?: ThreadId;
   pr: ThreadPr;
   number: number;
   reference?: Pick<PullRequestRef, "host" | "repository" | "number"> | null;
@@ -162,6 +164,7 @@ export function ThreadDetailsPrRow({
     environmentId,
     reference,
     terminology,
+    ...(threadId === undefined ? {} : { threadIds: [threadId] }),
     onSuccess: () => {
       checksQuery.refresh();
       onActed?.();

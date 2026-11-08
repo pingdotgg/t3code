@@ -24,12 +24,14 @@ import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
 
 function ThreadDetailsPrLinkRow({
   environmentId,
+  threadId,
   link,
   onOpen,
   onActed,
   onStopWatching,
 }: {
   environmentId: EnvironmentId;
+  threadId: ScopedThreadRef["threadId"];
   link: ThreadPullRequestLink;
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
@@ -49,6 +51,7 @@ function ThreadDetailsPrLinkRow({
   return (
     <ThreadDetailsPrRow
       environmentId={environmentId}
+      threadId={threadId}
       pr={pr}
       number={link.number}
       reference={link}
@@ -91,7 +94,13 @@ export function ThreadDetailsPrRows({
               watching: false,
             },
           });
-  const currentRow = <ThreadDetailsPrRow {...row} onStopWatching={stopWatching(currentLink)} />;
+  const currentRow = (
+    <ThreadDetailsPrRow
+      {...row}
+      threadId={threadRef.threadId}
+      onStopWatching={stopWatching(currentLink)}
+    />
+  );
   const rest =
     currentLink === null
       ? []
@@ -109,6 +118,7 @@ export function ThreadDetailsPrRows({
             <ThreadDetailsPrLinkRow
               key={threadPullRequestKeyOf(link)}
               environmentId={row.environmentId}
+              threadId={threadRef.threadId}
               link={link}
               onOpen={(event) => onOpenLink(event, link.url)}
               onActed={row.onActed}

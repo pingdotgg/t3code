@@ -10,6 +10,7 @@ export function shouldRecedeThreadRow(input: {
       input.status === "committing" ||
       input.status === "pushing" ||
       input.status === "submitting" ||
+      input.status === "merging" ||
       input.status === "waiting")
   );
 }

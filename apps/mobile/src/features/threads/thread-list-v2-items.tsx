@@ -136,6 +136,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
   },
+  merging: {
+    label: "Merging",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
   waiting: {
     label: null,
     icon: "circle.dashed.inset.filled",
@@ -781,7 +787,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const status = resolveThreadListV2Status(thread, { sourceControlStatus });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const isSourceControlStatus =
-    status === "committing" || status === "pushing" || status === "submitting";
+    status === "committing" ||
+    status === "pushing" ||
+    status === "submitting" ||
+    status === "merging";
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =

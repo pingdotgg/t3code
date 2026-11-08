@@ -42,6 +42,7 @@ import {
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
   resolveSourceControlThreadStatus,
+  threadIdsLinkedToPullRequest,
   vcsStackedActionThreadKey,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
@@ -744,7 +745,41 @@ describe("resolveSourceControlThreadStatus", () => {
     expect(resolveSourceControlThreadStatus({ ...base, action: "create_pr", phase: null })).toBe(
       "submitting",
     );
+    expect(resolveSourceControlThreadStatus({ ...base, action: "merge", phase: null })).toBe(
+      "merging",
+    );
     expect(resolveSourceControlThreadStatus(null)).toBeNull();
+  });
+});
+
+describe("threadIdsLinkedToPullRequest", () => {
+  it("returns threads whose linked PRs match host, repository, and number", () => {
+    const threadA = ThreadId.make("thread-a");
+    const threadB = ThreadId.make("thread-b");
+    const threadC = ThreadId.make("thread-c");
+    expect(
+      threadIdsLinkedToPullRequest(
+        [
+          {
+            environmentId,
+            id: threadA,
+            pullRequests: [{ repository: "owner/repo", number: 7, host: "github.com" }],
+          },
+          {
+            environmentId,
+            id: threadB,
+            pullRequests: [{ repository: "owner/repo", number: 8 }],
+          },
+          {
+            environmentId: EnvironmentId.make("other"),
+            id: threadC,
+            pullRequests: [{ repository: "owner/repo", number: 7, host: "github.com" }],
+          },
+        ],
+        environmentId,
+        { repository: "owner/repo", number: 7, host: "github.com" },
+      ),
+    ).toEqual([threadA]);
   });
 });
 
