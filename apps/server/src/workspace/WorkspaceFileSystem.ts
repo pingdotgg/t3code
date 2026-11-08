@@ -602,16 +602,43 @@ export const make = Effect.gen(function* () {
           }),
       ),
     );
+    const platform = yield* HostProcess.Platform;
+    let cleanupFailure: unknown;
     yield* Effect.tryPromise({
-      // A symlink swapped in after the check is not followed. Windows lacks O_NOFOLLOW.
-      try: () =>
-        NodeFSP.writeFile(realTargetPath, contents, {
-          flag:
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_TRUNC |
-            (NodeFS.constants.O_NOFOLLOW ?? 0),
-        }),
+      try: async () => {
+        // Check write access without truncating; a swapped-in symlink is not followed on POSIX.
+        const previous = await NodeFSP.open(
+          realTargetPath,
+          NodeFS.constants.O_WRONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+        ).catch((error: unknown) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+          throw error;
+        });
+        let mode: number | undefined;
+        if (previous) {
+          try {
+            mode = (await previous.stat()).mode & 0o777;
+          } finally {
+            await previous.close();
+          }
+        }
+        const temporaryDirectory = await NodeFSP.mkdtemp(
+          path.join(path.dirname(realTargetPath), ".t3-save-"),
+        );
+        try {
+          const temporaryPath = path.join(temporaryDirectory, "contents");
+          await NodeFSP.writeFile(temporaryPath, contents, { flag: "wx", mode });
+          if (mode !== undefined && platform !== "win32") await NodeFSP.chmod(temporaryPath, mode);
+          await NodeFSP.rename(temporaryPath, realTargetPath);
+        } finally {
+          // Cleanup must not report failure after the replacement has landed.
+          await NodeFSP.rm(temporaryDirectory, { recursive: true, force: true }).catch(
+            (cause: unknown) => {
+              cleanupFailure = cause;
+            },
+          );
+        }
+      },
       catch: (cause) =>
         new WorkspaceFileSystemOperationError({
           workspaceRoot: input.cwd,
@@ -621,7 +648,16 @@ export const make = Effect.gen(function* () {
           operation: "write-file",
           cause,
         }),
-    });
+    }).pipe(
+      Effect.onExit(() =>
+        cleanupFailure === undefined
+          ? Effect.void
+          : Effect.logWarning("Workspace save temporary cleanup failed", {
+              path: realTargetPath,
+              cause: cleanupFailure,
+            }),
+      ),
+    );
     // Editor autosave overwrites existing files, which leaves the indexed paths unchanged, and
     // fff's watcher applies the new contents on its own. A forced rescan re-walks the whole
     // workspace, and the save would wait for it.
