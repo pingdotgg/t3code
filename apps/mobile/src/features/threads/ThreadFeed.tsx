@@ -174,7 +174,7 @@ import { getReviewSectionIdForCheckpoint } from "../review/reviewModel";
 import { setReviewSelectedSectionId } from "../review/reviewState";
 import { Menu } from "../../components/ui/Menu";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useBarInset } from "../../components/ui/useBarInset";
+import { useBarInset, useContentTopInset } from "../../components/ui/useBarInset";
 import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import {
@@ -368,7 +368,6 @@ export interface ThreadFeedProps {
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
   readonly fitShortFeedToViewport?: boolean;
-  readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly contentMaxWidth?: number;
@@ -2814,10 +2813,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
   const insets = useSafeAreaInsets();
   const barInset = useBarInset();
-  const topContentInset = props.contentTopInset ?? barInset;
+  const columnTopInset = useContentTopInset();
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
+  // Without UIKit's automatic inset, a spacer clears the solid bar the column lays content under.
+  const topContentInset = usesNativeAutomaticInsets ? 0 : columnTopInset;
   const initialContentInset = deriveThreadFeedInitialContentInset({
     platform: Platform.OS,
     usesNativeAutomaticInsets,
@@ -3244,7 +3245,9 @@ export const ThreadFeed = memo(function ThreadFeed({
     onHeaderMaterialVisibilityChange?.(visible);
   };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
+    reportHeaderMaterialVisibility(
+      event.nativeEvent.contentOffset.y + (usesNativeAutomaticInsets ? barInset : 0) > 6,
+    );
     // Re-arm follow only at the actual end; the broader threshold can reclaim upward drags during streaming.
     const listState = listRef.current?.getState();
     if (listState) {
