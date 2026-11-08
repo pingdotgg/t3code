@@ -31,7 +31,7 @@ import { Button } from "../ui/button";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import {
   buildPullRequestTimeline,
   groupPullRequestTimelineConversations,
@@ -784,17 +784,19 @@ export function PullRequestTimelineTab({
   // Virtualized: a large pull request has thousands of events, and mounting every one stalls
   // the page. The connector line is drawn by the content container, behind the rows.
   return (
-    <LegendList<PullRequestTimelineRow>
-      ref={(list: LegendListRef | null) => scrollerRef(list?.getScrollableNode() ?? null)}
-      data={rows}
-      extraData={{ editable, reactions, newestCommitAt }}
-      keyExtractor={rowKey}
-      renderItem={renderRow}
-      estimatedItemSize={140}
-      className="scrollbar-gutter-both h-full px-4"
-      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
-      ListHeaderComponent={<div className="h-5" />}
-      ListFooterComponent={<div className="h-5" />}
-    />
+    <TooltipScrollDismissArea dismissFocused className="h-full">
+      <LegendList<PullRequestTimelineRow>
+        ref={(list: LegendListRef | null) => scrollerRef(list?.getScrollableNode() ?? null)}
+        data={rows}
+        extraData={{ editable, reactions, newestCommitAt }}
+        keyExtractor={rowKey}
+        renderItem={renderRow}
+        estimatedItemSize={140}
+        className="scrollbar-gutter-both h-full px-4"
+        contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+        ListHeaderComponent={<div className="h-5" />}
+        ListFooterComponent={<div className="h-5" />}
+      />
+    </TooltipScrollDismissArea>
   );
 }

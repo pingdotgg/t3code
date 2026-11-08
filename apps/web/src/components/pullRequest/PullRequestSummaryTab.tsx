@@ -43,7 +43,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipTrigger, TooltipScrollDismissArea } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
   PullRequestCheckStatusIcon,
@@ -733,7 +733,12 @@ export function PullRequestSummaryTab({
   };
 
   return (
-    <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
+    <TooltipScrollDismissArea
+      dismissFocused
+      ref={scrollerRef}
+      className="h-full overflow-y-auto"
+      data-pull-request-summary-scroll
+    >
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
@@ -1029,6 +1034,6 @@ export function PullRequestSummaryTab({
           </>
         )}
       </Section>
-    </div>
+    </TooltipScrollDismissArea>
   );
 }

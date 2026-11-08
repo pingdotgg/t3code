@@ -19,7 +19,7 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-// The compiler freezes context values; update hovered tooltips through calls instead of shared ref writes.
+// The compiler freezes context values; update tracked tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
   let hovered: { trigger: HTMLElement; actionsRef: TooltipActionsRef } | null = null;
   return {
@@ -29,9 +29,12 @@ function createTooltipHoverTracker() {
     release(actionsRef: TooltipActionsRef) {
       if (hovered?.actionsRef === actionsRef) hovered = null;
     },
-    dismissUnfocused() {
+    dismiss(dismissFocused: boolean) {
       const tooltip = hovered;
-      if (!tooltip || tooltip.trigger.contains(tooltip.trigger.ownerDocument.activeElement)) {
+      if (
+        !tooltip ||
+        (!dismissFocused && tooltip.trigger.contains(tooltip.trigger.ownerDocument.activeElement))
+      ) {
         return;
       }
       hovered = null;
@@ -45,7 +48,14 @@ type TooltipHoverTracker = ReturnType<typeof createTooltipHoverTracker>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);
 const TooltipScrollContext = createContext<TooltipHoverTracker | null>(null);
 
-function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<"div">) {
+function TooltipScrollDismissArea({
+  onScrollCapture,
+  dismissFocused = false,
+  ...props
+}: ComponentProps<"div"> & {
+  /** PR scrolling also dismisses tooltips reopened by media preview focus restoration. */
+  dismissFocused?: boolean;
+}) {
   const [tracker] = useState(createTooltipHoverTracker);
   return (
     <TooltipScrollContext value={tracker}>
@@ -53,7 +63,7 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
         {...props}
         onScrollCapture={(event) => {
           onScrollCapture?.(event);
-          tracker.dismissUnfocused();
+          tracker.dismiss(dismissFocused);
         }}
       />
     </TooltipScrollContext>
@@ -94,6 +104,10 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
       {...props}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
+        tracker.hover(event.currentTarget, actionsRef);
+      }}
+      onFocus={(event) => {
+        props.onFocus?.(event);
         tracker.hover(event.currentTarget, actionsRef);
       }}
     />
