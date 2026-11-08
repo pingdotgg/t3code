@@ -39,7 +39,11 @@ import {
   classifyComposerAttachmentFile,
   shouldHandleComposerAttachmentPaste,
 } from "../chat/composerAttachmentFiles";
-import { prepareTurnAttachments, restoreComposerDraft } from "../chat/chatViewSend";
+import {
+  confirmAccountSwitch,
+  prepareTurnAttachments,
+  restoreComposerDraft,
+} from "../chat/chatViewSend";
 import { optimisticMessageAttachments, snapshotComposerSend } from "../ChatView.logic";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentServerConfigsAtom } from "../../state/server";
@@ -58,8 +62,7 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import type { AssistantCitationSourceAnchor } from "../../lib/assistantTextSelection";
 import { isMacPlatform, newMessageId } from "../../lib/utils";
-import { accountSwitchConfirmMessage, providerInstanceEntriesFor } from "../../providerInstances";
-import { readLocalApi } from "../../localApi";
+import { providerInstanceEntriesFor } from "../../providerInstances";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { makeModelDisabledReason } from "../ChatView.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -341,18 +344,13 @@ export function SideChatComposer(props: {
         });
 
     sendInFlight.current = true;
-    const accountSwitchMessage = modelSelection
-      ? accountSwitchConfirmMessage(
-          instanceEntries,
-          shell.modelSelection.instanceId,
-          modelSelection.instanceId,
-        )
-      : null;
     if (
-      accountSwitchMessage !== null &&
-      !(await readLocalApi()
-        ?.dialogs.confirm(accountSwitchMessage)
-        .catch(() => false))
+      modelSelection &&
+      !(await confirmAccountSwitch(
+        instanceEntries,
+        shell.modelSelection.instanceId,
+        modelSelection.instanceId,
+      ))
     ) {
       sendInFlight.current = false;
       return;

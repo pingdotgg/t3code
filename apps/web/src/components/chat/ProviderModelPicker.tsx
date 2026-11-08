@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  PROVIDER_DISPLAY_NAMES,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
@@ -238,9 +239,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
 
   // With two accounts for one provider, the chip names which one this thread runs on.
   const accountLabel =
+    props.triggerLabel === undefined &&
+    !selectedEntries &&
     activeEntry &&
     shouldShowInstanceBadge({ ...activeEntry, accentColor: undefined }, props.instanceEntries)
-      ? activeEntry.displayName.replace(/^.+?\s+[·—–-]\s+/u, "")
+      ? activeEntry.displayName.replace(/^(.+?)\s+[·—–-]\s+/u, (prefix, head: string) =>
+          head === PROVIDER_DISPLAY_NAMES[activeEntry.driverKind] ? "" : prefix,
+        )
       : undefined;
   const triggerText =
     props.triggerLabel ??

@@ -119,6 +119,7 @@ import {
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
 import {
+  confirmAccountSwitch,
   draftSendState,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
@@ -132,8 +133,7 @@ import type {
 import type { UnifiedSettings } from "@t3tools/contracts";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget } from "../../composerDraftStore";
-import { accountSwitchConfirmMessage, type ProviderInstanceEntry } from "../../providerInstances";
-import { readLocalApi } from "../../localApi";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import type { SessionPhase } from "../../types";
 import type { DraftSessionState } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
@@ -598,6 +598,15 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    // A started thread keeps its account unless the user agrees to move it.
+    const confirmSendAccount = () =>
+      isServerThread && activeMessageCount > 0 && multipleModelSelections === null
+        ? confirmAccountSwitch(
+            providerInstanceEntries,
+            activeThread.modelSelection.instanceId,
+            ctxSelectedModelSelection.instanceId,
+          )
+        : Promise.resolve(true);
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
         images: sendContextImages,
@@ -761,6 +770,7 @@ export function useComposerSend(input: ComposerSendInput) {
       if (composerRef.current?.validateProviderInput(outgoingFollowUpText) === false) {
         return;
       }
+      if (!(await confirmSendAccount())) return;
       const followUpPromptSnapshot = promptRef.current;
       const followUpTerminalContexts = [...sendableComposerTerminalContexts];
       const followUpReviewComments = [...composerReviewComments];
@@ -966,20 +976,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
 
     sendInFlightRef.current = true;
-    const accountSwitchMessage =
-      isServerThread && activeMessageCount > 0 && multipleModelSelections === null
-        ? accountSwitchConfirmMessage(
-            providerInstanceEntries,
-            activeThread.modelSelection.instanceId,
-            ctxSelectedModelSelection.instanceId,
-          )
-        : null;
-    if (
-      accountSwitchMessage !== null &&
-      !(await readLocalApi()
-        ?.dialogs.confirm(accountSwitchMessage)
-        .catch(() => false))
-    ) {
+    if (!(await confirmSendAccount())) {
       sendInFlightRef.current = false;
       return;
     }

@@ -67,7 +67,9 @@ export function deriveProviderInstanceEntries(
       isDefault &&
       driverKind !== "acpRegistry" &&
       resolvedName === PROVIDER_DISPLAY_NAMES[driverKind] &&
-      providers.some((other) => other.driver === driverKind && other.instanceId !== instanceId);
+      providers.some(
+        (other) => other.enabled && other.driver === driverKind && other.instanceId !== instanceId,
+      );
     return {
       instanceId,
       driverKind,

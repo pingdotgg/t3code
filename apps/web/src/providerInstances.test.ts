@@ -180,6 +180,12 @@ describe("deriveProviderInstanceEntries", () => {
         provider({ provider: codex, instanceId: "codex" }),
       ]),
     ).toEqual(["Claude · this box", "Claude · Mac mini pool", "Codex"]);
+    expect(
+      names([
+        provider({ provider: claude, instanceId: "claudeAgent" }),
+        provider({ provider: claude, instanceId: "claude-public-pool", enabled: false }),
+      ])[0],
+    ).toBe("Claude");
   });
 });
 
