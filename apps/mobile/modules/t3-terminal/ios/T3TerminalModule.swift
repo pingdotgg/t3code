@@ -16,6 +16,10 @@ public class T3TerminalModule: Module {
         view.writeOutput(data, reset: reset)
       }
 
+      AsyncFunction("resetInput") { (view: T3TerminalView) in
+        view.resetInputField()
+      }
+
       Prop("terminalKey") { (view: T3TerminalView, terminalKey: String) in
         view.terminalKey = terminalKey
       }
