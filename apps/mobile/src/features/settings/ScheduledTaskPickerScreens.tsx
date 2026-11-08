@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { isListedThreadLineage } from "@t3tools/contracts";
+import { isListedThreadLineage, isSideChatThread } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useMemo, useRef, useState } from "react";
 import { FlatList, Platform, type TextInputInstance, View } from "react-native";
@@ -223,6 +223,7 @@ export function ScheduledTaskThreadPickerRouteScreen() {
           thread.id !== threadId &&
           thread.archivedAt === null &&
           isListedThreadLineage(thread.lineage) &&
+          !isSideChatThread(thread) &&
           thread.title.toLocaleLowerCase().includes(search),
       )
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))

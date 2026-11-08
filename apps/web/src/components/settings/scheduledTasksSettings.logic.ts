@@ -1,4 +1,8 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  isSideChatThread,
+  isWebhookDedupeTemplate,
+} from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -346,6 +350,7 @@ export function scheduledTaskDestinationThreads(
         thread.id !== target.currentThreadId &&
         thread.archivedAt === null &&
         isListedThreadLineage(thread.lineage) &&
+        !isSideChatThread(thread) &&
         thread.title.toLocaleLowerCase().includes(search),
     )
     .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));

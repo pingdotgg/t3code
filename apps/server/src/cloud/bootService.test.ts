@@ -818,6 +818,12 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* fs.readFileString(plan.unitPath)).toBe(unit);
       expect(commands).toEqual([]);
       expect((yield* other.status).otherBaseDir).toBe(baseDir);
+
+      // OminaX's home rename leaves the old home linking to the new one.
+      const linkedHome = path.join(otherHome, "linked");
+      yield* fs.symlink(baseDir, linkedHome);
+      const linked = yield* makeService(undefined, "1.2.3", linkedHome);
+      expect((yield* linked.status).otherBaseDir).toBeUndefined();
     }),
   );
 

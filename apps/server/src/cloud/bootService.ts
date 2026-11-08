@@ -538,7 +538,7 @@ export class BootServiceOtherBaseDirError extends Schema.TaggedError<BootService
   },
 ) {
   override get message(): string {
-    return `The T3 Code service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`t3 service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
+    return `The ${T3_LEARN_PRODUCT_NAME} service on this machine serves ${this.installedBaseDir}, not ${this.baseDir}. Pass ${formatBootServiceBaseDirOption(this.installedBaseDir)} to manage it, or run \`${T3_LEARN_COMMAND} service uninstall ${formatBootServiceBaseDirOption(this.installedBaseDir)}\` first to move it; both data directories are kept.`;
   }
 
   // A refusal the user fixes by rerunning, so the CLI prints the message, not a stack trace.
@@ -683,13 +683,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const logPath = path.join(input.logsDir, BOOT_SERVICE_LOG_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
-  const otherBaseDirOf = (unit: string) => {
+  // Real paths: OminaX's home rename leaves the old home linking to the new one.
+  const realOrResolved = (dir: string) =>
+    fs.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+  const otherBaseDirOf = Effect.fn("cloud.boot_service.other_base_dir")(function* (unit: string) {
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    return installedBaseDir !== undefined &&
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+    if (installedBaseDir === undefined) return undefined;
+    return (yield* realOrResolved(installedBaseDir)) !== (yield* realOrResolved(input.baseDir))
       ? installedBaseDir
       : undefined;
-  };
+  });
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -855,7 +858,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // service onto this home's data, which looks like every thread vanished.
     const existingUnit = yield* fs.readFileString(unitPath).pipe(Effect.option);
     const installedBaseDir = Option.isSome(existingUnit)
-      ? otherBaseDirOf(existingUnit.value)
+      ? yield* otherBaseDirOf(existingUnit.value)
       : undefined;
     if (installedBaseDir !== undefined) {
       return yield* new BootServiceOtherBaseDirError({ installedBaseDir, baseDir: input.baseDir });
@@ -1209,7 +1212,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    const otherBaseDir = otherBaseDirOf(unit);
+    const otherBaseDir = yield* otherBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
