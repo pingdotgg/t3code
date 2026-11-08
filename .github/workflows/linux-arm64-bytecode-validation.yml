@@ -78,11 +78,12 @@ jobs:
           assert.equal(process.platform, 'linux');
           assert.equal(process.arch, 'arm64');
           assert(manifest.runtime.includes('-linux-arm64-'), manifest.runtime);
-          const helper = require(path.join(resources, 'app.asar/apps/desktop/dist-electron/serverCompileCache.cjs'));
           const entries = manifest.entries.filter(e => /\/(binCli|server)-[^/]+\.mjs$/.test(e.module));
           assert.equal(entries.length, 2);
           process.env.APPIMAGE = 'bytecode-validation';
-          assert(helper.enablePreparedServerCache(path.join(resources, entries[0].module), path.join(process.env.T3CODE_HOME, 'cache')));
+          process.env.XDG_CACHE_HOME = path.join(process.env.T3CODE_HOME, 'cache');
+          process.argv[1] = path.join(resources, entries[0].module);
+          require(path.join(resources, 'app.asar/apps/desktop/dist-electron/compileCache.cjs'));
           assert.equal(Reflect.get(globalThis, Symbol.for('t3code.preparedServerCache')), true);
           (async () => {
             for (const entry of entries) await import(pathToFileURL(path.join(resources, entry.module)).href);
