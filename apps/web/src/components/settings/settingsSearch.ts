@@ -381,6 +381,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["latex tex katex equations formulas markdown"],
   },
   {
+    id: "smooth-text-reveal",
+    title: "Smooth text reveal",
+    to: "/settings/appearance",
+    searchTerms: ["streaming fade words animation reply"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

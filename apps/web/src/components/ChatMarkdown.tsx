@@ -206,10 +206,12 @@ import {
 } from "./chat/ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
+import { MarkdownLinkPreviewCard, standaloneLinkHref } from "./chat/MarkdownLinkPreviewCard";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
 import { rehypeTextDirection } from "./chat/markdownTextDirection";
+import { rehypeWordFade, settleWordFades } from "./chat/markdownWordFade";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
   extractCodeBlock,
@@ -392,6 +394,16 @@ const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
   rehypeHeadingIds,
   rehypeTextDirection,
   rehypeChipPunctuation,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_RENDER_WORD_FADE_REHYPE_PLUGINS = [
+  ...CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS,
+  rehypeWordFade,
+] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+
+const CHAT_MARKDOWN_LITERAL_HTML_WORD_FADE_REHYPE_PLUGINS = [
+  ...CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS,
+  rehypeWordFade,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
 function markdownUrlTransform(href: string) {
@@ -975,9 +987,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <div {...props}>{children}</div>;
   },
-  p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>;
+  p: function MarkdownParagraph({ node, children, ...props }) {
+    const { skills, threadRef, environmentId, isStreaming, inline } = use(
+      ChatMarkdownRendererContext,
+    );
+    const paragraph = (
+      <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>
+    );
+    const previewUrl =
+      environmentId !== null && !isStreaming && !inline ? standaloneLinkHref(node) : null;
+    if (previewUrl === null || environmentId === null) return paragraph;
+    return (
+      <>
+        {paragraph}
+        <MarkdownLinkPreviewCard environmentId={environmentId} url={previewUrl} />
+      </>
+    );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =
@@ -1730,6 +1755,8 @@ function ChatMarkdown({
 }: ChatMarkdownProps) {
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
     useChatMarkdownState({ text, inline, ...props });
+  const smoothTextReveal = useClientSettings((settings) => settings.smoothTextReveal);
+  const wordFade = smoothTextReveal && props.isStreaming === true && !inline;
   // Streaming re-renders only the last block; offsets for task edits need the whole text.
   const streamingBlocks =
     props.isStreaming === true &&
@@ -1746,6 +1773,11 @@ function ChatMarkdown({
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
+    // Words already on screen when a reply mounts, such as on opening its thread, never fade.
+    if (node && !node.hasAttribute("data-word-fade-ready")) {
+      settleWordFades(node);
+      node.setAttribute("data-word-fade-ready", "");
+    }
   };
   const sharedRemarkPlugins =
     CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
@@ -1785,8 +1817,12 @@ function ChatMarkdown({
             remarkPlugins={remarkPlugins}
             rehypePlugins={
               parseRawHtml
-                ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
+                ? wordFade
+                  ? CHAT_MARKDOWN_RENDER_WORD_FADE_REHYPE_PLUGINS
+                  : CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
+                : wordFade
+                  ? CHAT_MARKDOWN_LITERAL_HTML_WORD_FADE_REHYPE_PLUGINS
+                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
             }
             shared={!uncachedPlugins}
             // Every block before the last is finished, so its parse can be reused.

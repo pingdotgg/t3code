@@ -351,6 +351,27 @@ export function AppearanceSettingsPanel() {
             />
           }
         />
+        <SettingsRow
+          {...searchableSetting("smooth-text-reveal")}
+          description="Fade in words as replies stream instead of showing each burst at once."
+          resetAction={
+            settings.smoothTextReveal !== DEFAULT_UNIFIED_SETTINGS.smoothTextReveal ? (
+              <SettingResetButton
+                label="smooth text reveal"
+                onClick={() =>
+                  updateSettings({ smoothTextReveal: DEFAULT_UNIFIED_SETTINGS.smoothTextReveal })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.smoothTextReveal}
+              onCheckedChange={(checked) => updateSettings({ smoothTextReveal: Boolean(checked) })}
+              aria-label="Smooth text reveal"
+            />
+          }
+        />
         <AdvancedSettings
           targetIds={[
             searchableSetting("panel-animations").id,

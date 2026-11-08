@@ -98,6 +98,9 @@ const publicAddresses = async (host: string, fakeIpHosts: Map<string, string>) =
   return undefined;
 };
 
+/** The addresses `host` resolves to, or undefined when any of them is local or private. */
+export const resolvePublicAddresses = (host: string) => publicAddresses(host, new Map());
+
 // SOCKS5 (RFC 1928) replies: success, refused by rule, host unreachable, command unsupported.
 const reply = (code: number) => Buffer.from([5, code, 0, 1, 0, 0, 0, 0, 0, 0]);
 

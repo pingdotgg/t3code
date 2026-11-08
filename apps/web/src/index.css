@@ -1521,6 +1521,20 @@ html[data-theme-id] [data-chat-header] [data-slot="separator"] {
   background-color: var(--contrast-toolbar-border);
 }
 
+/* Streamed words fade in once as they are added (markdownWordFade.ts). Opacity only, so lines
+   never move; the spans go away when the reply finishes, so nothing replays. */
+@keyframes chat-word-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chat-markdown[data-word-fade-ready] [data-word-fade]:not([data-word-settled]) {
+    animation: chat-word-fade-in 320ms ease-out both;
+  }
+}
+
 /* Chat code blocks join the other code surfaces on the code tokens. The
    default look keeps its secondary/input tints; themed palettes tint those
    surfaces with the accent, which fights syntax highlighting. */

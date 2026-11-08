@@ -909,6 +909,17 @@ export class ServerNpmReleaseError extends Schema.TaggedError<ServerNpmReleaseEr
   }
 }
 
+export const ServerLinkPreviewInput = Schema.Struct({
+  url: Schema.String.check(Schema.isMaxLength(2_048), Schema.isPattern(/^https?:\/\//i)),
+});
+export type ServerLinkPreviewInput = typeof ServerLinkPreviewInput.Type;
+
+export const ServerLinkPreview = Schema.Struct({
+  title: Schema.NullOr(Schema.String),
+  description: Schema.NullOr(Schema.String),
+});
+export type ServerLinkPreview = typeof ServerLinkPreview.Type;
+
 export const ServerSelfUpdateInput = Schema.Struct({
   /** Exact npm version, never a dist-tag, so server and client agree on the request. */
   targetVersion: TrimmedNonEmptyString,
