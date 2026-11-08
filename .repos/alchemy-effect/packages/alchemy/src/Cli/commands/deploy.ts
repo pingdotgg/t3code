@@ -1,15 +1,13 @@
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Command from "effect/cli/Command";
 import * as Flag from "effect/cli/Flag";
-
-import * as Drift from "../../Alchemist/routes/drift.ts";
-import * as Stacks from "../../Alchemist/routes/stack.ts";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Alchemist from "../../Alchemist/index.ts";
+import * as Interaction from "../../Interaction.ts";
 import { Cli } from "../../Report.ts";
-import * as CliKit from "../CliKit/index.ts";
+import { renderApply } from "../../Report.ts";
 import { planDecisionScreen } from "../components/view/PlanDecision.tsx";
 import { stackOutputsView } from "../components/view/StackOutputs.tsx";
-
 import { exitDeclined } from "./errors.ts";
 import {
   configPath,
@@ -26,7 +24,7 @@ import {
   yes,
 } from "./flags.ts";
 import { instrumentCommand } from "./instrument.ts";
-import { renderApply, renderPlanning } from "./render.ts";
+import { renderPlanning } from "./render.ts";
 
 interface StackCommandOptions {
   readonly main: string;
@@ -70,49 +68,46 @@ const detailed = Flag.Boolean("detailed").pipe(
 );
 
 const detectDrift = Flag.Boolean("detect-drift").pipe(
-  Flag.withDescription(
-    "Detect infrastructure drift and offer to repair it before deploying",
-  ),
+  Flag.withDescription("Detect infrastructure drift and offer to repair it before deploying"),
   Flag.withDefault(false),
 );
 
-const detectAndMaybeRepairDrift = Effect.fn(function* (
-  target: Stacks.StackTarget,
+const detectAndMaybeRepairDrift = Effect.fn(function* <E, R>(
+  scanDrift: Effect.Effect<Alchemist.Drift.DriftScan, E, R>,
   options: {
+    readonly stage: string;
     readonly yes?: boolean;
     readonly detailed?: boolean;
     readonly dryRun?: boolean;
   },
 ) {
   const cli = yield* Cli;
-  const snapshot = yield* Drift.inspect(target).pipe(
+  const snapshot = yield* scanDrift.pipe(
     renderPlanning({
       operation: "Drift",
-      stage: target.stage,
+      stage: options.stage,
       computingLabel: "Checking drift",
       readyLabel: "Drift check complete",
     }),
   );
-  if (!Drift.hasDrift(snapshot)) return true;
+  if (!Alchemist.Drift.hasDrift(snapshot)) return true;
 
   if (options.dryRun) {
-    yield* cli.displayPlan(snapshot.repairPlan.native, {
+    yield* cli.displayPlan(snapshot.native, {
       detailed: options.detailed,
-      stage: target.stage,
+      stage: options.stage,
     });
     return true;
   }
 
-  let decision: "repair" | "deploy" | "cancel" = options.yes
-    ? "repair"
-    : "cancel";
+  let decision: "repair" | "deploy" | "cancel" = options.yes ? "repair" : "cancel";
   if (!options.yes) {
-    const terminal = yield* CliKit.CliKit;
+    const terminal = yield* Interaction.Interaction;
     if (terminal.terminal.input) {
       decision = yield* terminal.prompt
-        .custom(
+        .screen(
           planDecisionScreen({
-            plan: snapshot.repairPlan.native,
+            plan: snapshot.native,
             message: "Drift detected",
             choices: [
               {
@@ -131,27 +126,23 @@ const detectAndMaybeRepairDrift = Effect.fn(function* (
             initialValue: "repair" as const,
           }),
         )
-        .pipe(
-          Effect.catchTag("TerminalCancelled", () =>
-            Effect.succeed("cancel" as const),
-          ),
-        );
+        .pipe(Effect.catchTag("TerminalCancelled", () => Effect.succeed("cancel" as const)));
     } else {
-      yield* cli.displayPlan(snapshot.repairPlan.native, {
+      yield* cli.displayPlan(snapshot.native, {
         detailed: options.detailed,
-        stage: target.stage,
+        stage: options.stage,
       });
-      yield* CliKit.accessors.output.warning(
+      yield* Interaction.warning(
         "Drift detected in a non-interactive terminal. Re-run with --yes to repair and deploy.",
       );
     }
   }
 
   if (decision === "repair") {
-    yield* Drift.repair(snapshot).pipe(
-      renderApply(snapshot.repairPlan.native, {
+    yield* Alchemist.Drift.execute(snapshot).pipe(
+      renderApply(snapshot.native, {
         detailed: options.detailed,
-        stage: target.stage,
+        stage: options.stage,
       }),
     );
   }
@@ -162,72 +153,70 @@ const runStack = Effect.fn(function* (options: StackCommandOptions) {
   yield* validateSelectionOptions(options);
   const cli = yield* Cli;
   const display = { detailed: options.detailed, stage: options.stage };
-  const target = {
-    entrypoint: options.main,
+  const buildOptions = {
     stage: options.stage,
     profile: options.profile,
     envFile: Option.getOrUndefined(options.envFile),
+    adopt: options.adopt,
+    updateStateStore: options.yes,
   };
+  const stack = Alchemist.importStack(options.main);
 
-  const operation = options.destroy
-    ? "Destroy"
-    : options.dryRun
-      ? "Plan"
-      : "Deploy";
+  const operation = options.destroy ? "Destroy" : options.dryRun ? "Plan" : "Deploy";
   const withPlanningProgress = renderPlanning({
     operation,
     stage: options.stage,
   });
 
   if (options.detectDrift && !options.destroy) {
-    const proceed = yield* detectAndMaybeRepairDrift(target, options);
+    // The drift check closes its build before the deploy builds again: a
+    // remote state store holds one lease per stage per build.
+    const proceed = yield* detectAndMaybeRepairDrift(
+      Effect.flatMap(stack, (stack) => Alchemist.Drift.scan({ ...buildOptions, stack })),
+      options,
+    ).pipe(Effect.scoped);
     if (!proceed) {
-      yield* CliKit.accessors.output.info(
-        "Deploy aborted: drift was detected and not approved.",
-      );
+      yield* Interaction.info("Deploy aborted: drift was detected and not approved.");
       return yield* exitDeclined;
     }
   }
 
-  const snapshot = yield* Stacks.plan({
-    target,
-    operation: options.destroy ? "destroy" : "deploy",
-    force: options.force,
-    include: options.include,
-    exclude: options.exclude,
-    adopt: options.adopt,
-    updateStateStore: options.yes,
-  }).pipe(withPlanningProgress);
+  const snapshot = yield* Effect.flatMap(stack, (stack) =>
+    Alchemist.plan(
+      options.destroy
+        ? { ...buildOptions, stack, operation: "destroy" }
+        : {
+            ...buildOptions,
+            stack,
+            operation: "deploy",
+            force: options.force,
+            include: options.include,
+            exclude: options.exclude,
+          },
+    ),
+  ).pipe(withPlanningProgress);
 
   if (options.dryRun) {
     return yield* cli.displayPlan(snapshot.native, display);
   }
 
-  if (!options.yes && Stacks.hasChanges(snapshot.summary)) {
+  if (!options.yes && Alchemist.hasChanges(snapshot)) {
     const approved = yield* cli.approvePlan(snapshot.native, display).pipe(
       Effect.tap((approved) =>
-        approved
-          ? Effect.void
-          : CliKit.accessors.output.info(
-              `${operation} aborted: plan declined.`,
-            ),
+        approved ? Effect.void : Interaction.info(`${operation} aborted: plan declined.`),
       ),
       Effect.catchTag("NonInteractiveTerminal", () =>
-        CliKit.accessors.output
-          .warning(
-            `Cannot prompt for approval in a non-interactive terminal. Nothing was changed — re-run with --yes to ${operation.toLowerCase()}.`,
-          )
-          .pipe(Effect.as(false)),
+        Interaction.warning(
+          `Cannot prompt for approval in a non-interactive terminal. Nothing was changed — re-run with --yes to ${operation.toLowerCase()}.`,
+        ).pipe(Effect.as(false)),
       ),
     );
     if (!approved) return yield* exitDeclined;
   }
 
-  const result = yield* Stacks.apply(snapshot).pipe(
-    renderApply(snapshot.native, display),
-  );
+  const result = yield* Alchemist.apply(snapshot).pipe(renderApply(snapshot.native, display));
   if (result !== undefined) {
-    const kit = yield* CliKit.CliKit;
+    const kit = yield* Interaction.Interaction;
     yield* kit.output.print(stackOutputsView(result));
   }
 });
