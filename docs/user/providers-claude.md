@@ -111,7 +111,12 @@ Claude threads can use the Claude in Chrome extension, which works in your own
 Chrome with its sign-ins. T3 Code sessions load it only when asked: add `--chrome`
 to **Launch arguments** in the Claude instance's settings in **Settings > Providers**.
 It applies to sessions that start after you save. Set up the extension as you would
-for Claude Code first.
+for Claude Code first; see Claude Code's [Chrome guide](https://code.claude.com/docs/en/chrome).
+
+The instance must be signed in with `/login` on a direct Anthropic plan. Instances
+that use an API key or a `claude setup-token` token don't get it, even with
+`--chrome`, and neither do third-party providers such as Amazon Bedrock. Claude Code
+doesn't support it in WSL.
 
 ## OpenRouter
 
