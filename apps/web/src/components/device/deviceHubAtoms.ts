@@ -90,8 +90,8 @@ export const androidFoldViewAtom = Atom.family((deviceKey: string) =>
 /**
  * Reads the fold while mounted and records it in the device's fold view. The
  * screen size is part of the key because folding resizes the screen, so a new
- * size means the posture may have changed. An expired ticket stops retrying:
- * renewed access is a new key and reads again.
+ * size means the posture may have changed. A 401 (renewed access is a new key)
+ * or a 404 (no fold endpoint) stops retrying; the hub's 400s and 409s are transient.
  */
 export const androidFoldReadAtom = Atom.family(
   (input: {
@@ -104,10 +104,10 @@ export const androidFoldReadAtom = Atom.family(
     Atom.make((get) =>
       Effect.tryPromise({
         try: (signal) => readAndroidFold(input.access, input.deviceId, signal),
-        catch: (cause) => ({ expired: isAndroidFoldError(cause) && cause.status === 401 }),
+        catch: (cause) => (isAndroidFoldError(cause) ? cause.status : null),
       }).pipe(
         Effect.retry({
-          while: (failure) => !failure.expired,
+          while: (status) => status !== 401 && status !== 404,
           schedule: Schedule.spaced(FOLD_RETRY_MS),
         }),
         Effect.tap((fold) =>
