@@ -89,7 +89,7 @@ export function withCreationProvenance(
     case "delegated_task.request":
       return { ...command, ...provenance };
     case "queued-run.edit":
-      return { ...command, editor: provenance };
+      return command.editor === undefined ? command : { ...command, editor: provenance };
     default:
       return command;
   }
