@@ -25,7 +25,7 @@ import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
-import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
+import { resolveSourceControlThreadStatus } from "@t3tools/client-runtime/state/vcs";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
@@ -114,6 +114,24 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
   },
   working: {
     label: null,
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  committing: {
+    label: "Committing",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  pushing: {
+    label: "Pushing",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  submitting: {
+    label: "Submitting",
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
@@ -759,9 +777,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const stackedAction = stackedActionThreads.get(`${thread.environmentId}:${thread.id}`);
-  const sourceControlBusy = isThreadStackedActionRunning(thread, stackedActionThreads);
-  const status = resolveThreadListV2Status(thread, { sourceControlBusy });
+  const sourceControlStatus = resolveSourceControlThreadStatus(stackedAction);
+  const status = resolveThreadListV2Status(thread, { sourceControlStatus });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isSourceControlStatus =
+    status === "committing" || status === "pushing" || status === "submitting";
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
@@ -1245,11 +1265,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               <Text
                 className={cn(
                   "text-xs font-t3-bold",
+                  (status === "working" || isSourceControlStatus || status === "waiting") &&
+                    "tabular-nums",
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
                 {statusLabel.label}
-                {status === "working" ? (
+                {status === "working" || isSourceControlStatus ? (
                   <ThreadListV2Duration
                     startedAt={workingStartedAt}
                     leadingSpace={statusLabel.label !== null}

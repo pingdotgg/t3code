@@ -41,6 +41,7 @@ import {
   isThreadStackedActionRunning,
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
+  resolveSourceControlThreadStatus,
   vcsStackedActionThreadKey,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
@@ -596,6 +597,7 @@ describe("vcsActionState", () => {
         const targetKey = { environmentId, cwd };
         const runningActionId = "working-shelf-running";
         const entered = yield* Deferred.make<void>();
+        const afterPhase = yield* Deferred.make<void>();
         const release = yield* Deferred.make<void>();
         const client = {
           [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
@@ -603,14 +605,30 @@ describe("vcsActionState", () => {
               Effect.gen(function* () {
                 yield* Deferred.succeed(entered, undefined);
                 yield* Deferred.await(release);
-                return Stream.make(
-                  progress({
-                    kind: "action_finished",
-                    actionId: input.actionId,
-                    cwd,
-                    action,
-                    result,
-                  }),
+                return Stream.concat(
+                  Stream.make(
+                    progress({
+                      kind: "phase_started",
+                      actionId: input.actionId,
+                      cwd,
+                      action,
+                      phase: "push",
+                      label: "Pushing",
+                    }),
+                  ),
+                  Stream.fromEffect(Deferred.await(afterPhase)).pipe(
+                    Stream.flatMap(() =>
+                      Stream.make(
+                        progress({
+                          kind: "action_finished",
+                          actionId: input.actionId,
+                          cwd,
+                          action,
+                          result,
+                        }),
+                      ),
+                    ),
+                  ),
                 );
               }),
             ),
@@ -650,10 +668,19 @@ describe("vcsActionState", () => {
           Effect.sync(() => registry.dispose()),
         );
         const threadId = ThreadId.make("thread-working-shelf");
+        let resolvePhaseSeen!: () => void;
+        const phaseSeen = new Promise<void>((resolve) => {
+          resolvePhaseSeen = resolve;
+        });
         const running = manager.runStackedAction(targetKey).run(registry, {
           actionId: runningActionId,
           action,
           threadId,
+          onProgress: (event) => {
+            if (event.kind === "phase_started" && event.phase === "push") {
+              resolvePhaseSeen();
+            }
+          },
         });
 
         yield* Deferred.await(entered);
@@ -663,19 +690,62 @@ describe("vcsActionState", () => {
           actionId: runningActionId,
         });
         const busy = registry.get(manager.stackedActionThreadsAtom);
-        expect(busy.get(vcsStackedActionThreadKey(environmentId, threadId))).toMatchObject({
+        const presence = busy.get(vcsStackedActionThreadKey(environmentId, threadId));
+        expect(presence).toMatchObject({
           actionId: runningActionId,
           threadId,
+          action,
+          phase: null,
         });
         expect(isThreadStackedActionRunning({ environmentId, id: threadId }, busy)).toBe(true);
+        expect(resolveSourceControlThreadStatus(presence)).toBe("committing");
 
         yield* Deferred.succeed(release, undefined);
+        yield* Effect.promise(() => phaseSeen);
+        const mid = registry
+          .get(manager.stackedActionThreadsAtom)
+          .get(vcsStackedActionThreadKey(environmentId, threadId));
+        expect(mid?.phase).toBe("push");
+        expect(resolveSourceControlThreadStatus(mid)).toBe("pushing");
+
+        yield* Deferred.succeed(afterPhase, undefined);
         const finished = yield* Effect.promise(() => running);
         expect(AsyncResult.isSuccess(finished)).toBe(true);
         expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
       }),
     ),
   );
+});
+
+describe("resolveSourceControlThreadStatus", () => {
+  const base = {
+    environmentId,
+    threadId: ThreadId.make("thread-status"),
+    actionId: "action-status",
+    startedAtMs: 1,
+  };
+
+  it("maps phase first, then stacked action kind", () => {
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "push" }),
+    ).toBe("pushing");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "pr" }),
+    ).toBe("submitting");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "commit" }),
+    ).toBe("committing");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: null }),
+    ).toBe("committing");
+    expect(resolveSourceControlThreadStatus({ ...base, action: "push", phase: null })).toBe(
+      "pushing",
+    );
+    expect(resolveSourceControlThreadStatus({ ...base, action: "create_pr", phase: null })).toBe(
+      "submitting",
+    );
+    expect(resolveSourceControlThreadStatus(null)).toBeNull();
+  });
 });
 
 vi.mock("./session.ts", () => ({

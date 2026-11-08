@@ -311,14 +311,23 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("waiting");
   });
 
-  it("treats an in-flight commit, push, or PR as working ahead of ready", () => {
-    expect(resolveSidebarThreadStatus(idle, { sourceControlBusy: true })).toBe("working");
+  it("labels in-flight commit, push, or PR only when nothing else owns the row", () => {
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "committing" })).toBe(
+      "committing",
+    );
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "pushing" })).toBe("pushing");
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "submitting" })).toBe(
+      "submitting",
+    );
     expect(
       resolveSidebarThreadStatus(
         { ...idle, hasPendingUserInput: true },
-        { sourceControlBusy: true },
+        { sourceControlStatus: "committing" },
       ),
     ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, runtime }, { sourceControlStatus: "pushing" }),
+    ).toBe("working");
   });
 });
 

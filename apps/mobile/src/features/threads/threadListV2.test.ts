@@ -187,18 +187,35 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
-  it("treats an in-flight commit, push, or PR as working ahead of ready", () => {
+  it("labels in-flight commit, push, or PR only when nothing else owns the row", () => {
     const thread = presentThreadShell(
       environmentId,
       decodeThreadShell(makeRawThreadShell({ status: "completed" })),
     );
-    expect(resolveThreadListV2Status(thread, { sourceControlBusy: true })).toBe("working");
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "committing" })).toBe(
+      "committing",
+    );
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "pushing" })).toBe("pushing");
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "submitting" })).toBe(
+      "submitting",
+    );
     expect(
       resolveThreadListV2Status(
         { ...thread, hasPendingUserInput: true },
-        { sourceControlBusy: true },
+        { sourceControlStatus: "committing" },
       ),
     ).toBe("input");
+    const running = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "running",
+          activeRunId: RunId.make("run-source-control"),
+          latestRunId: RunId.make("run-source-control"),
+        }),
+      ),
+    );
+    expect(resolveThreadListV2Status(running, { sourceControlStatus: "pushing" })).toBe("working");
   });
 
   it.each([

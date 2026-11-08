@@ -63,7 +63,24 @@ export interface VcsStackedActionThreadPresence {
   readonly environmentId: EnvironmentIdType;
   readonly threadId: ThreadId;
   readonly actionId: string;
+  readonly action: GitStackedAction;
+  readonly phase: GitActionProgressPhase | null;
   readonly startedAtMs: number;
+}
+
+/** Sidebar / home-list status while a stacked Git action owns the thread. */
+export type SourceControlThreadStatus = "committing" | "pushing" | "submitting";
+
+export function resolveSourceControlThreadStatus(
+  presence: VcsStackedActionThreadPresence | null | undefined,
+): SourceControlThreadStatus | null {
+  if (presence === null || presence === undefined) return null;
+  if (presence.phase === "push") return "pushing";
+  if (presence.phase === "pr") return "submitting";
+  if (presence.phase === "commit" || presence.phase === "branch") return "committing";
+  if (presence.action === "push") return "pushing";
+  if (presence.action === "create_pr") return "submitting";
+  return "committing";
 }
 
 export interface VcsActionTarget {
@@ -219,7 +236,15 @@ function markStackedActionThread(
 ): void {
   const key = vcsStackedActionThreadKey(presence.environmentId, presence.threadId);
   const current = registry.get(vcsStackedActionThreadsAtom);
-  if (current.get(key)?.actionId === presence.actionId) return;
+  const existing = current.get(key);
+  if (
+    existing?.actionId === presence.actionId &&
+    existing.action === presence.action &&
+    existing.phase === presence.phase &&
+    existing.startedAtMs === presence.startedAtMs
+  ) {
+    return;
+  }
   const next = new Map(current);
   next.set(key, presence);
   registry.set(vcsStackedActionThreadsAtom, next);
@@ -523,12 +548,15 @@ export function createVcsActionManager<R, E>(
             ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
           }),
         );
+        const startedAtMs = nowMs();
         if (input.threadId !== undefined) {
           markStackedActionThread(registry, {
             environmentId: target.environmentId,
             threadId: input.threadId,
             actionId: input.actionId,
-            startedAtMs: nowMs(),
+            action: input.action,
+            phase: null,
+            startedAtMs,
           });
         }
 
@@ -565,6 +593,16 @@ export function createVcsActionManager<R, E>(
                   return;
                 }
                 registry.set(stateAtom, applyVcsActionProgressEvent(current, event));
+                if (input.threadId !== undefined && event.kind === "phase_started") {
+                  markStackedActionThread(registry, {
+                    environmentId: target.environmentId,
+                    threadId: input.threadId,
+                    actionId: input.actionId,
+                    action: input.action,
+                    phase: event.phase,
+                    startedAtMs,
+                  });
+                }
                 if (input.onProgress !== undefined) {
                   try {
                     input.onProgress(event);

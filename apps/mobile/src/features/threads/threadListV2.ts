@@ -68,6 +68,9 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "committing"
+  | "pushing"
+  | "submitting"
   | "waiting"
   | "failed"
   | "limited"
@@ -267,7 +270,9 @@ export function resolveThreadListV2Status(
     | "runtime"
     | "blockedOnThreadWait"
   >,
-  options?: { readonly sourceControlBusy?: boolean },
+  options?: {
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | null;
+  },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -278,9 +283,6 @@ export function resolveThreadListV2Status(
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
-  }
-  if (options?.sourceControlBusy === true) {
-    return "working";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -296,6 +298,10 @@ export function resolveThreadListV2Status(
   }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
+  // Commit / push / PR only when nothing more urgent owns the row.
+  if (options?.sourceControlStatus != null) {
+    return options.sourceControlStatus;
   }
   return "ready";
 }

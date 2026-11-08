@@ -70,7 +70,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
-import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
+import { resolveSourceControlThreadStatus } from "@t3tools/client-runtime/state/vcs";
 import { vcsActionManager, vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -716,8 +716,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const stackedAction = stackedActionThreads.get(`${thread.environmentId}:${thread.id}`);
-  const sourceControlBusy = isThreadStackedActionRunning(thread, stackedActionThreads);
-  const status = resolveSidebarThreadStatus(thread, { sourceControlBusy });
+  const sourceControlStatus = resolveSourceControlThreadStatus(stackedAction);
+  const status = resolveSidebarThreadStatus(thread, { sourceControlStatus });
   const workingStartedAt =
     resolveWorkingStartedAt(thread) ??
     (stackedAction === undefined ? null : new Date(stackedAction.startedAtMs).toISOString());
@@ -734,15 +734,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isActive: props.isActive,
     isSelected,
   });
+  const isSourceControlStatus =
+    status === "committing" || status === "pushing" || status === "submitting";
   const topStatus =
-    status === "preparing" || status === "working"
+    status === "preparing" || status === "working" || isSourceControlStatus
       ? {
           label:
             status === "preparing"
               ? "Setting up"
-              : thread.goal?.status === "active"
-                ? "Goal"
-                : "Working",
+              : status === "committing"
+                ? "Committing"
+                : status === "pushing"
+                  ? "Pushing"
+                  : status === "submitting"
+                    ? "Submitting"
+                    : thread.goal?.status === "active"
+                      ? "Goal"
+                      : "Working",
           icon: "working" as const,
           className: "text-info-foreground",
         }
@@ -976,7 +984,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
     shouldRecede &&
-      (status === "preparing" || status === "working") &&
+      (status === "preparing" || status === "working" || isSourceControlStatus) &&
       "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
@@ -1514,7 +1522,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             BackgroundThreadAnnouncer and the open thread's
                             timeline speak status changes instead. */}
                           {topStatus.label}
-                          {status === "preparing" || status === "working" ? (
+                          {status === "preparing" ||
+                          status === "working" ||
+                          isSourceControlStatus ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={workingStartedAt} />
                             </span>

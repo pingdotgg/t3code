@@ -819,6 +819,9 @@ export type SidebarThreadStatus =
   | "request"
   | "preparing"
   | "working"
+  | "committing"
+  | "pushing"
+  | "submitting"
   | "waiting"
   | "failed"
   | "limited"
@@ -839,7 +842,14 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
+  if (
+    input.status === "preparing" ||
+    input.status === "working" ||
+    input.status === "committing" ||
+    input.status === "pushing" ||
+    input.status === "submitting" ||
+    input.status === "waiting"
+  ) {
     return true;
   }
   if (input.status === "ready" || input.status === "approval") {
@@ -860,7 +870,9 @@ type SidebarThreadStatusInput = Pick<
 
 export function resolveSidebarThreadStatus(
   thread: SidebarThreadStatusInput,
-  options?: { readonly sourceControlBusy?: boolean },
+  options?: {
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | null;
+  },
 ): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -871,9 +883,6 @@ export function resolveSidebarThreadStatus(
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
-  }
-  if (options?.sourceControlBusy === true) {
-    return "working";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -892,6 +901,10 @@ export function resolveSidebarThreadStatus(
   }
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
+  }
+  // Commit / push / PR only when nothing more urgent owns the row.
+  if (options?.sourceControlStatus != null) {
+    return options.sourceControlStatus;
   }
   return "ready";
 }
@@ -918,7 +931,15 @@ export function resolveSidebarFolderDot(
     (thread) => resolveSidebarThreadStatus(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
-  if (statuses.has("working") || statuses.has("preparing")) return "working";
+  if (
+    statuses.has("working") ||
+    statuses.has("preparing") ||
+    statuses.has("committing") ||
+    statuses.has("pushing") ||
+    statuses.has("submitting")
+  ) {
+    return "working";
+  }
   return null;
 }
 
