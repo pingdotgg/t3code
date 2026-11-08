@@ -1307,6 +1307,11 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
     }),
+    linkPreview: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:link-preview",
+      tag: WS_METHODS.serverGetLinkPreview,
+      staleTimeMs: 30 * 60_000,
+    }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,

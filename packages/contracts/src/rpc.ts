@@ -329,6 +329,8 @@ import {
   ServerNpmRelease,
   ServerNpmReleaseError,
   ServerNpmReleaseInput,
+  ServerLinkPreview,
+  ServerLinkPreviewInput,
   ServerSelfUpdateInput,
   ServerSelfUpdateProgressEvent,
   ServerSelfUpdateResult,
@@ -510,6 +512,7 @@ export const WS_METHODS = {
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
+  serverGetLinkPreview: "server.getLinkPreview",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
   serverUpdateServer: "server.updateServer",
@@ -779,6 +782,12 @@ const WsServerGetNpmReleaseRpc = Rpc.make(WS_METHODS.serverGetNpmRelease, {
   payload: ServerNpmReleaseInput,
   success: Schema.NullOr(ServerNpmRelease),
   error: Schema.Union([ServerNpmReleaseError, EnvironmentAuthorizationError]),
+});
+
+const WsServerGetLinkPreviewRpc = Rpc.make(WS_METHODS.serverGetLinkPreview, {
+  payload: ServerLinkPreviewInput,
+  success: Schema.NullOr(ServerLinkPreview),
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
@@ -2053,6 +2062,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProviderInstallRemoveRpc,
   WsServerUpdateServerRpc,
   WsServerGetNpmReleaseRpc,
+  WsServerGetLinkPreviewRpc,
   WsServerUpdateServerWithProgressRpc,
   WsServerCommitDesktopUpdateRpc,
   WsServerUpsertKeybindingRpc,

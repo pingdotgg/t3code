@@ -206,6 +206,7 @@ import {
 } from "./chat/ChatMarkdownMedia";
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
+import { MarkdownLinkPreviewCard, standaloneLinkHref } from "./chat/MarkdownLinkPreviewCard";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
 import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
 import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
@@ -986,9 +987,22 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <div {...props}>{children}</div>;
   },
-  p: function MarkdownParagraph({ node: _node, children, ...props }) {
-    const { skills, threadRef } = use(ChatMarkdownRendererContext);
-    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>;
+  p: function MarkdownParagraph({ node, children, ...props }) {
+    const { skills, threadRef, environmentId, isStreaming, inline } = use(
+      ChatMarkdownRendererContext,
+    );
+    const paragraph = (
+      <p {...props}>{renderSkillInlineMarkdownChildren(children, skills, threadRef)}</p>
+    );
+    const previewUrl =
+      environmentId !== null && !isStreaming && !inline ? standaloneLinkHref(node) : null;
+    if (previewUrl === null || environmentId === null) return paragraph;
+    return (
+      <>
+        {paragraph}
+        <MarkdownLinkPreviewCard environmentId={environmentId} url={previewUrl} />
+      </>
+    );
   },
   blockquote: function MarkdownBlockquote({ node: _node, children, ...props }) {
     const alert =
