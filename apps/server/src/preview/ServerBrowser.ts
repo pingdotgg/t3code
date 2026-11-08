@@ -1970,7 +1970,7 @@ const make = Effect.gen(function* () {
 
   const runOperation = async (
     request: PreviewAutomationRequest,
-    deadlineMs: number,
+    signal: AbortSignal,
   ): Promise<unknown> => {
     const input = request.input;
     switch (request.operation) {
@@ -2095,7 +2095,7 @@ const make = Effect.gen(function* () {
             }
             return statusWithTitle(tab, request.agentSessionId);
           },
-          deadlineMs,
+          signal,
         );
       }
       case "recordingStop": {
@@ -2178,6 +2178,12 @@ const make = Effect.gen(function* () {
         return executeTabOperation(tab, request);
       });
     }
+    // An action blocked by a dialog outlives its request; point the agent at the dialog.
+    if (tab.dialog && tab.control.overdue)
+      throw new BrowserControlInterrupted({
+        message: "A browser dialog is pending. Read preview_status and use preview_dialog first.",
+        reason: "dialogPending",
+      });
     return tab.control.agent(
       agentSessionId,
       async () => {
@@ -2198,7 +2204,7 @@ const make = Effect.gen(function* () {
           if (generation !== tab.control.generation) ServerBrowserPage.invalidateRefs(tab.page);
         }
       },
-      deadlineMs,
+      signal,
     );
   };
 
@@ -2298,12 +2304,21 @@ const make = Effect.gen(function* () {
 
   const handleRequest = (connectionId: string, request: PreviewAutomationRequest) =>
     Effect.tryPromise({
-      try: () =>
-        runOperation(request, performance.now() + request.timeoutMs).finally(() =>
-          markUsed(request),
-        ),
+      try: (signal) => runOperation(request, signal).finally(() => markUsed(request)),
       catch: ServerBrowserPage.toOperationError,
     }).pipe(
+      // Answer before the broker evicts this host; the abandoned run still holds its tab's queue.
+      Effect.timeoutOrElse({
+        duration: request.timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new ServerBrowserPage.ServerBrowserOperationError({
+              tag: "PreviewAutomationTimeoutError",
+              message: `The browser did not finish ${request.operation} in ${request.timeoutMs}ms.`,
+              detail: { timeoutMs: request.timeoutMs },
+            }),
+          ),
+      }),
       Effect.match({
         onSuccess: (result) => ({ ok: true as const, result }),
         onFailure: (error) => ({
@@ -2344,8 +2359,9 @@ const make = Effect.gen(function* () {
         closedSessions.delete(key);
         return;
       }
+      // Queued per tab at call time, so one stuck tab cannot hold back the others.
       if (event.type === "resized") {
-        await tab.control
+        void tab.control
           .system(async () => {
             if (
               !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)
