@@ -76,7 +76,7 @@ export function limitRecoveryCommand(
   if (
     !recovery.autoResume ||
     (resetMs > nowMs && clearedAt === undefined) ||
-    (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+    Orchestrator.snoozeHoldsLimitRecovery(thread, nowMs)
   )
     return null;
   // A separate id for early delivery keeps a rejected one from claiming the

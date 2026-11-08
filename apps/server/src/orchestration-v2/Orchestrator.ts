@@ -811,6 +811,22 @@ function limitRecoveryWaitsForReset(
   return previous?.runId === runId && previous.waitForReset === true;
 }
 
+// A snooze until the recovery's reset ends when the thread resumes early; one the user set stays.
+export function snoozeHoldsLimitRecovery(
+  thread: {
+    readonly snoozedUntil?: DateTime.Utc | null | undefined;
+    readonly limitRecovery?: OrchestrationV2LimitRecovery | null | undefined;
+  },
+  nowMs: number,
+): boolean {
+  if (thread.snoozedUntil == null) return false;
+  const untilMs = DateTime.toEpochMillis(thread.snoozedUntil);
+  return (
+    untilMs > nowMs &&
+    !(thread.limitRecovery?.snooze === true && untilMs === Date.parse(thread.limitRecovery.resetAt))
+  );
+}
+
 function latestStableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | null {
@@ -5252,8 +5268,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.settledOverride === "settled" ||
         projection.thread.providerInstanceId !== run.providerInstanceId ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
-        (projection.thread.snoozedUntil != null &&
-          DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
+        snoozeHoldsLimitRecovery(projection.thread, DateTime.toEpochMillis(now))
       ) {
         yield* emit(
           events,
@@ -5268,9 +5283,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             recovery.requestId === command.usageLimitRecoveryRequestId &&
             recovery.runId === command.usageLimitContinuationOfRunId &&
             (projection.runtimeRequests.some((request) => request.status === "pending") ||
-              (projection.thread.snoozedUntil != null &&
-                DateTime.toEpochMillis(projection.thread.snoozedUntil) >
-                  DateTime.toEpochMillis(now)))
+              snoozeHoldsLimitRecovery(projection.thread, DateTime.toEpochMillis(now)))
               ? { limitRecovery: { ...recovery, requestId: command.commandId } }
               : {}),
           },

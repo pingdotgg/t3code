@@ -3873,6 +3873,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
                   OR julianday(json_extract(t.payload_json, '$.snoozedUntil')) <= julianday(${DateTime.formatIso(options.now)})
+                  -- snoozeHoldsLimitRecovery: the recovery's own snooze yields to an early resume.
+                  OR (
+                    json_extract(t.payload_json, '$.limitRecovery.snooze') = 1
+                    AND julianday(json_extract(t.payload_json, '$.snoozedUntil')) = julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt'))
+                  )
                 )
               )
               OR (
