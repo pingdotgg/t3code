@@ -1,5 +1,6 @@
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
+import { runInNewLayoutTab } from "../../layout/layoutStore";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -627,16 +628,25 @@ function useThreadLineage(props: {
     ).length ?? 0;
 
   // Idle children can be omitted from the shell; opening one loads its own detail.
+  // A child opens as a ghost tab beside this thread's tab; the parent opens as any thread does.
   const openThread = (threadId: ThreadId) => {
     const routeRef = resolveThreadOpenRoute(
       scopeThreadRef(props.environmentId, threadId),
       graph.nodes.get(threadId)?.thread ?? null,
     );
     if (routeRef.threadId === ref.threadId) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(routeRef),
-    });
+    const open = () =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(routeRef),
+      });
+    const isParent = relationshipRows.some(
+      (row) => row.threadId === threadId && isParentThreadRelationship(row.edge, props.threadId),
+    );
+    // A side chat routes to its parent's tab instead of a ghost of its own.
+    void (isParent || routeRef.threadId !== threadId
+      ? open()
+      : runInNewLayoutTab(open, { ghostOf: ref }));
   };
 
   const merge = async () => {
