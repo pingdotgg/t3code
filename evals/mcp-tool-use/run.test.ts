@@ -339,6 +339,33 @@ it("grades a page passed by path on the file the agent last wrote there", () => 
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',
     "page known html_render /tmp/v.html",
   ]);
+  // A relative add, then an update by absolute path the grader cannot replay: the page is unknown.
+  const added = {
+    ...write,
+    input: { file_path: "v.html", content: "<p style=background:var(--card)>" },
+  };
+  const patchAbsolute = { ...patchUnknown, step: 2 };
+  assert.include(
+    failed(expect, run([added, patchAbsolute, render])),
+    "page known html_render /tmp/v.html",
+  );
+  const appended = {
+    ...write,
+    tool: "Bash",
+    input: { command: "cat >> /tmp/v.html <<'EOF'\n<p>var(--x)</p>\nEOF" },
+  };
+  assert.include(failed(expect, run([appended, render])), "page known html_render /tmp/v.html");
+  const patched = {
+    step: 1,
+    tool: "Edit",
+    input: {
+      patch: "*** Update File: /tmp/v.html\n@@\n-background:#000\n+background:var(--card)\n",
+    },
+  };
+  assert.deepEqual(failed(expect, run([write, patched, render])), []);
+  const twice = { ...write, input: { ...write.input, content: "<p style=background:#000>#000" } };
+  const fixAll = { ...fix, input: { ...fix.input, replace_all: true } };
+  assert.deepEqual(failed(expect, run([twice, fixAll, render])), []);
   const spoofed = { ...render, input: { path: "/tmp/v.html", page: "var(--card)" } };
   assert.deepEqual(failed(expect, run([spoofed])), [
     'calls html_render {"path":"/tmp/v.html","page":"~var(--"}',

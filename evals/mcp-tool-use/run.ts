@@ -83,6 +83,7 @@ import {
   argvForm,
   gradeSecret,
   scriptsBefore,
+  UNKNOWN_SCRIPT,
   scriptSources,
   SecretExpect,
   secretDiagnostics,
@@ -1716,10 +1717,11 @@ const withPage = (tool: string, input: unknown, files: ReadonlyMap<string, strin
       file === path ||
       (!file.startsWith("/") && path.endsWith(`/${file.replace(/^(?:\.\/)+/, "")}`)),
   );
+  const pages = new Set(written.map(([, page]) => page));
   const page =
     typeof input.html === "string"
       ? input.html
-      : new Set(written.map(([, page]) => page)).size === 1
+      : pages.size === 1 && !pages.has(UNKNOWN_SCRIPT)
         ? written[0]![1]
         : undefined;
   // The grader derives `page`; a call cannot supply its own.
