@@ -2,13 +2,13 @@ import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
 import { NavigationContext } from "@react-navigation/native";
-import { use, useId, useLayoutEffect } from "react";
-import { View } from "react-native";
+import { use, useId, useLayoutEffect, type ReactElement } from "react";
+import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
-import { useDeviceType } from "../../native/native-layout-metrics";
+import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/AdaptiveWorkspaceLayout";
 import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
@@ -18,10 +18,12 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
+import type { AppBarMenu, AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
+import { Menu } from "./Menu";
+import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -39,6 +41,60 @@ function mailMenuItems(items: ReadonlyArray<AppBarMenuItem>): MailMenu["items"] 
           disabled: item.disabled,
           onPress: item.onPress,
         },
+  );
+}
+
+const TITLE_BAR_MARGIN = 32;
+const TITLE_BAR_BUTTON = 44;
+
+/** Custom title that long-presses open a menu without UIKit's title-menu chevron. */
+function AppBarTitleMenu(props: {
+  readonly title: string;
+  readonly titleMenu: AppBarMenu;
+  readonly tintColor: string;
+  readonly leadingButtons: number;
+  readonly trailingButtons: number;
+}): ReactElement {
+  const { width: windowWidth } = useWindowDimensions();
+  const columnWidth = useNativeColumnLayoutMetrics()?.width;
+  const screenWidth = columnWidth ?? windowWidth;
+  // UIKit centers the title view in the full bar. Reserve the heavier side on both sides.
+  const leadingWidth = TITLE_BAR_MARGIN / 2 + props.leadingButtons * TITLE_BAR_BUTTON;
+  const trailingWidth = TITLE_BAR_MARGIN / 2 + props.trailingButtons * TITLE_BAR_BUTTON;
+  const width = Math.max(0, screenWidth - 2 * Math.max(leadingWidth, trailingWidth));
+  return (
+    <View style={{ width, overflow: "hidden" }}>
+      <Menu
+        shouldOpenOnLongPress
+        title={props.titleMenu.status ?? props.titleMenu.title}
+        actions={androidHeaderMenuActions(props.titleMenu.items)}
+        onPressAction={({ nativeEvent }) => {
+          const action = findHeaderMenuAction(props.titleMenu.items, nativeEvent.event);
+          if (action && !action.disabled) action.onPress();
+        }}
+        style={{ width }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={props.title}
+          accessibilityHint="Shows more actions"
+          style={{ width }}
+        >
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{
+              color: props.tintColor,
+              fontSize: 16,
+              fontWeight: "800",
+              width,
+            }}
+          >
+            {props.title}
+          </Text>
+        </Pressable>
+      </Menu>
+    </View>
   );
 }
 
@@ -90,11 +146,22 @@ export function AppBar(props: AppBarProps) {
     !compactSearch &&
     NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
     isDuoDevice(deviceType);
+  const titleMenu = props.titleMenu;
+  const titleLeadingButtons = Math.max(
+    1,
+    (props.onClose || rootBack || splitBack || showsSidebarToggle ? 1 : 0) + (compose ? 1 : 0),
+  );
+  const titleTrailingButtons =
+    (props.actions?.length ?? 0) +
+    visibleMenus.length +
+    (props.trailing ? 1 : 0) +
+    (props.confirm ? 1 : 0) +
+    (closeInspector ? 1 : 0);
   if (props.embedded || props.sheet) return null;
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
+        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined, titleMenu]}
         options={{
           headerShown: true,
           headerBackVisible:
@@ -104,6 +171,23 @@ export function AppBar(props: AppBarProps) {
             !(props.guardBack && props.onBack),
           ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
+          // Long-press MenuView instead of UIKit titleMenu — the latter adds a disclosure
+          // chevron that squeezes trailing git/terminal/files into the system More overflow.
+          ...(titleMenu
+            ? {
+                // React Navigation treats headerTitle as a render callback, not a child component type.
+                // oxlint-disable-next-line react/no-unstable-nested-components -- headerTitle render prop
+                headerTitle: () => (
+                  <AppBarTitleMenu
+                    title={props.title}
+                    titleMenu={titleMenu}
+                    tintColor={String(colors["--color-header-foreground"])}
+                    leadingButtons={titleLeadingButtons}
+                    trailingButtons={titleTrailingButtons}
+                  />
+                ),
+              }
+            : undefined),
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-sheet-solid"] } }
@@ -194,7 +278,7 @@ export function AppBar(props: AppBarProps) {
       props.confirm ||
       closeInspector ? (
         <Toolbar placement="right">
-          {props.actions?.map(({ loading, ...action }) =>
+          {props.actions?.map(({ loading, visibilityPriority, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>
                 <View
@@ -210,6 +294,7 @@ export function AppBar(props: AppBarProps) {
                 {...action}
                 icon={iosIcon(action.icon)}
                 separateBackground={action.separateBackground ?? true}
+                visibilityPriority={visibilityPriority}
               />
             ),
           )}

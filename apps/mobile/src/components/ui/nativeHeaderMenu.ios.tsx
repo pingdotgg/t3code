@@ -32,6 +32,7 @@ export function createNativeHeaderMenu(menu: AppBarMenu) {
       accessibilityLabel={menu.title}
       icon={typeof menu.icon === "string" ? menu.icon : menu.icon.ios}
       separateBackground={menu.separateBackground ?? true}
+      visibilityPriority={menu.visibilityPriority}
     >
       {menu.status ? <Toolbar.Label>{menu.status}</Toolbar.Label> : null}
       {renderMenuItems(menu.items)}

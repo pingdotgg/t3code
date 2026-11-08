@@ -4,10 +4,14 @@ import { act, createContext, startTransition, Suspense, type ReactElement } from
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 
+type NativeStackHeaderItemMenu = Extract<NativeStackHeaderItem, { type: "menu" }>;
 type HeaderOptions = {
   unstable_headerLeftItems?: () => NativeStackHeaderItem[];
   unstable_headerRightItems?: () => NativeStackHeaderItem[];
   unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
+  unstable_headerTitleMenu?: () =>
+    | { title?: string; items: NativeStackHeaderItemMenu["menu"]["items"] }
+    | undefined;
 };
 
 const harness = vi.hoisted(() => ({
@@ -104,6 +108,41 @@ afterEach(() => {
   harness.renderedItems = [];
   harness.setOptionsCalls = 0;
   vi.unstubAllGlobals();
+});
+
+it("publishes a title long-press menu without a trailing bar button", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  const onPress = vi.fn();
+  act(() =>
+    root!.render(
+      <NativeHeaderToolbar placement="title">
+        <NativeHeaderToolbar.Menu title="Thread actions">
+          <NativeHeaderToolbar.MenuAction onPress={onPress}>
+            Settle thread
+          </NativeHeaderToolbar.MenuAction>
+          <NativeHeaderToolbar.Menu title="Snooze" icon="clock">
+            <NativeHeaderToolbar.MenuAction onPress={() => {}}>
+              1 hour
+            </NativeHeaderToolbar.MenuAction>
+          </NativeHeaderToolbar.Menu>
+        </NativeHeaderToolbar.Menu>
+      </NativeHeaderToolbar>,
+    ),
+  );
+  const titleMenu = harness.appliedOptions.unstable_headerTitleMenu?.();
+  expect(titleMenu?.title).toBe("Thread actions");
+  expect(titleMenu?.items).toHaveLength(2);
+  const [settle, snooze] = titleMenu?.items ?? [];
+  if (settle?.type !== "action" || snooze?.type !== "submenu") {
+    throw new Error("Expected settle action and snooze submenu");
+  }
+  expect(settle.label).toBe("Settle thread");
+  settle.onPress?.();
+  expect(onPress).toHaveBeenCalledOnce();
+  expect(snooze.label).toBe("Snooze");
+  expect(snooze.icon).toEqual({ type: "sfSymbol", name: "clock" });
+  expect(harness.renderedItems).toEqual([]);
 });
 
 it("does not configure a native screen from an embedded pane", () => {

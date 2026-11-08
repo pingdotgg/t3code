@@ -1,3 +1,4 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AppBar } from "../../components/ui/AppBar";
 import type { AppBarAction, AppBarMenu } from "../../components/ui/AppBar.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -8,11 +9,14 @@ import {
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
+import { buildThreadTitleMenu } from "./threadOverflowMenu";
+import { useThreadLifecycleMenu } from "./useThreadLifecycleMenu";
 
 export function ThreadHeader(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly gitControls: ThreadGitControlsProps;
+  readonly thread?: EnvironmentThreadShell | null;
   readonly onReturnToThread?: () => void;
   readonly draft?: boolean;
   readonly hasThreadCwd: boolean;
@@ -24,6 +28,9 @@ export function ThreadHeader(props: {
     useAdaptiveWorkspaceLayout();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
+  const { items: lifecycleItems, sheet: lifecycleSheet } = useThreadLifecycleMenu(
+    props.draft ? null : (props.thread ?? null),
+  );
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -38,26 +45,31 @@ export function ThreadHeader(props: {
       ]
     : [];
   const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
+  const titleMenu = buildThreadTitleMenu(lifecycleItems);
 
   return (
-    <AppBar
-      title={props.title}
-      subtitle={props.subtitle}
-      onBackToList={goBack}
-      onCompose={props.draft ? undefined : startNewTask}
-      backInSplitView={
-        props.onReturnToThread
-          ? {
-              accessibilityLabel: "Return to chat",
-              icon: "chevron.left",
-              onPress: props.onReturnToThread,
-            }
-          : undefined
-      }
-      actions={actions}
-      menus={menus}
-      hideBottomBorder
-      compact={composerKeyboardActive}
-    />
+    <>
+      <AppBar
+        title={props.title}
+        subtitle={props.subtitle}
+        onBackToList={goBack}
+        onCompose={props.draft ? undefined : startNewTask}
+        backInSplitView={
+          props.onReturnToThread
+            ? {
+                accessibilityLabel: "Return to chat",
+                icon: "chevron.left",
+                onPress: props.onReturnToThread,
+              }
+            : undefined
+        }
+        actions={actions}
+        menus={menus}
+        titleMenu={titleMenu ?? undefined}
+        hideBottomBorder
+        compact={composerKeyboardActive}
+      />
+      {lifecycleSheet}
+    </>
   );
 }

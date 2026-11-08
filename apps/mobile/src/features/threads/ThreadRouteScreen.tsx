@@ -954,6 +954,7 @@ function ThreadRouteContent(
               <ThreadHeader
                 title={selectedThread.title}
                 subtitle={headerSubtitle}
+                thread={selectedThread}
                 gitControls={threadGitControlProps}
                 hasThreadCwd={selectedThreadCwd !== null}
                 inspectorMode={inspectorMode}

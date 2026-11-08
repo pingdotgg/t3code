@@ -40,6 +40,7 @@ type Options = NativeStackNavigationOptions & {
   readonly headerSubtitleStyle?: { color?: string; fontSize?: number; fontFamily?: string };
   readonly unstable_headerCenterItems?: () => NativeStackHeaderItem[];
   readonly unstable_headerToolbarItems?: () => ToolbarItem[];
+  readonly unstable_headerTitleMenu?: () => MenuInput | undefined;
 };
 
 type MenuElementInput =
@@ -69,6 +70,7 @@ function convertMenu(menu: MenuInput, id: string): StackHeaderMenuIOS {
         {
           ...convertMenu({ items: item.items }, childId),
           title: "label" in item ? item.label : item.title,
+          icon: convertIcon(item.icon),
           displayInline:
             "inline" in item
               ? item.inline
@@ -125,6 +127,8 @@ function convertItems(items: NativeStackHeaderItem[], prefix: string): HeaderIte
           icon: convertIcon(item.icon),
           menu: item.disabled ? undefined : convertMenu(item.menu, `${id}:menu`),
           disabled: item.disabled,
+          visibilityPriority:
+            item.visibilityPriority === "default" ? "standard" : item.visibilityPriority,
           variant: item.variant,
           tintColor: item.tintColor,
           hidesSharedBackground: item.hidesSharedBackground,
@@ -361,6 +365,10 @@ export function V5StackHeader(props: {
           titleItem: isValidElement(titleElement)
             ? { id: "title", render: () => titleElement }
             : undefined,
+          titleMenu: (() => {
+            const menu = options.unstable_headerTitleMenu?.();
+            return menu ? convertMenu(menu, "title-menu") : undefined;
+          })(),
           largeTitleEnabled: options.headerLargeTitle,
           backButtonDisplayMode: options.headerBackButtonDisplayMode ?? "minimal",
           backButtonMenuEnabled: options.headerBackButtonMenuEnabled ?? true,

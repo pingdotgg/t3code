@@ -31,6 +31,7 @@ export type AppNativeStackNavigationOptions = Omit<
   readonly unstable_headerRightItems?: unknown;
   readonly unstable_headerSubtitle?: unknown;
   readonly unstable_headerToolbarItems?: unknown;
+  readonly unstable_headerTitleMenu?: unknown;
   readonly unstable_navigationItemStyle?: unknown;
   readonly unstable_headerMinimizationBehavior?: unknown;
 };

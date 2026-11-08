@@ -1,13 +1,15 @@
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import { Column, Row, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { weight } from "@expo/ui/jetpack-compose/modifiers";
+import type { MenuAction } from "@react-native-menu/menu";
 import { use, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 
 import type { AppSymbolName } from "./AppSymbol";
 import { NativeAppBar } from "./NativeAppBar.android";
 import { IconButton } from "./IconButton";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
+import { Menu } from "./Menu";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { useToolbarLayout } from "./useToolbarLayout";
@@ -40,6 +42,11 @@ export function AndroidScreenHeader(props: {
   readonly title: string;
   readonly titleContent?: ReactNode;
   readonly subtitle?: string | null;
+  readonly titleMenu?: {
+    readonly title: string;
+    readonly actions: MenuAction[];
+    readonly onSelect: (id: string) => void;
+  };
   readonly actions?: ReadonlyArray<AndroidHeaderAction>;
   readonly leading?: ReactNode;
   readonly trailing?: ReactNode;
@@ -58,6 +65,79 @@ export function AndroidScreenHeader(props: {
   const { visibleActions, overflowActions } = splitAndroidHeaderActions(
     props.actions ?? [],
     headerWidth >= 600,
+  );
+  const titleLabel = !props.subtitle ? (
+    <NativeText
+      color={colors["--color-header-foreground"]}
+      maxLines={1}
+      overflow="ellipsis"
+      style={titleTypography}
+    >
+      {props.title}
+    </NativeText>
+  ) : props.compact ? (
+    <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
+      <NativeText
+        color={colors["--color-header-foreground"]}
+        maxLines={1}
+        overflow="ellipsis"
+        style={titleTypography}
+      >
+        {props.title}
+      </NativeText>
+      <NativeText
+        color={colors["--color-foreground-muted"]}
+        maxLines={1}
+        overflow="ellipsis"
+        style={subtitleTypography}
+        modifiers={[weight(1)]}
+      >
+        {props.subtitle}
+      </NativeText>
+    </Row>
+  ) : (
+    <Column>
+      <NativeText
+        color={colors["--color-header-foreground"]}
+        maxLines={1}
+        overflow="ellipsis"
+        style={titleTypography}
+      >
+        {props.title}
+      </NativeText>
+      <NativeText
+        color={colors["--color-foreground-muted"]}
+        maxLines={1}
+        overflow="ellipsis"
+        style={subtitleTypography}
+      >
+        {props.subtitle}
+      </NativeText>
+    </Column>
+  );
+  const title = props.titleContent ? (
+    <RNHostView matchContents={{ vertical: true }}>
+      <View collapsable={false}>{props.titleContent}</View>
+    </RNHostView>
+  ) : props.titleMenu ? (
+    <RNHostView matchContents={{ vertical: true }}>
+      <Menu
+        shouldOpenOnLongPress
+        title={props.titleMenu.title}
+        actions={props.titleMenu.actions}
+        onPressAction={({ nativeEvent }) => props.titleMenu?.onSelect(nativeEvent.event)}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={props.title}
+          accessibilityHint="Shows more actions"
+        >
+          {titleLabel}
+        </Pressable>
+      </Menu>
+    </RNHostView>
+  ) : (
+    titleLabel
   );
 
   return (
@@ -94,63 +174,7 @@ export function AndroidScreenHeader(props: {
             </View>
           ) : undefined
         }
-        title={
-          props.titleContent ? (
-            <RNHostView matchContents={{ vertical: true }}>
-              <View collapsable={false}>{props.titleContent}</View>
-            </RNHostView>
-          ) : !props.subtitle ? (
-            <NativeText
-              color={colors["--color-header-foreground"]}
-              maxLines={1}
-              overflow="ellipsis"
-              style={titleTypography}
-            >
-              {props.title}
-            </NativeText>
-          ) : props.compact ? (
-            <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
-              <NativeText
-                color={colors["--color-header-foreground"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={titleTypography}
-              >
-                {props.title}
-              </NativeText>
-              <NativeText
-                color={colors["--color-foreground-muted"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={subtitleTypography}
-                modifiers={[weight(1)]}
-              >
-                {props.subtitle}
-              </NativeText>
-            </Row>
-          ) : (
-            <Column>
-              <NativeText
-                color={colors["--color-header-foreground"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={titleTypography}
-              >
-                {props.title}
-              </NativeText>
-              {props.subtitle ? (
-                <NativeText
-                  color={colors["--color-foreground-muted"]}
-                  maxLines={1}
-                  overflow="ellipsis"
-                  style={subtitleTypography}
-                >
-                  {props.subtitle}
-                </NativeText>
-              ) : null}
-            </Column>
-          )
-        }
+        title={title}
         actions={
           visibleActions.length > 0 || overflowActions.length > 0 || props.trailing ? (
             <View collapsable={false} className="flex-row items-center">

@@ -17,6 +17,8 @@ export interface AppBarAction {
   readonly overflowOnly?: boolean;
   /** iOS: false shares one glass capsule with neighbouring items. Defaults to true. */
   readonly separateBackground?: boolean;
+  /** iOS: keep this action out of the system More overflow when space is tight. */
+  readonly visibilityPriority?: "high" | "low";
 }
 
 export type AppBarMenuItem =
@@ -45,6 +47,8 @@ export interface AppBarMenu {
   readonly icon: AppSymbolName;
   readonly status?: string;
   readonly separateBackground?: boolean;
+  /** iOS: keep this menu out of the system More overflow when space is tight. */
+  readonly visibilityPriority?: "high" | "low";
   readonly items: ReadonlyArray<AppBarMenuItem>;
 }
 
@@ -81,6 +85,8 @@ export interface AppBarProps {
   /** Pull-to-refresh is the gesture on both platforms; Android also lists this in the overflow menu. */
   readonly refresh?: Pick<AppBarAction, "accessibilityLabel" | "disabled" | "onPress">;
   readonly menus?: ReadonlyArray<AppBarMenu>;
+  /** Long-press the title (iOS title menu / Android anchored menu). */
+  readonly titleMenu?: AppBarMenu;
   readonly search?: AppBarSearch;
   readonly onBack?: () => void;
   /** Back runs `onBack` and swipe-back is off, so a `usePreventRemove` guard sees it first. */

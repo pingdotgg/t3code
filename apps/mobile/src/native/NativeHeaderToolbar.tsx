@@ -43,8 +43,10 @@ type NativeStackHeaderVisibilityPriority = Extract<
   { type: "button" }
 >["visibilityPriority"];
 type NativeToolbarItem = NativeStackHeaderItem | HeaderBarButtonSearchBarPlacementItem;
+type NativeTitleMenu = NativeStackHeaderItemMenu["menu"];
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeToolbarItem[];
+  unstable_headerTitleMenu?: () => NativeTitleMenu | undefined;
 };
 
 function iconFromProp(icon: unknown): NativeStackHeaderIcon | undefined {
@@ -195,6 +197,7 @@ function convertToolbarChild(
           ? child.props.variant
           : "plain",
       identifier: typeof child.props.identifier === "string" ? child.props.identifier : undefined,
+      visibilityPriority: child.props.visibilityPriority as NativeStackHeaderVisibilityPriority,
     };
   }
 
@@ -224,8 +227,21 @@ function collectToolbarItems(children: ReactNode, register: RegisterHandler): Na
   return items;
 }
 
+function collectTitleMenu(children: ReactNode, register: RegisterHandler): NativeTitleMenu | null {
+  let menu: NativeTitleMenu | null = null;
+  Children.forEach(children, (child) => {
+    if (!isValidElement<ToolbarElementProps>(child)) return;
+    if (elementTypeName(child) !== "NativeHeaderToolbarMenu") return;
+    menu = {
+      title: typeof child.props.title === "string" ? child.props.title : undefined,
+      items: collectMenuItems(child.props.children, register),
+    };
+  });
+  return menu;
+}
+
 function NativeHeaderToolbarRoot(props: {
-  readonly placement?: "left" | "right" | "bottom";
+  readonly placement?: "left" | "right" | "bottom" | "title";
   readonly children?: ReactNode;
 }) {
   const setOptions = useScreenOptionsWriter();
@@ -233,15 +249,26 @@ function NativeHeaderToolbarRoot(props: {
   const tabActivity = use(NativeWorkspaceTabActivityContext);
   const isTabActive = tabActivity?.isActive;
   const committedHandlers = useRef<(() => void)[]>([]);
-  const { items, handlers } = useMemo(() => {
+  const { items, titleMenu, handlers } = useMemo(() => {
     const handlers: (() => void)[] = [];
     const register: RegisterHandler = (handler) => {
       const index = handlers.length;
       handlers.push(typeof handler === "function" ? (handler as () => void) : () => undefined);
       return () => committedHandlers.current[index]?.();
     };
-    return { items: collectToolbarItems(props.children, register), handlers };
-  }, [props.children, committedHandlers]);
+    if (props.placement === "title") {
+      return {
+        items: [] as NativeToolbarItem[],
+        titleMenu: collectTitleMenu(props.children, register),
+        handlers,
+      };
+    }
+    return {
+      items: collectToolbarItems(props.children, register),
+      titleMenu: null as NativeTitleMenu | null,
+      handlers,
+    };
+  }, [props.children, props.placement, committedHandlers]);
   // Native retains actions when unchanged presentation skips re-registration.
   // Publish only committed handlers; abandoned renders must not replace them.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed toolbar handlers to the ref native actions call; discarded renders must not leak
@@ -265,6 +292,10 @@ function NativeHeaderToolbarRoot(props: {
         setOptions({
           unstable_headerToolbarItems: () => [],
         } as NativeStackOptionsWithToolbar);
+      } else if (props.placement === "title") {
+        setOptions({
+          unstable_headerTitleMenu: () => undefined,
+        } as NativeStackOptionsWithToolbar);
       } else if (props.placement === "left") {
         setOptions({ unstable_headerLeftItems: () => [] });
       } else {
@@ -275,13 +306,17 @@ function NativeHeaderToolbarRoot(props: {
 
   return (
     <NativeStackScreenOptions
-      optionsVersion={[items, route.params]}
+      optionsVersion={[items, titleMenu, route.params]}
       options={
         props.placement === "bottom"
           ? { unstable_headerToolbarItems: () => items }
-          : props.placement === "left"
-            ? { unstable_headerLeftItems: () => headerItems }
-            : { unstable_headerRightItems: () => headerItems }
+          : props.placement === "title"
+            ? ({
+                unstable_headerTitleMenu: () => titleMenu ?? undefined,
+              } as NativeStackOptionsWithToolbar)
+            : props.placement === "left"
+              ? { unstable_headerLeftItems: () => headerItems }
+              : { unstable_headerRightItems: () => headerItems }
       }
     />
   );
@@ -316,6 +351,7 @@ function NativeHeaderToolbarMenu(_props: {
   readonly tintColor?: ColorValue;
   readonly title?: string;
   readonly variant?: "plain" | "done" | "prominent";
+  readonly visibilityPriority?: NativeStackHeaderVisibilityPriority;
 }) {
   return null;
 }

@@ -29,6 +29,125 @@ vi.mock("react-native-screens", () => ({
 
 import { V5StackHeader } from "./V5StackHeader.ios";
 
+it("attaches a title long-press menu to the native header config", () => {
+  bridge.ios = undefined;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  try {
+    act(() =>
+      root.render(
+        <V5StackHeader
+          canGoBack={false}
+          options={{
+            title: "Start a Conversation",
+            unstable_headerTitleMenu: () => ({
+              title: "Thread actions",
+              items: [
+                {
+                  type: "action",
+                  label: "Settle thread",
+                  icon: { type: "sfSymbol", name: "checkmark" },
+                  onPress: () => {},
+                },
+                {
+                  type: "submenu",
+                  label: "Snooze",
+                  icon: { type: "sfSymbol", name: "clock" },
+                  items: [{ type: "action", label: "1 hour", onPress: () => {} }],
+                },
+              ],
+            }),
+          }}
+        />,
+      ),
+    );
+    expect(bridge.ios?.titleMenu).toMatchObject({
+      type: "menu",
+      title: "Thread actions",
+    });
+    expect(bridge.ios?.titleMenu?.children).toEqual([
+      expect.objectContaining({
+        type: "menuItem",
+        title: "Settle thread",
+        icon: { type: "sfSymbol", name: "checkmark" },
+      }),
+      expect.objectContaining({
+        type: "menu",
+        title: "Snooze",
+        icon: { type: "sfSymbol", name: "clock" },
+      }),
+    ]);
+    expect(bridge.ios?.trailingItems ?? []).toEqual([]);
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it("forwards submenu icons into the native menu tree", () => {
+  bridge.ios = undefined;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const root = createRoot(document.createElement("div"));
+  try {
+    act(() =>
+      root.render(
+        <V5StackHeader
+          canGoBack={false}
+          options={{
+            unstable_headerRightItems: () => [
+              {
+                type: "menu",
+                label: "Thread actions",
+                icon: { type: "sfSymbol", name: "ellipsis" },
+                menu: {
+                  items: [
+                    {
+                      type: "action",
+                      label: "Settle thread",
+                      icon: { type: "sfSymbol", name: "checkmark" },
+                      onPress: () => {},
+                    },
+                    {
+                      type: "submenu",
+                      label: "Snooze",
+                      icon: { type: "sfSymbol", name: "clock" },
+                      items: [
+                        {
+                          type: "action",
+                          label: "1 hour",
+                          onPress: () => {},
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ],
+          }}
+        />,
+      ),
+    );
+    const [menuItem] = (bridge.ios as StackHeaderConfigProps["ios"])?.trailingItems ?? [];
+    if (menuItem?.type !== "item" || !("menu" in menuItem) || !menuItem.menu) {
+      throw new Error("Expected a trailing menu item");
+    }
+    const [settle, snooze] = menuItem.menu.children;
+    expect(settle).toMatchObject({
+      type: "menuItem",
+      title: "Settle thread",
+      icon: { type: "sfSymbol", name: "checkmark" },
+    });
+    expect(snooze).toMatchObject({
+      type: "menu",
+      title: "Snooze",
+      icon: { type: "sfSymbol", name: "clock" },
+    });
+  } finally {
+    act(() => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
 it.each(["leadingItems", "trailingItems", "toolbarItems"] as const)(
   "updates native enabled state after permissions change in %s",
   (placement) => {

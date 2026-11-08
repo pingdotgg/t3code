@@ -96,7 +96,8 @@ function presetOptions(presets: ReadonlyArray<SnoozePresetSetting> | undefined) 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
-  readonly now: Date;
+  /** Wall clock as a `Date`, or epoch ms when the caller must stay Date-constructor free. */
+  readonly now: Date | number;
   readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }):
   | { readonly _tag: "selected"; readonly preset: SnoozePreset }
@@ -106,7 +107,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
   const preset = pickSnoozePreset({
     shown: input.displayedPresets,
     id: input.event.slice("snooze:".length),
-    now: input.now,
+    now: typeof input.now === "number" ? new Date(input.now) : input.now,
     ...presetOptions(input.presets),
   });
   return preset ? { _tag: "selected", preset } : { _tag: "expired" };
