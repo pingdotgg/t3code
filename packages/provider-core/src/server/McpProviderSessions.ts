@@ -68,8 +68,9 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
       : input.height;
   const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
   const path = input.path;
-  // The handler refuses a call with both sources, so it published nothing to recover.
-  if (path !== undefined && input.html !== undefined) {
+  // The handler refuses a call with both sources, so it published nothing to recover. Its decoder
+  // reads null as an omitted source, so only strings count here.
+  if (typeof path === "string" && typeof input.html === "string") {
     return -1;
   }
   if (typeof path === "string" && path.length > 0) {

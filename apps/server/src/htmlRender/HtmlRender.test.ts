@@ -292,8 +292,10 @@ describe("HtmlRender", () => {
       expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: inline.html })).toBe(
         undefined,
       );
-      expect(yield* mcpSessions.takeHtmlRender(threadId, inline)).toEqual(inlineReference);
-      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(first);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...inline, path: null })).toEqual(
+        inlineReference,
+      );
+      expect(yield* mcpSessions.takeHtmlRender(threadId, { ...page, html: null })).toEqual(first);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
     }).pipe(Effect.provide(layerTest)),

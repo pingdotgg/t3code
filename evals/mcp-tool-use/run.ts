@@ -1727,12 +1727,16 @@ export const gradeSample = (expect: McpToolUseCase["expect"], run: SampleRun, pa
   const checks: Array<{ readonly check: string; readonly pass: boolean }> = [];
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   const written = scriptsBefore(run.calls);
+  // A refused page call showed nothing, so it neither previews nor renders, and no file stands in
+  // for its page. Inline HTML it sent still counts against callsMustNot.
   const attempted = run.calls.map((call, index) => ({
     ...call,
-    input: withPage(call.tool, withOptionsObject(call.input), written[index]!),
+    input: withPage(
+      call.tool,
+      withOptionsObject(call.input),
+      call.failed ? new Map() : written[index]!,
+    ),
   }));
-  // A refused page call showed nothing, so it neither previews nor renders, but it still counts
-  // against callsMustNot: the agent sent what it sent.
   const calls = attempted.filter((call) => !(call.failed && isPageTool(call.tool)));
   const count = (tool: string) => calls.filter((call) => call.tool === tool).length;
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request".
