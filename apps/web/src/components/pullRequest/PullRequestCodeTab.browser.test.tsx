@@ -137,6 +137,11 @@ const detail: PullRequestDetailView = {
   },
 };
 
+const viewedDetail: PullRequestDetailView = {
+  ...detail,
+  capabilities: { ...detail.capabilities, viewedFiles: "host" },
+};
+
 function setup({ paged, canMarkViewed = true }: { paged: boolean; canMarkViewed?: boolean }) {
   mocks.paged = paged;
   mocks.diffCommits = [];
@@ -147,10 +152,12 @@ const tab = (
   refreshToken: number,
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   pullRequest: PullRequestDetailView = detail,
+  environmentConnected = true,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
+    environmentConnected={environmentConnected}
     reference={pullRequest}
     detail={pullRequest}
     selectedCommitOid={null}
@@ -225,6 +232,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
     <PullRequestCodeTab
       scrollerRef={() => {}}
       environmentId={EnvironmentId.make("environment")}
+      environmentConnected
       reference={detail}
       detail={{
         ...detail,
@@ -254,10 +262,20 @@ it("disables the Viewed checkbox on a connection that cannot mark files viewed",
   setup({ paged: false, canMarkViewed: false });
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
-  await using screen = await render(
-    tab(0, null, { ...detail, capabilities: { ...detail.capabilities, viewedFiles: "host" } }),
-    { container },
-  );
+  await using screen = await render(tab(0, null, viewedDetail), { container });
 
   await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
+});
+
+it("disables the Viewed checkbox while the environment is disconnected, then enables it on reconnect", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0, null, viewedDetail, false), { container });
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeDisabled();
+
+  await screen.rerender(tab(0, null, viewedDetail, true));
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeEnabled();
 });

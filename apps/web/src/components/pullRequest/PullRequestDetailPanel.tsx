@@ -1832,6 +1832,7 @@ export function PullRequestDetailPanel({
                     scrollerRef={scrollerRefs.code}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
+                    environmentConnected={environmentConnected}
                     reference={reference}
                     detail={detail}
                     selectedCommitOid={selectedCodeCommitOid}

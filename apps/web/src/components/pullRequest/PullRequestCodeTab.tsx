@@ -337,6 +337,7 @@ export interface PullRequestAgentSelectionInput {
 function PullRequestCodeTab({
   scrollerRef,
   environmentId,
+  environmentConnected,
   reference,
   detail,
   selectedCommitOid,
@@ -353,6 +354,7 @@ function PullRequestCodeTab({
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
+  environmentConnected: boolean;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
   selectedCommitOid: string | null;
@@ -521,9 +523,10 @@ function PullRequestCodeTab({
     reference,
     enabled: viewedFilesStore !== undefined,
   });
-  const canMarkViewed = useAtomValue(
-    pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
-  );
+  // The grant outlives a dropped connection, and a write without a session fails.
+  const canMarkViewed =
+    useAtomValue(pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId)) &&
+    environmentConnected;
   const {
     setViewed,
     refresh: refreshFilesViewed,
