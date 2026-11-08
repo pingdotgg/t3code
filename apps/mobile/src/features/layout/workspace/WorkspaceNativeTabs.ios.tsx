@@ -4,14 +4,13 @@ import {
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { View, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
   workspaceTabForNativeSlot,
-  workspaceUsesColumns,
   type WorkspaceTab,
 } from "./workspace-tabs-state";
 import {
@@ -20,7 +19,6 @@ import {
 } from "../../../native/v5-workspace-context";
 import { useFloatingWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
-import { useDeviceType } from "../../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
 import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
@@ -69,8 +67,6 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
-  /** The sidebar column draws the tabs itself, so they leave with it. */
-  readonly tabsInSidebarColumn?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
@@ -79,15 +75,6 @@ export function WorkspaceNativeTabs(props: {
   const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
-  const deviceType = useDeviceType();
-  const { layout, panes } = useAdaptiveWorkspaceLayout();
-  // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
-  const hiddenWithSidebar =
-    deviceType === "pad" &&
-    layout.usesSplitView &&
-    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
-    !panes.primarySidebarVisible;
-  const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
@@ -151,27 +138,6 @@ export function WorkspaceNativeTabs(props: {
           );
         })}
       </Tabs.Host>
-      {/* Split-view iPad keeps the dock in the sidebar column; the card stack draws it on the root
-          screen so interactive pops reveal it underneath. Only cover the rare in-place case here. */}
-      {deviceType === "pad" &&
-      layout.usesSplitView &&
-      !props.hidden &&
-      !props.tabsInSidebarColumn &&
-      !hiddenWithSidebar ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
-            width: Math.min(280, layout.listPaneWidth ?? width, width),
-            height: 128,
-          }}
-        >
-          <WorkspaceSidebarTabsFooter />
-        </View>
-      ) : null}
     </View>
   );
 }
