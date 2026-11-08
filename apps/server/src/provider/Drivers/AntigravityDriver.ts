@@ -26,6 +26,7 @@ import { HttpClient } from "effect/http";
 import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { ProviderAdapterOpenSessionError } from "@t3tools/provider-core/server/ProviderAdapter";
 import {
   isAntigravityTextGenerationAvailable,
   makeAntigravityTextGeneration,
@@ -196,8 +197,20 @@ export const AntigravityDriver: ProviderDriver<
         Effect.map((catalog) => stampIdentity(ModelCatalog.applyModelCatalog(draft, catalog))),
       );
 
+    const acquireExecutable = installation.acquire(settings.binaryPath, processEnvironment).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail: cause.detail,
+            cause,
+          }),
+      ),
+    );
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+      sessionExecutable?: AntigravityInstallation.AntigravityExecutable,
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -210,17 +223,7 @@ export const AntigravityDriver: ProviderDriver<
           detail: authConfigIssue,
         });
       }
-      const executable = yield* installation.acquire(settings.binaryPath, processEnvironment).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderSetupError({
-              instanceId,
-              operation: "resolve",
-              detail: cause.detail,
-              cause,
-            }),
-        ),
-      );
+      const executable = sessionExecutable ?? (yield* acquireExecutable);
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,
@@ -453,35 +456,35 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const defaultModel = currentCatalog.pipe(Effect.map((catalog) => catalog?.defaultChatModel));
-    const usesCli = yield* installation.resolve(settings.binaryPath, processEnvironment).pipe(
-      Effect.map((executable) => executable.harnessPath === null),
-      Effect.orElseSucceed(() => false),
-    );
-    const orchestrationAdapter = yield* makeAntigravityAdapterV2({
-      instanceId,
-      usesCli,
-      selfInvocation,
-      makeRuntime,
-      withProcess: authFlow.withProcess,
-      defaultModel,
-      profileDirectory,
-      onSessionStarted: provider.onSessionStarted,
-      onSessionEvent: (event) => {
-        if (event._tag === "ConfigOptionsUpdated") {
-          return provider.onConfigOptionsUpdated(event.configOptions);
-        }
-        return event._tag === "AvailableCommandsUpdated"
-          ? provider.onAvailableCommands(event.availableCommands)
-          : Effect.void;
-      },
-      continuationRequests,
-      nativeLogging: (threadId) =>
-        makeNativeLogger({
-          nativeEventLogger: loggers.native,
-          provider: DRIVER,
-          threadId,
-        }),
-    });
+    const adapterContext =
+      yield* Effect.context<Effect.Services<ReturnType<typeof makeAntigravityAdapterV2>>>();
+    const makeAdapter = (executable?: AntigravityInstallation.AntigravityExecutable) =>
+      makeAntigravityAdapterV2({
+        instanceId,
+        usesCli: executable?.harnessPath === null,
+        selfInvocation,
+        makeRuntime: (input) => makeRuntime(input, executable),
+        withProcess: authFlow.withProcess,
+        defaultModel,
+        profileDirectory,
+        onSessionStarted: provider.onSessionStarted,
+        onSessionEvent: (event) => {
+          if (event._tag === "ConfigOptionsUpdated") {
+            return provider.onConfigOptionsUpdated(event.configOptions);
+          }
+          return event._tag === "AvailableCommandsUpdated"
+            ? provider.onAvailableCommands(event.availableCommands)
+            : Effect.void;
+        },
+        continuationRequests,
+        nativeLogging: (threadId) =>
+          makeNativeLogger({
+            nativeEventLogger: loggers.native,
+            provider: DRIVER,
+            threadId,
+          }),
+      }).pipe(Effect.provideContext(adapterContext));
+    const orchestrationAdapter = yield* makeAdapter();
     const textGeneration = yield* makeAntigravityTextGeneration({
       profileDirectory,
       defaultModel,
@@ -565,7 +568,23 @@ export const AntigravityDriver: ProviderDriver<
                   }),
               ),
             ),
-      orchestrationAdapter,
+      orchestrationAdapter: {
+        ...orchestrationAdapter,
+        openSession: Effect.fn("AntigravityDriver.openSession")(function* (input) {
+          const executable = yield* acquireExecutable.pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterOpenSessionError({
+                  driver: DRIVER,
+                  providerSessionId: input.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+          const adapter = yield* makeAdapter(executable);
+          return yield* adapter.openSession(input);
+        }),
+      },
       textGeneration,
       auth: authFlow.controller,
       refreshModels,
