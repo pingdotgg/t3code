@@ -1,22 +1,34 @@
 import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { ScopedThreadRef } from "@t3tools/contracts";
+import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { MessageSquareIcon, PlusIcon, SquarePenIcon, XIcon } from "lucide-react";
+import {
+  Columns2Icon,
+  MessageSquareIcon,
+  PlusIcon,
+  Rows2Icon,
+  SquarePenIcon,
+  XIcon,
+} from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect } from "react";
+import { useEffect, type MouseEvent } from "react";
 
 import { isElectron } from "../../env";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { startNewThreadFromContext } from "../../lib/chatThreadActions";
 import { cn } from "../../lib/utils";
+import { readLocalApi } from "../../localApi";
 import { openCommandPalette } from "../../commandPaletteBus";
 import { useThreadShell } from "../../state/entities";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { buildThreadRouteParams } from "../../threadRoutes";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
-import { neighborTabKey, useWorkspaceTabsStore } from "./workspaceTabsStore";
+import { useShowThreadInMain } from "./WorkspaceSplit";
+import {
+  neighborTabKey,
+  useWorkspaceTabsStore,
+  type WorkspaceSplitDirection,
+} from "./workspaceTabsStore";
 
 const TAB_CLASS =
   "group/tab relative flex h-7.5 min-w-0 max-w-56 flex-1 items-center rounded-md text-sm [-webkit-app-region:no-drag]";
@@ -31,11 +43,13 @@ function ThreadTab({
   active,
   onSelect,
   onClose,
+  onContextMenu,
 }: {
   threadRef: ScopedThreadRef;
   active: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onContextMenu: (event: MouseEvent) => void;
 }) {
   const thread = useThreadShell(threadRef);
   const providers = useAtomValue(primaryServerProvidersAtom);
@@ -62,6 +76,7 @@ function ThreadTab({
         onAuxClick={(event) => {
           if (event.button === 1) onClose();
         }}
+        onContextMenu={onContextMenu}
         className={TAB_BODY_CLASS}
       >
         {icon}
@@ -79,12 +94,19 @@ function ThreadTab({
   );
 }
 
+const SPLIT_BUTTON_CLASS =
+  "grid size-7.5 shrink-0 place-items-center rounded-md text-muted-foreground opacity-65 outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/7 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-30";
+
 export function WorkspaceTabs() {
   const navigate = useNavigate();
   const routeTarget = useThreadRouteTarget();
   const keys = useWorkspaceTabsStore((state) => state.keys);
+  const splitKey = useWorkspaceTabsStore((state) => state.split?.key ?? null);
   const openTab = useWorkspaceTabsStore((state) => state.open);
   const closeTab = useWorkspaceTabsStore((state) => state.close);
+  const openSplit = useWorkspaceTabsStore((state) => state.openSplit);
+  const closeSplit = useWorkspaceTabsStore((state) => state.closeSplit);
+  const showThread = useShowThreadInMain();
   const newThreadContext = useHandleNewThread();
   const activeKey = routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
 
@@ -93,17 +115,36 @@ export function WorkspaceTabs() {
     if (activeKey) openTab(activeKey);
   }, [activeKey, openTab]);
 
-  const showThread = (ref: ScopedThreadRef) =>
-    void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
+  const splitShown = splitKey !== null && splitKey !== activeKey;
+  const splitCandidate = (activeKey ? neighborTabKey(keys, activeKey) : keys.at(-1)) ?? null;
 
+  // The split pane's thread takes over the main pane when the main one closes.
   const close = (key: string) => {
     if (key === activeKey) {
-      const next = neighborTabKey(keys, key);
+      const next = (splitShown ? splitKey : null) ?? neighborTabKey(keys, key);
       const nextRef = next ? parseScopedThreadKey(next) : null;
       if (nextRef) showThread(nextRef);
       else void navigate({ to: "/" });
     }
     closeTab(key);
+  };
+
+  const showTabMenu = (event: MouseEvent, key: string) => {
+    const api = readLocalApi();
+    if (!api) return;
+    event.preventDefault();
+    const inMain = key === activeKey;
+    const items: ContextMenuItem<WorkspaceSplitDirection | "close-split" | "close">[] = [
+      { id: "right", label: "Split right", disabled: inMain },
+      { id: "down", label: "Split down", disabled: inMain },
+      ...(splitShown ? [{ id: "close-split" as const, label: "Close split" }] : []),
+      { id: "close", label: "Close tab", separatorBefore: true },
+    ];
+    void api.contextMenu.show(items, { x: event.clientX, y: event.clientY }).then((action) => {
+      if (action === "right" || action === "down") openSplit(key, action);
+      else if (action === "close-split") closeSplit();
+      else if (action === "close") close(key);
+    });
   };
 
   // A project keeps one draft, so from a draft "+" asks which project to start in.
@@ -135,9 +176,10 @@ export function WorkspaceTabs() {
           <ThreadTab
             key={key}
             threadRef={ref}
-            active={key === activeKey}
+            active={key === activeKey || (splitShown && key === splitKey)}
             onSelect={() => showThread(ref)}
             onClose={() => close(key)}
+            onContextMenu={(event) => showTabMenu(event, key)}
           />
         );
       })}
@@ -155,6 +197,35 @@ export function WorkspaceTabs() {
       >
         <PlusIcon className="size-4" />
       </button>
+      <div className="ml-auto flex shrink-0 items-center gap-0.5 pl-2">
+        {splitShown ? (
+          <button
+            type="button"
+            aria-label="Close split"
+            onClick={closeSplit}
+            className={SPLIT_BUTTON_CLASS}
+          >
+            <XIcon className="size-4" />
+          </button>
+        ) : (
+          (["right", "down"] as const).map((direction) => (
+            <button
+              key={direction}
+              type="button"
+              aria-label={direction === "right" ? "Split right" : "Split down"}
+              disabled={splitCandidate === null}
+              onClick={() => splitCandidate && openSplit(splitCandidate, direction)}
+              className={SPLIT_BUTTON_CLASS}
+            >
+              {direction === "right" ? (
+                <Columns2Icon className="size-4" />
+              ) : (
+                <Rows2Icon className="size-4" />
+              )}
+            </button>
+          ))
+        )}
+      </div>
     </nav>
   );
 }
