@@ -21,7 +21,7 @@ jobs:
           name: desktop-linux-arm64
           run-id: 42515139484
           github-token: ${{ github.token }}
-          path: artifact
+          path: ${{ runner.temp }}/artifact
       - uses: actions/checkout@v6
         with:
           sparse-checkout: .github/actions/setup-apt-mirrors
@@ -32,8 +32,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          chmod +x artifact/*.AppImage
-          artifact/*.AppImage --appimage-extract >/dev/null
+          chmod +x "$RUNNER_TEMP"/artifact/*.AppImage
+          "$RUNNER_TEMP"/artifact/*.AppImage --appimage-extract >/dev/null
           cat > "$RUNNER_TEMP/verify.cjs" <<'JS'
           const assert = require('node:assert/strict');
           const fs = require('node:fs');
