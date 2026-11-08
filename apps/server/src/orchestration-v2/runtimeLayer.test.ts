@@ -4916,6 +4916,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
   it.effect("releases held agent messages once a later run completes, not the user's", () =>
     Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
       const threadId = ThreadId.make("runtime-layer-failed-queue-agent-messages");
       const { send, runFor, end, startedRunIds, releasedAfter, awaitHeld } =
@@ -4928,6 +4929,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end("active", "failed");
       yield* awaitHeld("issue");
       assert.isTrue((yield* runFor("issue")).queueHeld);
+      // An agent's edit restamps the user's message but leaves the user's hold in place.
+      yield* orchestrator.dispatch({
+        type: "queued-run.edit",
+        commandId: CommandId.make(`${threadId}:edit:user`),
+        threadId,
+        runId: (yield* runFor("user")).id,
+        text: "user, edited by an agent",
+        editor: { createdBy: "agent", creationSource: "mcp" },
+      });
       // Delivery bookkeeping rewrites an older completed run; the thread has not moved on.
       yield* end("earlier", "completed", ":bookkeeping");
       // A scheduled tick finds the thread idle and starts past the held queue.
