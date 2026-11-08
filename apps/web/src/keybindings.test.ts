@@ -921,19 +921,25 @@ describe("Usage shortcuts", () => {
     },
   );
 
-  it("matches shifted number keys for periods and only on Usage", () => {
-    const shortcut = event({ key: "!", code: "Digit1", ctrlKey: true, shiftKey: true });
-    assert.strictEqual(
-      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Linux",
-        context: { usagePageOpen: true },
-      }),
-      "usage.period.day",
-    );
-    assert.isNull(
-      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Linux",
-      }),
-    );
-  });
+  it.each([
+    { key: "!", code: "Digit1", command: "usage.period.day" },
+    { key: "%", code: "Digit5", command: "usage.period.thisMonth" },
+  ])(
+    "matches shifted number keys for periods and only on Usage ($key)",
+    ({ key, code, command }) => {
+      const shortcut = event({ key, code, ctrlKey: true, shiftKey: true });
+      assert.strictEqual(
+        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "Linux",
+          context: { usagePageOpen: true },
+        }),
+        command,
+      );
+      assert.isNull(
+        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "Linux",
+        }),
+      );
+    },
+  );
 });

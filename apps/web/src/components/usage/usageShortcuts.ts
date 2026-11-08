@@ -10,11 +10,17 @@ export const METRIC_OPTIONS = [
 ] as const satisfies readonly { value: UsageMetric; label: string; command: KeybindingCommand }[];
 
 export const WINDOW_OPTIONS = [
-  { days: 1, label: "Past 24h", command: "usage.period.day" },
-  { days: 7, label: "7 days", command: "usage.period.week" },
-  { days: 30, label: "30 days", command: "usage.period.month" },
-  { days: 90, label: "90 days", command: "usage.period.quarter" },
+  { period: 1, label: "Past 24h", command: "usage.period.day" },
+  { period: 7, label: "7 days", command: "usage.period.week" },
+  { period: 30, label: "30 days", command: "usage.period.month" },
+  { period: 90, label: "90 days", command: "usage.period.quarter" },
 ] as const;
+
+export const THIS_MONTH_OPTION = {
+  period: "month",
+  label: "This month",
+  command: "usage.period.thisMonth",
+} as const;
 
 export function resolveUsageShortcut(
   event: ShortcutEventLike & { target: EventTarget | null },

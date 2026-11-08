@@ -94,24 +94,40 @@ export function formatUsageContractMismatch(
     : `This client is older than the server on ${environmentLabel}; its usage is excluded from totals.`;
 }
 
+const SHORT_MONTHS = [
+  "Jan",
+  "Feb",
+  "Mar",
+  "Apr",
+  "May",
+  "Jun",
+  "Jul",
+  "Aug",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Dec",
+];
+
+const FULL_MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
 export function formatDayShort(day: string): string {
   const [year, month, dayOfMonth] = day.split("-").map((part) => Number(part));
   if (year === undefined || month === undefined || dayOfMonth === undefined) return day;
-  const MONTHS = [
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-  ];
-  return `${MONTHS[month - 1] ?? ""} ${dayOfMonth}`;
+  return `${SHORT_MONTHS[month - 1] ?? ""} ${dayOfMonth}`;
 }
 
 export function enumerateDays(sinceDay: string, untilDay: string): readonly string[] {
@@ -244,29 +260,37 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone, hour12);
 }
 
+function zoneDayFormatter(): { timeZone: string; format: Intl.DateTimeFormat } {
+  const requested = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  try {
+    return {
+      timeZone: requested,
+      format: new Intl.DateTimeFormat("en-CA", {
+        timeZone: requested,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }),
+    };
+  } catch {
+    return {
+      timeZone: "UTC",
+      format: new Intl.DateTimeFormat("en-CA", {
+        timeZone: "UTC",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }),
+    };
+  }
+}
+
 export function makeWindow(
   days: number,
   now = new Date(),
   resolution: UsageResolution = "day",
 ): UsageSummaryInput {
-  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  let format: Intl.DateTimeFormat;
-  try {
-    format = new Intl.DateTimeFormat("en-CA", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  } catch {
-    timeZone = "UTC";
-    format = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "UTC",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    });
-  }
+  const { timeZone, format } = zoneDayFormatter();
   const untilDay = format.format(now);
   if (resolution === "hour") {
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
@@ -293,4 +317,91 @@ export function makeWindow(
     timeZone,
     resolution,
   };
+}
+
+export const USAGE_HISTORY_DAYS = 92;
+
+export type UsageRollingDays = 1 | 7 | 30 | 90;
+
+// "YYYY-MM" calendar month keys, e.g. "2026-10".
+export type UsageMonthKey = `${number}-${number}`;
+
+export type UsagePeriod = UsageRollingDays | "month" | UsageMonthKey;
+
+export function makePeriodWindow(period: UsagePeriod, now = new Date()): UsageSummaryInput {
+  if (typeof period === "number") {
+    return period === 1 ? makeWindow(1, now, "hour") : makeWindow(period, now);
+  }
+  const { timeZone, format } = zoneDayFormatter();
+  const untilDay = format.format(now);
+  const currentMonth = untilDay.slice(0, 7);
+  if (period === "month" || period >= currentMonth) {
+    return {
+      sinceDay: UsageDay.make(`${currentMonth}-01`),
+      untilDay: UsageDay.make(untilDay),
+      timeZone,
+      resolution: "day",
+    };
+  }
+  const [year = 0, month = 1] = period.split("-").map((part) => Number.parseInt(part, 10));
+  // Date.UTC normalizes day 0 to the last day of the previous month, leap years included.
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    sinceDay: UsageDay.make(`${period}-01`),
+    untilDay: UsageDay.make(`${period}-${lastDay}`),
+    timeZone,
+    resolution: "day",
+  };
+}
+
+export function selectableUsageMonths(now = new Date()): readonly UsageMonthKey[] {
+  const { format } = zoneDayFormatter();
+  const [year = 0, month = 1, dayOfMonth = 1] = format
+    .format(now)
+    .split("-")
+    .map((part) => Number.parseInt(part, 10));
+  const cutoffDay = new Date(Date.UTC(year, month - 1, dayOfMonth - USAGE_HISTORY_DAYS))
+    .toISOString()
+    .slice(0, 10);
+  const months: UsageMonthKey[] = [];
+  let cursorYear = year;
+  let cursorMonth = month;
+  while (`${cursorYear}-${String(cursorMonth).padStart(2, "0")}-01` > cutoffDay) {
+    months.push(`${cursorYear}-${String(cursorMonth).padStart(2, "0")}` as UsageMonthKey);
+    cursorMonth -= 1;
+    if (cursorMonth === 0) {
+      cursorMonth = 12;
+      cursorYear -= 1;
+    }
+  }
+  return months;
+}
+
+export function formatUsageMonth(month: UsageMonthKey, withYear = true): string {
+  const [year, monthNumber] = month.split("-");
+  const name = FULL_MONTHS[Number(monthNumber) - 1];
+  if (name === undefined) return month;
+  return withYear ? `${name} ${year}` : name;
+}
+
+export function formatDayRange(sinceDay: string, untilDay: string): string {
+  const [sinceYear = "", sinceMonth = "", sinceDayOfMonth = ""] = sinceDay.split("-");
+  const [untilYear = "", untilMonth = "", untilDayOfMonth = ""] = untilDay.split("-");
+  const sinceLabel = formatDayShort(sinceDay);
+  const untilLabel = formatDayShort(untilDay);
+  if (sinceDay === untilDay) return untilLabel;
+  if (sinceYear === untilYear && sinceMonth === untilMonth) {
+    return `${SHORT_MONTHS[Number(sinceMonth) - 1] ?? ""} ${Number(sinceDayOfMonth)} – ${Number(untilDayOfMonth)}`;
+  }
+  if (sinceYear === untilYear) return `${sinceLabel} – ${untilLabel}`;
+  return `${sinceLabel}, ${sinceYear} – ${untilLabel}, ${untilYear}`;
+}
+
+export function parseUsagePeriod(value: string): UsagePeriod | undefined {
+  if (value === "1") return 1;
+  if (value === "7") return 7;
+  if (value === "30") return 30;
+  if (value === "90") return 90;
+  if (value === "month") return "month";
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? (value as UsageMonthKey) : undefined;
 }

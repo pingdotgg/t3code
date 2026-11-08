@@ -1,7 +1,12 @@
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { ChatGptUsageSummary } from "./ChatGptUsageSummary";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { EnvironmentId, USAGE_CONTRACT_VERSION, type UsageProviderKind } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  USAGE_CONTRACT_VERSION,
+  type UsageProviderKind,
+  type UsageSummaryInput,
+} from "@t3tools/contracts";
 import { type RouteProp, useIsFocused, useRoute } from "@react-navigation/native";
 import {
   updatingProvidersLabel,
@@ -18,21 +23,30 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
+  formatDayRange,
   formatDayShort,
   formatHourShort,
   formatPercent,
   formatTokens,
   formatUsageContractMismatch,
+  formatUsageMonth,
   formatUsd,
-  makeWindow,
+  makePeriodWindow,
+  parseUsagePeriod,
+  selectableUsageMonths,
   usageSourceMessages,
+  type UsageMonthKey,
+  type UsagePeriod,
 } from "@t3tools/shared/usageFormat";
+import type { MenuAction } from "@react-native-menu/menu";
 import { useRef, useState, type ReactNode } from "react";
 import { RefreshControl, View } from "react-native";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
+import { ControlPill } from "../../components/ui/ControlPill";
+import { Menu } from "../../components/ui/Menu";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
@@ -59,6 +73,7 @@ const WINDOW_OPTIONS = [
   { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
   { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
   { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  { value: "month", label: "Month", accessibilityLabel: "This month" },
 ] as const;
 
 const CHART_HEIGHT = 180;
@@ -94,12 +109,13 @@ function UsageScreen(props: {
   // A workspace pane knows its width in the render that resizes it; measuring lags a frame.
   const width = useWorkspaceSettledContentWidth() ?? measuredWidth;
   const wide = width >= WIDE_WIDTH;
-  const [windowSelection, setWindowSelection] = useState(() => ({
-    days: 30,
-    window: makeWindow(30),
-  }));
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const [windowSelection, setWindowSelection] = useState<{
+    readonly period: UsagePeriod;
+    readonly window: UsageSummaryInput;
+  }>(() => ({ period: 30, window: makePeriodWindow(30) }));
+  const { period, window } = windowSelection;
+  const isPast24Hours = period === 1;
+  const isMonthPeriod = typeof period === "string";
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
@@ -137,22 +153,19 @@ function UsageScreen(props: {
     refreshing: refreshingUsage,
     providerLabel,
   });
-  const selectWindow = (days: number) => {
-    setWindowSelection({
-      days,
-      window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
-    });
+  const selectPeriod = (period: UsagePeriod) => {
+    setWindowSelection({ period, window: makePeriodWindow(period) });
   };
   const refreshWindow = () => {
     if (refreshingRef.current) return;
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = makePeriodWindow(period);
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ period, window: nextWindow });
     }
     refreshingRef.current = true;
     setRefreshingUsage(true);
@@ -173,6 +186,15 @@ function UsageScreen(props: {
     timeZone: window.timeZone,
   };
   const providers = <ProviderSection merged={merged} metric={metric} compact={wide} />;
+  const monthPicker =
+    isMonthPeriod && !showingLimits ? (
+      <UsageMonthPicker
+        period={period}
+        sinceDay={window.sinceDay}
+        untilDay={window.untilDay}
+        onSelect={selectPeriod}
+      />
+    ) : null;
 
   const showEnvironmentFilter = environments.length > 0 || selectedEnvironmentIds !== null;
   const selectEnvironment = (value: string) => {
@@ -237,8 +259,8 @@ function UsageScreen(props: {
               ) : (
                 <SegmentedControl
                   options={WINDOW_OPTIONS}
-                  selected={windowDays}
-                  onSelect={selectWindow}
+                  selected={isMonthPeriod ? "month" : period}
+                  onSelect={selectPeriod}
                   size="compact"
                   className="flex-1"
                 />
@@ -260,6 +282,7 @@ function UsageScreen(props: {
               role="tab"
             />
           )}
+          {wide ? monthPicker : null}
           <Animated.View
             key={showingLimits ? "limits" : "usage"}
             entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
@@ -277,11 +300,12 @@ function UsageScreen(props: {
                 {wide ? null : (
                   <SegmentedControl
                     options={WINDOW_OPTIONS}
-                    selected={windowDays}
-                    onSelect={selectWindow}
+                    selected={isMonthPeriod ? "month" : period}
+                    onSelect={selectPeriod}
                     size="compact"
                   />
                 )}
+                {monthPicker}
                 <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
                 {merged.duplicateSources.length > 0 ? (
                   <Text className="text-sm text-foreground-muted">
@@ -358,6 +382,54 @@ function UsageScreen(props: {
         </View>
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+function UsageMonthPicker(props: {
+  readonly period: "month" | UsageMonthKey;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly onSelect: (period: UsagePeriod) => void;
+}) {
+  const monthKeys = selectableUsageMonths();
+  const actions: MenuAction[] = [
+    { id: "month", title: "This month", state: props.period === "month" ? "on" : "off" },
+    ...monthKeys.slice(1).map((key): MenuAction => ({
+      id: key,
+      title: formatUsageMonth(key),
+      state: props.period === key ? "on" : "off",
+    })),
+  ];
+  return (
+    <View className="flex-row items-center gap-3">
+      <Menu
+        accessible
+        accessibilityLabel="Choose month"
+        accessibilityRole="button"
+        actions={actions}
+        onPressAction={({ nativeEvent }) => {
+          const next = parseUsagePeriod(nativeEvent.event);
+          if (next !== undefined) props.onSelect(next);
+        }}
+      >
+        <ControlPill
+          variant="pill"
+          icon="calendar.badge.clock"
+          label={
+            props.period === "month"
+              ? "This month"
+              : formatUsageMonth(
+                  props.period,
+                  props.period.slice(0, 4) !== monthKeys[0]?.slice(0, 4),
+                )
+          }
+          accessibilityLabel="Choose month"
+        />
+      </Menu>
+      <Text className="text-sm text-foreground-muted">
+        {formatDayRange(props.sinceDay, props.untilDay)}
+      </Text>
+    </View>
   );
 }
 
