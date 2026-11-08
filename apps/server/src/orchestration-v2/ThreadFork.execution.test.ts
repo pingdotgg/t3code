@@ -1379,6 +1379,18 @@ it.effect("cancelling a pending merge-back withdraws it and frees the target", (
       ),
       [],
     );
+    // Another device cancelling after the first one is not an error.
+    const cancelledAgain = yield* orchestrator
+      .dispatch({
+        type: "thread.merge_back.cancel",
+        commandId: CommandId.make("merge-back-cancel-cancel-again"),
+        sourceThreadId: sideChat.threadId,
+        targetThreadId: parentId,
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isSuccess(cancelledAgain), String(cancelledAgain));
     yield* mergeBack("merge-back-cancel-other-fork", otherFork);
     const afterOther = yield* orchestrator.getThreadProjection(parentId);
     assert.deepEqual(

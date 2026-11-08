@@ -4775,7 +4775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Thread ${command.targetThreadId} already has pending context from another side chat or fork. Send a message there first.`,
+        cause: `Thread ${command.targetThreadId} already has pending context from another side chat or fork. Send a message there first, or cancel that merge-back.`,
       });
     }
 
@@ -13910,6 +13910,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||
+          command.type === "thread.merge_back.cancel" ||
           (command.type === "thread.delete" && command.onlyIfUnused === true),
         (_planned) =>
           new OrchestratorDispatchError({
