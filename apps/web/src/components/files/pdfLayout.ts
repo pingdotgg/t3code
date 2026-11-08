@@ -50,6 +50,22 @@ export function pdfPageScrollTop(offsets: readonly number[], index: number) {
   return Math.max(0, (offsets[index] ?? PDF_PAGE_GAP) - PDF_PAGE_GAP);
 }
 
+/** A saved offset was taken at `savedWidth`; a reloaded document can have fewer or shorter pages. */
+export function pdfRestoredScrollTop(
+  ratios: readonly number[],
+  width: number,
+  view: { page: number; offset: number },
+  savedWidth = width,
+) {
+  const page = Math.min(view.page, ratios.length - 1);
+  const offsets = pdfPageOffsets(ratios, width);
+  return (
+    offsets[page]! -
+    PDF_PAGE_GAP +
+    Math.min((view.offset * width) / savedWidth, Math.max(0, width * ratios[page]! - 1))
+  );
+}
+
 export function pdfPageText(
   items: readonly ({ str: string; hasEOL: boolean } | { type: string })[],
 ) {

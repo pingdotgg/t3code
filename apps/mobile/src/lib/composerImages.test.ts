@@ -63,6 +63,19 @@ vi.mock("expo-file-system", () => ({
       return files.get(this.uri)?.mimeType ?? "";
     }
 
+    get size(): number | null {
+      const entry = files.get(this.uri);
+      return entry && !entry.deleted
+        ? Math.floor((entry.base64.replace(/=+$/, "").length * 3) / 4)
+        : null;
+    }
+
+    async copy(destination: { readonly uri: string }): Promise<void> {
+      const entry = files.get(this.uri);
+      if (!entry) throw new Error("missing file");
+      files.set(destination.uri, { ...entry });
+    }
+
     async base64(): Promise<string> {
       const entry = files.get(this.uri);
       if (!entry || entry.deleted) {
@@ -102,6 +115,7 @@ vi.mock("expo-file-system", () => ({
 
     create(): void {}
   },
+  FileMode: { ReadOnly: "r", WriteOnly: "w" },
   Paths: { document: "file:///documents" },
 }));
 
@@ -109,7 +123,7 @@ vi.mock("./uuid", () => ({
   uuidv4: () => "attachment-id",
 }));
 
-import { convertPastedImagesToAttachments } from "./composerImages";
+import { convertPastedImagesToAttachments, persistComposerAttachmentFile } from "./composerImages";
 
 describe("native pasted image cleanup", () => {
   beforeEach(() => {
@@ -245,6 +259,22 @@ describe("native pasted image cleanup", () => {
     expect(files.get(rejected)?.deleted).toBe(true);
     expect(files.get(overflow)?.deleted).toBe(true);
     expect(files.get(userOwned)?.deleted).toBe(false);
+  });
+});
+
+describe("persistComposerAttachmentFile", () => {
+  beforeEach(() => {
+    files.clear();
+  });
+
+  it("stores picked files under a name Android's java.net.URI accepts", async () => {
+    const source = "file:///cache/DocumentPicker/Report [draft].pdf";
+    files.set(source, { base64: "JVBERg==", deleted: false });
+
+    const fileUri = await persistComposerAttachmentFile(source, "Report [draft].pdf");
+
+    // expo-file-system encodes spaces and `%` but leaves `[`, `]`, `|` and `^` raw.
+    expect(fileUri.split("/").at(-1)).toMatch(/^[\w\-.!~*'();:@&=+$, %]+\.pdf$/);
   });
 });
 
