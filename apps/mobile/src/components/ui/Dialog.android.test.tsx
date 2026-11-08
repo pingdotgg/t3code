@@ -125,3 +125,38 @@ it("cancels a confirm that a newer dialog replaced", async () => {
   expect(onCancel).toHaveBeenCalledOnce();
   expect(onConfirm).not.toHaveBeenCalled();
 });
+
+it("ignores stale confirm and cancel before and after replacement cancellation", async () => {
+  mountHost();
+  const onCancel = vi.fn();
+  const onConfirm = vi.fn();
+  act(() =>
+    Dialog.confirm({
+      title: "Remove project",
+      confirmText: "Remove project",
+      cancelText: "Cancel",
+      onConfirm,
+      onCancel,
+    }),
+  );
+  const staleCancel = renderedClicks.at(-2)!;
+  const staleConfirm = renderedClicks.at(-1)!;
+
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+  act(() => {
+    staleConfirm();
+    staleCancel();
+  });
+
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  act(() => {
+    staleConfirm();
+    staleCancel();
+  });
+
+  expect(onCancel).toHaveBeenCalledOnce();
+  expect(onConfirm).not.toHaveBeenCalled();
+});

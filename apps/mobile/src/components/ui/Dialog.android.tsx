@@ -35,12 +35,14 @@ type DialogRequest =
   | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
 
 type PresentedDialog = DialogRequest & { readonly id: number };
+type PresentationStatus = "active" | "replaced" | "completed";
 
 // App services raise dialogs before the root mounts, so the request lives in
 // the module and the Host renders whatever is current. One dialog shows at a
 // time: a new request replaces the presented one.
 let presented: PresentedDialog | null = null;
 let nextPresentationId = 0;
+const presentationStatus = new Map<number, PresentationStatus>();
 const listeners = new Set<() => void>();
 
 function setPresented(next: PresentedDialog | null) {
@@ -48,14 +50,24 @@ function setPresented(next: PresentedDialog | null) {
   for (const listener of listeners) listener();
 }
 
+function statusOf(id: number): PresentationStatus | undefined {
+  return presentationStatus.get(id);
+}
+
 function cancelPresented(dialog: PresentedDialog) {
+  if (statusOf(dialog.id) === "completed") return;
+  presentationStatus.set(dialog.id, "completed");
+  dismiss(dialog.id);
   if (dialog.kind === "alert") dialog.request.options?.onDismiss?.();
   else dialog.request.onCancel?.();
 }
 
 function submitRequest(dialog: DialogRequest) {
   const previous = presented;
-  setPresented({ ...dialog, id: ++nextPresentationId });
+  if (previous) presentationStatus.set(previous.id, "replaced");
+  const id = ++nextPresentationId;
+  presentationStatus.set(id, "active");
+  setPresented({ ...dialog, id });
   // A newer dialog replaces the current one without a button press; cancel the
   // previous so awaiters (settle confirms, busy flags) do not hang.
   if (previous !== null) {
@@ -101,25 +113,32 @@ export function prompt(request: TextInputDialogRequest): void {
   submitRequest({ kind: "text-input", request });
 }
 
+function handleCancelFor(dialog: PresentedDialog) {
+  if (statusOf(dialog.id) !== "active") return;
+  cancelPresented(dialog);
+}
+
+function handleConfirmFor(dialog: PresentedDialog, nativeInputValue?: string) {
+  if (statusOf(dialog.id) !== "active") return;
+  presentationStatus.set(dialog.id, "completed");
+  dismiss(dialog.id);
+  if (dialog.kind === "confirm") {
+    dialog.request.onConfirm();
+  } else if (dialog.kind === "text-input") {
+    dialog.request.onConfirm(nativeInputValue ?? dialog.request.initialValue);
+  }
+}
+
+function handleAlertActionFor(dialog: PresentedDialog, action: AlertButton) {
+  // Stale native alert presses still run their action; only the active
+  // presentation can clear the store entry.
+  if (statusOf(dialog.id) === "active") presentationStatus.set(dialog.id, "completed");
+  dismiss(dialog.id);
+  action.onPress?.();
+}
+
 export function Host() {
   const presented = useSyncExternalStore(subscribe, getPresented, getPresented);
-
-  const handleCancel = () => {
-    if (!presented) return;
-    dismiss(presented.id);
-    if (presented.kind === "alert") presented.request.options?.onDismiss?.();
-    else presented.request.onCancel?.();
-  };
-
-  const handleConfirm = (nativeInputValue?: string) => {
-    if (!presented) return;
-    dismiss(presented.id);
-    if (presented.kind === "confirm") {
-      presented.request.onConfirm();
-    } else if (presented.kind === "text-input") {
-      presented.request.onConfirm(nativeInputValue ?? presented.request.initialValue);
-    }
-  };
 
   if (presented?.kind === "alert") {
     return (
@@ -132,12 +151,9 @@ export function Host() {
         }}
         alertActions={presented.request.buttons ?? [{ text: "OK" }]}
         dismissable={presented.request.options?.cancelable ?? false}
-        onAlertAction={(action) => {
-          dismiss(presented.id);
-          action.onPress?.();
-        }}
-        onCancel={handleCancel}
-        onConfirm={handleConfirm}
+        onAlertAction={(action) => handleAlertActionFor(presented, action)}
+        onCancel={() => handleCancelFor(presented)}
+        onConfirm={(value) => handleConfirmFor(presented, value)}
       />
     );
   }
@@ -150,8 +166,8 @@ export function Host() {
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
       inputPlaceholder={presented.kind === "text-input" ? presented.request.placeholder : undefined}
-      onCancel={handleCancel}
-      onConfirm={handleConfirm}
+      onCancel={() => handleCancelFor(presented)}
+      onConfirm={(value) => handleConfirmFor(presented, value)}
     />
   ) : null;
 }
