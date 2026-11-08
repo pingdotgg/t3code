@@ -16,6 +16,16 @@ import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
 
+export const geminiIcon: ProviderIcon = {
+  viewBox: "0 0 24 24",
+  fill: { light: "#4285f4", dark: "#8ab4f8" },
+  paths: [
+    {
+      d: "M12 0C12 6.627 6.627 12 0 12C6.627 12 12 17.373 12 24C12 17.373 17.373 12 24 12C17.373 12 12 6.627 12 0Z",
+    },
+  ],
+};
+
 // OpenRouter's Ink and Cloud glyphs from https://openrouter.ai/brand.
 export const openRouterIcon: ProviderIcon = {
   viewBox: "0 0 1024 730",
