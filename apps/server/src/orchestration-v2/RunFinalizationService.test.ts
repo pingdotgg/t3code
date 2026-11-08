@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  GitManagerError,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadShell,
@@ -308,5 +309,110 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
     yield* Deferred.await(firstInterrupted);
     yield* Deferred.await(secondLookedUp);
     assert.strictEqual(lookups, 2);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("still looks up a PR when the divergence refresh fails", () => {
+  const threadId = ThreadId.make("thread-divergence-fail");
+  const runId = RunId.make("completed-run");
+  const lookedUp = Deferred.makeUnsafe<void>();
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: false,
+              refName: "feature",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+          refreshDivergence: () =>
+            Effect.fail(
+              new GitManagerError({
+                operation: "refreshDivergence",
+                cwd: "/repo",
+                detail: "transient remote read failed",
+              }),
+            ),
+          refreshPullRequestStatus: () =>
+            Deferred.succeed(lookedUp, undefined).pipe(Effect.as(null)),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () =>
+            Effect.succeed({
+              id: threadId,
+              branch: "feature",
+              activeRunId: null,
+            } as OrchestrationV2ThreadShell),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.await(lookedUp);
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("runs a second divergence-only refresh after an overlapping one finishes", () => {
+  const threadId = ThreadId.make("thread-divergence-overlap");
+  const runId = RunId.make("completed-run");
+  const firstStarted = Deferred.makeUnsafe<void>();
+  const releaseFirst = Deferred.makeUnsafe<void>();
+  const secondFinished = Deferred.makeUnsafe<void>();
+  let divergenceRefreshes = 0;
+  const layer = RunFinalization.layerObserver.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+        Layer.mock(PullRequestService.PullRequestService)({
+          refreshAfterTurn: () => Effect.void,
+        }),
+        Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+          refreshLocalStatus: () =>
+            Effect.succeed({
+              isRepo: true,
+              hasPrimaryRemote: true,
+              isDefaultRef: true,
+              refName: "main",
+              hasWorkingTreeChanges: false,
+              workingTree: { files: [], insertions: 0, deletions: 0 },
+            }),
+          refreshDivergence: () =>
+            Effect.suspend(() => {
+              divergenceRefreshes += 1;
+              if (divergenceRefreshes === 1) {
+                return Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseFirst)),
+                  Effect.as(null),
+                );
+              }
+              return Deferred.succeed(secondFinished, undefined).pipe(Effect.as(null));
+            }),
+          refreshPullRequestStatus: () =>
+            Effect.die("default-branch finalization must not look up a PR"),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadShell: () => Effect.die("default branch skips the thread shell"),
+        }),
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const observer = yield* RunFinalization.RunFinalizationObserver;
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.await(firstStarted);
+    yield* observer.refresh({ cwd: "/repo", threadId, runId });
+    yield* Deferred.succeed(releaseFirst, undefined);
+    yield* Deferred.await(secondFinished);
+    assert.strictEqual(divergenceRefreshes, 2);
   }).pipe(Effect.provide(layer));
 });

@@ -99,6 +99,8 @@ export const layerObserver = Layer.effect(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const pullRequestLookups = yield* FiberMap.make<string>();
     const divergenceRefreshes = yield* FiberMap.make<string>();
+    // A second divergence-only finalization must not vanish behind onlyIfMissing when HEAD moved.
+    const divergenceRefreshesWanted = new Set<string>();
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
@@ -116,23 +118,33 @@ export const layerObserver = Layer.effect(
           // runs. That CLI can take minutes, so the next turn must not wait for it. A newer
           // turn's lookup replaces a running one, but divergence alone must neither cancel a
           // lookup nor be skipped for one.
-          const divergence = vcsStatus.refreshDivergence(cwd);
-          const logFailure = (error: { readonly message: string }) =>
+          const logFailure = (error: { readonly _tag: string }) =>
             Effect.logWarning("failed to refresh remote status after run completion", {
               threadId,
-              cwd,
-              detail: error.message,
+              cwdLength: cwd.length,
+              errorTag: error._tag,
             });
-          yield* shouldLookUpPullRequest
-            ? divergence.pipe(
+          if (shouldLookUpPullRequest) {
+            // A failed divergence must not skip discovering a PR the forge would still find.
+            yield* vcsStatus
+              .refreshDivergence(cwd)
+              .pipe(
+                Effect.catch(logFailure),
                 Effect.andThen(vcsStatus.refreshPullRequestStatus(cwd)),
                 Effect.catch(logFailure),
                 FiberMap.run(pullRequestLookups, cwd),
-              )
-            : divergence.pipe(
-                Effect.catch(logFailure),
-                FiberMap.run(divergenceRefreshes, cwd, { onlyIfMissing: true }),
               );
+            return;
+          }
+          divergenceRefreshesWanted.add(cwd);
+          yield* Effect.suspend(() => {
+            divergenceRefreshesWanted.delete(cwd);
+            return vcsStatus.refreshDivergence(cwd);
+          }).pipe(
+            Effect.catch(logFailure),
+            Effect.repeat({ while: () => divergenceRefreshesWanted.has(cwd) }),
+            FiberMap.run(divergenceRefreshes, cwd, { onlyIfMissing: true }),
+          );
         },
         (effect, { cwd }) =>
           effect.pipe(Effect.mapError((cause) => new RunFinalizationRefreshError({ cwd, cause }))),
