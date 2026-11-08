@@ -132,7 +132,7 @@ export function AndroidScreenHeader(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={props.title}
-          accessibilityHint="Shows more actions"
+          accessibilityHint="Long press to show more actions"
         >
           {props.subtitle && props.compact ? (
             <View className="flex-row items-center gap-2">

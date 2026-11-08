@@ -83,7 +83,7 @@ function AppBarTitleMenu(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={props.title}
-          accessibilityHint="Shows more actions"
+          accessibilityHint="Long press to show more actions"
           style={{ width }}
         >
           <Text
@@ -181,7 +181,17 @@ export function AppBar(props: AppBarProps) {
   return (
     <>
       <NativeStackScreenOptions
-        optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined, titleMenu]}
+        optionsVersion={[
+          props.optionsVersion,
+          compactSearch ? menu : undefined,
+          titleMenu,
+          props.title,
+          props.subtitle,
+          titleLeadingButtons,
+          titleTrailingButtons,
+          colors["--color-header-foreground"],
+          colors["--color-foreground-muted"],
+        ]}
         options={{
           headerShown: true,
           headerBackVisible:
