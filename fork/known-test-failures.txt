@@ -5,3 +5,11 @@ pins tool search on when the user's Claude settings choose auto
 # Added 2026-11-05 (fail on unmodified munim-v0.1.50):
 hides the one-tap Continue message from memory and SQL timelines
 continues a stopped run without a visible user message
+# Added 2026-11-08: fail on GitHub's Windows runners only (a helper exits 2
+# while staging the Linux archive fixtures); they pass on a local Windows PC.
+accepts an embedded archive with the Linux
+rejects a node-pty prebuild for the wrong architecture
+rejects an embedded archive built for a different release version
+rejects an embedded archive without the Linux node-pty binary
+rejects an emitted WSL archive whose sidecar digest does not match
+stages the Linux CLI archive verbatim with its SHA-256 sidecar
