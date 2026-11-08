@@ -4782,11 +4782,17 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
                 "fix/a>b",
                 "fix/a|b",
                 "con",
+                "prn",
+                "prn.txt",
                 "aux.c",
                 "lpt0",
                 "COM¹",
                 "COM².txt",
                 "LPT³",
+                "CONIN$",
+                "CONIN$.txt",
+                "CONOUT$",
+                "CONOUT$.txt",
                 `nul.${"n".repeat(40)}`,
               ]),
         ];
@@ -4798,7 +4804,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const folder = pathService.basename(created.worktree.path);
           assert.isAtMost(folder.length, 40);
           if (unchanged.includes(branch)) assert.equal(folder, branch);
-          assert.notMatch(folder, /[<>"|]|^(con|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(\.|$)/i);
+          assert.notMatch(
+            folder,
+            /[<>"|]|^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\.|$)/i,
+          );
           assert.equal(yield* git(created.worktree.path, ["branch", "--show-current"]), branch);
           assert.include(
             yield* git(cwd, ["-c", "core.quotePath=false", "worktree", "list", "--porcelain"]),
