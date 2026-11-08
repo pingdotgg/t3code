@@ -168,6 +168,7 @@ function ThreadLineageGroup(props: {
         render={
           <ThreadDetailsControl
             part="choice"
+            chevronAlign="icon"
             className="h-8 min-h-8 sm:min-h-8"
             aria-label="Previous agents"
           />
@@ -1127,7 +1128,7 @@ export function ThreadRelationshipsPanel(props: {
             </div>
           ) : null}
           {groups
-            .filter((group) => group.id === "previous")
+            .filter((group) => group.id === "previous" && group.rows.length > 0)
             .map((group) => (
               <div key={`${scopedThreadKey(ref)}:${group.id}`} className="mt-1.5">
                 <ThreadLineageGroup {...group}>

@@ -42,13 +42,14 @@ while you record; models with built-in long-form support transcribe when you sto
 ## Dictate
 
 Press the microphone in the composer, or `mod+shift+d` (`mod` is Command on
-macOS and Ctrl elsewhere). Press again, or the check mark, to finish; `Esc`
+macOS and Ctrl elsewhere). While you record, the microphone shows live bars and
+Send becomes Stop. Press the shortcut again, the bars, or Stop to finish; `Esc`
 discards the recording and leaves your draft unchanged. Recordings last up to
 five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
 
-Pressing Send while dictating finishes the recording and sends the draft once
-the transcript has been inserted. Cancelling also cancels that queued send. In
+Using your send shortcut while dictating finishes the recording and sends the
+draft once the transcript has been inserted. Cancelling also cancels that queued send. In
 the other editors, Save, Comment, Reply, Submit review, or Attach works the
 same way, and the shortcut targets the editor that has focus, or the composer
 when none does. In the desktop browser's annotation editor, the microphone and

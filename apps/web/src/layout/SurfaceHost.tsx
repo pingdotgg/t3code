@@ -1505,8 +1505,10 @@ function LayoutChatSurface({
         "absolute flex min-h-0 min-w-0 flex-col",
         closing && "pointer-events-none",
         // Off screen: skip its rendering but keep its layout state, so the
-        // timeline's scroll position and the terminal's size survive.
-        !visible && "pointer-events-none inset-0 [content-visibility:hidden]",
+        // timeline's scroll position and the terminal's size survive. Moved out
+        // of the window: Electron keeps applying its stale window drag regions.
+        !visible &&
+          "pointer-events-none inset-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
         visible && (split || staged) && "overflow-clip rounded-pane pane-surface",
         // A lone pane paints flat before its chat does, not the inset's grain behind it.
         visible && !(split || staged) && "bg-background",
@@ -2047,7 +2049,9 @@ function LayoutPageSurface({
       data-layout-pane-focused={focused ? "true" : undefined}
       className={cn(
         "absolute flex min-h-0 min-w-0 flex-col outline-none",
-        placed === null && "pointer-events-none inset-0 [content-visibility:hidden]",
+        // Out of the window, like a hidden chat: its stale drag regions stay applied.
+        placed === null &&
+          "pointer-events-none inset-0 -translate-x-[calc(100%+100vw)] [content-visibility:hidden]",
         (split || staged) && "overflow-clip rounded-pane pane-surface",
       )}
       style={placed?.style}
