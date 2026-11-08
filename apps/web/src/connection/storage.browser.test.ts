@@ -1,3 +1,7 @@
+import {
+  RelayConnectionRegistration,
+  RelayConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { Persistence } from "@t3tools/client-runtime/platform";
 import { EnvironmentQueryStore } from "@t3tools/client-runtime/state/query-persistence";
 import { EnvironmentId } from "@t3tools/contracts";
@@ -9,6 +13,35 @@ import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
 
 import * as ConnectionStorage from "./storage";
+
+describe("IndexedDB connection catalog", () => {
+  it.effect("keeps both tabs' connections when they save at the same moment", () =>
+    Effect.gen(function* () {
+      const openTab = Layer.build(Layer.fresh(ConnectionStorage.layer));
+      const tabs = [yield* openTab, yield* openTab];
+      const targets = tabs.map(
+        (_, index) =>
+          new RelayConnectionTarget({
+            environmentId: EnvironmentId.make(`catalog-tab-${index}`),
+            label: `Tab ${index}`,
+          }),
+      );
+      yield* Effect.forEach(
+        tabs,
+        (tab, index) =>
+          Context.get(tab, Persistence.ConnectionRegistrationStore).register(
+            new RelayConnectionRegistration({ target: targets[index]! }),
+            [targets[index]!],
+          ),
+        { concurrency: "unbounded" },
+      );
+      const reopened = yield* openTab;
+      expect(yield* Context.get(reopened, Persistence.ConnectionTargetStore).list).toEqual(
+        expect.arrayContaining(targets),
+      );
+    }).pipe(Effect.scoped),
+  );
+});
 
 describe("IndexedDB query cache", () => {
   it.effect("round trips per environment and clears with the environment", () =>

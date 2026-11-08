@@ -85,6 +85,9 @@ const isQueryBatch = Schema.is(Schema.Struct({ rows: Schema.Number, bytes: Schem
 const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDocument);
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
+// An IndexedDB transaction stays open only while its callbacks run, so updates code synchronously.
+const decodeStoredCatalog = Schema.decodeUnknownOption(ConnectionCatalogDocumentJson);
+const encodeCatalogSync = Schema.encodeSync(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
 const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
@@ -279,6 +282,40 @@ function writeDatabaseValueOnConnection(
       resume(Effect.fail(catalogError("write", cause)));
     }
   }).pipe(Effect.withSpan("web.connectionStorage.writeDatabaseValue"));
+}
+
+// One readwrite transaction, so another connection's write cannot land between the get and put.
+function updateDatabaseValueOnConnection(
+  database: IDBDatabase,
+  storeName: string,
+  key: IDBValidKey,
+  transform: (value: unknown) => unknown,
+) {
+  return Effect.callback<void, ConnectionTransientError>((resume) => {
+    try {
+      const transaction = database.transaction(storeName, "readwrite");
+      transaction.addEventListener("abort", () => {
+        resume(
+          Effect.fail(catalogError("write", transaction.error ?? "Unknown IndexedDB write error")),
+        );
+      });
+      transaction.addEventListener("complete", () => {
+        resume(Effect.void);
+      });
+      const store = transaction.objectStore(storeName);
+      const request = store.get(key);
+      request.addEventListener("success", () => {
+        try {
+          store.put(transform(request.result), key);
+        } catch (cause) {
+          resume(Effect.fail(catalogError("write", cause)));
+          transaction.abort();
+        }
+      });
+    } catch (cause) {
+      resume(Effect.fail(catalogError("write", cause)));
+    }
+  }).pipe(Effect.withSpan("web.connectionStorage.updateDatabaseValue"));
 }
 
 function removeDatabaseValueOnConnection(
@@ -481,6 +518,10 @@ const encodeCatalog = Effect.fn("web.connectionStorage.encodeCatalog")(function*
 export interface CatalogBackend {
   readonly read: Effect.Effect<string | null, ConnectionTransientError>;
   readonly write: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
+  /** Reads and writes in one step that other tabs cannot interleave. */
+  readonly update?: (
+    transform: (raw: string | null) => string,
+  ) => Effect.Effect<void, ConnectionTransientError>;
   readonly quarantine?: (raw: string) => Effect.Effect<void, ConnectionTransientError>;
 }
 
@@ -518,6 +559,12 @@ export function makeCatalogBackend(database: DatabaseHandle): CatalogBackend {
     write: (raw) => writeDatabaseValue(database, CATALOG_STORE_NAME, CATALOG_KEY, raw),
     quarantine: (raw) =>
       writeDatabaseValue(database, CATALOG_STORE_NAME, `${CATALOG_KEY}:corrupt:${Date.now()}`, raw),
+    update: (transform) =>
+      withDatabase(database, (opened) =>
+        updateDatabaseValueOnConnection(opened, CATALOG_STORE_NAME, CATALOG_KEY, (value) =>
+          transform(typeof value === "string" ? value : null),
+        ),
+      ),
   };
 }
 
@@ -574,22 +621,33 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
     return catalog;
   });
 
-  // Other tabs save the same document. A stored copy this tab cannot read keeps the cached one.
-  const reloadUnlocked = Effect.gen(function* () {
-    const cached = yield* Ref.get(state);
-    if (Option.isNone(cached)) return yield* loadUnlocked();
-    const raw = yield* backend.read;
-    const stored = raw === null ? Option.none() : yield* Effect.option(decodeCatalog(raw));
-    return Option.getOrElse(stored, () => cached.value);
-  });
+  // Without an atomic update the backend has one writer, the single desktop window.
+  const updateStored =
+    backend.update ??
+    ((transform: (raw: string | null) => string) =>
+      backend.read.pipe(
+        Effect.flatMap((raw) =>
+          Effect.try({
+            try: () => transform(raw),
+            catch: (cause) => catalogError("encode", cause),
+          }),
+        ),
+        Effect.flatMap(backend.write),
+      ));
 
   const read = lock.withPermits(1)(loadUnlocked());
   const update: CatalogStore["update"] = Effect.fn("web.connectionStorage.updateCatalog")(
     function* (transform) {
       yield* lock.withPermits(1)(
         Effect.gen(function* () {
-          const next = transform(yield* reloadUnlocked);
-          yield* backend.write(yield* encodeCatalog(next));
+          const cached = yield* loadUnlocked();
+          let next = cached;
+          // Other tabs save the same document. A stored copy this tab cannot read keeps the cache.
+          yield* updateStored((raw) => {
+            const stored = raw === null ? Option.none() : decodeStoredCatalog(raw);
+            next = transform(Option.getOrElse(stored, () => cached));
+            return encodeCatalogSync(next);
+          });
           yield* Ref.set(state, Option.some(next));
         }),
       );
