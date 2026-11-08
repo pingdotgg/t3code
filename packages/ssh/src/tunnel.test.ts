@@ -1,12 +1,15 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -165,6 +168,59 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "pairing replaces the runner without rewriting the file a running shell reads",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-pairing-test-" });
+        // Runs the remote script in a local sh instead of over ssh.
+        const localShell = ChildProcessSpawner.make((command) =>
+          command._tag === "StandardCommand"
+            ? realSpawner.spawn(
+                ChildProcess.make("sh", ["-s"], {
+                  ...command.options,
+                  env: {
+                    HOME: home,
+                    PATH: `${path.dirname(process.execPath)}:${process.env.PATH}`,
+                  },
+                  extendEnv: false,
+                }),
+              )
+            : Effect.die("unexpected piped command"),
+        );
+        const pair = Effect.fn(function* (name: string) {
+          const nodeScriptPath = path.join(home, `${name}.mjs`);
+          yield* fs.writeFileString(
+            nodeScriptPath,
+            `console.log(JSON.stringify({ credential: "${name}" }));\n`,
+          );
+          const result = yield* SshTunnel.issueRemotePairingToken(
+            { alias: "devbox", hostname: "devbox.example.com", username: "julius", port: 2222 },
+            undefined,
+            { nodeScriptPath },
+          ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, localShell));
+          assert.equal(result.credential, name);
+        });
+
+        yield* pair("first");
+        const launchDir = path.join(home, ".t3", "ssh-launch");
+        const [stateKey] = yield* fs.readDirectory(launchDir);
+        assert.ok(stateKey);
+        const runnerFile = path.join(launchDir, stateKey, "run-t3.sh");
+        const firstRunner = yield* fs.readFileString(runnerFile);
+        const running = yield* fs.open(runnerFile);
+
+        yield* pair("second");
+        const held = new Uint8Array(firstRunner.length + 1024);
+        const heldBytes = yield* running.read(held, { position: 0n });
+        assert.equal(new TextDecoder().decode(held.subarray(0, heldBytes)), firstRunner);
+        assert.include(yield* fs.readFileString(runnerFile), "second.mjs");
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
 
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
