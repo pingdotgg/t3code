@@ -39,16 +39,10 @@ export type RenderMetrics = Readonly<Record<string, ScenarioReport>>;
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 
-export function runOnce(
-  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node tooling has no Effect runtime; tests pass the platform explicitly.
-  platform: NodeJS.Platform = process.platform,
-): RenderMetrics {
+export function runOnce(): RenderMetrics {
   const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-renders-"));
   try {
-    const [command, commandArgs] = vitePlusCommand(
-      ["test", "run", "--project", "renders"],
-      platform,
-    );
+    const [command, commandArgs] = vitePlusCommand(["test", "run", "--project", "renders"]);
     const result = NodeChildProcess.spawnSync(command, commandArgs, {
       cwd: NodePath.join(root, "apps/web"),
       env: { ...process.env, T3CODE_RENDER_REPORT_DIR: directory },
@@ -128,7 +122,7 @@ if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
   if (command === "run") {
     const runs = Number(option(args, "--runs") ?? 3);
-    const results = Array.from({ length: runs }, () => runOnce());
+    const results = Array.from({ length: runs }, runOnce);
     const unstable = nondeterministic(results);
     if (unstable.length) {
       for (const scenario of unstable) {
