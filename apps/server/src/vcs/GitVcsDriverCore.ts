@@ -73,6 +73,14 @@ const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
 const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const GIT_DEFAULT_CONFLICT_MARKER_SIZE = 7;
+
+// Git falls back to the default for any value that is not a positive integer.
+function parseConflictMarkerSize(value = "") {
+  const size = /^\+?\d+$/.test(value) ? Number.parseInt(value, 10) : 0;
+  return size > 0 ? size : GIT_DEFAULT_CONFLICT_MARKER_SIZE;
+}
+
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -2432,9 +2440,139 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     filePaths?: readonly string[],
     env?: NodeJS.ProcessEnv,
   ) {
-    const config = env
-      ? ["-c", "core.splitIndex=false", "-c", "splitIndex.sharedIndexExpire=never"]
-      : [];
+    const isolatedIndexConfig = [
+      "-c",
+      "core.splitIndex=false",
+      "-c",
+      "splitIndex.sharedIndexExpire=never",
+    ];
+    const config = env ? isolatedIndexConfig : [];
+    const envOptions = env ? { env } : {};
+    // Status paths are repository-relative, while cwd can be a subdirectory.
+    const toPathspec = (file: string) => `:(top,literal)${file}`;
+    const pathspecs = (filePaths ?? []).map(toPathspec);
+    const unmerged = yield* executeGit(
+      "GitVcsDriver.commit.unmerged",
+      cwd,
+      [
+        "ls-files",
+        "--unmerged",
+        "-z",
+        "--full-name",
+        "--",
+        ...(pathspecs.length > 0 ? pathspecs : [":(top)"]),
+      ],
+      { ...envOptions, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+    );
+    // Each record is "<mode> <object> <stage>\t<path>", once per stage.
+    const unmergedPaths = new Set(
+      splitNullSeparatedGitStdoutPaths(unmerged).map((record) =>
+        record.slice(record.indexOf("\t") + 1),
+      ),
+    );
+    if (unmergedPaths.size > 0) {
+      // add -A marks unmerged paths resolved, so check the files it would stage for leftover markers.
+      const files = Array.from(unmergedPaths);
+      const operation = "GitVcsDriver.commit.conflictMarkers";
+      const checkFailed = "Could not check conflicted files for conflict markers.";
+      const root = yield* readWorktreeRoot(cwd);
+      if (root === null) {
+        return yield* new GitCommandError({ operation, command: "git", cwd, detail: checkFailed });
+      }
+      // check-attr takes plain repository paths, not pathspecs, and prints one
+      // "<path> <attribute> <value>" triple per path in input order.
+      const readMarkerSizes = (source: readonly string[], options: { env?: NodeJS.ProcessEnv }) =>
+        executeGit(
+          "GitVcsDriver.commit.conflictMarkerSize",
+          root,
+          ["check-attr", ...source, "-z", "conflict-marker-size", "--", ...files],
+          { ...options, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+        ).pipe(Effect.map((result) => result.stdout.split("\0")));
+      // HEAD's attributes come from a throwaway index, since check-attr --source needs Git 2.40.
+      const readHeadMarkerSizes = Effect.gen(function* () {
+        const head = yield* executeGit(
+          "GitVcsDriver.commit.head",
+          cwd,
+          ["rev-parse", "--verify", "--quiet", "HEAD"],
+          { allowNonZeroExit: true },
+        );
+        if (head.exitCode !== 0) return [];
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3code-attributes-index-",
+        });
+        const headIndex = { GIT_INDEX_FILE: path.join(directory, "index") };
+        yield* runGit(
+          "GitVcsDriver.commit.headIndex",
+          cwd,
+          [...isolatedIndexConfig, "read-tree", "HEAD"],
+          { env: headIndex },
+        );
+        return yield* readMarkerSizes(["--cached"], { env: headIndex });
+      }).pipe(
+        Effect.scoped,
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            new GitCommandError({ operation, command: "git", cwd, detail: checkFailed, cause }),
+        }),
+      );
+      // Markers use the size from before the conflict; afterwards it may survive only in HEAD, the
+      // index or the worktree. An unborn HEAD leaves the default.
+      const lookups = yield* Effect.all(
+        [
+          readMarkerSizes([], envOptions),
+          readMarkerSizes(["--cached"], envOptions),
+          readHeadMarkerSizes,
+        ],
+        { concurrency: 3 },
+      );
+      const filesBySize = new Map<number, Set<string>>();
+      files.forEach((file, index) => {
+        for (const values of lookups) {
+          const size = parseConflictMarkerSize(values[index * 3 + 2]);
+          filesBySize.set(size, (filesBySize.get(size) ?? new Set()).add(file));
+        }
+      });
+      const markedPaths = new Set<string>();
+      for (const [size, group] of filesBySize) {
+        // Git writes exactly `size` marker characters, then whitespace and a label.
+        const args = [
+          "grep",
+          "-l",
+          "-z",
+          "--full-name",
+          "-E",
+          "-e",
+          `^(<{${size}}|>{${size}})([[:space:]]|$)`,
+          "--",
+          ...Array.from(group, toPathspec),
+        ];
+        const markers = yield* executeGit(operation, cwd, args, {
+          ...envOptions,
+          allowNonZeroExit: true,
+          maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
+        });
+        if (markers.exitCode !== 0 && markers.exitCode !== 1) {
+          return yield* new GitCommandError({
+            ...gitCommandContext({ operation, cwd, args }),
+            detail: checkFailed,
+            ...(markers.exitCode === null ? {} : { exitCode: markers.exitCode }),
+            stdoutLength: markers.stdout.length,
+            stderrLength: markers.stderr.length,
+          });
+        }
+        for (const file of splitNullSeparatedGitStdoutPaths(markers)) markedPaths.add(file);
+      }
+      if (markedPaths.size > 0) {
+        const named = Array.from(markedPaths).slice(0, 5).join(", ");
+        const more = markedPaths.size > 5 ? ` and ${markedPaths.size - 5} more` : "";
+        return yield* new GitCommandError({
+          operation: "GitVcsDriver.commit",
+          command: "git commit",
+          cwd,
+          detail: `Cannot commit files that still contain conflict markers: ${named}${more}. Resolve the conflicts, then commit again.`,
+        });
+      }
+    }
     if (filePaths && filePaths.length > 0) {
       if (env) {
         const head = yield* executeGit(
@@ -2483,17 +2621,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* runGit(
         "GitVcsDriver.commit.addSelected",
         cwd,
-        // Status paths are repository-relative, while cwd can be a subdirectory.
-        [...config, "add", "-A", "--", ...filePaths.map((file) => `:(top,literal)${file}`)],
-        env ? { env } : {},
+        [...config, "add", "-A", "--", ...pathspecs],
+        envOptions,
       );
     } else {
-      yield* runGit(
-        "GitVcsDriver.commit.addAll",
-        cwd,
-        [...config, "add", "-A"],
-        env ? { env } : {},
-      );
+      yield* runGit("GitVcsDriver.commit.addAll", cwd, [...config, "add", "-A"], envOptions);
     }
   });
 
