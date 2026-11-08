@@ -32,6 +32,7 @@ import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
 import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
+import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -55,12 +56,22 @@ const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new
 const decodeThreadKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
 const threadKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 
-// Null when this client doesn't know the thread. Keyed, so a link never walks an environment's threads.
+// Omitted and archived targets need only a title lookup, not their conversation history.
 const threadTitleAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
-  return Atom.make((get) => get(environmentThreadShells.threadShellAtom(ref))?.title ?? null).pipe(
-    Atom.withLabel(`mobile-thread-title:${key}`),
-  );
+  return Atom.make((get) => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    if (shell !== null) return shell.title;
+    const titles = get(
+      orchestrationEnvironment.threadTitles({
+        environmentId: ref.environmentId,
+        input: { threadIds: [ref.threadId] },
+      }),
+    );
+    return AsyncResult.isSuccess(titles)
+      ? (titles.value[ref.threadId] ?? (titles.waiting ? "Thread" : null))
+      : "Thread";
+  }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
 
 const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
