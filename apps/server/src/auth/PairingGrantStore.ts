@@ -18,11 +18,13 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
+import { forkParked } from "../serverActivation.ts";
 
 export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
@@ -168,6 +170,17 @@ export class BootstrapCredentialLookupError extends Schema.TaggedError<Bootstrap
   }
 }
 
+export class StalePairingLinksPruneError extends Schema.TaggedError<StalePairingLinksPruneError>()(
+  "StalePairingLinksPruneError",
+  {
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Failed to prune stale pairing links.";
+  }
+}
+
 export const BootstrapCredentialInternalError = Schema.Union([
   ActivePairingLinksLoadError,
   PairingLinkRevokeError,
@@ -176,6 +189,7 @@ export const BootstrapCredentialInternalError = Schema.Union([
   BootstrapCredentialConsumeError,
   BootstrapCredentialConsumeAvailableError,
   BootstrapCredentialLookupError,
+  StalePairingLinksPruneError,
 ]);
 export type BootstrapCredentialInternalError = typeof BootstrapCredentialInternalError.Type;
 export const isBootstrapCredentialInternalError = Schema.is(BootstrapCredentialInternalError);
@@ -231,6 +245,7 @@ export class PairingGrantStore extends Context.Service<
         readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
       },
     ) => Effect.Effect<BootstrapGrant, BootstrapCredentialError>;
+    readonly pruneStale: () => Effect.Effect<number, BootstrapCredentialInternalError>;
   }
 >()("t3/auth/PairingGrantStore") {}
 
@@ -252,6 +267,7 @@ type ConsumeResult =
 const DEFAULT_ONE_TIME_TOKEN_TTL_MINUTES = Duration.minutes(5);
 const DESKTOP_BOOTSTRAP_TTL_HOURS = Duration.hours(24);
 const DEV_STARTUP_TTL_HOURS = Duration.hours(24);
+const STALE_PAIRING_LINK_RETENTION = Duration.days(1);
 const PAIRING_TOKEN_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const PAIRING_TOKEN_LENGTH = 12;
 const PAIRING_TOKEN_REJECTION_LIMIT =
@@ -618,6 +634,20 @@ const make = Effect.gen(function* () {
     },
   );
 
+  const pruneStale: PairingGrantStore["Service"]["pruneStale"] = Effect.fn(
+    "PairingGrantStore.pruneStale",
+  )(
+    function* () {
+      const now = yield* DateTime.now;
+      const pruned = yield* pairingLinks.deleteStale({
+        cutoff: DateTime.subtractDuration(now, STALE_PAIRING_LINK_RETENTION),
+      });
+      yield* Effect.annotateCurrentSpan({ "auth_pairing_links.pruned": pruned });
+      return pruned;
+    },
+    Effect.mapError((cause) => new StalePairingLinksPruneError({ cause })),
+  );
+
   return PairingGrantStore.of({
     issueOneTimeToken,
     listActive,
@@ -626,8 +656,24 @@ const make = Effect.gen(function* () {
     },
     revoke,
     consume,
+    pruneStale,
   });
 });
+
+/** Server-only: CLI processes build `layer` too and must not start this loop. */
+export const layerPruneStale = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const pairingGrants = yield* PairingGrantStore;
+    yield* forkParked(
+      pairingGrants.pruneStale().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to prune stale pairing links", { cause }),
+        ),
+        Effect.repeat(Schedule.spaced(Duration.hours(1))),
+      ),
+    );
+  }),
+);
 
 export const layer = Layer.effect(PairingGrantStore, make).pipe(
   Layer.provideMerge(AuthPairingLinks.layer),

@@ -6,6 +6,8 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Record from "effect/Record";
 import * as Stream from "effect/Stream";
 import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
@@ -15,6 +17,7 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 
 import * as ServerConfig from "../config.ts";
+import * as AuthPairingLinks from "../persistence/AuthPairingLinks.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 
@@ -208,6 +211,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
         ),
       ),
     ),
+  );
+
+  it.effect("prunes pairing links used, revoked or expired more than a day ago", () =>
+    Effect.gen(function* () {
+      const grants = yield* PairingGrantStore.PairingGrantStore;
+      const pairingLinks = yield* AuthPairingLinks.AuthPairingLinkRepository;
+      const consumedLongAgo = yield* grants.issueOneTimeToken({ ttl: Duration.days(7) });
+      const revokedLongAgo = yield* grants.issueOneTimeToken({ ttl: Duration.days(7) });
+      const expiredLongAgo = yield* grants.issueOneTimeToken();
+      const active = yield* grants.issueOneTimeToken({ ttl: Duration.days(7) });
+      yield* grants.consume(consumedLongAgo.credential);
+      yield* grants.revoke(revokedLongAgo.id);
+
+      yield* TestClock.adjust(Duration.days(2));
+      const recentlyRevoked = yield* grants.issueOneTimeToken();
+      yield* grants.revoke(recentlyRevoked.id);
+
+      const pruned = yield* grants.pruneStale();
+
+      const stored = yield* Effect.all(
+        Record.map(
+          { consumedLongAgo, revokedLongAgo, expiredLongAgo, active, recentlyRevoked },
+          ({ credential }) =>
+            pairingLinks.getByCredential({ credential }).pipe(Effect.map(Option.isSome)),
+        ),
+      );
+      expect(stored).toEqual({
+        consumedLongAgo: false,
+        revokedLongAgo: false,
+        expiredLongAgo: false,
+        active: true,
+        recentlyRevoked: true,
+      });
+      expect(pruned).toBe(3);
+    }).pipe(Effect.provide(Layer.merge(layerPairingGrantStore(), TestClock.layer()))),
+  );
+
+  it.effect("prunes a backlog larger than one delete batch in a single pass", () =>
+    Effect.gen(function* () {
+      const grants = yield* PairingGrantStore.PairingGrantStore;
+      yield* Effect.forEach(Array.from({ length: 1201 }), () => grants.issueOneTimeToken());
+      yield* TestClock.adjust(Duration.days(2));
+
+      expect(yield* grants.pruneStale()).toBe(1201);
+      expect(yield* grants.pruneStale()).toBe(0);
+    }).pipe(Effect.provide(Layer.merge(layerPairingGrantStore(), TestClock.layer()))),
   );
 
   it.effect("keeps credentials out of pairing lists and change events", () =>

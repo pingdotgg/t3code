@@ -70,6 +70,14 @@ export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
 });
 export type GetAuthPairingLinkByCredentialInput = typeof GetAuthPairingLinkByCredentialInput.Type;
 
+export const DeleteStaleAuthPairingLinksInput = Schema.Struct({
+  cutoff: Schema.DateTimeUtcFromString,
+});
+export type DeleteStaleAuthPairingLinksInput = typeof DeleteStaleAuthPairingLinksInput.Type;
+
+/** Keeps each delete short so the first prune of a large table never hogs the SQLite writer. */
+const DELETE_STALE_BATCH_SIZE = 500;
+
 const AuthPairingLinkRawDbRow = Schema.Struct({
   id: Schema.String,
   credential: Schema.Unknown,
@@ -104,6 +112,9 @@ export class AuthPairingLinkRepository extends Context.Service<
     readonly getByCredential: (
       input: GetAuthPairingLinkByCredentialInput,
     ) => Effect.Effect<Option.Option<AuthPairingLinkRecord>, AuthPairingLinkRepositoryError>;
+    readonly deleteStale: (
+      input: DeleteStaleAuthPairingLinksInput,
+    ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
   }
 >()("t3/persistence/AuthPairingLinks/AuthPairingLinkRepository") {}
 
@@ -271,6 +282,22 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const deleteStalePairingLinkRows = SqlSchema.findAll({
+    Request: DeleteStaleAuthPairingLinksInput,
+    Result: Schema.Struct({ id: Schema.String }),
+    execute: ({ cutoff }) =>
+      sql`
+        DELETE FROM auth_pairing_links
+        WHERE id IN (
+          SELECT id
+          FROM auth_pairing_links
+          WHERE COALESCE(revoked_at, consumed_at, expires_at) < ${cutoff}
+          LIMIT ${DELETE_STALE_BATCH_SIZE}
+        )
+        RETURNING id AS "id"
+      `,
+  });
+
   const create: AuthPairingLinkRepository["Service"]["create"] = (input) =>
     createPairingLinkRow(input).pipe(
       Effect.mapError(
@@ -371,12 +398,33 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  const deleteStale: AuthPairingLinkRepository["Service"]["deleteStale"] = (input) => {
+    const deleteBatches = (
+      deleted: number,
+    ): Effect.Effect<number, AuthPairingLinkRepositoryError> =>
+      deleteStalePairingLinkRows(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "AuthPairingLinkRepository.deleteStale:query",
+            "AuthPairingLinkRepository.deleteStale:decodeRows",
+          ),
+        ),
+        Effect.flatMap((rows) =>
+          rows.length < DELETE_STALE_BATCH_SIZE
+            ? Effect.succeed(deleted + rows.length)
+            : deleteBatches(deleted + rows.length),
+        ),
+      );
+    return deleteBatches(0);
+  };
+
   return {
     create,
     consumeAvailable,
     listActive,
     revoke,
     getByCredential,
+    deleteStale,
   } satisfies AuthPairingLinkRepository["Service"];
 });
 
