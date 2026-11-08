@@ -3619,7 +3619,12 @@ export default function ChatView(props: ChatViewProps) {
                     ? {}
                     : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
                   onOpenThread={onOpenRelatedThreadStable}
-                  parentThreadLink={parentThreadLink}
+                  // The header's parent tab already names a subagent's parent here.
+                  parentThreadLink={
+                    headerParentThreadLink !== null && parentThreadLink?.sideChat !== true
+                      ? null
+                      : parentThreadLink
+                  }
                   workflowOpening={workflowOpening}
                   supportsConversationRollback={supportsConversationRollback}
                   threadStartCheckpointReady={threadStartCheckpointReady}

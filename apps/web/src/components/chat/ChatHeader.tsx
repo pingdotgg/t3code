@@ -4,7 +4,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -37,12 +37,13 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   PANE_GHOST_TAB_TITLE_CLASS,
+  PANE_INACTIVE_TAB_TITLE_CLASS,
   PANE_TAB_CLASS,
   PANE_TAB_TITLE_CLASS,
   PaneNotch,
   PaneTabButton,
 } from "../PaneNotch";
-import { Button } from "../ui/button";
+import { Button, ContentButton } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { surfaceShortcutActionForKey } from "../RightPanelTabs";
 import { SURFACE_LAUNCHER_ENTRIES } from "../SurfaceLauncher";
@@ -64,7 +65,7 @@ import {
   useLayoutPaneSiblingTabs,
   useLayoutTabGhostOf,
 } from "../../layout/PaneTabs";
-import { useQuietThreadShell } from "../../state/entities";
+import { useProject, useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
 
 interface ChatHeaderProps {
@@ -384,7 +385,11 @@ export const ChatHeader = memo(function ChatHeader({
             <LayoutPaneTab key={tab.id} tab={tab} />
           ))}
           {parentThreadLink && !parentTabShown ? (
-            <ParentThreadTab link={parentThreadLink} onOpenThread={onOpenThread} />
+            <ParentThreadTab
+              environmentId={activeThreadEnvironmentId}
+              link={parentThreadLink}
+              onOpenThread={onOpenThread}
+            />
           ) : null}
           {renamingTitle !== null ? (
             <div
@@ -617,32 +622,44 @@ function NewTabMenu(props: {
 }
 
 /**
- * A subagent thread's way back to its parent: a muted notch control ahead of
- * the thread's own tab.
+ * A subagent thread's way back to its parent when the parent has no tab in
+ * this pane: an inactive tab like any other, ahead of the thread's own.
  */
 function ParentThreadTab({
+  environmentId,
   link,
   onOpenThread,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly link: { threadId: ThreadId; title: string };
   readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const parent = useQuietThreadShell(scopeThreadRef(environmentId, link.threadId));
+  const project = useProject(
+    parent ? scopeProjectRef(parent.environmentId, parent.projectId) : null,
+  );
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            variant="ghost-muted"
-            size="sm"
-            aria-label={`Open parent thread: ${link.title}`}
-            onClick={() => onOpenThread(link.threadId)}
-            className="min-w-0 max-w-40 shrink-0 [-webkit-app-region:no-drag]"
-          />
-        }
-      >
-        <span className="min-w-0 truncate">{link.title}</span>
-      </TooltipTrigger>
-      <TooltipPopup side="bottom">{link.title}</TooltipPopup>
-    </Tooltip>
+    <span className={LAYOUT_TAB_SLOT_CLASS}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <ContentButton
+              variant="tab"
+              type="button"
+              aria-label={`Open parent thread: ${link.title}`}
+              onClick={() => onOpenThread(link.threadId)}
+            />
+          }
+        >
+          {project ? <ProjectFavicon project={project} className="size-3.5 shrink-0" /> : null}
+          <span className={PANE_INACTIVE_TAB_TITLE_CLASS} dir={textDirection(link.title)}>
+            {link.title}
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="bottom" className="whitespace-pre-line">
+          {`${link.title}\nParent thread`}
+        </TooltipPopup>
+      </Tooltip>
+    </span>
   );
 }
