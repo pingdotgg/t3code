@@ -78,12 +78,17 @@ export const isLocalLoopbackHost = (host: string): boolean => {
   if (normalized === "localhost" || normalized === "::1") return true;
   if (parseIpv4Address(normalized)?.[0] === 127) return true;
   // Mapped forms must be well formed. normalizeHostname forgives stray brackets and trailing dots,
-  // and the shared dotted parser also reads `127..0.1` and `0x7f.0.0.1`.
+  // and the shared dotted parser also reads `127..0.1` and `0x7f.0.0.1`. A canonical dotted tail
+  // becomes two hextets so every spelling, `0:0:0:0:0:ffff:7f00:1` included, parses as IPv6.
   const literal = (/^\[.*\]$/u.test(host) ? host.slice(1, -1) : host).toLowerCase();
-  const mapped = /^[\da-f:.]+$/u.test(literal) ? parseIpv4MappedIpv6Address(literal) : null;
-  return (
-    mapped?.[0] === 127 && (!literal.includes(".") || literal === `::ffff:${mapped.join(".")}`)
-  );
+  const hex = literal.replace(/:(\d+\.\d+\.\d+\.\d+)$/u, (match, dotted: string) => {
+    const ipv4 = parseIpv4Address(dotted);
+    return ipv4?.join(".") === dotted
+      ? `:${((ipv4[0]! << 8) | ipv4[1]!).toString(16)}:${((ipv4[2]! << 8) | ipv4[3]!).toString(16)}`
+      : match;
+  });
+  const ipv6 = /^[\da-f:]+$/u.test(hex) ? parseIpv6Address(hex) : null;
+  return ipv6 !== null && ipv6PrefixMatches(ipv6, [0, 0, 0, 0, 0, 0xffff, 0x7f00, 0], 104);
 };
 
 /** MagicDNS or fd7a:115c:a1e0::/48 identifies Tailscale; shared 100.64.0.0/10 addresses alone do not. */

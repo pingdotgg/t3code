@@ -117,12 +117,15 @@ describe("isLocalLoopbackHost", () => {
       "::FFFF:127.1.2.3",
       new URL("http://[::ffff:127.0.0.1]:3773/").hostname,
       "::ffff:7fff:fffe",
+      "0:0:0:0:0:ffff:7f00:1",
+      "0:0:0:0:0:FFFF:127.0.0.1",
     ]) {
       expect(isLocalLoopbackHost(host), host).toBe(true);
     }
     for (const host of [
       "::ffff:192.168.1.10",
       "::7f00:1",
+      "::ffff:0:7f00:1",
       "::ffff:127..0.1",
       "::ffff:0x7f.0.0.1",
       "[::ffff:7f00:1",
