@@ -2,6 +2,7 @@
 import type * as NodeChildProcess from "node:child_process";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - the free-space probe is a plain Promise callback.
 import * as NodeFS from "node:fs";
+import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
@@ -464,6 +465,121 @@ if (context.update?.status === "pending") {
       }),
   );
 
+  it.effect.each(["wal", "delete"] as const)(
+    "backs up a %s-mode database (online when WAL) and restores its final state",
+    (journalMode) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-online-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        const observationsPath = path.join(root, "observations.json");
+        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        const seed = new NodeSqlite.DatabaseSync(databasePath);
+        seed.exec(`
+        PRAGMA journal_mode = ${journalMode};
+        CREATE TABLE events (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+        INSERT INTO events (payload) SELECT 'before the update ' || i FROM n;
+      `);
+        seed.close();
+
+        const encoded = JSON.stringify({ root, databasePath, observationsPath, journalMode });
+        const childSource = `
+import { readdirSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+const paths = ${encoded};
+const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
+if (context.update?.status === "pending") {
+  writeFileSync(paths.observationsPath + ".trial", JSON.stringify(
+    readdirSync(paths.root + "/runtime/db-backup/" + context.update.id).sort(),
+  ));
+  writeFileSync(context.update.dbPath, "database after migration");
+  writeFileSync(context.update.dbPath + "-wal", "trial wal");
+  process.exit(1);
+} else if (context.update === undefined) {
+  const db = new DatabaseSync(paths.databasePath);
+  db.exec("PRAGMA journal_mode = " + paths.journalMode + ";");
+  const insert = db.prepare("INSERT INTO events (payload) VALUES (?)");
+  const writer = setInterval(() => insert.run("written while serving"), 1);
+  process.once("SIGTERM", () => {
+    clearInterval(writer);
+    insert.run("last write before stopping");
+    const backupRoot = paths.root + "/runtime/db-backup";
+    writeFileSync(paths.observationsPath, JSON.stringify({
+      backupsAtStop: readdirSync(backupRoot).map((entry) => readdirSync(backupRoot + "/" + entry)),
+      rows: db.prepare("SELECT count(*) AS n FROM events").get().n,
+    }));
+    db.close();
+    process.exit(0);
+  });
+  process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: paths.databasePath });
+} else {
+  process.exit(0);
+}
+`;
+        for (const version of ["1.0.0", "1.1.0"]) {
+          yield* writeFakeRuntime(
+            fs,
+            path,
+            path.join(root, "runtime", "versions", version),
+            childSource,
+          );
+        }
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+          }),
+        );
+
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+          {
+            backupSpaceProbe: { canClone: async () => false },
+          },
+        );
+        yield* Effect.promise(() =>
+          launcher.run().then(
+            () => Promise.reject(new Error("launcher unexpectedly completed")),
+            () => Promise.resolve(),
+          ),
+        );
+
+        const state = yield* Effect.promise(() => readServiceState(statePath));
+        assert.equal(state.update?.status, "rolled-back");
+        const observed = JSON.parse(yield* fs.readFileString(observationsPath));
+        // A WAL database's main file is copied before the server is asked to stop; others fall back offline.
+        assert.deepEqual(observed.backupsAtStop, journalMode === "wal" ? [["database"]] : []);
+        assert.isAbove(observed.rows, 501);
+        // Only the online copy holds no -shm: the offline fallback copies the one the server left.
+        assert.deepEqual(
+          JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
+          journalMode === "wal" ? ["database", "database-wal"] : ["database"],
+        );
+        const restored = new NodeSqlite.DatabaseSync(databasePath);
+        try {
+          assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+          assert.equal(
+            restored.prepare("SELECT count(*) AS n FROM events").get()?.n,
+            observed.rows,
+          );
+          assert.equal(
+            restored
+              .prepare(
+                "SELECT count(*) AS n FROM events WHERE payload = 'last write before stopping'",
+              )
+              .get()?.n,
+            1,
+          );
+        } finally {
+          restored.close();
+        }
+      }),
+  );
+
   const requestRejectedUpdate = (backupSpaceProbe: Partial<BackupSpaceProbe>) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -670,7 +786,7 @@ setInterval(() => {}, 1_000);
       assert.include((yield* check(0.5 * 1024 ** 3, true)) ?? "", "1.0 GB needed, 0.5 GB free");
       const blocker = yield* check(8 * 1024 ** 3, false);
       assert.include(blocker ?? "", "Not enough free disk space");
-      assert.include(blocker ?? "", "10.5 GB needed, 8.0 GB free");
+      assert.include(blocker ?? "", "10.8 GB needed, 8.0 GB free");
       assert.include(blocker ?? "", "The server was not stopped");
     }),
   );
