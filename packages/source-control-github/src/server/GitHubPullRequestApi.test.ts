@@ -12,6 +12,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
 
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -2861,6 +2862,42 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
       expect(error.message).toContain("more than 1000 workflow runs");
       assert.strictEqual(runPages, 11);
+    }),
+  );
+
+  it.effect.each([
+    new GitHubRequestPolicy.GitHubApiRateLimitError({
+      host: "github.com",
+      operation: "listWorkflowRunsRequiringApproval",
+    }),
+    new SourceControlRateLimit.SourceControlRateLimitPausedError({
+      provider: SourceControlProviderKind.make("github"),
+      host: "github.com",
+      retryAt: Date.parse("2099-08-13T14:00:00Z"),
+    }),
+  ])("keeps $_tag when the workflow run read is rate-limited", (refusal) =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        call.kind === "graphql"
+          ? Effect.succeed(output(encodeJson(heads([7]))))
+          : Effect.fail(refusal),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.listWorkflowRunsRequiringApproval({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          headSha: "abc123",
+          headBranch: "feat/page",
+          headRepositoryOwner: "octocat",
+          isCrossRepository: true,
+        }),
+      );
+
+      assert.strictEqual(error._tag, refusal._tag);
     }),
   );
 

@@ -1562,7 +1562,15 @@ export const make = Effect.gen(function* () {
           operation: "listWorkflowRunsRequiringApproval",
           path: `repos/${owner}/${name}/actions/runs?head_sha=${encodeURIComponent(input.headSha)}&branch=${encodeURIComponent(input.headBranch)}&event=pull_request&status=action_required&per_page=100&page=${page}`,
           decode: decodeWorkflowRunsJson,
-        }).pipe(Effect.mapError((error) => workflowApprovalReadError(input.cwd, error)));
+        }).pipe(
+          // A rate-limited read is no answer; callers wait instead of reporting approval unknown.
+          Effect.mapError((error) =>
+            error._tag === "GitHubApiRateLimitError" ||
+            error._tag === "SourceControlRateLimitPausedError"
+              ? error
+              : workflowApprovalReadError(input.cwd, error),
+          ),
+        );
         runs.push(...read.runs);
         if (read.rawCount < 100) break;
       }
