@@ -324,14 +324,14 @@ const seedParentWithTerminalTask = (input: {
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
   it.effect.each([
     // The delivery run has ended, but the successor delivery is not claimed yet.
-    { name: "reserved", reserved: true, held: ["subagent"] },
+    { name: "reserved", reserved: true, held: ["subagent"], parentRunStatus: "completed" as const },
     // No delivery will claim it, so it must not hold the parent forever.
-    { name: "unreserved", reserved: false, held: [] },
+    { name: "unreserved", reserved: false, held: [], parentRunStatus: "completed" as const },
     // A checkpoint rollback hides the run's items but keeps its cohort open, and a later run settles.
     { name: "rolled back", reserved: true, held: [], parentRunStatus: "rolled_back" as const },
   ])(
     "holds an idle parent on a pending finished task only while $name",
-    ({ name, reserved, held, parentRunStatus = "completed" }) =>
+    ({ name, reserved, held, parentRunStatus }) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
