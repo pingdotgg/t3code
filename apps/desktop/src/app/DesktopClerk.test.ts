@@ -12,6 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { afterAll, beforeEach, vi } from "vite-plus/test";
 
 const clerkStateDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-desktop-clerk-"));
@@ -489,6 +490,11 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
     const pageOpened = Promise.withResolvers<void>();
     const workspaceOpened = Promise.withResolvers<void>();
     const pairLink = "t3code://pair?pairingUrl=https%3A%2F%2Fvps.example.com%2F%23token%3Dabc";
+    const missingFolder = NodePath.join(clerkStateDir, "private-missing-folder");
+    const warning = Promise.withResolvers<string>();
+    const logger = Logger.make(({ logLevel, message, cause }) => {
+      if (logLevel === "Warn") warning.resolve(JSON.stringify({ message, cause }));
+    });
     yield* Effect.gen(function* () {
       const clerk = yield* DesktopClerk.DesktopClerk;
       yield* clerk.configure;
@@ -512,7 +518,12 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
       };
       assert.strictEqual(openFile(htmlFile), 1);
       assert.strictEqual(openFile(htmlNamedFolder), 1);
+      assert.strictEqual(openFile(missingFolder), 1);
       yield* Effect.promise(() => Promise.all([pageOpened.promise, workspaceOpened.promise]));
+      const logged = yield* Effect.promise(() => warning.promise);
+      assert.notInclude(logged, clerkStateDir);
+      assert.notInclude(logged, "private-missing-folder");
+      assert.include(logged, "NotFound");
       assert.deepStrictEqual(received, [
         "https://example.com/page",
         "http://localhost:3000/",
@@ -545,7 +556,9 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         DesktopAppActivation.DesktopAppActivation,
         recordOpenedWorkspaces(openedWorkspaces, workspaceOpened.resolve),
       ),
-      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(
+        Layer.mergeAll(NodeFileSystem.layer, Logger.layer([logger], { mergeWithExisting: false })),
+      ),
     );
   }).pipe(Effect.scoped),
 );

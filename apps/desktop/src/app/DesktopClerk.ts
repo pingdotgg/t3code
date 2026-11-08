@@ -254,7 +254,12 @@ export const make = Effect.gen(function* () {
               }
               return Effect.void;
             }),
-            Effect.catchCause((cause) => Effect.logWarning("Could not open a dropped file", cause)),
+            Effect.catch((error) =>
+              Effect.logWarning("Could not open a dropped file", { category: error.reason._tag }),
+            ),
+            Effect.catchCause(() =>
+              Effect.logWarning("Could not open a dropped file", { category: "Unexpected" }),
+            ),
           ),
         );
       };
