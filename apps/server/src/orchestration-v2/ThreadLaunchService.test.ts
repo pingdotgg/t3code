@@ -1204,6 +1204,7 @@ it.effect.each([
     );
     const projection = yield* preparationSettled(launched.threadId);
     assert.equal(projection.runs[0]?.status, "starting");
+    assert.deepEqual(projection.runs[0]?.workspacePreparation, { type: "root" });
     assert.isNull(projection.thread.worktreePath);
     assert.isNull(projection.thread.branch);
     assert.equal(harness.createWorktree.mock.calls.length, 0);

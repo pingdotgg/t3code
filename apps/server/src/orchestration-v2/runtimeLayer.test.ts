@@ -5747,6 +5747,36 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  // A successful empty-repo fallback leaves worktreePath null with a completed run; that must
+  // not hold the queue the way a failed worktree setup does.
+  it.effect("starts the next queued run after a completed worktree prep without a worktree", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-empty-repo-worktree-fallback");
+      const { send, runFor, end, startedRunIds } = yield* queueTestThread(threadId);
+      yield* send("setup", "agent", true);
+      yield* send("queued", "agent", false);
+      const { thread } = yield* orchestrator.getThreadProjection(threadId);
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:worktree-fallback`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: yield* DateTime.now,
+            payload: { ...thread, worktreePath: null },
+          },
+        ],
+      });
+      yield* end("setup", "completed", "", {
+        workspacePreparation: { type: "worktree", baseRef: "main" },
+      });
+      assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("queued")).id);
+      assert.notEqual((yield* runFor("queued")).queueHeld, true);
+    }),
+  );
+
   it.effect("keeps queued user selections and pauses only the limited provider", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
