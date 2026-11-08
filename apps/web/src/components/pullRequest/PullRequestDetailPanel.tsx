@@ -1701,11 +1701,11 @@ export function PullRequestDetailPanel({
               <span
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute top-px left-0.5 h-6 rounded-lg surface-raised",
+                  "pointer-events-none absolute top-px left-px h-6 rounded-md surface-raised",
                   tabMotionActive && "transition-transform ease-out",
                 )}
                 style={{
-                  width: `calc((100% - 0.25rem - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
+                  width: `calc((100% - 2px - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
                   transform: `translateX(calc(${Math.max(
                     0,
                     visibleTabs.findIndex((item) => item.value === tab),
