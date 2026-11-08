@@ -4364,10 +4364,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               timeoutMs: null,
               ...(onSubmoduleLine
                 ? {
-                    env: { LANGUAGE: "C" },
+                    env: { ...STATUS_UPSTREAM_REFRESH_ENV, LANGUAGE: "C" },
                     progress: { onStdoutLine: onSubmoduleLine, onStderrLine: onSubmoduleLine },
                   }
-                : {}),
+                : { env: STATUS_UPSTREAM_REFRESH_ENV }),
             },
           ),
         ),
