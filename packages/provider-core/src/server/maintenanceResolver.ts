@@ -566,7 +566,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     );
     if (!install || mise.upgrade === false) return manual(binaryPath);
     if (!isShim) {
-      const toolDir = normalizeCommandPath(install.install_path)
+      // Keep the path's case: `realPath` needs it on case-sensitive filesystems.
+      const toolDir = install.install_path
+        .replaceAll("\\", "/")
         .replace(/\/+$/, "")
         .replace(/\/[^/]+$/, "");
       const latestDirs = [toolDir, yield* realPath(toolDir)].map((dir) => `${dir}/latest`);

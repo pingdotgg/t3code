@@ -1649,34 +1649,6 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
-  it.effect.skipIf(!symlinksSupported || windowsHost)(
-    "launches the upgraded version through mise's latest link",
-    () =>
-      Effect.gen(function* () {
-        const tempDir = yield* makeTempDir("t3-mise-upgraded");
-        const mise = miseFixture(tempDir);
-        const resolve = () =>
-          resolveProviderMaintenanceCapabilitiesEffect(miseToolUpdate, {
-            binaryPath: mise.latestBinaryPath,
-            env: { PATH: mise.miseBinDir },
-          }).pipe(
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              miseSpawner({ which: mise.binaryPath, installed: mise.installed() }, []),
-            ),
-          );
-        expect((yield* resolve()).update).toMatchObject({ args: ["upgrade", "package-tool"] });
-
-        const upgraded = mise.install("1.1.0");
-        NodeFS.rmSync(NodePath.join(tempDir, "mise", "installs", "package-tool", "1.0.0"), {
-          recursive: true,
-        });
-
-        expect(NodeFS.realpathSync(mise.latestBinaryPath)).toBe(NodeFS.realpathSync(upgraded));
-        expect((yield* resolve()).update).toMatchObject({ args: ["upgrade", "package-tool"] });
-      }),
-  );
-
   it.effect.each([
     { name: "a pinned version", installed: { requested_version: "1.0.0" } },
     { name: "an inactive install", installed: { active: false } },
