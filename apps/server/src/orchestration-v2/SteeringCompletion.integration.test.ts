@@ -1679,7 +1679,6 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
       const { started, layer, startFirstTurn } = yield* goalHarness("restart-send-delivery");
       yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const threadManagement = yield* ThreadManagementService.ThreadManagementService;
         const threadId = yield* startFirstTurn;
         const input = {
@@ -1694,19 +1693,15 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
           creationSource: "mcp",
         } as const;
         const sent = yield* threadManagement.sendToThread(input);
-        const replacementRunning = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        yield* worker.drain();
-        yield* Fiber.join(replacementRunning);
+        // Stop holds the replacement before it starts; a replay must still report the restart.
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make("stop-after-restart"),
+          threadId,
+        });
         const replayed = yield* threadManagement.sendToThread(input);
 
-        assert.equal(started.length, 2);
+        assert.equal(started.length, 1);
         assert.deepEqual([sent.delivery, replayed.delivery], ["restarted", "restarted"]);
       }).pipe(
         Effect.provide(

@@ -867,7 +867,7 @@ const make = Effect.gen(function* () {
     });
     const projection = yield* getProjectThreadRecords(input, ["runs", "messages", "turnItems"], {
       messageIds: [input.messageId],
-      turnItemTypes: ["user_message", "run_interrupt_request"],
+      turnItemTypes: ["user_message"],
     });
     const message = projection.messages.find((candidate) => candidate.id === input.messageId);
     const run =
@@ -892,20 +892,14 @@ const make = Effect.gen(function* () {
       });
     }
     // A provider without interrupt-and-restart stops the turn and runs the
-    // restart as the next turn. Durable records only, so a replay agrees: an
-    // earlier run stopped once this message existed.
-    const isEarlierRun = (runId: RunId | null) =>
-      (projection.runs.find((candidate) => candidate.id === runId)?.ordinal ?? run.ordinal) <
-      run.ordinal;
+    // restart as the next turn. Read from this command's own events, so a replay agrees.
     const restartedAsNextTurn =
       mode === "restart" &&
-      (run.status !== "queued" || (run.queuePosition === 1 && run.queueHeld !== true)) &&
-      projection.turnItems.some(
-        (item) =>
-          item.type === "run_interrupt_request" &&
-          item.startedAt !== null &&
-          DateTime.isGreaterThanOrEqualTo(item.startedAt, message.createdAt) &&
-          isEarlierRun(item.runId),
+      dispatched.storedEvents.some(
+        ({ event }) =>
+          event.type === "turn-item.updated" &&
+          event.payload.type === "run_interrupt_request" &&
+          event.payload.runId !== run.id,
       );
     const delivery: ThreadManagementSendResult["delivery"] = restartedAsNextTurn
       ? "restarted"
