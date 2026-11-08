@@ -116,6 +116,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
+import { isConnectedWithConfig } from "./scopedSettings";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
 
@@ -844,12 +845,19 @@ function DeviceIntegrationControls({
 }) {
   const canConfigure = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const { state, loaded } = useDeviceState(environmentId);
-  const { scope, connectedEnvironments } = useSettingsScope();
+  const { scope, environments, connectedEnvironments } = useSettingsScope();
   const updateSettings = useUpdateScopedSettings();
   const projectScope = scope.kind === "project" || scope.kind === "checkout";
   const anyHubEnabled = connectedEnvironments.some(
     (environment) => environment.serverConfig?.settings.enableDeviceSupport,
   );
+  const offlineLabels = environments
+    .filter((environment) => !isConnectedWithConfig(environment))
+    .map((environment) => environment.label);
+  const offlineStatus =
+    offlineLabels.length > 0
+      ? `Offline machines will not get this setting: ${offlineLabels.join(", ")}.`
+      : undefined;
   const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<
@@ -949,6 +957,7 @@ function DeviceIntegrationControls({
         {...searchableSetting("device-hub")}
         serverScoped
         settingKeys={["enableDeviceSupport"]}
+        status={offlineStatus}
         description={
           <>
             Open simulators and emulators in the Device panel. Hub:{" "}
@@ -988,6 +997,7 @@ function DeviceIntegrationControls({
         {...searchableSetting("agent-device-access")}
         serverScoped
         settingKeys={["enableAgentDeviceAccess"]}
+        status={offlineStatus}
         description={
           <>
             New agent sessions can open and drive these devices. agent-device:{" "}
