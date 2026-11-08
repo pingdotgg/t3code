@@ -17,7 +17,6 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import { useComposerSelection } from "./useComposerSelection";
 
 const environmentId = EnvironmentId.make("environment-local");
-const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread-cursor"));
 const cursor = ProviderInstanceId.make("cursor");
 const stored = createModelSelection(cursor, "claude-opus-5-5", [{ id: "effort", value: "medium" }]);
 
@@ -38,24 +37,25 @@ const providers: ReadonlyArray<ServerProvider> = [
 ];
 
 // The hook reads only the thread's identity and stored selection.
-const activeThread = {
-  environmentId,
-  id: threadRef.threadId,
-  modelSelection: stored,
-} as EnvironmentThreadShell;
+function cursorThread(id: string) {
+  return { environmentId, id: ThreadId.make(id), modelSelection: stored } as EnvironmentThreadShell;
+}
 
-function Picker() {
+function Picker(props: {
+  thread: EnvironmentThreadShell;
+  runtime: Parameters<typeof useComposerSelection>[0]["activeRuntime"];
+}) {
   const { onProviderModelSelectStable } = useComposerSelection({
     environmentId,
-    composerDraftTarget: threadRef,
+    composerDraftTarget: scopeThreadRef(environmentId, props.thread.id),
     draftThread: null,
-    activeThread,
-    activeRuntime: null,
+    activeThread: props.thread,
+    activeRuntime: props.runtime,
     activeProjectSettings: { settings: { newWorktreesStartFromOrigin: false } },
     settings: DEFAULT_UNIFIED_SETTINGS,
     providerStatuses: providers,
     lockedProvider: null,
-    supportsProviderSwitchingViaHandoff: false,
+    supportsProviderSwitchingViaHandoff: true,
     multipleModelSelections: null,
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -73,12 +73,27 @@ function Picker() {
   );
 }
 
-it("keeps a Cursor thread's stored model when the user re-picks its unavailable row", async () => {
-  await using _screen = await render(<Picker />);
+it("keeps a Cursor thread's stored model and options when the user re-picks its unavailable row", async () => {
+  const thread = cursorThread("thread-cursor");
+  await using _screen = await render(<Picker thread={thread} runtime={null} />);
   await page.getByRole("button", { name: "Pick the stored model" }).click();
 
-  expect(
-    useComposerDraftStore.getState().getComposerDraft(threadRef)?.modelSelectionByProvider[cursor]
-      ?.model,
-  ).toBe("claude-opus-5-5");
+  const draft = useComposerDraftStore
+    .getState()
+    .getComposerDraft(scopeThreadRef(environmentId, thread.id));
+  expect(draft?.modelSelectionByProvider[cursor] ?? thread.modelSelection).toEqual(stored);
+});
+
+it("switches back to the thread's stored model while the session runs on another instance", async () => {
+  const thread = cursorThread("thread-cursor-handoff");
+  const runtime = { providerInstanceId: ProviderInstanceId.make("codex") } as Parameters<
+    typeof useComposerSelection
+  >[0]["activeRuntime"];
+  await using _screen = await render(<Picker thread={thread} runtime={runtime} />);
+  await page.getByRole("button", { name: "Pick the stored model" }).click();
+
+  const draft = useComposerDraftStore
+    .getState()
+    .getComposerDraft(scopeThreadRef(environmentId, thread.id));
+  expect(draft?.activeProvider).toBe(cursor);
 });
