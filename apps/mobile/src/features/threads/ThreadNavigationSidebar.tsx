@@ -324,8 +324,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const { onSelectThread, onOpenThreadPullRequests, onOpenPendingTask } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
-    if (consumeOpenSwipeable()) return;
+  const openThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
@@ -334,6 +333,14 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       requestThreadMessageJump(scopedThreadKey(thread.environmentId, thread.id), messageId);
     }
     onSelectThread(thread);
+  };
+  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+    if (consumeOpenSwipeable()) return;
+    openThread(thread);
+  };
+  const handleSelectThreadFromShortcut = (thread: EnvironmentThreadShell) => {
+    closeOpenSwipeable();
+    openThread(thread);
   };
   const handleOpenThreadPullRequests = (
     thread: EnvironmentThreadShell,
@@ -365,7 +372,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     threadSearchMatchByKey,
     workingShelfEnabled,
   };
-  useThreadJumpShortcuts(listItems, handleSelectThread);
+  useThreadJumpShortcuts(listItems, handleSelectThreadFromShortcut);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
       return threadListV2ListItemsAreEqual(previous, item);

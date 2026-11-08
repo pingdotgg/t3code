@@ -496,8 +496,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const { onSelectThread } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
-  const selectThread = (thread: EnvironmentThreadShell) => {
-    if (consumeOpenSwipeable()) return;
+  const openThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
@@ -507,7 +506,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     onSelectThread(thread);
   };
-  useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const selectThreadFromTap = (thread: EnvironmentThreadShell) => {
+    if (consumeOpenSwipeable()) return;
+    openThread(thread);
+  };
+  const selectThreadFromShortcut = (thread: EnvironmentThreadShell) => {
+    closeOpenSwipeable();
+    openThread(thread);
+  };
+  useThreadJumpShortcuts(threadListV2Items, selectThreadFromShortcut);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -617,7 +624,7 @@ export function HomeScreen(props: HomeScreenProps) {
             : undefined
         }
         searchQuery={threadSearch.query}
-        onSelectThread={selectThread}
+        onSelectThread={selectThreadFromTap}
         onOpenThreadPullRequests={handleOpenThreadPullRequests}
         onDeleteThread={handleDeleteThread}
         onArchiveThread={props.onArchiveThread}
@@ -754,6 +761,11 @@ export function HomeScreen(props: HomeScreenProps) {
           onProjectChange={(projectKey) => {
             if (consumeOpenSwipeable()) return;
             props.onProjectChange(projectKey);
+          }}
+          onResetFilters={() => {
+            if (consumeOpenSwipeable()) return;
+            props.onEnvironmentChange(null);
+            props.onProjectChange(null);
           }}
         />
       ) : null}

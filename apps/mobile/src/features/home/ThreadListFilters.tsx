@@ -14,6 +14,8 @@ export function ThreadListFilters(props: {
   readonly selectedProjectKey: string | null;
   readonly onEnvironmentChange: (environmentId: EnvironmentId | null) => void;
   readonly onProjectChange: (projectKey: string | null) => void;
+  /** Clears both filters in one action; avoids split callbacks that can partially apply. */
+  readonly onResetFilters?: () => void;
   /** List padding the scroller bleeds through so pills start where row content does. */
   readonly gutter: number;
 }) {
@@ -91,6 +93,10 @@ export function ThreadListFilters(props: {
           accessibilityLabel="Reset thread filters"
           className="h-8 w-8 items-center justify-center"
           onPress={() => {
+            if (props.onResetFilters) {
+              props.onResetFilters();
+              return;
+            }
             props.onEnvironmentChange(null);
             props.onProjectChange(null);
           }}
