@@ -1316,14 +1316,19 @@ export function PullRequestDetailPanel({
     detail?.state === "merged" || detail?.state === "closed" ? detail.state : null;
   const finishedBadge =
     detail && finishedState ? (
-      <PullRequestStateBadge tone={finishedState === "merged" ? "merged" : "destructive"}>
-        {finishedState === "merged" ? (
-          <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        ) : (
-          <PullRequestGlyph.closed aria-hidden className="size-3.5" />
-        )}
-        {finishedState === "merged" ? `Merged into ${detail.baseBranch}` : "Closed without merging"}
-      </PullRequestStateBadge>
+      <PullRequestStateBadge
+        tone={finishedState === "merged" ? "merged" : "destructive"}
+        icon={
+          finishedState === "merged" ? (
+            <PullRequestGlyph.merged aria-hidden className="size-3.5" />
+          ) : (
+            <PullRequestGlyph.closed aria-hidden className="size-3.5" />
+          )
+        }
+        label={
+          finishedState === "merged" ? `Merged into ${detail.baseBranch}` : "Closed without merging"
+        }
+      />
     ) : null;
   const finishedMenu =
     detail && finishedState && (can("reopen") || can("revert") || showsDeleteBranch) ? (
