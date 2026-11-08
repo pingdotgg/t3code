@@ -3,7 +3,8 @@ import { SheetHeader } from "../../../components/ui/SheetHeader";
 import { Button } from "../../../components/ui/Button";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Platform, Pressable, ScrollView, View } from "react-native";
+import { NativeStackScreenOptions } from "../../../native/StackHeader";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -25,6 +26,8 @@ type GitCommitSheetProps = StaticScreenProps<{
 export function GitCommitSheet(_props: GitCommitSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const android = Platform.OS === "android";
+  const [footerHeight, setFooterHeight] = useState(0);
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const gitState = useSelectedThreadGitState();
@@ -65,6 +68,30 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
     });
   };
 
+  const footer = (
+    <View
+      className="shrink-0 gap-2 border-t border-border-subtle bg-sheet-solid px-5 pt-3"
+      onLayout={android ? (event) => setFooterHeight(event.nativeEvent.layout.height) : undefined}
+      style={{ paddingBottom: Math.max(insets.bottom, 18) }}
+    >
+      <Button
+        label="Commit changes"
+        icon="checkmark"
+        tone="primary"
+        fullWidth
+        disabled={!canWriteSourceControl || noneSelected || busy}
+        onPress={() => void runCommitAction(false)}
+      />
+      <Button
+        label="Commit on a new branch"
+        icon="arrow.branch"
+        tone="text"
+        fullWidth
+        disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
+        onPress={() => void runCommitAction(true)}
+      />
+    </View>
+  );
   const header = (
     <SheetHeader
       title="Commit changes"
@@ -81,6 +108,19 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
       collapsable={false}
       className="bg-sheet ios:flex-1 android:absolute android:inset-0 android:flex-col-reverse"
     >
+      {android ? (
+        <NativeStackScreenOptions
+          options={{ unstable_sheetFooter: () => footer }}
+          optionsVersion={{
+            commitMessage: dialogCommitMessage,
+            filePaths: selectedFiles.map((file) => file.path),
+            busy,
+            canWriteSourceControl,
+            canChangeThreadBranch,
+            bottomInset: insets.bottom,
+          }}
+        />
+      ) : null}
       <ScreenContent>
         <ScrollView
           nestedScrollEnabled
@@ -90,6 +130,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           keyboardDismissMode="on-drag"
           automaticallyAdjustKeyboardInsets
           contentContainerClassName="px-5 pt-4 pb-6 gap-5"
+          contentContainerStyle={android ? { paddingBottom: footerHeight + 24 } : undefined}
         >
           {isDefaultRef ? (
             <Text className="text-sm text-warning-foreground">
@@ -204,27 +245,7 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
             )}
           </View>
         </ScrollView>
-        <View
-          className="shrink-0 gap-2 border-t border-border-subtle px-5 pt-3"
-          style={{ paddingBottom: Math.max(insets.bottom, 18) }}
-        >
-          <Button
-            label="Commit changes"
-            icon="checkmark"
-            tone="primary"
-            fullWidth
-            disabled={!canWriteSourceControl || noneSelected || busy}
-            onPress={() => void runCommitAction(false)}
-          />
-          <Button
-            label="Commit on a new branch"
-            icon="arrow.branch"
-            tone="text"
-            fullWidth
-            disabled={!canWriteSourceControl || !canChangeThreadBranch || noneSelected || busy}
-            onPress={() => void runCommitAction(true)}
-          />
-        </View>
+        {android ? null : footer}
       </ScreenContent>
       {header}
     </View>
