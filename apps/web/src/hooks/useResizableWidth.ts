@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useLayoutEffect, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useLayoutEffect,
+  useState,
+} from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 import { useResizeDrag } from "./useResizeDrag";
@@ -25,6 +30,11 @@ export interface ResizableWidthHandlers {
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly tabIndex: 0;
+  readonly "aria-valuenow": number;
+  readonly "aria-valuemin": number;
+  readonly "aria-valuemax": number;
+  readonly onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
 }
 
 /** Uses the current default until a width is chosen; persists on drag end, not every frame. */
@@ -103,9 +113,37 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reapplies the live drag pointer position to the DOM before paint when the bounds change
   useLayoutEffect(() => refresh({ min: minWidth, max: maxWidth }), [refresh, minWidth, maxWidth]);
 
+  const setWidth = (value: number) => commitWidth(storageKey, clamp(value));
+  // The arrow pointing away from the edge the handle sits on grows the panel.
+  const growKey = edge === "left" ? "ArrowLeft" : "ArrowRight";
+  const shrinkKey = edge === "left" ? "ArrowRight" : "ArrowLeft";
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    let nextWidth: number;
+    switch (event.key) {
+      case growKey:
+        nextWidth = clampedWidth + 16;
+        break;
+      case shrinkKey:
+        nextWidth = clampedWidth - 16;
+        break;
+      case "Home":
+        nextWidth = minWidth;
+        break;
+      case "End":
+        nextWidth = maxWidth;
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setWidth(nextWidth);
+  };
+
   return {
     width: clampedWidth,
-    setWidth: (value) => commitWidth(storageKey, clamp(value)),
+    setWidth,
     handlers: {
       ref: drag.ref,
       onPointerDown: drag.onPointerDown,
@@ -113,6 +151,11 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       onPointerUp: drag.onPointerUp,
       onPointerCancel: drag.onPointerCancel,
       onLostPointerCapture: drag.onLostPointerCapture,
+      tabIndex: 0,
+      "aria-valuenow": clampedWidth,
+      "aria-valuemin": minWidth,
+      "aria-valuemax": maxWidth,
+      onKeyDown,
     },
   };
 }

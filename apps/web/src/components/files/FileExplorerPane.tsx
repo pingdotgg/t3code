@@ -32,7 +32,7 @@ export function FileExplorerPane({
 }) {
   const [maxWidth, setMaxWidth] = useState(MAX_WIDTH);
   const [responsiveDefaultWidth, setResponsiveDefaultWidth] = useState(defaultWidth);
-  const { width, setWidth, handlers } = useResizableWidth({
+  const { width, handlers } = useResizableWidth({
     storageKey,
     defaultWidth: responsiveDefaultWidth,
     minWidth,
@@ -75,39 +75,7 @@ export function FileExplorerPane({
           : undefined
       }
     >
-      {resizable ? (
-        <RightPanelResizeHandle
-          handlers={handlers}
-          label={resizeLabel}
-          tabIndex={0}
-          aria-valuenow={width}
-          aria-valuemin={minWidth}
-          aria-valuemax={maxWidth}
-          onKeyDown={(event) => {
-            if (event.altKey || event.ctrlKey || event.metaKey) return;
-            let nextWidth: number;
-            switch (event.key) {
-              case "ArrowLeft":
-                nextWidth = width + 16;
-                break;
-              case "ArrowRight":
-                nextWidth = width - 16;
-                break;
-              case "Home":
-                nextWidth = minWidth;
-                break;
-              case "End":
-                nextWidth = maxWidth;
-                break;
-              default:
-                return;
-            }
-            event.preventDefault();
-            event.stopPropagation();
-            setWidth(nextWidth);
-          }}
-        />
-      ) : null}
+      {resizable ? <RightPanelResizeHandle handlers={handlers} label={resizeLabel} /> : null}
       {children}
     </aside>
   );

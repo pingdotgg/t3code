@@ -1,17 +1,18 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { RESIZABLE_WIDTH_PROPERTY, useResizableWidth } from "./useResizableWidth";
 
 const STORAGE_KEY = "test:responsive-panel-width";
 
-function Panel({ defaultWidth }: { defaultWidth: number }) {
+function Panel({ defaultWidth, edge = "left" }: { defaultWidth: number; edge?: "left" | "right" }) {
   const { width, setWidth, handlers } = useResizableWidth({
     storageKey: STORAGE_KEY,
     defaultWidth,
     minWidth: 160,
     maxWidth: 560,
-    edge: "left",
+    edge,
   });
   return (
     <>
@@ -77,6 +78,42 @@ describe("useResizableWidth", () => {
       expect(localStorage.getItem(STORAGE_KEY)).toBe("330");
       await screen.rerender(<Panel defaultWidth={200} />);
       expect(screen.container.textContent).toBe("330");
+    } finally {
+      if (previous === null) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY, previous);
+    }
+  });
+
+  it("resizes from the keyboard within its bounds and persists the width", async () => {
+    const previous = localStorage.getItem(STORAGE_KEY);
+    localStorage.removeItem(STORAGE_KEY);
+    try {
+      // This hook only needs browser storage and React; no navigation is involved.
+      await using screen = await render(<Panel defaultWidth={320} />, { router: false });
+      const handle = screen.getByRole("separator");
+      (handle.element() as HTMLElement).focus();
+      await expect.element(handle).toHaveFocus();
+      await expect.element(handle).toHaveAttribute("aria-valuemin", "160");
+      await expect.element(handle).toHaveAttribute("aria-valuemax", "560");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "320");
+
+      await userEvent.keyboard("{ArrowLeft}");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "336");
+      expect(localStorage.getItem(STORAGE_KEY)).toBe("336");
+      await userEvent.keyboard("{ArrowRight}");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "320");
+      expect(localStorage.getItem(STORAGE_KEY)).toBe("320");
+      await userEvent.keyboard("{End}");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "560");
+      expect(localStorage.getItem(STORAGE_KEY)).toBe("560");
+      await userEvent.keyboard("{Home}");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "160");
+      expect(localStorage.getItem(STORAGE_KEY)).toBe("160");
+
+      await screen.rerender(<Panel defaultWidth={320} edge="right" />);
+      await userEvent.keyboard("{ArrowRight}");
+      await expect.element(handle).toHaveAttribute("aria-valuenow", "176");
+      expect(localStorage.getItem(STORAGE_KEY)).toBe("176");
     } finally {
       if (previous === null) localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY, previous);
