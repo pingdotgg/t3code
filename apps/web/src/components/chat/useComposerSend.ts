@@ -489,11 +489,18 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     const readDraftImages = () =>
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.images ?? [];
-    const pendingSnapShotText = waitForSnapShotContexts(readDraftImages().map(({ id }) => id));
+    const waitForDraftSnapShotText = () =>
+      waitForSnapShotContexts(readDraftImages().map(({ id }) => id));
+    let pendingSnapShotText = waitForDraftSnapShotText();
+    const waitedForSnapShotText = pendingSnapShotText !== null;
     if (pendingSnapShotText) {
       sendInFlightRef.current = true;
       try {
-        await pendingSnapShotText;
+        // A shot that lands during the wait joins this message, so wait for its text too.
+        while (pendingSnapShotText) {
+          await pendingSnapShotText;
+          pendingSnapShotText = waitForDraftSnapShotText();
+        }
       } finally {
         sendInFlightRef.current = false;
       }
@@ -617,7 +624,7 @@ export function useComposerSend(input: ComposerSendInput) {
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
     // The composer's image ref updates after render, so text that just landed is only in the store.
-    const textFilledImages = pendingSnapShotText
+    const textFilledImages = waitedForSnapShotText
       ? new Map(readDraftImages().map((image) => [image.id, image]))
       : null;
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
