@@ -16,6 +16,7 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  claimedGatewayPeerIds,
   desiredGatewayPeers,
   gatewayPeerUpstreamUrl,
   mergeGatewayRoutes,
@@ -797,6 +798,40 @@ describe("gateway peer upstream selection", () => {
         desired: [],
         listed: [{ environmentId: otherClientPeer, httpBaseUrl: "http://192.168.1.50:3773/" }],
         previousDesired: new Set(),
+      }),
+    ).toEqual({ add: [], remove: [] });
+  });
+
+  it("claims ownership only for successful or already-listed registrations", () => {
+    const owned = EnvironmentId.make("env_owned");
+    const listed = EnvironmentId.make("env_listed");
+    const failed = EnvironmentId.make("env_failed");
+    const succeeded = EnvironmentId.make("env_ok");
+    expect(
+      claimedGatewayPeerIds({
+        desired: [
+          { environmentId: owned },
+          { environmentId: listed },
+          { environmentId: failed },
+          { environmentId: succeeded },
+        ],
+        previousDesired: new Set([owned]),
+        addAttempts: [failed, succeeded],
+        addSucceeded: new Set([succeeded]),
+      }),
+    ).toEqual(new Set([owned, listed, succeeded]));
+
+    // A later catalog drop of a never-claimed peer must not plan a remove.
+    expect(
+      planGatewayPeerReconcile({
+        desired: [],
+        listed: [{ environmentId: failed, httpBaseUrl: "http://192.168.1.90:3773/" }],
+        previousDesired: claimedGatewayPeerIds({
+          desired: [{ environmentId: failed }],
+          previousDesired: new Set(),
+          addAttempts: [failed],
+          addSucceeded: new Set(),
+        }),
       }),
     ).toEqual({ add: [], remove: [] });
   });

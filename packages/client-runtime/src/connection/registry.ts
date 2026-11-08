@@ -7,6 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -51,6 +52,7 @@ import {
   connectionRouteId,
   connectionRoutes,
   credentialConnectionId,
+  claimedGatewayPeerIds,
   desiredGatewayPeers,
   entryWithRoutes,
   findRouteToSameAddress,
@@ -301,6 +303,7 @@ export const make = Effect.gen(function* () {
   const gatewayPreviousDesired = yield* Ref.make<
     ReadonlyMap<EnvironmentId, ReadonlySet<EnvironmentId>>
   >(new Map());
+  const gatewayReconcileLock = yield* Semaphore.make(1);
   const gatewayReconcileGeneration = yield* Ref.make(0);
   const persistedEnvironmentIds = yield* Ref.make<ReadonlySet<EnvironmentId>>(
     new Set(persistedRoutesByEnvironment.keys()),
@@ -397,16 +400,20 @@ export const make = Effect.gen(function* () {
       retain,
       previousDesired,
     });
+    const addSucceeded = new Set<EnvironmentId>();
     for (const peer of plan.add) {
-      yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
-        Effect.catch((error) =>
-          Effect.logDebug("Could not register a LAN gateway peer from the catalog.", {
-            gatewayEnvironmentId,
-            peerEnvironmentId: peer.environmentId,
-            error,
-          }),
-        ),
+      const outcome = yield* client[WS_METHODS.lanGatewayAdd]({ url: peer.url }).pipe(
+        Effect.result,
       );
+      if (Result.isSuccess(outcome)) {
+        addSucceeded.add(peer.environmentId);
+        continue;
+      }
+      yield* Effect.logDebug("Could not register a LAN gateway peer from the catalog.", {
+        gatewayEnvironmentId,
+        peerEnvironmentId: peer.environmentId,
+        error: outcome.failure,
+      });
     }
     for (const peerEnvironmentId of plan.remove) {
       yield* client[WS_METHODS.lanGatewayRemove]({ environmentId: peerEnvironmentId }).pipe(
@@ -419,9 +426,15 @@ export const make = Effect.gen(function* () {
         ),
       );
     }
+    const claimed = claimedGatewayPeerIds({
+      desired,
+      previousDesired,
+      addAttempts: plan.add.map((peer) => peer.environmentId),
+      addSucceeded,
+    });
     yield* Ref.update(gatewayPreviousDesired, (current) => {
       const next = new Map(current);
-      next.set(gatewayEnvironmentId, new Set(desired.map((peer) => peer.environmentId)));
+      next.set(gatewayEnvironmentId, claimed);
       return next;
     });
   });
@@ -436,13 +449,14 @@ export const make = Effect.gen(function* () {
   );
 
   // Catalog edits and gateway connect both schedule this; debounce merges bursts.
+  // The lock keeps an older run from overwriting ownership after a newer one.
   const enqueueGatewayPeerReconcile = Effect.fnUntraced(function* () {
     const generation = yield* Ref.updateAndGet(gatewayReconcileGeneration, (n) => n + 1);
     yield* Effect.forkIn(registryScope)(
       Effect.gen(function* () {
         yield* Effect.sleep(Duration.millis(500));
         if ((yield* Ref.get(gatewayReconcileGeneration)) !== generation) return;
-        yield* reconcileAllGatewayPeers();
+        yield* gatewayReconcileLock.withPermits(1)(reconcileAllGatewayPeers());
       }).pipe(Effect.ignoreCause({ log: true })),
     );
   });
