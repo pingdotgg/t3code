@@ -495,8 +495,13 @@ export function usePaneMotion(
     if (!before || !animate) return;
     const paneWas = new Map<string, PaneBox>();
     for (const box of previousBoxes.values()) paneWas.set(box.paneId, box);
-    const wasOf = (tabId: string, box: PaneBox) =>
-      previousBoxes.get(tabId) ?? paneWas.get(box.paneId);
+    const wasOf = (tabId: string, box: PaneBox) => {
+      const was = previousBoxes.get(tabId) ?? paneWas.get(box.paneId);
+      const inherited = was && was.element !== box.element ? slides.get(was.element) : undefined;
+      if (!was || !inherited) return was;
+      const owed = inherited.run.value();
+      return { ...was, x: was.x + inherited.dx * owed, y: was.y + inherited.dy * owed };
+    };
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
