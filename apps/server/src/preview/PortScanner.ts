@@ -79,8 +79,8 @@ const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
-/** Bounds how long a cached Windows image name can outlive its process if Windows reuses the PID. */
-const WINDOWS_PROCESS_NAME_TTL_MS = Duration.toMillis(Duration.seconds(60));
+/** Bounds how long a cached process name can outlive its process if the OS reuses the PID. */
+const PROCESS_NAME_TTL_MS = Duration.toMillis(Duration.seconds(60));
 const WINDOWS_PROCESS_NAME_CONCURRENCY = 4;
 const WEB_PROBE_CONCURRENCY = 16;
 const NAVIGATION_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
@@ -282,6 +282,21 @@ const parseTasklistProcessName = (raw: string, pid: number): string | null => {
   return null;
 };
 
+/**
+ * Reads macOS `ps -o pid=,comm=`, which prints argv[0]. That carries a `process.title`, while
+ * lsof reports the kernel name, which stays the executable's file name (`node`, `Python`).
+ */
+const parsePsProcessNames = (raw: string): ReadonlyMap<number, string | null> => {
+  const names = new Map<number, string | null>();
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+    if (!match) continue;
+    const command = match[2]!.trim();
+    names.set(Number(match[1]), command.slice(command.lastIndexOf("/") + 1) || null);
+  }
+  return names;
+};
+
 const discoveredWindowsListeners = (
   listeners: ReadonlyArray<WindowsTcpListeners.WindowsTcpListener>,
   owners: ReadonlyMap<number, ServerOwner>,
@@ -465,7 +480,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
-  const windowsProcessNamesRef = yield* Ref.make<
+  const processNamesRef = yield* Ref.make<
     ReadonlyMap<number, { readonly name: string | null; readonly expiresAtMillis: number }>
   >(new Map());
   const socketOwnersRef = yield* Ref.make<
@@ -740,20 +755,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return { discovered: servers.filter(isOwned), configured } satisfies WebProbeSnapshot;
   });
 
-  // tasklist costs 200-300ms per PID; query visible servers with bounded concurrency and cache names.
-  const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
-    snapshot: WebProbeSnapshot,
-  ) {
-    const servers = [...snapshot.discovered, ...snapshot.configured.values()];
-    const pids = new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid])));
-    const nowMillis = yield* Clock.currentTimeMillis;
-    const cached = [...(yield* Ref.get(windowsProcessNamesRef))].filter(
-      ([pid, entry]) => pids.has(pid) && entry.expiresAtMillis > nowMillis,
-    );
-    const cachedPids = new Set(cached.map(([pid]) => pid));
-    const expiresAtMillis = nowMillis + WINDOWS_PROCESS_NAME_TTL_MS;
-    const fetched = yield* Effect.forEach(
-      [...pids].filter((pid) => !cachedPids.has(pid)),
+  // tasklist costs 200-300ms per PID, so it runs with bounded concurrency.
+  const readWindowsProcessNames = (pids: ReadonlyArray<number>) =>
+    Effect.forEach(
+      pids,
       (pid) =>
         processRunner
           .run({
@@ -766,23 +771,54 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             Effect.map((result) =>
               exitedWithError(result)
                 ? []
-                : [
-                    [
-                      pid,
-                      { name: parseTasklistProcessName(result.stdout, pid), expiresAtMillis },
-                    ] as const,
-                  ],
+                : [[pid, parseTasklistProcessName(result.stdout, pid)] as const],
             ),
             Effect.orElseSucceed(() => []),
           ),
       { concurrency: WINDOWS_PROCESS_NAME_CONCURRENCY },
+    ).pipe(Effect.map((entries) => new Map(entries.flat())));
+
+  // One ps call covers every pid; a pid missing from its output keeps lsof's name.
+  const readMacProcessNames = (pids: ReadonlyArray<number>) =>
+    processRunner
+      .run({
+        command: "ps",
+        args: ["-ww", "-o", "pid=,comm=", "-p", pids.join(",")],
+        timeout: Duration.millis(PS_TIMEOUT_MS),
+        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+      })
+      .pipe(
+        Effect.map((result) => {
+          const names = parsePsProcessNames(result.stdout);
+          return new Map(pids.map((pid) => [pid, names.get(pid) ?? null] as const));
+        }),
+        Effect.orElseSucceed((): ReadonlyMap<number, string | null> => new Map()),
+      );
+
+  // Names the visible servers where the listener scan names them poorly, cached per pid.
+  const withProcessNames = Effect.fn("PortDiscovery.withProcessNames")(function* (
+    snapshot: WebProbeSnapshot,
+    readNames: (pids: ReadonlyArray<number>) => Effect.Effect<ReadonlyMap<number, string | null>>,
+  ) {
+    const servers = [...snapshot.discovered, ...snapshot.configured.values()];
+    const pids = new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid])));
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const cached = [...(yield* Ref.get(processNamesRef))].filter(
+      ([pid, entry]) => pids.has(pid) && entry.expiresAtMillis > nowMillis,
     );
-    const names = new Map([...cached, ...fetched.flat()]);
-    yield* Ref.set(windowsProcessNamesRef, names);
+    const cachedPids = new Set(cached.map(([pid]) => pid));
+    const unread = [...pids].filter((pid) => !cachedPids.has(pid));
+    const read = unread.length === 0 ? new Map<number, string | null>() : yield* readNames(unread);
+    const expiresAtMillis = nowMillis + PROCESS_NAME_TTL_MS;
+    const names = new Map([
+      ...cached,
+      ...[...read].map(([pid, name]) => [pid, { name, expiresAtMillis }] as const),
+    ]);
+    yield* Ref.set(processNamesRef, names);
     const withName = (server: DiscoveredLocalServer): DiscoveredLocalServer =>
-      server.pid === null || server.processName !== null
+      server.pid === null
         ? server
-        : { ...server, processName: names.get(server.pid)?.name ?? null };
+        : { ...server, processName: names.get(server.pid)?.name ?? server.processName };
     return {
       discovered: snapshot.discovered.map(withName),
       configured: new Map([...snapshot.configured].map(([key, server]) => [key, withName(server)])),
@@ -836,8 +872,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverWindowsProbeFailure,
         }),
       );
-      return yield* withWindowsProcessNames(
+      return yield* withProcessNames(
         yield* probeWebServers(listeners ?? [], configuredUrls),
+        readWindowsProcessNames,
       );
     }
     const fromProc = yield* scanProcListeners(resolveOwners);
@@ -869,7 +906,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverLsofProbeFailure,
         }),
       );
-    if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
+    if (lsofResult !== null) {
+      const snapshot = yield* probeWebServers(lsofResult, configuredUrls);
+      return hostPlatform === "darwin"
+        ? yield* withProcessNames(snapshot, readMacProcessNames)
+        : snapshot;
+    }
     // A missing lsof makes a bounded, partial /proc owner walk the only available discovery.
     const withoutLsof = (yield* Ref.get(lsofMissingRef))
       ? yield* scanProcListeners(resolveOwners)

@@ -603,6 +603,7 @@ effectIt.effect.each([
         }),
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
+            if (input.command !== "lsof") return Effect.succeed(processOutput(""));
             lsofSpawns += 1;
             if (mode === "fd-budget-no-lsof") return processProbeFailure(input);
             return Effect.succeed(processOutput(`p1234\ncnode\nn*:${LSOF_TEST_PORT}\n`));
@@ -625,6 +626,52 @@ effectIt.effect.each([
       expect(procWalks).toBe(4);
     }
     expect(lsofSpawns).toBe(fallback ? 1 : 0);
+  }).pipe(Effect.provide(layer));
+});
+
+effectIt.effect("names macOS listeners by argv[0], which carries a process title", () => {
+  const psArgs: string[][] = [];
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command === "lsof") {
+              return Effect.succeed(
+                processOutput(
+                  `p1234\ncnode\nn*:${LSOF_TEST_PORT}\n` +
+                    `p1235\ncSome Helper\nn*:${LSOF_TEST_PORT + 1}\n` +
+                    `p1236\ncnode\nn*:${LSOF_TEST_PORT + 2}\n`,
+                ),
+              );
+            }
+            psArgs.push([...input.args]);
+            // 1236 exited between lsof and ps.
+            return Effect.succeed(
+              processOutput(
+                " 1234 webapp-api\n 1235 /Applications/Some App.app/Contents/MacOS/Some Helper\n",
+              ),
+            );
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner([1234, 1235, 1236]);
+    const expected = [
+      { port: LSOF_TEST_PORT, processName: "webapp-api" },
+      { port: LSOF_TEST_PORT + 1, processName: "Some Helper" },
+      { port: LSOF_TEST_PORT + 2, processName: "node" },
+    ];
+    for (let scan = 0; scan < 2; scan += 1) {
+      const servers = yield* scanner.scan();
+      expect(servers.map(({ port, processName }) => ({ port, processName }))).toEqual(expected);
+    }
+    expect(psArgs).toEqual([["-ww", "-o", "pid=,comm=", "-p", "1234,1235,1236"]]);
   }).pipe(Effect.provide(layer));
 });
 
@@ -837,6 +884,7 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
+              if (input.args.includes("pid=,comm=")) return Effect.succeed(processOutput(""));
               // A direct child of this process, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
                 return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
