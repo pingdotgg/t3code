@@ -315,10 +315,10 @@ const make = Effect.gen(function* () {
   const upload = Effect.fn("LinearService.upload")(function* (
     input: typeof L.LinearUploadInput.Type,
   ) {
-    if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(input.base64))
+    if (input.base64.length > 4 * Math.ceil((8 * 1024 * 1024) / 3))
       return yield* new L.LinearError({ reason: "invalid-response" });
     const bytes = NodeBuffer.Buffer.from(input.base64, "base64");
-    if (bytes.length > 8 * 1024 * 1024)
+    if (bytes.length > 8 * 1024 * 1024 || bytes.toString("base64") !== input.base64)
       return yield* new L.LinearError({ reason: "invalid-response" });
     const ticket = yield* request(
       `mutation LinearUpload($filename:String!,$contentType:String!,$size:Int!) { result:fileUpload(filename:$filename,contentType:$contentType,size:$size,makePublic:false) { success uploadFile { uploadUrl assetUrl headers { key value } } } }`,

@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeBuffer from "node:buffer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -222,6 +223,80 @@ it.effect("rejects malformed upload bytes before requesting storage", () => {
     const service = yield* Linear.LinearService;
     const error = yield* service
       .upload({ filename: "proof.txt", contentType: "text/plain", base64: "not-base64" })
+      .pipe(Effect.flip);
+    assert.equal(error.reason, "invalid-response");
+    assert.equal(calls, 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer(() => {
+        calls++;
+        return new Response(null, { status: 500 });
+      }),
+    ),
+  );
+});
+
+it.effect.each([4, 8])("uploads a valid %s MiB file without a validator defect", (mebibytes) => {
+  const size = mebibytes * 1024 * 1024;
+  const bytes = NodeBuffer.Buffer.alloc(size, 42);
+  let ticketRequested = false;
+  let uploaded = false;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    yield* service.upload({
+      filename: "proof.bin",
+      contentType: "application/octet-stream",
+      base64: bytes.toString("base64"),
+    });
+    assert.isTrue(ticketRequested);
+    assert.isTrue(uploaded);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      testLayer((_authorization, request) => {
+        if (request.method === "POST") {
+          ticketRequested = true;
+          assert.equal(request.body._tag, "Uint8Array");
+          if (request.body._tag === "Uint8Array") {
+            const payload = JSON.parse(new TextDecoder().decode(request.body.body));
+            assert.equal(payload.variables.size, size);
+          }
+          return Response.json({
+            data: {
+              result: {
+                success: true,
+                uploadFile: {
+                  uploadUrl: "https://storage.example.test/signed",
+                  assetUrl: "https://uploads.linear.app/proof.bin",
+                  headers: [],
+                },
+              },
+            },
+          });
+        }
+        uploaded = true;
+        assert.equal(request.body._tag, "Uint8Array");
+        if (request.body._tag === "Uint8Array") {
+          assert.equal(request.body.body.length, size);
+          assert.deepEqual(request.body.body, bytes);
+        }
+        return new Response(null, { status: 200 });
+      }),
+    ),
+  );
+});
+
+it.effect("rejects decoded uploads over 8 MiB before requesting storage", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const service = yield* Linear.LinearService;
+    const error = yield* service
+      .upload({
+        filename: "too-large.bin",
+        contentType: "application/octet-stream",
+        base64: NodeBuffer.Buffer.alloc(8 * 1024 * 1024 + 1, 42).toString("base64"),
+      })
       .pipe(Effect.flip);
     assert.equal(error.reason, "invalid-response");
     assert.equal(calls, 0);
