@@ -5977,6 +5977,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { markerSize: "9", attributes: "incoming" },
       { markerSize: "3", attributes: "changed" },
       { markerSize: "5.0", attributes: "committed" },
+      { markerSize: "7", attributes: "encoded" },
     ])(
       "rejects files that still contain conflict markers outside a merge (size $markerSize, $attributes)",
       ({ markerSize, attributes }) =>
@@ -5989,6 +5990,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           // changes it afterwards).
           const setSize = (size: string) =>
             writeTextFile(cwd, ".gitattributes", `/README.md -diff conflict-marker-size=${size}\n`);
+          // Git stores working-tree-encoding files as UTF-8 but writes their markers in that encoding.
+          const writeReadme = (contents: string) =>
+            attributes === "encoded"
+              ? Effect.flatMap(FileSystem.FileSystem, (fileSystem) =>
+                  fileSystem.writeFile(`${cwd}/README.md`, Buffer.from(contents, "utf16le")),
+                )
+              : writeTextFile(cwd, "README.md", contents);
+          if (attributes === "encoded") {
+            yield* writeTextFile(
+              cwd,
+              ".gitattributes",
+              "/README.md working-tree-encoding=UTF-16LE\n",
+            );
+            yield* writeReadme("# test\n");
+            yield* git(cwd, ["add", ".gitattributes", "README.md"]);
+            yield* git(cwd, ["commit", "-m", "Encoding"]);
+          }
           if (attributes === "untracked") yield* setSize(markerSize);
           if (attributes === "incoming" || attributes === "changed" || attributes === "committed") {
             yield* setSize(markerSize);
@@ -5996,9 +6014,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             yield* git(cwd, ["commit", "-m", "Attributes"]);
           }
           if (attributes === "incoming") yield* setSize("3");
-          yield* writeTextFile(cwd, "README.md", "stashed version\n");
+          yield* writeReadme("stashed version\n");
           yield* git(cwd, ["stash"]);
-          yield* writeTextFile(cwd, "README.md", "committed version\n");
+          yield* writeReadme("committed version\n");
           yield* git(cwd, ["commit", "-am", "Change README"]);
           if (attributes === "staged") {
             yield* setSize(markerSize);

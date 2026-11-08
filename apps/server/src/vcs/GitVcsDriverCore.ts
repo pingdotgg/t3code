@@ -2480,16 +2480,24 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         return yield* new GitCommandError({ operation, command: "git", cwd, detail: checkFailed });
       }
       // check-attr takes plain repository paths, not pathspecs, and prints one
-      // "<path> <attribute> <value>" triple per path in input order.
-      const readMarkerSizes = (source: readonly string[], options: { env?: NodeJS.ProcessEnv }) =>
+      // "<path> <attribute> <value>" triple per path and attribute in input order.
+      const readAttributes = (source: readonly string[], options: { env?: NodeJS.ProcessEnv }) =>
         executeGit(
           "GitVcsDriver.commit.conflictMarkerSize",
           root,
-          ["check-attr", ...source, "-z", "conflict-marker-size", "--", ...files],
+          [
+            "check-attr",
+            ...source,
+            "-z",
+            "conflict-marker-size",
+            "working-tree-encoding",
+            "--",
+            ...files,
+          ],
           { ...options, maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
         ).pipe(Effect.map((result) => result.stdout.split("\0")));
       // HEAD's attributes come from a throwaway index, since check-attr --source needs Git 2.40.
-      const readHeadMarkerSizes = Effect.gen(function* () {
+      const readHeadAttributes = Effect.gen(function* () {
         const head = yield* executeGit(
           "GitVcsDriver.commit.head",
           cwd,
@@ -2507,7 +2515,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           [...isolatedIndexConfig, "read-tree", "HEAD"],
           { env: headIndex },
         );
-        return yield* readMarkerSizes(["--cached"], { env: headIndex });
+        return yield* readAttributes(["--cached"], { env: headIndex });
       }).pipe(
         Effect.scoped,
         Effect.catchTags({
@@ -2519,24 +2527,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       // index or the worktree. An unborn HEAD leaves the default.
       const lookups = yield* Effect.all(
         [
-          readMarkerSizes([], envOptions),
-          readMarkerSizes(["--cached"], envOptions),
-          readHeadMarkerSizes,
+          readAttributes([], envOptions),
+          readAttributes(["--cached"], envOptions),
+          readHeadAttributes,
         ],
         { concurrency: 3 },
       );
       const filesBySize = new Map<number, Set<string>>();
+      const encodedFiles = new Set<string>();
       files.forEach((file, index) => {
         for (const values of lookups) {
-          const size = parseConflictMarkerSize(values[index * 3 + 2]);
+          const size = parseConflictMarkerSize(values[index * 6 + 2]);
           filesBySize.set(size, (filesBySize.get(size) ?? new Set()).add(file));
+          const encoding = values[index * 6 + 5];
+          if (encoding !== "unspecified" && encoding !== "unset") encodedFiles.add(file);
         }
       });
-      const markedPaths = new Set<string>();
-      for (const [size, group] of filesBySize) {
+      const grepMarkers = Effect.fn("GitVcsDriver.commit.grepMarkers")(function* (
+        size: number,
+        group: readonly string[],
+        source: readonly string[],
+        options: { env?: NodeJS.ProcessEnv },
+      ) {
         // Git writes exactly `size` marker characters, then whitespace and a label.
         const args = [
           "grep",
+          ...source,
           "-l",
           "-z",
           "--full-name",
@@ -2544,10 +2560,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "-e",
           `^(<{${size}}|>{${size}})([[:space:]]|$)`,
           "--",
-          ...Array.from(group, toPathspec),
+          ...group.map(toPathspec),
         ];
         const markers = yield* executeGit(operation, cwd, args, {
-          ...envOptions,
+          ...options,
           allowNonZeroExit: true,
           maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES,
         });
@@ -2560,7 +2576,39 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             stderrLength: markers.stderr.length,
           });
         }
-        for (const file of splitNullSeparatedGitStdoutPaths(markers)) markedPaths.add(file);
+        return splitNullSeparatedGitStdoutPaths(markers);
+      });
+      // Git stages working-tree-encoding files as UTF-8, so grep that content from a throwaway index.
+      const grepEncodedMarkers = Effect.fn("GitVcsDriver.commit.grepEncodedMarkers")(
+        function* (size: number, group: readonly string[]) {
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3code-encoded-index-",
+          });
+          const options = { env: { ...env, GIT_INDEX_FILE: path.join(directory, "index") } };
+          yield* runGit(
+            "GitVcsDriver.commit.encodedIndex",
+            root,
+            [...isolatedIndexConfig, "update-index", "--add", "--remove", "--", ...group],
+            options,
+          );
+          return yield* grepMarkers(size, group, ["--cached"], options);
+        },
+        Effect.scoped,
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            new GitCommandError({ operation, command: "git", cwd, detail: checkFailed, cause }),
+        }),
+      );
+      const markedPaths = new Set<string>();
+      for (const [size, group] of filesBySize) {
+        const plain: string[] = [];
+        const encoded: string[] = [];
+        for (const file of group) (encodedFiles.has(file) ? encoded : plain).push(file);
+        const found = [
+          ...(plain.length > 0 ? yield* grepMarkers(size, plain, [], envOptions) : []),
+          ...(encoded.length > 0 ? yield* grepEncodedMarkers(size, encoded) : []),
+        ];
+        for (const file of found) markedPaths.add(file);
       }
       if (markedPaths.size > 0) {
         const named = Array.from(markedPaths).slice(0, 5).join(", ");
