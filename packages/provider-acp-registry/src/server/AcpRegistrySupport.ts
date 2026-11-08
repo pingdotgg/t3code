@@ -1753,7 +1753,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         if (executable !== undefined) {
           yield* validateLocalExecutable(executable);
           const launched = launchLocalExecutable(executable, [], environment ?? hostEnvironment);
-          if (launched instanceof AcpRegistryError) return yield* launched;
+          if (isAcpRegistryError(launched)) return yield* launched;
         }
         return executable === undefined
           ? ({
@@ -1882,7 +1882,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         }
         yield* validateLocalExecutable(command);
         const launched = launchLocalExecutable(command, settings.commandArgs, env);
-        if (launched instanceof AcpRegistryError) return yield* launched;
+        if (isAcpRegistryError(launched)) return yield* launched;
         return {
           distribution: "local",
           spawn: {
