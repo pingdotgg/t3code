@@ -4,7 +4,7 @@ import { Cause } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { act, fakeTimers, render as renderUi } from "../../../test/render";
+import { act, render as renderUi } from "../../../test/render";
 import type { RemoteOpenState } from "../../remoteOpen";
 
 const state = vi.hoisted(() => ({
@@ -15,6 +15,7 @@ const state = vi.hoisted(() => ({
   openUrl: vi.fn(),
   setPreferred: vi.fn(),
   markHintSeen: vi.fn(),
+  announce: vi.fn(),
   listeners: new Set<() => void>(),
 }));
 
@@ -64,6 +65,10 @@ vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
   useRemoteOpenHint: () => [false, state.markHintSeen] as const,
   openRemoteEditorUrl: state.openUrl,
 }));
+vi.mock(import("../../lib/announce"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  announce: state.announce,
+}));
 
 import { OpenInPicker } from "./OpenInPicker";
 import {
@@ -83,6 +88,7 @@ async function setup() {
   state.openUrl.mockReset().mockResolvedValue(true);
   state.setPreferred.mockReset();
   state.markHintSeen.mockReset();
+  state.announce.mockReset();
   state.listeners.clear();
   window.localStorage.clear();
 
@@ -208,29 +214,21 @@ describe("open in editor announcement", () => {
     const { screen, renderPicker, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.allowed.add(selected);
     await renderPicker();
-    using _timers = fakeTimers();
-    const regions = () => [...document.querySelectorAll('body > [aria-live="polite"]')];
-    const spoken = async () => {
-      await act(async () => vi.runAllTimers());
-      return regions()
-        .map((region) => region.textContent)
-        .join("");
-    };
     const refuse = () =>
       state.run.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("No editor"))));
 
     refuse();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("");
+    expect(state.announce).not.toHaveBeenCalled();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(state.announce).toHaveBeenCalledExactlyOnceWith("Opened in VS Code");
 
-    for (const region of regions()) region.textContent = "";
+    state.announce.mockClear();
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
     refuse();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("");
+    expect(state.announce).not.toHaveBeenCalled();
     await pressOpenFavorite();
-    expect(await spoken()).toBe("Opened in VS Code");
+    expect(state.announce).toHaveBeenCalledExactlyOnceWith("Opened in VS Code");
   });
 });
