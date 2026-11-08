@@ -732,37 +732,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const viewportRef = useRef<TimelineViewport | null>(null);
   const navigateTimeline = () => viewportRef.current?.navigate({ releasesFollow: true });
   const restoreReady = restoringThreadPosition && rows.length > 0;
-  // Z: syncs LegendList's scroll position with which thread it shows. The list
-  // is not keyed per thread and reports no "new data" event, and the restore
-  // must land before paint, after LegendList's own layout effects applied the
-  // new data. A citation request that arrives mid-restore takes over.
-  const { findOpenAtOpening } = identityChanged ? { findOpenAtOpening: findOpen } : listState;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    const viewport = viewportRef.current;
-    if (!restoreReady || !list || !viewport) return;
-    return startTimelinePositionRestore({
-      list,
-      viewport,
-      listIdentityKey,
-      listOpenedOn,
-      rememberedPosition,
-      citationPending: citationRequest !== null,
-      releaseForFind: findOpenAtOpening,
-      onPositioned: setPositionedThreadKey,
-    });
-  }, [
-    citationRequest,
-    findOpenAtOpening,
-    listIdentityKey,
-    listOpenedOn,
-    listRef,
-    rememberedPosition,
-    restoreReady,
-    viewportRef,
-  ]);
-
   const [timelineViewportElement, setTimelineViewportElement] = useState<HTMLDivElement | null>(
     null,
   );
@@ -898,14 +867,50 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
-  const scheduleMinimapRefresh = () => {
+  const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
     // LegendList recycles row containers before React commits their positions.
     minimapRefreshFrameRef.current = requestAnimationFrame(() => {
       minimapRefreshFrameRef.current = null;
       refreshMinimap();
     });
-  };
+  });
+
+  // Z: syncs LegendList's scroll position with which thread it shows. The list
+  // is not keyed per thread and reports no "new data" event, and the restore
+  // must land before paint, after LegendList's own layout effects applied the
+  // new data. A citation request that arrives mid-restore takes over.
+  const { findOpenAtOpening } = identityChanged ? { findOpenAtOpening: findOpen } : listState;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores LegendList's scroll position for the shown thread before paint, after the list's own layout
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    const viewport = viewportRef.current;
+    if (!restoreReady || !list || !viewport) return;
+    return startTimelinePositionRestore({
+      list,
+      viewport,
+      listIdentityKey,
+      listOpenedOn,
+      rememberedPosition,
+      citationPending: citationRequest !== null,
+      releaseForFind: findOpenAtOpening,
+      onPositioned: (key) => {
+        setPositionedThreadKey(key);
+        // The restore can land without a scroll event, and the minimap skipped refreshes while it ran.
+        scheduleMinimapRefresh();
+      },
+    });
+  }, [
+    citationRequest,
+    findOpenAtOpening,
+    listIdentityKey,
+    listOpenedOn,
+    listRef,
+    rememberedPosition,
+    restoreReady,
+    scheduleMinimapRefresh,
+    viewportRef,
+  ]);
 
   // The measurement the last remember wrote, so a follow release can rewrite
   // it without reading render state from a listener.

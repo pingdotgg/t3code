@@ -465,6 +465,47 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => expect(screen.button("Next turn")).not.toBeDisabled());
   });
 
+  it("enables the minimap's next turn button on a thread restored above its bottom", async () => {
+    setup();
+    const base = baseProps();
+    const turns = (prefix: string) =>
+      Array.from({ length: 16 }, (_, index) => [
+        message(`${prefix} question ${index}`, {}, `${prefix}-user-${index}`),
+        message(`${prefix} answer ${index}`, { role: "assistant" }, `${prefix}-assistant-${index}`),
+      ]).flat();
+    const other = "environment-local:thread-minimap-restored";
+    rememberTimelinePosition(
+      other,
+      { rowId: "entry-b-user-4", offsetWithinRow: 0, scrollOffset: 0, atEnd: false },
+      false,
+    );
+    await using screen = await renderElement(
+      <MessagesTimeline {...base} timelineEntries={turns("a")} />,
+    );
+    const viewport = base.listRef.current!.getScrollableNode()!;
+    await vi.waitFor(() => {
+      expect(viewport.scrollTop).toBeGreaterThan(0);
+      expect(screen.button("Next turn")).toBeDisabled();
+    });
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...base}
+        routeThreadKey={other}
+        timelineEntries={turns("b")}
+        liveFollowEnabled={false}
+      />,
+    );
+    await vi.waitFor(() => {
+      const row = screen.container.querySelector('[data-timeline-row-id="entry-b-user-4"]');
+      expect(row).not.toBeNull();
+      expect(
+        Math.abs(row!.getBoundingClientRect().top - viewport.getBoundingClientRect().top),
+      ).toBeLessThanOrEqual(2);
+      expect(screen.button("Next turn")).not.toBeDisabled();
+    });
+  });
+
   it("keeps rows in item order after a reload or thread switch, before any timer runs", async () => {
     setup();
     // NVDA's browse mode keeps the first DOM order it reads, so a timer that sorts rows later is too late.
