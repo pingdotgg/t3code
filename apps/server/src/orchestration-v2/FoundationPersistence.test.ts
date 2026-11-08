@@ -2278,8 +2278,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         pruneStatement[1],
       );
       assert.include(
-        plan.map((row) => row.detail).join("\n"),
-        "orchestration_v2_effect_outbox_settled_completed_idx",
+        plan.map((row) => row.detail),
+        "SEARCH orchestration_v2_effect_outbox USING COVERING INDEX " +
+          "orchestration_v2_effect_outbox_settled_completed_idx (status=? AND completed_at<?)",
       );
 
       const remaining = yield* sql<{ readonly effect_id: string }>`
