@@ -64,7 +64,7 @@ function subscriptionUsageProps(
       .map((driver) => {
         const pool = pools.find((candidate) => candidate.driver === driver);
         const name = driver === "codex" ? "Codex" : "Claude";
-        if (!pool)
+        if (!pool || pool.windows.length === 0)
           return {
             name,
             detail: "No limits available",

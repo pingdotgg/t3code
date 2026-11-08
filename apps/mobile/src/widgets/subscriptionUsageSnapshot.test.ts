@@ -99,6 +99,43 @@ describe("subscription widget snapshots", () => {
     const snapshot = buildSubscriptionUsageSnapshot(input, deepLink);
     expect(snapshot.providers[0]?.name).toBe("Codex");
     expect(JSON.stringify(snapshot)).not.toContain("example.com");
+    const source = input.get(EnvironmentId.make("env"))!.serverConfig.usageLimitSources[0]!;
+    const failed = buildSubscriptionUsageSnapshot(
+      new Map([
+        [
+          EnvironmentId.make("env"),
+          {
+            entry: { target: { label: "Remote" } },
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: source.accounts.map((account) => ({
+                    ...account,
+                    usageLimits: {
+                      checkedAt,
+                      windows: [],
+                      unavailable: { reason: "probeFailed" as const },
+                    },
+                  })),
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+      deepLink,
+    );
+    expect(failed.providers).toEqual([
+      {
+        name: "Codex",
+        detail: "No limits available",
+        windows: [],
+        expiresAt: 0,
+        totalWindows: 0,
+      },
+    ]);
   });
   it("bounds OS storage and puts the most constrained windows first", () => {
     const windows = Array.from({ length: 20 }, (_, index) => ({
