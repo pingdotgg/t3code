@@ -143,6 +143,7 @@ describe("compactDynamicToolOutput", () => {
 
 it("keeps valid quiz cards and drops invalid cards", () => {
   const quizCard = {
+    reply: "The teaching this card tests.",
     answer: "A",
     explanation: "Why",
     level: "apply",

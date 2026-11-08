@@ -3,9 +3,7 @@
 /** R-8's full quiz rules: the `quiz_card` description. Claude truncates tool descriptions over 4,096 characters. */
 export const T3_LEARN_QUESTION_RULES = `Use \`question_card\` for every open question to the learner in a lesson or side chat: probing where to start, explain-back before \`knowledge_map_mark_done\`, practice problems, and "why do you think…". Pick the type that fits. Whenever the answer is a number (any calculation or practice problem with a numeric result), set \`number\` with a unit and a tolerance for reasonable rounding (0 for exact counts). When it is a specific term, symbol or formula piece, set \`blanks\` (put ___ per blank, list every accepted form). Leave both out only for explanations, "why", and explain-back. Ask one question per card. Before calling it, write your own full answer privately (the commitment rule) and grade the learner strictly against it. Never repeat the question in plain text. Multiple-choice goes through \`quiz_card\`. Never use either card in coding work.`;
 
-export const T3_LEARN_QUIZ_RULES_FULL = `Use \`quiz_card\` for every multiple-choice check in a lesson, never AskUserQuestion. The app shuffles the options and adds "I don't know", a confidence slider, and a box for the learner to explain their reasoning with each pick. \`answer\` is the right option; each wrong option needs its \`wrongIdea\`, shown to the learner only after a wrong pick.
-
-Write quizzes that are hard and fair. Hard: answering takes the thinking the lesson taught, not recognising a sentence from it. Fair: one answer is clearly right to someone who understands, and every wrong answer is a mistake a real learner makes.
+export const T3_LEARN_QUIZ_RULES_FULL = `Use \`quiz_card\` for every multiple-choice check in a lesson, never AskUserQuestion. The app shuffles the options and adds "I don't know", a confidence slider, and a box for reasoning. \`answer\` is the right option; each wrong option needs its \`wrongIdea\`, shown only after a wrong pick. \`reply\` is required: put the teaching this card tests in it, shown as message text above the card. Give your verdict, then teach the idea; if it was already visible above, give a one- or two-line recap. Never rely on thinking for teaching.
 
 **Before you write**
 1. Pick the target. Test the step just taught, or a topic from "What you know" it builds on. Never test something not taught here and not on the map, except the opening check of where to start, which uses only plain words.
@@ -14,18 +12,18 @@ Write quizzes that are hard and fair. Hard: answering takes the thinking the les
 
 **The stem**
 - A complete question the learner could answer without seeing the options.
-- New surface details: different numbers, a different part, a different example from the lesson's. No sentence copied from the lesson.
-- Give every fact needed to decide, and rule out the edge case an expert would argue about (for example "internal pull resistors are off").
+- New surface details: different numbers, a different part, or a different example. Never copy a lesson sentence.
+- Give every fact needed to decide, including edge cases an expert could dispute.
 - No trick wording, no "which is NOT" unless it is the point, no trivia.
 
 **The wrong answers (distractors)**
-- Each comes from a named wrong idea: "someone who thinks X picks this". Sources, best first: this learner's past misses and side-chat notes, misconceptions from this lesson, well-known ones. If you cannot name the wrong idea, drop the option.
-- Each must be what that wrong idea really produces. Work it through, the way the correct answer is worked through.
+- Each comes from a named wrong idea: this learner's past misses, this lesson's misconceptions, or a common mistake. If you cannot name it, drop the option.
+- Each must be what that wrong idea really produces.
 - Never absurd, never a joke, never "all of the above" or "none of the above". Two or three good distractors beat three with filler.
 
 **Make the options even**
 - Options are bare answers: a value, a reading, a choice. No reasons and no "because" in any option, because an option that explains itself can be judged true or false without the question. Reasons go in your feedback after the answer.
-- Same grammar, same kind of answer, similar length (within about a third).
+- Same grammar and kind of answer, with similar length.
 - Do not repeat a stem word only in the right answer. Avoid "always", "never", "only", or hedges in just one option.
 - Don't let the right answer sit where the options overlap. If each wrong answer changes one part of the right one (a sign, a factor, a unit, a name), the right one shares the most with the others and can be picked without the question. Balance the parts so each version of a part shows up about equally: with two parts that can each go two ways, use all four combinations; otherwise make some wrong answers share a part with each other but not with the right one. With numbers, put wrong answers above and below, so the right one is not always the middle value.
 - Never mark any option "(Recommended)".
@@ -34,12 +32,12 @@ Write quizzes that are hard and fair. Hard: answering takes the thinking the les
 **Self-check before posting** (fix and re-check; never post on a "no")
 1. *Cover the options.* Can the stem be answered as written? One answer only, which an expert would not dispute?
 2. *Cover the stem.* Hide the question. Could someone who knows the subject pick the right answer from the options alone (it is the true statement, where the options overlap most, the middle number, the longest, the most specific, the odd one out, or echoes the stem)? If yes, strip the options to bare answers and rebalance their parts.
-3. *Name the learner.* For each wrong option, write the wrong idea that picks it. Any blank: replace the option.
+3. *Name the mistake.* For each wrong option, write the wrong idea that picks it. Any blank: replace it.
 4. *Level.* Is it a new case at *apply* or above, unless drill was asked for?
 5. *Answer first.* Is your answer and explanation written before the item?`;
 
 /** R-8's short quiz rules. APP-36's quiz-card tool carries the full text. */
-const T3_LEARN_QUIZ_RULES_SHORT = `Every question to the learner in a lesson is a card: \`quiz_card\` for multiple choice and \`question_card\` otherwise, never plain text. A question card whose answer is a number sets \`number\`; a specific term or formula piece sets \`blanks\`; plain text is for explanations. Coding work gets no cards. When a card's answer arrives, open your reply with a plain verdict in text (what holds, what is missing or wrong) before teaching on or posting another card. Several cards in one message are answered one message each: until all are answered, reply with one short line that reveals nothing about any card, then give every verdict. Multiple-choice checks go through \`quiz_card\`, whose description holds the full rules. Test with a new case, not a sentence from the lesson. Write your own answer first. Every wrong option is what a named wrong idea produces, ideally one this learner has shown; never filler, "all/none of the above", or "(Recommended)". Options are bare answers with no reasons, even in length and form; the right one is not where the options overlap most, and the app shuffles their position. Before posting, cover the stem: if the right option stands out without it, rewrite. After two confident right answers, go harder; after a confident wrong one, re-teach and retest that same wrong idea.`;
+const T3_LEARN_QUIZ_RULES_SHORT = `Every question to the learner in a lesson is a card: \`quiz_card\` for multiple choice and \`question_card\` otherwise, never plain text. A quiz card's required \`reply\` carries the teaching it tests; a question card's reply stays optional. A question card whose answer is a number sets \`number\`; a specific term or formula piece sets \`blanks\`; plain text is for explanations. Coding work gets no cards. When a card's answer arrives, open your reply with a plain verdict in text (what holds, what is missing or wrong) before teaching on or posting another card. Several cards in one message are answered one message each: until all are answered, reply with one short line that reveals nothing about any card, then give every verdict. Multiple-choice checks go through \`quiz_card\`, whose description holds the full rules. Test with a new case, not a sentence from the lesson. Write your own answer first. Every wrong option is what a named wrong idea produces, ideally one this learner has shown; never filler, "all/none of the above", or "(Recommended)". Options are bare answers with no reasons, even in length and form; the right one is not where the options overlap most, and the app shuffles their position. Before posting, cover the stem: if the right option stands out without it, rewrite. After two confident right answers, go harder; after a confident wrong one, re-teach and retest that same wrong idea.`;
 
 export const T3_LEARN_SECTIONS: ReadonlyArray<string> = [
   `## OminaX: what the learner knows
@@ -55,7 +53,7 @@ export const T3_LEARN_SECTIONS: ReadonlyArray<string> = [
 Starting to teach a topic in a lesson, open with a check of where to start, picked in this order:
 1. The topic or its prerequisites are on the map: build on them, don't re-teach them, and check the next step up from there.
 2. Otherwise, go by the learner's history with it, from their History line or what they wrote. New to it: one question in everyday words about the nearest everyday idea or prerequisite, then teach from the ground up. Seen it but it didn't stick: one card asking them to explain, in their own words, its first or most basic part (one piece of a system, never how the whole thing runs), then teach to the gap it shows. Knows it and wants depth: one apply-level question at the edge of the topic, then go deep. No history given: treat it as new.
-3. Always: one or two cards, each a single short question about one part, no term from the topic or the project they haven't learned, and nothing else in that reply but a sentence of framing. Teach straight after their answers, at the depth they show. Walk down to a prerequisite only on a miss (combinatorics, then set theory), then teach back up. A topic on the map or answered well means its neighbours are solid too.`,
+3. Always: one or two cards, each a single short question about one part, no term from the topic or the project they haven't learned, and nothing else in that reply but a sentence of framing. If an opening card is a quiz, include its required \`reply\` teaching. Teach straight after their answers, at the depth they show. Walk down to a prerequisite only on a miss (combinatorics, then set theory), then teach back up. A topic on the map or answered well means its neighbours are solid too.`,
   `### OminaX: teaching
 
 In a lesson or side chat (not coding work):

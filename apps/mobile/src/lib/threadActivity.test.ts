@@ -66,6 +66,7 @@ it("keeps a completed quiz card as its own feed entry", () => {
     input: {},
     output: {
       quizCard: {
+        reply: "The teaching this card tests.",
         answer: "A",
         explanation: "Because",
         level: "remember",

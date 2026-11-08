@@ -1,4 +1,4 @@
-import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import { OrchestratorMcpFailure, TrimmedNonEmptyString } from "@t3tools/contracts";
 import {
   T3_LEARN_QUESTION_RULES,
   T3_LEARN_QUIZ_RULES_FULL,
@@ -11,15 +11,19 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 // First, so the model writes the reply before the question.
-const reply = Schema.optional(
+const questionReply = Schema.optional(
   Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))).annotate({
     description:
       "After the learner answers a card: your reply, shown to them as your message text just before this card. Give your verdict on their answer, then teach what this card tests. The learner never sees your thinking, so put the reply here unless you already wrote it as response text.",
   }),
 );
+const quizReply = TrimmedNonEmptyString.check(Schema.isMaxLength(2000)).annotate({
+  description:
+    "Required: the teaching this card tests, shown as message text above the card. Give your verdict, then teach the idea; if you already taught it in visible text above, give a one- or two-line recap.",
+});
 
 export const QuizCardInput = Schema.Struct({
-  reply,
+  reply: quizReply,
   answer: Schema.String.pipe(Schema.check(Schema.isMaxLength(300))),
   explanation: Schema.String.pipe(Schema.check(Schema.isMaxLength(1500))),
   level: Schema.Literals(["remember", "understand", "apply", "analyse"]),
@@ -49,7 +53,7 @@ const QuizCardTool = Tool.make(QUIZ_CARD_TOOL_NAME, {
   .annotate(Tool.Idempotent, false);
 
 export const QuestionCardInput = Schema.Struct({
-  reply,
+  reply: questionReply,
   question: Schema.String.pipe(Schema.check(Schema.isMaxLength(2000))),
   blanks: Schema.optional(
     Schema.Array(

@@ -1700,7 +1700,12 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     // T3 refuses a card it cannot show.
     if (name === "quiz_card") {
       const card = readQuizCard(input);
-      const problem = card === undefined ? "Invalid quiz card." : quizCardProblem(card);
+      const problem =
+        card === undefined
+          ? typeof input.reply !== "string" || input.reply.trim() === ""
+            ? CARD_REPLY_FIRST
+            : "Invalid quiz card."
+          : quizCardProblem(card);
       if (problem !== undefined) return failed(problem);
     }
     if (name === "question_card" && readQuestionCard(input) === undefined) {

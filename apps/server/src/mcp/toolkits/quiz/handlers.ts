@@ -2,7 +2,7 @@ import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import {
   cardAnswerAwaitsReply,
-  type LessonCard,
+  type QuestionCard,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -20,22 +20,45 @@ const CARD_REPLY_FIRST =
 // The answer each thread's reply covered, so later cards in that turn need none.
 const repliedAnswers = new Map<string, string>();
 
-const requireReply = Effect.fn("QuizHandlers.requireReply")(function* (card: LessonCard) {
+const deliveredMessages = <
+  Message extends { readonly role: string; readonly text: string; readonly runId?: string | null },
+  Run extends { readonly id: string; readonly status: string },
+>(
+  messages: ReadonlyArray<Message>,
+  runs: ReadonlyArray<Run>,
+) => {
+  const undeliveredRunIds = new Set(
+    runs
+      .filter((run) => run.status === "queued" || run.status === "preparing")
+      .map((run) => run.id),
+  );
+  return messages.filter(
+    (message) =>
+      message.runId === undefined ||
+      message.runId === null ||
+      !undeliveredRunIds.has(message.runId),
+  );
+};
+
+const requireQuestionReply = Effect.fn("QuizHandlers.requireQuestionReply")(function* (
+  card: QuestionCard,
+) {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   if (scope.thread === undefined) return;
   const threadId = scope.thread.threadId;
   const threads = yield* ThreadManagementService.ThreadManagementService;
   // A failed read never blocks the lesson; the card shows as before.
-  const { messages } = yield* threads
-    .getThreadRecords(threadId, ["messages"], { messageRoles: ["user", "assistant"] })
-    .pipe(Effect.orElseSucceed(() => ({ messages: [] })));
-  const answerId = messages.findLast((message) => message.role === "user")?.id;
+  const { messages, runs } = yield* threads
+    .getThreadRecords(threadId, ["messages", "runs"], { messageRoles: ["user", "assistant"] })
+    .pipe(Effect.orElseSucceed(() => ({ messages: [], runs: [] })));
+  const delivered = deliveredMessages(messages, runs ?? []);
+  const answerId = delivered.findLast((message) => message.role === "user")?.id;
   if (card.reply !== undefined) {
     if (answerId !== undefined) repliedAnswers.set(threadId, answerId);
     return;
   }
   const replied = answerId !== undefined && repliedAnswers.get(threadId) === answerId;
-  if (cardAnswerAwaitsReply(messages) && !replied) {
+  if (cardAnswerAwaitsReply(delivered) && !replied) {
     return yield* new OrchestratorMcpFailure({
       code: "invalid_request",
       message: CARD_REPLY_FIRST,
@@ -57,7 +80,7 @@ const handlers = {
       const card = readQuizCard(input);
       const problem =
         card === undefined
-          ? "Invalid quiz card: provide 2–4 wrong options and all required bounded fields."
+          ? "Invalid quiz card: reply is required; put the teaching this card tests in reply, then provide 2–4 wrong options and all other required bounded fields."
           : quizCardProblem(card);
       if (problem !== undefined || card === undefined) {
         return yield* new OrchestratorMcpFailure({
@@ -65,7 +88,6 @@ const handlers = {
           message: problem ?? "Invalid quiz card.",
         });
       }
-      yield* requireReply(card);
       return { quizCard: card, message: QUIZ_CARD_SHOWN };
     }),
   ),
@@ -79,7 +101,7 @@ const handlers = {
             "Invalid question card: provide a non-empty question of at most 2000 characters; for blanks, provide one entry per ___ in the question and list every accepted answer; for number, provide answer and tolerance ≥ 0; do not provide both; keep reply under 2000 characters and the whole card under about 7 KB.",
         });
       }
-      yield* requireReply(card);
+      yield* requireQuestionReply(card);
       return { questionCard: card, message: QUESTION_CARD_SHOWN };
     }),
   ),

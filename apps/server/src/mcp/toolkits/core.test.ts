@@ -318,7 +318,7 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
 );
 
 it.effect("a card after a card answer carries the tutor's reply unless text came first", () => {
-  const messages = [
+  const messages: Array<{ id: string; role: string; text: string; runId?: string }> = [
     { id: "answer-1", role: "user", text: cardAnswerMessage("It breaks the circuit.", "item-q1") },
   ];
   return Effect.gen(function* () {
@@ -347,6 +347,12 @@ it.effect("a card after a card answer carries the tutor's reply unless text came
       role: "user",
       text: cardAnswerMessage("Less current.", "item-q2"),
     });
+    messages.push({
+      id: "queued-2",
+      role: "user",
+      text: "A queued follow-up.",
+      runId: "run-queued",
+    });
     expect((yield* ask()).isError).toBe(true);
     messages.push({ id: "reply-2", role: "assistant", text: "Right: ..." });
     expect((yield* ask()).isError).not.toBe(true);
@@ -356,7 +362,14 @@ it.effect("a card after a card answer carries the tutor's reply unless text came
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadRecords: () => Effect.sync(() => ({ messages: [...messages] }) as never),
+            getThreadRecords: () =>
+              Effect.sync(
+                () =>
+                  ({
+                    messages: [...messages],
+                    runs: [{ id: "run-queued", status: "queued" }],
+                  }) as never,
+              ),
           }),
         ),
       ),

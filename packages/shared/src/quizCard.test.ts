@@ -18,6 +18,7 @@ import {
 } from "./quizCard.ts";
 
 const card: QuizCard = {
+  reply: "The teaching this card tests.",
   answer: "High",
   explanation: "Because",
   level: "apply",
@@ -114,6 +115,11 @@ describe("quiz cards", () => {
     expect(blankAnswerRight({ answers: ["acceleration"] }, "Acceleration")).toBe(true);
   });
   it("validates options and bounds", () => {
+    expect(readQuizCard({ ...card, reply: undefined })).toBeUndefined();
+    expect(readQuizCard({ ...card, reply: " " })).toBeUndefined();
+    expect(readQuizCard({ ...card, reply: "The teaching this card tests." })).toMatchObject({
+      reply: "The teaching this card tests.",
+    });
     expect(quizCardProblem({ ...card, answer: "All of the above" })).toBeDefined();
     expect(quizCardProblem({ ...card, answer: "(Recommended) High" })).toBeDefined();
     expect(

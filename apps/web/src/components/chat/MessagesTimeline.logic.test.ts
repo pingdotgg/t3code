@@ -4739,6 +4739,7 @@ it("marks only the quiz card an answer names as answered", () => {
     createdAt: at,
     runId: null,
     quizCard: {
+      reply: "The teaching this card tests.",
       answer: "A",
       explanation: "Because",
       level: "apply",

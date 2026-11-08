@@ -4,6 +4,7 @@ import { render } from "../../../test/render";
 import { QuizCardTimelineCard } from "./QuizCard";
 
 const quiz = {
+  reply: "The teaching this card tests.",
   answer: "A",
   explanation: "Because",
   level: "apply" as const,
