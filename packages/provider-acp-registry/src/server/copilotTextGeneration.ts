@@ -122,7 +122,7 @@ export const makeCopilotTextGeneration = Effect.fn("makeCopilotTextGeneration")(
           (cause) =>
             new TextGenerationError({
               operation,
-              detail: `Could not launch GitHub Copilot: ${cause.message}`,
+              detail: `Could not launch GitHub Copilot (${cause.reason}).`,
               cause,
             }),
         ),

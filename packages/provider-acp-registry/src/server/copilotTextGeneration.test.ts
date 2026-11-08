@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
+import { AcpRegistryError } from "./AcpRegistrySupport.ts";
 import { makeCopilotTextGeneration } from "./copilotTextGeneration.ts";
 
 const mockAgentPath = NodePath.join(
@@ -40,7 +41,11 @@ interface MockLog {
   readonly clientResponse?: { readonly id: string; readonly result?: unknown };
 }
 
-const harness = (input: { readonly scenario: string; readonly userConfig?: string }) =>
+const harness = (input: {
+  readonly scenario: string;
+  readonly userConfig?: string;
+  readonly resolveFailure?: AcpRegistryError;
+}) =>
   Effect.gen(function* () {
     const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-copilot-text-test-"));
     yield* Effect.addFinalizer(() =>
@@ -63,19 +68,21 @@ const harness = (input: { readonly scenario: string; readonly userConfig?: strin
     const textGeneration = yield* makeCopilotTextGeneration({
       environment: { COPILOT_HOME: userHome },
       resolveSpawn: (cwd) =>
-        Effect.succeed({
-          command,
-          // A local install's own arguments must not reach the helper.
-          args: ["--acp", "--additional-mcp-config", "@mcp.json", "--allow-all"],
-          cwd,
-          env: {
-            ...process.env,
-            T3_MOCK_SCENARIO: input.scenario,
-            T3_MOCK_LOG: logPath,
-            COPILOT_ALLOW_ALL: "true",
-            COPILOT_CUSTOM_INSTRUCTIONS_DIRS: userHome,
-          },
-        }),
+        input.resolveFailure
+          ? Effect.fail(input.resolveFailure)
+          : Effect.succeed({
+              command,
+              // A local install's own arguments must not reach the helper.
+              args: ["--acp", "--additional-mcp-config", "@mcp.json", "--allow-all"],
+              cwd,
+              env: {
+                ...process.env,
+                T3_MOCK_SCENARIO: input.scenario,
+                T3_MOCK_LOG: logPath,
+                COPILOT_ALLOW_ALL: "true",
+                COPILOT_CUSTOM_INSTRUCTIONS_DIRS: userHome,
+              },
+            }),
     });
     const readLog = (): ReadonlyArray<MockLog> =>
       NodeFS.existsSync(logPath)
@@ -203,33 +210,42 @@ describe("Copilot text generation", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it.live(
-    "refuses before launching when sign-in state is unreadable or a review guide is asked",
-    () =>
-      Effect.gen(function* () {
-        const unreadable = yield* harness({ scenario: "reply", userConfig: "{ not json" });
-        const signInError = yield* Effect.flip(generateTitle(unreadable.textGeneration, "default"));
-        assert.equal(
-          signInError.detail,
-          "Could not read the GitHub Copilot sign-in state for text generation.",
-        );
-        assert.deepEqual(unreadable.readLog(), []);
+  it.live("refuses before launching on sign-in, resolver or unsupported operation failures", () =>
+    Effect.gen(function* () {
+      const unreadable = yield* harness({ scenario: "reply", userConfig: "{ not json" });
+      const signInError = yield* Effect.flip(generateTitle(unreadable.textGeneration, "default"));
+      assert.equal(
+        signInError.detail,
+        "Could not read the GitHub Copilot sign-in state for text generation.",
+      );
+      assert.deepEqual(unreadable.readLog(), []);
 
-        const review = yield* harness({ scenario: "reply" });
-        const reviewError = yield* Effect.flip(
-          review.textGeneration.generateReviewGuide({
-            cwd: process.cwd(),
-            number: 1,
-            title: "Title",
-            description: "",
-            baseBranch: "main",
-            baseCommit: "abc",
-            settledReview: "",
-            modelSelection: createModelSelection(instanceId, "gpt-6-luna"),
-          }),
-        );
-        assert.match(reviewError.detail, /^Copilot cannot investigate a checkout read-only\./);
-        assert.deepEqual(review.readLog(), []);
-      }).pipe(Effect.scoped, Effect.provide(layer)),
+      const resolveFailure = new AcpRegistryError({
+        reason: "runner_unavailable",
+        detail: "arbitrary-output-secret-marker",
+      });
+      const unavailable = yield* harness({ scenario: "reply", resolveFailure });
+      const launchError = yield* Effect.flip(generateTitle(unavailable.textGeneration, "default"));
+      assert.equal(launchError.detail, "Could not launch GitHub Copilot (runner_unavailable).");
+      assert.notInclude(launchError.detail, resolveFailure.detail);
+      assert.strictEqual(launchError.cause, resolveFailure);
+      assert.deepEqual(unavailable.readLog(), []);
+
+      const review = yield* harness({ scenario: "reply" });
+      const reviewError = yield* Effect.flip(
+        review.textGeneration.generateReviewGuide({
+          cwd: process.cwd(),
+          number: 1,
+          title: "Title",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "abc",
+          settledReview: "",
+          modelSelection: createModelSelection(instanceId, "gpt-6-luna"),
+        }),
+      );
+      assert.match(reviewError.detail, /^Copilot cannot investigate a checkout read-only\./);
+      assert.deepEqual(review.readLog(), []);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 });
