@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 
 import { liveShellEnvironmentIdsAtom } from "../state/shell";
@@ -13,20 +14,25 @@ import { useUiStateStore } from "../uiStateStore";
  * nothing.
  */
 export function startThreadVisitedMigration(registry: AtomRegistry.AtomRegistry): () => void {
-  const migratedThreadKeys = new Set<string>();
+  const migratedThreadIds = new Map<EnvironmentId, Set<ThreadId>>();
   const migrate = () => {
     const liveEnvironmentIds = registry.get(liveShellEnvironmentIdsAtom);
+    for (const environmentId of migratedThreadIds.keys()) {
+      if (!liveEnvironmentIds.has(environmentId)) migratedThreadIds.delete(environmentId);
+    }
     for (const thread of registry.get(environmentThreadShells.threadShellsAtom)) {
       // An established server watermark may be deliberately older after Mark unread.
       if (thread.lastVisitedAt !== null) continue;
-      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       // Cached or resyncing shells may carry a stale null watermark; wait until they are live.
-      if (!liveEnvironmentIds.has(thread.environmentId)) {
-        migratedThreadKeys.delete(threadKey);
-        continue;
+      if (!liveEnvironmentIds.has(thread.environmentId)) continue;
+      let migrated = migratedThreadIds.get(thread.environmentId);
+      if (!migrated) {
+        migrated = new Set();
+        migratedThreadIds.set(thread.environmentId, migrated);
       }
-      if (migratedThreadKeys.has(threadKey)) continue;
-      migratedThreadKeys.add(threadKey);
+      if (migrated.has(thread.id)) continue;
+      migrated.add(thread.id);
+      const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       const local = useUiStateStore.getState().threadLastVisitedAtById[threadKey];
       if (!local) continue;
       const localMs = Date.parse(local);

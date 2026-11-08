@@ -118,6 +118,13 @@ describe("startThreadVisitedMigration", () => {
     migration.setLive(new Set());
     migration.setLive(new Set([thread.environmentId]));
     expect(runAtomCommand).toHaveBeenCalledTimes(2);
+
+    // Disabling an environment drops its threads before the hook sees them offline.
+    migration.setThreads([]);
+    migration.setLive(new Set());
+    migration.setLive(new Set([thread.environmentId]));
+    migration.setThreads([thread]);
+    expect(runAtomCommand).toHaveBeenCalledTimes(3);
   });
 
   it("waits for older servers to support visits before migrating", () => {
