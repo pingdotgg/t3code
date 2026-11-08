@@ -2283,16 +2283,9 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
           normalizeToolName(block.name) === "quiz_card" ||
           normalizeToolName(block.name) === "question_card";
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
-        if (lesson && held.length > 0) {
-          if (!isT3Mcp && held.join("").length <= 300) {
-            // The adapter keeps short narration as a Thought, so it is not visible text.
-          } else if (isCard) {
-            for (const text of held) if (!repeats(block, text)) texts.push(text);
-          } else {
-            texts.push(...held);
-          }
-        } else if (!lesson) {
-          // Non-lesson turns have no held text in the adapter.
+        // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
+        if (isT3Mcp || held.join("").length > 300) {
+          texts.push(...(isCard ? held.filter((text) => !repeats(block, text)) : held));
         }
         if (isCard) sample.lessonCardSeen = true;
         continue;

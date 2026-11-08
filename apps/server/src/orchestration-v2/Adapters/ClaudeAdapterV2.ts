@@ -2078,6 +2078,11 @@ function isLessonCardTool(name: string): boolean {
   return tool === QUIZ_CARD_TOOL_NAME || tool === QUESTION_CARD_TOOL_NAME;
 }
 
+// Lessons and their side chats show only the tutor's reply and cards, not narration (APP-108).
+function isLessonTurn(input: ProviderAdapter.ProviderAdapterV2TurnInput): boolean {
+  return input.appThread.lesson !== undefined || input.appThread.sideChat !== undefined;
+}
+
 // A lesson card whose reply already says this text shows it once, as the reply (APP-102).
 function cardReplyRepeats(block: { readonly name: string; readonly input: unknown }, text: string) {
   if (!isLessonCardTool(block.name)) return false;
@@ -7964,7 +7969,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context: ActiveClaudeTurnContext,
           block: { readonly name: string; readonly input: unknown },
         ) {
-          if (!context.input.lesson || context.assistant.heldText.length === 0) {
+          if (!isLessonTurn(context.input) || context.assistant.heldText.length === 0) {
             yield* flushHeldAssistantText(context);
             return;
           }
@@ -9180,7 +9185,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   update !== null &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
-                  !context.input.lesson &&
+                  !isLessonTurn(context.input) &&
                   claudeWritesUpdatesAsThinking(message.message.model) &&
                   !cardReplyRepeats(block, update.text)
                 ) {
@@ -9806,7 +9811,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (parentToolUseIdFromSdkMessage(message) === null) {
               const rootText = assistantTextFromSdkMessage(message);
               if (
-                context.input.lesson &&
+                isLessonTurn(context.input) &&
                 rootText !== null &&
                 rootText.text.length > 0 &&
                 !context.assistant.heldText.some(
@@ -10044,7 +10049,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (assistantText !== null && assistantText.text.length > 0) {
-            if (context.input.lesson || context.assistant.cardSeen) {
+            if (isLessonTurn(context.input) || context.assistant.cardSeen) {
               if (
                 !context.assistant.emittedNativeItemIds.has(assistantText.nativeItemId) &&
                 !context.assistant.heldText.some(

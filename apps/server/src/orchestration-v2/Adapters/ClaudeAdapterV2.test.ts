@@ -245,7 +245,6 @@ function makeClaudeTestTurnInput(input: {
 }): ProviderAdapter.ProviderAdapterV2TurnInput {
   return {
     appThread: makeClaudeTestAppThread(input),
-    ...(input.lesson === undefined ? {} : { lesson: input.lesson }),
     threadId: input.threadId,
     runId: RunId.make(`run-${input.attemptId}`),
     runOrdinal: 1,

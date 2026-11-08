@@ -477,8 +477,6 @@ export interface ProviderAdapterV2EnsureThreadInput {
 
 export interface ProviderAdapterV2TurnInput {
   readonly appThread: OrchestrationV2AppThread;
-  /** Lesson and lesson side-chat turns use Claude's learner-facing text filtering. */
-  readonly lesson?: boolean;
   readonly threadId: ThreadId;
   readonly runId: RunId;
   readonly runOrdinal: number;
