@@ -246,6 +246,8 @@ interface MessagesTimelineProps {
   askInSideChatPending?: boolean;
   isWorking: boolean;
   runlessWorkActive?: boolean;
+  /** Keep settled assistant messages visible in lesson turns. */
+  lesson?: boolean;
   activeTurnStartedAt?: string | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
@@ -371,6 +373,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   askInSideChatPending = false,
   isWorking,
   runlessWorkActive = false,
+  lesson = false,
   activeTurnStartedAt = null,
   worktreeSetup = null,
   footer = null,
@@ -622,6 +625,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         isWorking,
         runlessWorkActive,
+        lesson,
         toolCallVisibility,
         revealedMessageId,
       })
@@ -665,6 +669,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runningRunId,
         isWorking,
         runlessWorkActive,
+        lesson,
         toolCallVisibility,
         revealedMessageId,
       })
@@ -720,6 +725,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     expandedWorkGroupIds,
     isWorking,
     runlessWorkActive,
+    lesson,
     activeTurnStartedAt,
     turnDiffSummaries,
     supportsConversationRollback,
@@ -1251,6 +1257,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     runningRunId,
     isWorking,
     runlessWorkActive,
+    lesson,
     toolCallVisibility,
     rows,
     contentInsetEndAdjustment,

@@ -22,6 +22,7 @@ export function useThreadFindPositionReader({
   runningRunId,
   isWorking,
   runlessWorkActive,
+  lesson,
   toolCallVisibility,
   rows,
   contentInsetEndAdjustment,
@@ -35,6 +36,7 @@ export function useThreadFindPositionReader({
   readonly runningRunId: RunId | null;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
+  readonly lesson: boolean;
   readonly toolCallVisibility: ToolCallVisibility;
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
@@ -52,6 +54,7 @@ export function useThreadFindPositionReader({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          lesson,
           toolCallVisibility,
         });
       const entryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
@@ -100,6 +103,7 @@ export function useThreadFindPositionReader({
     latestRun,
     rows,
     runlessWorkActive,
+    lesson,
     runningRunId,
     timelineEntries,
     timelineViewportElement,

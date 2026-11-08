@@ -1128,6 +1128,21 @@ describe("deriveMessagesTimelineRows", () => {
       "card-entry",
       "assistant-final-entry",
     ]);
+
+    const lessonRows = deriveMessagesTimelineRows({
+      timelineEntries,
+      lesson: true,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(lessonRows.map((row) => row.id)).toEqual([
+      "user-entry",
+      "turn-fold:turn-1",
+      "assistant-first-entry",
+      "assistant-final-entry",
+    ]);
   });
 
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
