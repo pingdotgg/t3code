@@ -41,7 +41,7 @@ import {
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
-import { AutoSettleSettingsRows } from "./ThreadSettingsSections";
+import { AutoSettleSettingsRows, HostCapacitySettingsRows } from "./ThreadSettingsSections";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 
 type SettingsPage = "threads" | "source-control" | "worktrees" | "maintenance";
@@ -137,8 +137,6 @@ const AUTO_SETTLE_SETTING_KEYS: ReadonlySet<string> = new Set([
   "sidebarAutoSettleAfterDays",
   "autoResumeLimitedThreads",
   "snoozeLimitedThreads",
-  "paceNewTurnsByHostLoad",
-  "maxRunningTurns",
 ]);
 
 function planServerSettingsWrites(
@@ -397,6 +395,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   />
                 </SettingsSection>
                 <AutoSettleSettingsRows write={write} pending={pendingWrites > 0} />
+                <HostCapacitySettingsRows write={write} pending={pendingWrites > 0} />
               </>
             ) : null}
 

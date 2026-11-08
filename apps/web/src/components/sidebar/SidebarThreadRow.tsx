@@ -120,7 +120,7 @@ import {
   ThreadSearchPullRequestNumber,
 } from "../ThreadStatusIndicators";
 import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "../Sidebar.snooze";
-import { useThreadShell, useThreadWaitingForHostAdmission } from "../../state/entities";
+import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
@@ -997,9 +997,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const isUnread =
     props.suppressUnseenDone !== true && hasUnseenCompletion({ ...thread, lastVisitedAt });
-  const waitingForHostAdmission = useThreadWaitingForHostAdmission(threadRef);
   const status = mergePipelineParentStatus(
-    resolveSidebarThreadStatus({ ...thread, waitingForHostAdmission }),
+    resolveSidebarThreadStatus(thread),
     props.stepStatus ?? null,
   );
   // A run's attention badge opens the step that needs the user, or the parent when it has no thread yet.

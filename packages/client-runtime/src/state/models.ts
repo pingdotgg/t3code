@@ -115,6 +115,13 @@ export function threadRuntimeIsActive(runtime: ThreadStructureRuntime | null | u
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
 }
 
+/** The thread's latest run is queued while none of its runs is active, so it waits to be started. */
+export function threadRuntimeAwaitsTurn(
+  runtime: Pick<ThreadRuntimeSummary, "status" | "activeRunId"> | null | undefined,
+): boolean {
+  return runtime?.status === "queued" && runtime.activeRunId === null;
+}
+
 export function threadRuntimeCanArchive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   if (runtime?.status === "queued") return runtime.activeRunId === null;
   return (

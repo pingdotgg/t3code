@@ -5,6 +5,7 @@ import {
   queuedRunEditBlockedReason,
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { hostAdmissionWaitReason } from "@t3tools/client-runtime/host-admission-presentation";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -37,7 +38,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
-  resolveAdmissionWaitReason,
   resolveThreadQueueRowControls,
 } from "./threadQueueControlPresentation";
 
@@ -182,7 +182,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
     void Haptics.selectionAsync();
     if (action === "remove") {
       await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-    } else if (workflow?.canSendNow || queuedRuns[index]!.run.admissionWait !== undefined) {
+    } else if (workflow?.canSendNow) {
       await resume({ ...target, input: { threadId: target.threadId, runId } });
     } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
       await promote({
@@ -232,22 +232,20 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments, context, message }, index) => {
+      {queuedRuns.map(({ run, text, attachments, context, message, canStartNow }, index) => {
         const controls = resolveThreadQueueRowControls({
           busy: busyRunId !== null,
           // A fresh message starts its own turn: it may skip compaction, but not steer into a turn.
           canPromoteToSteer:
             (workflow?.canPromoteToSteer ?? false) &&
             (run.freshContext !== true || workflow?.promoteSkipsCompaction === true),
-          // A run held for the host can start now whatever its thread is doing.
-          canSendNow: (workflow?.canSendNow ?? false) || run.admissionWait !== undefined,
+          canSendNow: workflow?.canSendNow ?? false,
           editBlocked: editBlockedReason !== null,
           isEditing: editing?.runId === run.id,
           isGuestMessage: context?.guest !== undefined,
           text,
         });
-        const admissionReason = resolveAdmissionWaitReason(run.admissionWait, hostAdmission);
-        const canStartNow = run.admissionWait !== undefined;
+        const admissionReason = hostAdmissionWaitReason(run.admissionWait, hostAdmission);
         const title =
           controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
         return (
@@ -263,7 +261,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                   shouldOpenOnLongPress
                   style={{ flex: 1 }}
                   actions={[
-                    ...(workflow?.canPromoteToSteer || workflow?.canSendNow || canStartNow
+                    ...(workflow?.canPromoteToSteer || workflow?.canSendNow
                       ? [
                           {
                             id: "steer",
@@ -337,7 +335,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                     ) : null}
                   </Pressable>
                 </Menu>
-                {workflow?.canPromoteToSteer || workflow?.canSendNow || canStartNow ? (
+                {workflow?.canPromoteToSteer || workflow?.canSendNow ? (
                   // Outside the edit row and full row height, so a near miss never opens the editor.
                   <Pressable
                     accessibilityRole="button"

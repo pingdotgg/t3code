@@ -220,6 +220,7 @@ describe("pipeline parent status", () => {
   it.each([
     { steps: [], expected: null },
     { steps: ["ready", "waiting", "failed"], expected: null },
+    { steps: ["ready", "queued"], expected: null },
     { steps: ["ready", "working"], expected: "working" },
     { steps: ["working", "input", "ready"], expected: "input" },
     { steps: ["working", "request", "approval"], expected: "approval" },
@@ -237,6 +238,7 @@ describe("pipeline parent status", () => {
       expected: "working",
     },
     { name: "a paused run whose step monitors", steps: ["waiting"], run: "paused", expected: null },
+    { name: "a paused run whose step is queued", steps: ["queued"], run: "paused", expected: null },
     {
       name: "a paused run whose step asks",
       steps: ["approval"],
@@ -380,7 +382,7 @@ describe("pipelineProgressSegments", () => {
       ),
     } as PipelineRunSummary;
     const plan = [titled("s1", "plan", "2026-01-01T00:01:00Z", "P · Plan")];
-    for (const busy of ["working", "waiting"]) {
+    for (const busy of ["queued", "working", "waiting"]) {
       expect(summarize(pipelineProgressSegments(resumed, plan, () => busy))[0]).toBe(
         "Plan:running:s1",
       );
@@ -396,10 +398,11 @@ describe("pipelineProgressSegments", () => {
       titled("s2", "build", "2026-01-01T00:02:00Z", "P · Build"),
       titled("s3", "build", "2026-01-01T00:03:00Z", "P · Build (attempt 2)"),
     ];
-    const status = (s: { id: string }) => (s.id === "s2" ? "failed" : "ready");
+    const status = (s: { id: string }) =>
+      s.id === "s2" ? "failed" : s.id === "s3" ? "queued" : "ready";
     expect(summarize(pipelineProgressSegments(undefined, steps, status))).toEqual([
       "Plan:completed:s1",
-      "Build (attempt 2):completed:s3",
+      "Build (attempt 2):running:s3",
     ]);
   });
 });

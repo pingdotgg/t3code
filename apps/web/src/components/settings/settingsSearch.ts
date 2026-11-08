@@ -73,6 +73,7 @@ export interface SettingsSearchItem {
   readonly peerLinksOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
+  readonly hostAdmissionOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -91,6 +92,7 @@ export interface SettingsSearchAvailability {
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
+  readonly hasHostAdmission?: boolean;
 }
 
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
@@ -460,6 +462,31 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Resume after usage limits",
     to: "/settings/threads",
     searchTerms: ["usage quota rate limit reset recover continue"],
+  },
+  {
+    id: "pace-new-turns-by-host-load",
+    title: "Pace new turns by host load",
+    to: "/settings/threads",
+    searchTerms: ["host capacity memory cpu busy throttle admission queue"],
+    hostAdmissionOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "limit-running-turns",
+    title: "Limit running turns",
+    to: "/settings/threads",
+    searchTerms: ["host capacity concurrent parallel agents maximum cap queue waiting"],
+    hostAdmissionOnly: true,
+    scope: "environment-defaults",
+  },
+  {
+    id: "maximum-running-turns",
+    title: "Maximum running turns",
+    to: "/settings/threads",
+    targetId: "limit-running-turns",
+    searchTerms: ["host capacity concurrent parallel agents cap number"],
+    hostAdmissionOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "working-shelf",
@@ -1520,7 +1547,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.hostAdmissionOnly || availability.hasHostAdmission === true),
   );
 }
 

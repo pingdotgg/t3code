@@ -176,19 +176,21 @@ describe("resolveThreadListV2Status", () => {
     );
   });
 
-  it("shows a thread whose only queued run awaits host admission as Queued, not Working", () => {
-    const queued = presentThreadShell(
-      environmentId,
-      decodeThreadShell(
-        makeRawThreadShell({
-          status: "queued",
-          activeRunId: null,
-          latestRunId: RunId.make("run-queued"),
-        }),
-      ),
-    );
+  it("shows a queued run as Queued only while nothing of its thread is active", () => {
+    const queued = (activeRunId: RunId | null) =>
+      presentThreadShell(
+        environmentId,
+        decodeThreadShell(
+          makeRawThreadShell({
+            status: "queued",
+            activeRunId,
+            latestRunId: RunId.make("run-queued"),
+          }),
+        ),
+      );
 
-    expect(resolveThreadListV2Status(queued)).toBe("queued");
+    expect(resolveThreadListV2Status(queued(null))).toBe("queued");
+    expect(resolveThreadListV2Status(queued(RunId.make("run-active")))).toBe("working");
   });
 
   it("shows a waiting guest message as Request, after the agent's own requests", () => {

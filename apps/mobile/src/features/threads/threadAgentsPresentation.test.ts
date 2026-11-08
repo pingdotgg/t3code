@@ -78,11 +78,12 @@ describe("resolveSubagentRowPresentation", () => {
     );
   });
 
-  it("uses the status label when there is nothing to report yet", () => {
+  it("shows an agent that has not started as Queued, not Working", () => {
     const row = resolveSubagentRowPresentation({ ...base, status: "pending" });
 
     expect(row.detail).toBeNull();
-    expect(row.statusLabel).toBe("Working");
+    expect(row.statusLabel).toBe("Queued");
+    expect(row.tone).toBe("queued");
   });
 
   it("bounds long result previews without dropping the agent's status", () => {

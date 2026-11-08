@@ -21,7 +21,7 @@ import { subagentCardDetail } from "./subagent-card-presentation";
 
 const PROMPT_TITLE_LIMIT = 80;
 
-export type SubagentRowTone = "working" | "completed" | "failed" | "stopped";
+export type SubagentRowTone = "queued" | "working" | "completed" | "failed" | "stopped";
 
 export interface SubagentRowPresentation {
   readonly title: string;
@@ -64,6 +64,7 @@ function rowTitle(subagent: Pick<OrchestrationV2Subagent, "title" | "prompt">): 
 }
 
 function rowTone(status: OrchestrationV2Subagent["status"]): SubagentRowTone {
+  if (status === "pending") return "queued";
   if (isActiveSubagentStatus(status)) return "working";
   if (status === "completed") return "completed";
   if (status === "failed") return "failed";
@@ -73,6 +74,7 @@ function rowTone(status: OrchestrationV2Subagent["status"]): SubagentRowTone {
 function rowStatusLabel(status: OrchestrationV2Subagent["status"]): string {
   switch (status) {
     case "pending":
+      return "Queued";
     case "running":
       return "Working";
     case "waiting":
@@ -110,7 +112,7 @@ export function resolveSubagentRowPresentation(
   };
 }
 
-export type WorkflowRailTone = SubagentRowTone | "queued";
+export type WorkflowRailTone = SubagentRowTone;
 
 export interface WorkflowRailItem {
   readonly key: string;

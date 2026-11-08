@@ -4,6 +4,7 @@ import { cn } from "../../lib/cn";
 import type { SubagentRowTone } from "./threadAgentsPresentation";
 
 const TONE_CLASS = {
+  queued: "bg-foreground-muted",
   working: "bg-adaptive-sky-600-400",
   completed: "bg-adaptive-emerald-600-400",
   failed: "bg-adaptive-rose-600-400",
@@ -11,6 +12,7 @@ const TONE_CLASS = {
 } as const satisfies Record<SubagentRowTone, string>;
 
 export const SUBAGENT_TONE_TEXT_CLASS = {
+  queued: "text-foreground-muted",
   working: "text-adaptive-sky-600-400",
   completed: "text-adaptive-emerald-600-400",
   failed: "text-adaptive-rose-600-400",

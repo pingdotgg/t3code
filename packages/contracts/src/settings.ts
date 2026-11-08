@@ -99,6 +99,8 @@ const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
 export const MIN_MAX_RUNNING_TURNS = 1;
 export const MAX_MAX_RUNNING_TURNS = 64;
+/** What "Limit running turns" starts at when switched on. */
+export const DEFAULT_MAX_RUNNING_TURNS = 4;
 export const MaxRunningTurns = Schema.Number.check(
   Schema.isInt(),
   Schema.isBetween({ minimum: MIN_MAX_RUNNING_TURNS, maximum: MAX_MAX_RUNNING_TURNS }),

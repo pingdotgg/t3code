@@ -505,17 +505,24 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Completed", pulse: false });
   });
 
-  it("shows a static Queued pill while the host holds the queued run", () => {
+  it("shows a static Queued pill while a queued run waits with nothing of the thread active", () => {
     const queued = {
       ...baseThread,
       runtime: { ...baseThread.runtime, status: "queued" as const, activeRunId: null },
     };
-    expect(resolveSidebarThreadStatus(queued)).toBe("working");
-    expect(resolveSidebarThreadStatus({ ...queued, waitingForHostAdmission: true })).toBe("queued");
-    expect(resolveThreadStatusPill({ thread: queued })).toMatchObject({ label: "Connecting" });
-    expect(
-      resolveThreadStatusPill({ thread: { ...queued, waitingForHostAdmission: true } }),
-    ).toMatchObject({ label: "Queued", pulse: false });
+    const behindActiveRun = {
+      ...queued,
+      runtime: { ...queued.runtime, activeRunId: RunId.make("run-active") },
+    };
+    expect(resolveSidebarThreadStatus(queued)).toBe("queued");
+    expect(resolveSidebarThreadStatus(behindActiveRun)).toBe("working");
+    expect(resolveThreadStatusPill({ thread: queued })).toMatchObject({
+      label: "Queued",
+      pulse: false,
+    });
+    expect(resolveThreadStatusPill({ thread: behindActiveRun })).toMatchObject({
+      label: "Connecting",
+    });
   });
 
   it("shows failed, not completed, when the unseen run failed", () => {
@@ -1652,6 +1659,9 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    expect(
+      resolveSidebarFolderDot([{ ...idle, runtime: { ...runtime, status: "queued" } }]),
+    ).toBeNull();
   });
 });
 

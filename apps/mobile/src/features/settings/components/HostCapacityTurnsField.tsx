@@ -13,7 +13,7 @@ export function HostCapacityTurnsField(props: HostCapacityTurnsFieldProps) {
       {...props}
       min={MIN_MAX_RUNNING_TURNS}
       max={MAX_MAX_RUNNING_TURNS}
-      label="Running turns limit"
+      label="Maximum running turns"
       formatValue={(value) => `${value} ${value === 1 ? "turn" : "turns"}`}
     />
   );

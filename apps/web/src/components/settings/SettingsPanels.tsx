@@ -4,8 +4,10 @@ import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
+import { hostAdmissionCounts } from "@t3tools/client-runtime/host-admission-presentation";
 import {
   type DesktopUpdateChannel,
+  type EnvironmentId,
   IDLE_COMPACTION_MODES,
   globalIdleCompaction,
   managedUpdatesDenial,
@@ -15,6 +17,7 @@ import {
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_MAX_RUNNING_TURNS,
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_MAX_RUNNING_TURNS,
@@ -722,20 +725,20 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
-const DEFAULT_MAX_RUNNING_TURNS = 4;
-
-function HostCapacitySettings() {
+function HostCapacitySettings(props: { readonly environmentId: EnvironmentId }) {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const { environment } = useSettingsScope();
-  const configs = useServerConfigs();
-  const admission = environment ? configs.get(environment.environmentId)?.hostAdmission : undefined;
+  const admission = useServerConfigs().get(props.environmentId)?.hostAdmission;
+  // The server republishes counts only while a setting is on, so they go stale once both are off.
+  const showCounts =
+    admission !== undefined &&
+    (settings.paceNewTurnsByHostLoad || settings.maxRunningTurns !== null);
   return (
     <SettingsSection id="host-capacity" title="Host capacity">
       <SettingsRow
         serverScoped
         settingKeys={["paceNewTurnsByHostLoad"]}
-        title="Pace new turns by host load"
+        {...searchableSetting("pace-new-turns-by-host-load")}
         description="Holds new turns while memory is critically low and starts them one at a time while the host is busy."
         control={
           <ScopedSwitch
@@ -751,10 +754,10 @@ function HostCapacitySettings() {
       <SettingsRow
         serverScoped
         settingKeys={["maxRunningTurns"]}
-        title="Limit running turns"
+        {...searchableSetting("limit-running-turns")}
         description={
-          admission
-            ? `${admission.runningTurns} running \u00b7 ${admission.waitingTurns} waiting`
+          showCounts
+            ? hostAdmissionCounts(admission)
             : "Further turns wait until a running one finishes. Running turns are never paused."
         }
         control={
@@ -772,7 +775,7 @@ function HostCapacitySettings() {
         <SettingsRow
           serverScoped
           settingKeys={["maxRunningTurns"]}
-          title="Maximum running turns"
+          title={searchableSetting("maximum-running-turns").title}
           control={
             <BoundedIntegerInput
               value={settings.maxRunningTurns}
@@ -1676,6 +1679,13 @@ export function ThreadsSettingsPanel() {
   const supportsAutoSettlementScope = connectedEnvironments.every(
     (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
+  // The cap belongs to one host, and older servers drop the keys so the toggle would snap back.
+  const hostCapacityEnvironmentId =
+    !isProjectScope &&
+    connectedEnvironments.length === 1 &&
+    connectedEnvironments[0]!.serverConfig?.environment.capabilities.hostAdmission === true
+      ? connectedEnvironments[0]!.environmentId
+      : null;
 
   const textGenerationTargets = useTextGenerationTargets({
     environmentId,
@@ -1923,7 +1933,9 @@ export function ThreadsSettingsPanel() {
         </SettingsSection>
       ) : null}
 
-      {environment && !isProjectScope ? <HostCapacitySettings /> : null}
+      {hostCapacityEnvironmentId !== null ? (
+        <HostCapacitySettings environmentId={hostCapacityEnvironmentId} />
+      ) : null}
 
       <SettingsSection id="text-generation" title="Text generation">
         <SettingsRow

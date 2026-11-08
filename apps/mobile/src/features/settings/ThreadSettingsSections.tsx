@@ -13,7 +13,8 @@ import type { ComponentProps } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS, MAX_MAX_RUNNING_TURNS } from "@t3tools/contracts";
+import { DEFAULT_MAX_RUNNING_TURNS, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { hostAdmissionCounts } from "@t3tools/client-runtime/host-admission-presentation";
 import { useServerConfigs } from "../../state/entities";
 import { HostCapacityTurnsField } from "./components/HostCapacityTurnsField";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
@@ -64,7 +65,6 @@ export function SettingsLabsRouteScreen() {
   );
 }
 
-const DEFAULT_MAX_RUNNING_TURNS = Math.min(4, MAX_MAX_RUNNING_TURNS);
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 /**
@@ -95,11 +95,6 @@ export function AutoSettleSettingsRows(props: {
     );
   const reference = displayTargets[0] ?? null;
   const referenceSettings = reference?.settings ?? null;
-  const serverConfigs = useServerConfigs();
-  const hostAdmission =
-    reference === null
-      ? undefined
-      : serverConfigs.get(reference.environment.environmentId)?.hostAdmission;
 
   if (reference === null || referenceSettings === null) {
     return null;
@@ -109,8 +104,6 @@ export function AutoSettleSettingsRows(props: {
     patch: Partial<AutoSettleSettings> & {
       autoResumeLimitedThreads?: boolean;
       snoozeLimitedThreads?: boolean;
-      paceNewTurnsByHostLoad?: boolean;
-      maxRunningTurns?: number | null;
     },
   ) => props.write(patch);
 
@@ -132,7 +125,6 @@ export function AutoSettleSettingsRows(props: {
   const disabledFor = (...keys: string[]) =>
     disabled || managedSettingReason(displayTargets, ...keys) !== undefined;
   const afterDays = referenceSettings.sidebarAutoSettleAfterDays;
-  const maxRunningTurns = referenceSettings.maxRunningTurns;
 
   return (
     <View className="gap-6">
@@ -154,45 +146,6 @@ export function AutoSettleSettingsRows(props: {
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
-        </SettingsSection>
-      ) : null}
-      {!projectSelected ? (
-        <SettingsSection title="Host capacity">
-          <SettingsSwitchRow
-            icon="clock"
-            label="Pace new turns by host load"
-            subtitle="Holds new turns while memory is critically low and starts them one at a time while the host is busy."
-            value={referenceSettings.paceNewTurnsByHostLoad}
-            disabled={disabledFor("paceNewTurnsByHostLoad")}
-            onValueChange={(value) => writeToAll({ paceNewTurnsByHostLoad: value })}
-          />
-          <SettingsSwitchRow
-            icon="bolt.circle"
-            label="Limit running turns"
-            subtitle={
-              hostAdmission
-                ? `${hostAdmission.runningTurns} running \u00b7 ${hostAdmission.waitingTurns} waiting`
-                : undefined
-            }
-            value={maxRunningTurns !== null}
-            disabled={disabledFor("maxRunningTurns")}
-            onValueChange={(value) =>
-              writeToAll({ maxRunningTurns: value ? DEFAULT_MAX_RUNNING_TURNS : null })
-            }
-          />
-          {maxRunningTurns !== null ? (
-            <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
-              <View className="w-[22px] android:w-6" />
-              <Text className="flex-1 text-foreground text-lg android:text-base">
-                Running turns
-              </Text>
-              <HostCapacityTurnsField
-                value={maxRunningTurns}
-                disabled={disabledFor("maxRunningTurns")}
-                onValueChange={(value) => writeToAll({ maxRunningTurns: value })}
-              />
-            </View>
-          ) : null}
         </SettingsSection>
       ) : null}
       <SettingsSection title="Auto-settle">
@@ -241,6 +194,79 @@ export function AutoSettleSettingsRows(props: {
         </SettingsSection>
       ) : null}
     </View>
+  );
+}
+
+/**
+ * The cap and pacing belong to one host, so they show only while exactly one environment that
+ * supports them is selected.
+ */
+export function HostCapacitySettingsRows(props: {
+  readonly write: (patch: ServerSettingsPatch) => void;
+  readonly pending: boolean;
+}) {
+  const { selectedTargets, selectedProjectKey } = useSettingsEnvironmentFilter();
+  const writableEnvironments = useEnvironmentsWithScope(selectedTargets, AuthSettingsWriteScope);
+  const serverConfigs = useServerConfigs();
+  const target = selectedTargets.length === 1 ? selectedTargets[0]! : null;
+  if (
+    target === null ||
+    selectedProjectKey !== null ||
+    target.serverConfig.environment.capabilities.hostAdmission !== true
+  ) {
+    return null;
+  }
+  const displayTargets = resolveMobileSettingsTargets([target], null);
+  const settings = displayTargets[0]?.settings;
+  if (settings === undefined) return null;
+  const disabledFor = (key: string) =>
+    props.pending ||
+    !writableEnvironments.has(target.environmentId) ||
+    managedSettingReason(displayTargets, key) !== undefined;
+  const maxRunningTurns = settings.maxRunningTurns;
+  const admission = serverConfigs.get(target.environmentId)?.hostAdmission;
+  // The server republishes counts only while a setting is on, so they go stale once both are off.
+  const showCounts =
+    admission !== undefined && (settings.paceNewTurnsByHostLoad || maxRunningTurns !== null);
+
+  return (
+    <SettingsSection title="Host capacity">
+      <SettingsSwitchRow
+        icon="clock"
+        label="Pace new turns by host load"
+        subtitle="Holds new turns while memory is critically low and starts them one at a time while the host is busy."
+        value={settings.paceNewTurnsByHostLoad}
+        disabled={disabledFor("paceNewTurnsByHostLoad")}
+        onValueChange={(value) => props.write({ paceNewTurnsByHostLoad: value })}
+      />
+      <SettingsSwitchRow
+        icon="bolt.circle"
+        label="Limit running turns"
+        subtitle={
+          showCounts
+            ? hostAdmissionCounts(admission)
+            : "Further turns wait until a running one finishes. Running turns are never paused."
+        }
+        value={maxRunningTurns !== null}
+        disabled={disabledFor("maxRunningTurns")}
+        onValueChange={(value) =>
+          props.write({ maxRunningTurns: value ? DEFAULT_MAX_RUNNING_TURNS : null })
+        }
+      />
+      {maxRunningTurns !== null ? (
+        <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
+          <View className="w-[22px] android:w-6" />
+          <Text className="flex-1 text-foreground text-lg android:text-base">
+            Maximum running turns
+          </Text>
+          <HostCapacityTurnsField
+            value={maxRunningTurns}
+            disabled={disabledFor("maxRunningTurns")}
+            onValueChange={(value) => props.write({ maxRunningTurns: value })}
+          />
+        </View>
+      ) : null}
+    </SettingsSection>
   );
 }
 

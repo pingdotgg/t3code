@@ -1,4 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { hostAdmissionSummary } from "@t3tools/client-runtime/host-admission-presentation";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Pressable, View } from "react-native";
 
@@ -21,12 +22,7 @@ export function HostAdmissionCard() {
   return (
     <View className="gap-2 px-4 pb-2">
       {waiting.map(({ environmentId, config, admission }) => {
-        const turns = `${admission.waitingTurns} ${admission.waitingTurns === 1 ? "turn" : "turns"} waiting`;
-        const running =
-          admission.maxRunningTurns === null
-            ? `${admission.runningTurns} running`
-            : `${admission.runningTurns}/${admission.maxRunningTurns} running`;
-        const summary = `${turns} · ${running}`;
+        const summary = hostAdmissionSummary(admission);
         const listed = admission.waitingThreadIds.slice(0, MAX_LISTED_THREADS);
         const hidden = admission.waitingThreadIds.length - listed.length;
         return (

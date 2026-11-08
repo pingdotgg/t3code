@@ -1,4 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  hostAdmissionHoldReason,
+  hostAdmissionSummary,
+  hostAdmissionWaitingLabel,
+} from "@t3tools/client-runtime/host-admission-presentation";
 import type { EnvironmentId, HostAdmissionState, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { ClockIcon } from "lucide-react";
@@ -14,7 +19,7 @@ export const SidebarHostAdmissionPill = memo(function SidebarHostAdmissionPill()
   const configs = useServerConfigs();
   const waiting = [...configs].flatMap(([environmentId, config]) =>
     config.hostAdmission !== undefined && config.hostAdmission.waitingTurns > 0
-      ? [{ environmentId, admission: config.hostAdmission }]
+      ? [{ environmentId, label: config.environment.label, admission: config.hostAdmission }]
       : [],
   );
   return (
@@ -23,6 +28,7 @@ export const SidebarHostAdmissionPill = memo(function SidebarHostAdmissionPill()
         <HostAdmissionPill
           key={entry.environmentId}
           environmentId={entry.environmentId}
+          label={configs.size > 1 ? entry.label : null}
           admission={entry.admission}
         />
       ))}
@@ -32,14 +38,13 @@ export const SidebarHostAdmissionPill = memo(function SidebarHostAdmissionPill()
 
 function HostAdmissionPill(props: {
   readonly environmentId: EnvironmentId;
+  readonly label: string | null;
   readonly admission: HostAdmissionState;
 }) {
   const { admission } = props;
-  const running =
-    admission.maxRunningTurns === null
-      ? `${admission.runningTurns} running`
-      : `${admission.runningTurns}/${admission.maxRunningTurns} running`;
-  const title = `${admission.waitingTurns} ${admission.waitingTurns === 1 ? "turn" : "turns"} waiting`;
+  const prefix = props.label === null ? "" : `${props.label}: `;
+  const title = `${prefix}${hostAdmissionWaitingLabel(admission)}`;
+  const reason = hostAdmissionHoldReason(admission);
   return (
     <Popover>
       <PopoverTrigger
@@ -53,13 +58,13 @@ function HostAdmissionPill(props: {
         }
       >
         <ClockIcon />
-        <span className="min-w-0">{`${title} · ${running}`}</span>
+        <span className="min-w-0 truncate">{`${prefix}${hostAdmissionSummary(admission)}`}</span>
       </PopoverTrigger>
       <PopoverPopup side="top" align="start" padding="compact">
         <div className="w-72 max-w-full">
           <PopoverTitle>{title}</PopoverTitle>
           <p className="mt-1 text-2xs text-muted-foreground">
-            The host holds new turns while it is busy. Start one now from its thread.
+            {`${reason === null ? "" : `${reason}. `}Start one now from its thread.`}
           </p>
           <ul className="mt-2 flex max-h-60 flex-col gap-1 overflow-y-auto">
             {admission.waitingThreadIds.map((threadId) => (

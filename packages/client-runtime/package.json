@@ -71,6 +71,10 @@
       "types": "./src/pipelineRunPresentation.ts",
       "default": "./src/pipelineRunPresentation.ts"
     },
+    "./host-admission-presentation": {
+      "types": "./src/hostAdmissionPresentation.ts",
+      "default": "./src/hostAdmissionPresentation.ts"
+    },
     "./composerThreadItems": {
       "types": "./src/composerThreadItems.ts",
       "default": "./src/composerThreadItems.ts"

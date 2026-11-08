@@ -137,6 +137,40 @@ describe("thread workflows", () => {
     expect(state.canSendNow).toBe(false);
   });
 
+  it("offers Start now for a run the host holds only while its thread has no active run", () => {
+    const stateWith = (activeStatus: "running" | "completed") =>
+      deriveThreadQueueWorkflowState({
+        thread: { id: "thread", activeProviderThreadId: null },
+        runs: [
+          { id: "previous", status: activeStatus, ordinal: 1 },
+          {
+            id: "held",
+            status: "queued",
+            userMessageId: "message-held",
+            ordinal: 2,
+            admissionWait: "capacity",
+          },
+          { id: "behind", status: "queued", userMessageId: "message-behind", ordinal: 3 },
+        ],
+        messages: [
+          { id: "message-held", text: "Held" },
+          { id: "message-behind", text: "Behind" },
+        ],
+        providerThreads: [],
+        providerTurns: [],
+        providerSessions: [],
+      } as never);
+
+    expect(stateWith("completed").queuedRuns.map(({ canStartNow }) => canStartNow)).toEqual([
+      true,
+      false,
+    ]);
+    expect(stateWith("running").queuedRuns.map(({ canStartNow }) => canStartNow)).toEqual([
+      false,
+      false,
+    ]);
+  });
+
   it.each(["completed", "interrupted", "cancelled", "failed"])(
     "allows sending a held message after a %s turn without a live session",
     (status) => {

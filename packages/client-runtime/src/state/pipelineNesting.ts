@@ -223,8 +223,8 @@ export function pipelineStepLabel(
 const URGENT_STEP_STATUSES = ["approval", "input", "request", "working"] as const;
 export type PipelineStepStatus = (typeof URGENT_STEP_STATUSES)[number];
 
-/** Thread statuses of a step that is still running or monitoring, so nothing waits on the user. */
-const BUSY_THREAD_STATUSES: ReadonlySet<string> = new Set(["working", "waiting"]);
+/** Thread statuses of a step that is queued, running or monitoring, so nothing waits on the user. */
+const BUSY_THREAD_STATUSES: ReadonlySet<string> = new Set(["queued", "working", "waiting"]);
 
 /**
  * The most urgent status among a pipeline's steps (needs you before running), or null. A paused
@@ -276,7 +276,7 @@ const ATTENTION_THREAD_STATUSES: ReadonlySet<string> = new Set(["approval", "inp
 
 function finishedRunStepStatus(threadStatus: string): PipelineProgressStatus {
   if (ATTENTION_THREAD_STATUSES.has(threadStatus)) return "attention";
-  if (threadStatus === "working") return "running";
+  if (threadStatus === "working" || threadStatus === "queued") return "running";
   if (threadStatus === "failed" || threadStatus === "limited") return "failed";
   return "completed";
 }
