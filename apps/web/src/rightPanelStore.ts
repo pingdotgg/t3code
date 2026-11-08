@@ -14,6 +14,7 @@ import type { ChatFileAttachment } from "./types";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
+  "history",
   "files",
   "file",
   "preview",
@@ -47,6 +48,7 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
+  | { id: "history"; kind: "history" }
   | {
       id: "files";
       kind: "files";
@@ -224,6 +226,8 @@ const singletonSurface = (
   switch (kind) {
     case "diff":
       return { id: "diff", kind };
+    case "history":
+      return { id: "history", kind };
     case "files":
       return { id: "files", kind };
     case "pull-requests":

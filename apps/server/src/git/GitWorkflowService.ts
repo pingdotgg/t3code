@@ -12,6 +12,8 @@ import {
   type VcsCreateRefResult,
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
+  type VcsHistoryInput,
+  type VcsHistoryResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type GitManagerServiceError,
@@ -30,6 +32,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitManager from "./GitManager.ts";
+import { GIT_HISTORY_LOG_FORMAT, parseGitHistoryLog } from "./gitHistory.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -74,6 +77,8 @@ export class GitWorkflowService extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    /** One page of commit history reachable from HEAD, its upstream, and the remote default branch. */
+    readonly history: (input: VcsHistoryInput) => Effect.Effect<VcsHistoryResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
       options?: GitVcsDriver.CreateWorktreeOptions,
@@ -409,6 +414,52 @@ export const make = Effect.gen(function* () {
           isGitRepository ? git.listRefs(input) : Effect.succeed(nonRepositoryListRefs()),
         ),
       );
+    }),
+    history: Effect.fn("GitWorkflowService.history")(function* (input) {
+      const operation = "GitWorkflowService.history";
+      if (!(yield* detectGitRepositoryForCommand(operation, input.cwd))) {
+        return { isRepo: false, commits: [], nextCursor: null };
+      }
+      const resolves = (ref: string) =>
+        git
+          .execute({
+            operation,
+            cwd: input.cwd,
+            args: ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`],
+            allowNonZeroExit: true,
+            timeoutMs: 5_000,
+          })
+          .pipe(Effect.map((result) => result.exitCode === 0));
+      const [hasHead, hasUpstream, hasRemoteDefault] = yield* Effect.all(
+        [resolves("HEAD"), resolves("@{upstream}"), resolves("refs/remotes/origin/HEAD")],
+        { concurrency: "unbounded" },
+      );
+      if (!hasHead) return { isRepo: true, commits: [], nextCursor: null };
+      const cursor = input.cursor ?? 0;
+      const limit = input.limit ?? 200;
+      const result = yield* git.execute({
+        operation,
+        cwd: input.cwd,
+        args: [
+          "log",
+          "--topo-order",
+          "--decorate=full",
+          `--skip=${cursor}`,
+          `--max-count=${limit + 1}`,
+          GIT_HISTORY_LOG_FORMAT,
+          "HEAD",
+          ...(hasUpstream ? ["@{upstream}"] : []),
+          ...(hasRemoteDefault ? ["refs/remotes/origin/HEAD"] : []),
+          "--",
+        ],
+        timeoutMs: 15_000,
+      });
+      const commits = parseGitHistoryLog(result.stdout);
+      return {
+        isRepo: true,
+        commits: commits.slice(0, limit),
+        nextCursor: commits.length > limit ? cursor + limit : null,
+      };
     }),
     createWorktree: Effect.fn("GitWorkflowService.createWorktree")(function (input, options) {
       return ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
