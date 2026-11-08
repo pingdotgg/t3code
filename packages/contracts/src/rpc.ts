@@ -861,6 +861,7 @@ const WsLearnFeatureUsedRpc = Rpc.make(WS_METHODS.learnFeatureUsed, {
         "answer-types",
         "courses",
         "chat-sync",
+        "queued-follow-ups",
       ]),
     }),
     Schema.Struct({ feature: Schema.Literal("knowledge_map.view") }),

@@ -334,6 +334,11 @@ describe("ClientSettings notifications", () => {
   });
 });
 
+it("queues follow-ups unless the user chose Steer", () => {
+  expect(decodeClientSettings({}).followUpBehavior).toBe("queue");
+  expect(decodeClientSettings({ followUpBehavior: "steer" }).followUpBehavior).toBe("steer");
+});
+
 describe("ClientSettings quit confirmation", () => {
   it.each([
     [true, "hold"],
