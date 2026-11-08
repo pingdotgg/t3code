@@ -2,7 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { type DesktopBridge, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
+import { DraftId, resolveComposerDraftKey, useComposerDraftStore } from "../../composerDraftStore";
 import { waitForSnapShotContexts } from "../../lib/desktopSnapShot";
 import * as imageCompression from "../../lib/imageCompression";
 import {
@@ -265,7 +265,7 @@ describe("durable snapshot delivery", () => {
   it("lands a capture before its window text and holds sends until the text fills in", async () => {
     using _env = setup();
     const target = scopeThreadRef(environmentId, ThreadId.make("pending-text-thread"));
-    let current = target;
+    const promoted = scopeThreadRef(environmentId, ThreadId.make("promoted-thread"));
     const capture = {
       id: "12345678-1234-1234-1234-123456789abc",
       name: "window.png",
@@ -290,18 +290,24 @@ describe("durable snapshot delivery", () => {
       acknowledgeSnapShot: vi.fn(async () => undefined),
     } as unknown as DesktopBridge;
 
-    await deliverSnapShot(bridge, capture, () => current);
-    current = scopeThreadRef(environmentId, ThreadId.make("opened-after-landing"));
+    await deliverSnapShot(bridge, capture, () => target);
     const landed = useComposerDraftStore.getState().getComposerDraft(target);
     expect(landed?.images.map(({ id, source }) => [id, source?.accessibleText])).toEqual([
       [capture.id, undefined],
     ]);
+    // Promotion moves the draft, image included, before the text arrives.
+    useComposerDraftStore.setState((state) => {
+      const { [resolveComposerDraftKey(state, target)!]: moved, ...rest } = state.draftsByThreadKey;
+      return {
+        draftsByThreadKey: { ...rest, [resolveComposerDraftKey(state, promoted)!]: moved! },
+      };
+    });
     const sendWait = waitForSnapShotContexts([capture.id]);
     expect(sendWait).not.toBeNull();
 
     fillContext({ accessibleText: "const answer = 42;" });
     await sendWait;
-    const filled = useComposerDraftStore.getState().getComposerDraft(target);
+    const filled = useComposerDraftStore.getState().getComposerDraft(promoted);
     expect(filled?.images[0]?.source?.accessibleText).toBe("const answer = 42;");
     expect(filled?.persistedAttachments[0]?.source?.accessibleText).toBe("const answer = 42;");
     expect(waitForSnapShotContexts([capture.id])).toBeNull();

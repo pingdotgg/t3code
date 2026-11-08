@@ -159,7 +159,6 @@ async function fillSnapShotContext(
   bridge: DesktopBridge,
   capture: DesktopSnapShot,
   imageSize: Parameters<typeof resizeSnapShotSource>[1],
-  target: CaptureTarget,
   persistence: Promise<void>,
 ): Promise<void> {
   const context = await bridge.readSnapShotContext(capture.id);
@@ -167,11 +166,7 @@ async function fillSnapShotContext(
   if (!context?.accessibleText && !context?.accessibility) return;
   useComposerDraftStore
     .getState()
-    .setImageSource(
-      target,
-      capture.id,
-      resizeSnapShotSource({ ...capture.source, ...context }, imageSize),
-    );
+    .setImageSource(capture.id, resizeSnapShotSource({ ...capture.source, ...context }, imageSize));
 }
 
 export async function deliverSnapShot(
@@ -234,7 +229,7 @@ export async function deliverSnapShot(
     // Registered before any await so a send started now still waits for the text.
     trackSnapShotContext(
       capture.id,
-      fillSnapShotContext(bridge, capture, compressed.imageSize, target, persistence),
+      fillSnapShotContext(bridge, capture, compressed.imageSize, persistence),
     );
   }
   await persistence;

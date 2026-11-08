@@ -497,8 +497,13 @@ export function useComposerSend(input: ComposerSendInput) {
       } finally {
         sendInFlightRef.current = false;
       }
-      // The composer now belongs to whatever thread is open; don't send it to this one.
-      if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+      // A thread switch or new typing during the wait leaves the draft for the user to send again.
+      if (
+        currentRouteThreadKeyRef.current !== routeThreadKey ||
+        promptRef.current !== promptAtSend
+      ) {
+        return;
+      }
     }
     const sendCtx = composerRef.current?.getSendContext();
     // `/side` beats an open question and a plan follow-up, which would send the text to main.

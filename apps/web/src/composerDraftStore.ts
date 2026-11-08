@@ -545,11 +545,8 @@ interface ComposerDraftStoreState {
     options?: { allowDuplicates?: boolean },
   ) => string[];
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
-  setImageSource: (
-    threadRef: ComposerThreadTarget,
-    imageId: string,
-    source: SnapShotSource,
-  ) => void;
+  /** Finds the image by id in whichever draft holds it now. */
+  setImageSource: (imageId: string, source: SnapShotSource) => void;
   /** Returns the ids of files appended; a re-pick that replaces a marker is not listed. */
   addFiles: (
     threadRef: ComposerThreadTarget,
@@ -3338,30 +3335,23 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setImageSource: (threadRef, imageId, source) => {
-          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
-          if (threadKey.length === 0) {
-            return;
-          }
+        setImageSource: (imageId, source) => {
           set((state) => {
-            const current = state.draftsByThreadKey[threadKey];
-            if (!current?.images.some((image) => image.id === imageId)) {
-              return state;
+            let draftsByThreadKey: typeof state.draftsByThreadKey | undefined;
+            for (const [threadKey, current] of Object.entries(state.draftsByThreadKey)) {
+              if (!current.images.some((image) => image.id === imageId)) continue;
+              draftsByThreadKey ??= { ...state.draftsByThreadKey };
+              draftsByThreadKey[threadKey] = {
+                ...current,
+                images: current.images.map((image) =>
+                  image.id === imageId ? { ...image, source } : image,
+                ),
+                persistedAttachments: current.persistedAttachments.map((attachment) =>
+                  attachment.id === imageId ? { ...attachment, source } : attachment,
+                ),
+              };
             }
-            return {
-              draftsByThreadKey: {
-                ...state.draftsByThreadKey,
-                [threadKey]: {
-                  ...current,
-                  images: current.images.map((image) =>
-                    image.id === imageId ? { ...image, source } : image,
-                  ),
-                  persistedAttachments: current.persistedAttachments.map((attachment) =>
-                    attachment.id === imageId ? { ...attachment, source } : attachment,
-                  ),
-                },
-              },
-            };
+            return draftsByThreadKey ? { draftsByThreadKey } : state;
           });
         },
         addFiles: (threadRef, files, options) => {
