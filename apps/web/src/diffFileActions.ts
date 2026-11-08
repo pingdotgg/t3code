@@ -35,16 +35,13 @@ function repositoryRelativeWorkspaceSegments(
   const normalizedRepositoryRoot = normalizeProjectPathForComparison(repositoryRoot);
   if (normalizedWorkspaceRoot === normalizedRepositoryRoot) return [];
 
-  const separator = normalizedRepositoryRoot.includes("\\") ? "\\" : "/";
+  const separator = isWindowsAbsolutePath(normalizedRepositoryRoot) ? "\\" : "/";
   const repositoryPrefix = normalizedRepositoryRoot.endsWith(separator)
     ? normalizedRepositoryRoot
     : `${normalizedRepositoryRoot}${separator}`;
   if (!normalizedWorkspaceRoot.startsWith(repositoryPrefix)) return null;
 
-  return normalizedWorkspaceRoot
-    .slice(repositoryPrefix.length)
-    .split(/[\\/]+/)
-    .filter(Boolean);
+  return normalizedWorkspaceRoot.slice(repositoryPrefix.length).split(separator).filter(Boolean);
 }
 
 export function resolveDiffPathForWorkspace(input: {

@@ -45,25 +45,39 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("frontend/Dockerfile");
   });
 
-  it("handles Windows roots", () => {
-    expect(
-      resolveDiffPathForWorkspace({
-        filePath: "Frontend/src/index.ts",
-        workspaceRoot: "C:\\repo\\frontend",
-        repositoryRoot: "C:\\repo",
-      }),
-    ).toBe("src/index.ts");
-  });
-
-  it("keeps a literal backslash in a Git file name", () => {
-    expect(
-      resolveDiffPathForWorkspace({
-        filePath: "frontend/back\\slash.txt",
-        workspaceRoot: "/repo/frontend",
-        repositoryRoot: "/repo",
-      }),
-    ).toBe("back\\slash.txt");
-  });
+  it.each([
+    {
+      filePath: "Frontend/src/index.ts",
+      workspaceRoot: "C:\\repo\\frontend",
+      repositoryRoot: "C:\\repo",
+      expected: "src/index.ts",
+    },
+    {
+      filePath: "Frontend/Src/index.ts",
+      workspaceRoot: "C:\\repo\\frontend\\src",
+      repositoryRoot: "C:\\repo",
+      expected: "index.ts",
+    },
+    {
+      filePath: "frontend/back\\slash.txt",
+      workspaceRoot: "/repo/frontend",
+      repositoryRoot: "/repo",
+      expected: "back\\slash.txt",
+    },
+    {
+      filePath: "back\\slash/a.ts",
+      workspaceRoot: "/repo/back\\slash",
+      repositoryRoot: "/repo",
+      expected: "a.ts",
+    },
+  ])(
+    "resolves $filePath in $workspaceRoot",
+    ({ filePath, workspaceRoot, repositoryRoot, expected }) => {
+      expect(resolveDiffPathForWorkspace({ filePath, workspaceRoot, repositoryRoot })).toBe(
+        expected,
+      );
+    },
+  );
 
   // regression: #6174 opening diff files broke for repositories at a filesystem root
   it.each([
