@@ -1,5 +1,6 @@
 import type {
   HttpOptions_Style,
+  Socket_TcpTlsMode,
   TlsOptions_Version,
   Worker_Binding_CryptoKey_Usage,
 } from "./internal/config.capnp.ts";
@@ -8,6 +9,7 @@ import type {
 
 export {
   HttpOptions_Style,
+  Socket_TcpTlsMode,
   TlsOptions_Version,
   Worker_Binding_CryptoKey_Usage,
 } from "./internal/config.capnp.ts";
@@ -18,7 +20,7 @@ export type Void = typeof kVoid;
 export interface Config {
   services?: Array<Service>;
   sockets?: Array<Socket>;
-  v8Flags?: Array<string>;
+  v8Flags?: ReadonlyArray<string>;
   extensions?: Array<Extension>;
   autogates?: Array<string>;
   structuredLogging?: boolean;
@@ -44,6 +46,7 @@ export interface Socket_Https {
 
 export interface Socket_Tcp {
   tlsOptions?: TlsOptions;
+  tlsMode?: Socket_TcpTlsMode;
 }
 
 export type Service = {
@@ -59,6 +62,16 @@ export interface ServiceDesignator {
   name?: string;
   entrypoint?: string;
   props?: { json: string };
+}
+
+/** Engine and bindings for Workflow classes exposed through ctx.exports. */
+export interface WorkflowsEngine {
+  actorClass?: ServiceDesignator;
+  workflows?: Array<{
+    className?: string;
+    name?: string;
+    bindingService?: ServiceDesignator;
+  }>;
 }
 
 export type Worker_DockerConfiguration = {
@@ -91,6 +104,7 @@ export type Worker = (
   tails?: Array<ServiceDesignator>;
   streamingTails?: Array<ServiceDesignator>;
   containerEngine?: Worker_ContainerEngine;
+  workflowsEngine?: WorkflowsEngine;
   accessBlobHeader?: string;
   accessBindingService?: ServiceDesignator;
 };
@@ -182,9 +196,7 @@ export interface Worker_Binding_WrappedBinding {
   innerBindings?: Array<Worker_Binding>;
 }
 
-export type Worker_Binding_CryptoKey_Algorithm =
-  | { name?: string }
-  | { json?: string };
+export type Worker_Binding_CryptoKey_Algorithm = { name?: string } | { json?: string };
 
 export interface Worker_Binding_Hyperdrive {
   designator?: ServiceDesignator;
@@ -219,15 +231,24 @@ export interface Worker_DurableObjectNamespace_ContainerOptions {
    */
   imageName?: string;
   images?: Array<{ name: string; image: string }>;
-  privileges?: {
-    capabilities?: Array<string>;
-    devices?: Array<{
-      pathOnHost: string;
-      pathInContainer: string;
-      cgroupPermissions: string;
-    }>;
-    securityOpt?: Array<string>;
-  };
+  privileges?: Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges;
+}
+
+/**
+ * Extra Docker `HostConfig` privileges workerd applies when it creates the
+ * container. workerd passes them to Docker as-is, without validation.
+ */
+export interface Worker_DurableObjectNamespace_ContainerOptions_ContainerPrivileges {
+  /** Docker `HostConfig.CapAdd` values. */
+  capabilities?: Array<string>;
+  /** Docker `HostConfig.Devices` values. */
+  devices?: Array<{
+    pathOnHost: string;
+    pathInContainer: string;
+    cgroupPermissions: string;
+  }>;
+  /** Docker `HostConfig.SecurityOpt` values. */
+  securityOpt?: Array<string>;
 }
 
 export type Worker_DurableObjectNamespace = {

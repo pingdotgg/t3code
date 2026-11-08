@@ -17,7 +17,7 @@ export function videoMimeType(attachment: {
   readonly mimeType: string;
 }): string | null {
   const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
-  if (mimeType.startsWith("video/")) return mimeType;
+  if (mimeType.startsWith("video/") && !GENERIC_MIME_TYPES.has(mimeType)) return mimeType;
   if (mimeType !== "" && !GENERIC_MIME_TYPES.has(mimeType)) return null;
   const dotIndex = attachment.name.lastIndexOf(".");
   return dotIndex < 0

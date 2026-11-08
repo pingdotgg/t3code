@@ -1,8 +1,10 @@
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
 import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import { useEffect, useRef, useState } from "react";
 
+import { environmentCatalog } from "~/connection/catalog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { projectEnvironment } from "~/state/projects";
 
@@ -14,6 +16,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
     () => new Set([""]),
   );
   const requests = useRef(new Map<string, Promise<void>>());
+  const followUpRefreshes = useRef(new Map<string, Promise<void>>());
   const loaded = useRef(new Set<string>());
   const requested = useRef(new Set<string>());
   const active = useRef(true);
@@ -84,14 +87,25 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   const load = function loadDirectory(directoryPath: string, refresh = false): Promise<void> {
     const existing = requests.current.get(directoryPath);
-    if (existing)
-      return refresh ? existing.then(() => loadDirectory(directoryPath, true)) : existing;
+    if (existing) {
+      if (!refresh) return existing;
+      let followUp = followUpRefreshes.current.get(directoryPath);
+      if (!followUp) {
+        followUp = existing.then(() => {
+          followUpRefreshes.current.delete(directoryPath);
+          if (active.current) return loadDirectory(directoryPath, true);
+        });
+        followUpRefreshes.current.set(directoryPath, followUp);
+      }
+      return followUp;
+    }
     if (!refresh && loaded.current.has(directoryPath)) return Promise.resolve();
     setPending((count) => count + 1);
     if (!refresh) setLoadingDirectories((previous) => new Set(previous).add(directoryPath));
     return startRequest(directoryPath, refresh);
   };
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts the root directory read on mount and marks the hook inactive so late reads are ignored
   useEffect(() => {
     active.current = true;
     if (!requests.current.has("") && !loaded.current.has("")) void startRequest("", false);
@@ -99,6 +113,15 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       active.current = false;
     };
   }, [startRequest]);
+
+  // A folder read fails at once while its environment is unreachable; read it again once a new
+  // session is up rather than leaving the error until someone retries by hand.
+  const sessionGeneration = environmentCatalog.sessionGenerationAtom(environmentId);
+  // A listener alone does not compute the atom, so nothing would follow the connection.
+  useAtomMount(sessionGeneration);
+  useAtomSubscribe(sessionGeneration, () => {
+    for (const path of errors.keys()) void load(path);
+  });
 
   const entries: ProjectEntry[] = [];
   const visit = (path: string) => {
@@ -116,15 +139,10 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   const refresh = () => {
     const paths = [...requested.current].filter((path) => reachableDirectories.has(path));
-    const workerCount = Math.min(4, paths.length);
-    const worker = async () => {
-      while (active.current) {
-        const path = paths.shift();
-        if (path === undefined) return;
-        await load(path, true);
-      }
-    };
-    for (let index = 0; index < workerCount; index++) void worker();
+    for (const path of paths) {
+      if (!active.current) break;
+      void load(path, true);
+    }
   };
 
   return {
