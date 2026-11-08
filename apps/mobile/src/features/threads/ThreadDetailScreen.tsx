@@ -1161,7 +1161,7 @@ function ThreadDetailBody(
   const reduceMotion = useReducedMotion();
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
   const floatingControlCoverage = useDerivedValue(
-    () => withTiming(floatingCoverageTarget, { duration: 180, reduceMotion: ReduceMotion.System }),
+    () => withTiming(floatingCoverageTarget, { duration: 120, reduceMotion: ReduceMotion.System }),
     [floatingCoverageTarget],
   );
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;

@@ -37,17 +37,23 @@ const CONTROL_HEIGHT = 38.5;
 const CONTROL_GAP = 8;
 const COMPOSER_CAPSULE_INSET = 6;
 const GLASS_MERGE_SPACING = 12;
-const CONTROL_ENTERING = FadeIn.duration(180).reduceMotion(ReduceMotion.System);
-const CONTROL_EXITING = FadeOut.duration(120).reduceMotion(ReduceMotion.System);
+const CONTROL_ENTERING = FadeIn.duration(120).reduceMotion(ReduceMotion.System);
+const CONTROL_EXITING = FadeOut.duration(90).reduceMotion(ReduceMotion.System);
 const CONTROL_TIMING = {
-  duration: 240,
+  duration: 120,
   easing: Easing.out(Easing.cubic),
+  reduceMotion: ReduceMotion.System,
+} as const;
+const CONTROL_HIDE_TIMING = {
+  duration: 100,
+  easing: Easing.in(Easing.cubic),
   reduceMotion: ReduceMotion.System,
 } as const;
 const CONTROL_ROW_GAP = 14;
 const CONTROL_SEPARATION = (CONTROL_ROW_GAP + CONTROL_HEIGHT) / 2;
-const LABEL_ENTERING = FadeIn.duration(160).delay(80).reduceMotion(ReduceMotion.System);
-const LABEL_EXITING = FadeOut.duration(100).reduceMotion(ReduceMotion.System);
+// No enter delay — the status pill should read as already there when chrome settles.
+const LABEL_ENTERING = FadeIn.duration(100).reduceMotion(ReduceMotion.System);
+const LABEL_EXITING = FadeOut.duration(80).reduceMotion(ReduceMotion.System);
 
 // Expo reapplies glass after layout or reattachment, restoring material UIKit can lose behind visible labels.
 const UniwindGlassView = withUniwind(GlassView, {
@@ -120,7 +126,9 @@ export function FloatingWorkingControl(props: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated separation value when scroll-to-end visibility changes
   useEffect(() => {
-    separationProgress.set(withTiming(props.showScrollToEnd ? 1 : 0, CONTROL_TIMING));
+    // Snap in so the chevron is tappable immediately; only animate the hide.
+    if (props.showScrollToEnd) separationProgress.set(1);
+    else separationProgress.set(withTiming(0, CONTROL_HIDE_TIMING));
   }, [props.showScrollToEnd, separationProgress]);
 
   const lift = props.lift;
@@ -218,7 +226,7 @@ export function FloatingWorkingControl(props: {
           accessibilityRole="button"
           accessibilityLabel={extensionStatus.label}
           accessibilityHint="Shows the full Pi status"
-          onPress={extensionStatus.onPress}
+          onPressIn={extensionStatus.onPress}
           onLayout={(event) => setExtensionWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: availableLabelWidth * 0.5 }}
           className="h-11 flex-row items-center px-3 active:opacity-70"
@@ -240,7 +248,7 @@ export function FloatingWorkingControl(props: {
             accessibilityLabel={action.accessibilityLabel}
             accessibilityState={{ disabled: action.disabled }}
             disabled={action.disabled}
-            onPress={action.onPress}
+            onPressIn={action.disabled ? undefined : action.onPress}
             className={`h-11 items-center justify-center px-3 active:opacity-70 ${action.disabled ? "opacity-50" : ""}`}
           >
             <Text className="font-t3-medium text-xs text-foreground" numberOfLines={1}>
@@ -268,7 +276,7 @@ export function FloatingWorkingControl(props: {
           accessibilityRole="button"
           accessibilityLabel={`Open agents, ${agents.accessibilityLabel}`}
           accessibilityHint="Opens this turn's subagents"
-          onPress={props.onOpenAgents}
+          onPressIn={props.onOpenAgents}
           onLayout={(event) => setAgentsWidth(settleWidth(event.nativeEvent.layout.width))}
           className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
         >
@@ -284,7 +292,7 @@ export function FloatingWorkingControl(props: {
           accessibilityRole="button"
           accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
           accessibilityHint="Opens queued messages to send now, edit, or remove"
-          onPress={props.onOpenQueue}
+          onPressIn={props.onOpenQueue}
           onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
@@ -329,7 +337,11 @@ export function FloatingWorkingControl(props: {
 
           <AnimatedGlassView
             colorScheme={props.colorScheme}
-            glassEffectStyle={{ style: props.showScrollToEnd ? "regular" : "none", animate: true }}
+            // Avoid animating liquid-glass material on/off — that reapplication lags taps.
+            glassEffectStyle={{
+              style: props.showScrollToEnd ? "regular" : "none",
+              animate: false,
+            }}
             isInteractive
             pointerEvents={props.showScrollToEnd ? "auto" : "none"}
             accessibilityElementsHidden={!props.showScrollToEnd}
@@ -624,7 +636,7 @@ function StatusLabelRow(props: {
           accessibilityLabel={props.accessibilityLabel}
           accessibilityRole={props.accessibilityRole}
           className={`${rowClassName} active:opacity-70`}
-          onPress={props.onPress}
+          onPressIn={props.onPress}
         >
           {props.children}
         </Pressable>
