@@ -294,6 +294,18 @@ export function createVcsEnvironmentAtoms<R, E>(
       label: "environment-data:vcs:read-refs",
       tag: WS_METHODS.vcsListRefs,
     }),
+    branch: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:vcs:branch",
+      idleTtlMs: VCS_STATUS_IDLE_TTL_MS,
+      subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsBranch>) =>
+        subscribe(WS_METHODS.subscribeVcsBranch, input),
+    }),
+    refreshBranch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:refresh-branch",
+      tag: WS_METHODS.vcsRefreshBranch,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       idleTtlMs: VCS_STATUS_IDLE_TTL_MS,

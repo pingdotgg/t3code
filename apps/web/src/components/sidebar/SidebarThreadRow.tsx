@@ -1,3 +1,4 @@
+import { useAtomMount } from "@effect/atom-react";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
@@ -68,7 +69,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { useThreadSelectionStore } from "../../threadSelectionStore";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useNowSecond } from "../../hooks/useNowSecond";
-import { vcsEnvironment } from "../../state/vcs";
+import { vcsEnvironment, vcsBranchRevalidation } from "../../state/vcs";
 import { useEnvironmentQuery } from "../../state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { formatRelativeTimeLabel, parseTimestampDate } from "../../timestampFormat";
@@ -689,11 +690,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.status({
+      ? vcsEnvironment.branch({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd, includeRemote: false },
+          input: { cwd: gitCwd },
         })
       : null,
+  );
+  useAtomMount(
+    vcsBranchRevalidation(
+      leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+        ? { environmentId: thread.environmentId, cwd: gitCwd }
+        : null,
+    ),
   );
   const visibleGitStatus = useRetainedValue(
     JSON.stringify([thread.environmentId, gitCwd]),
@@ -1642,11 +1650,18 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   const gitCwd = thread.worktreePath ?? props.project?.workspaceRoot ?? null;
   const gitStatus = useEnvironmentQuery(
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
-      ? vcsEnvironment.status({
+      ? vcsEnvironment.branch({
           environmentId: thread.environmentId,
-          input: { cwd: gitCwd, includeRemote: false },
+          input: { cwd: gitCwd },
         })
       : null,
+  );
+  useAtomMount(
+    vcsBranchRevalidation(
+      leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
+        ? { environmentId: thread.environmentId, cwd: gitCwd }
+        : null,
+    ),
   );
   const visibleGitStatus = useRetainedValue(
     JSON.stringify([thread.environmentId, gitCwd]),

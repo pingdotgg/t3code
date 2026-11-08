@@ -124,6 +124,64 @@ function cacheWithRefs(
   });
 }
 
+describe("branch subscriptions", () => {
+  it.effect("shares checkout demand, reconnects, and releases the old stream", () =>
+    Effect.gen(function* () {
+      const released = yield* Queue.unbounded<string>();
+      let subscriptions = 0;
+      const clientFor = (refName: string) =>
+        ({
+          [WS_METHODS.subscribeVcsBranch]: () => {
+            subscriptions += 1;
+            return Stream.concat(Stream.make({ refName }), Stream.never).pipe(
+              Stream.ensuring(Queue.offer(released, refName)),
+            );
+          },
+        }) as unknown as WsRpcProtocolClient;
+      const activeSession = yield* SubscriptionRef.make(Option.some(session(clientFor("main"))));
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(CONNECTED_CONNECTION_STATE),
+        session: activeSession,
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+        followStream: (_environmentId, stream) =>
+          Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+      const runtime = Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+          Layer.succeed(Persistence.EnvironmentCacheStore, cacheWithRefs(Option.none())),
+        ),
+      );
+      const atoms = createVcsEnvironmentAtoms(runtime);
+      const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
+        Effect.sync(() => value.dispose()),
+      );
+      const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
+      const first = yield* Stream.toPull(
+        AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+      );
+      expect(yield* first).toEqual([{ refName: "main" }]);
+      const second = yield* Stream.toPull(
+        AtomRegistry.toStreamResult(registry, atoms.branch(target)),
+      );
+      expect(yield* second).toEqual([{ refName: "main" }]);
+      expect(subscriptions).toBe(1);
+      yield* SubscriptionRef.set(activeSession, Option.some(session(clientFor("external"))));
+      expect(yield* Queue.take(released)).toBe("main");
+      expect(yield* first).toEqual([{ refName: "external" }]);
+      expect(yield* second).toEqual([{ refName: "external" }]);
+      registry.dispose();
+      expect(yield* Queue.take(released)).toBe("external");
+    }).pipe(Effect.scoped),
+  );
+});
+
 describe("cached VCS refs", () => {
   it("invalidates all ref streams in the mutated environment", () => {
     const registry = AtomRegistry.make();
