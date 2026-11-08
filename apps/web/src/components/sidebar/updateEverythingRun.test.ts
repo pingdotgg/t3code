@@ -1,9 +1,16 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
-import { startDesktopUpdateLaunchNotice } from "./updateEverythingRun";
+import type { ServerUpdateOutcome } from "../ServerUpdateAction";
+import type { UpdateEverythingRun } from "./updateEverything.logic";
+import {
+  retryFailedUpdateRunServers,
+  setUpdateEverythingRun,
+  startDesktopUpdateLaunchNotice,
+} from "./updateEverythingRun";
 
 function relaunchWhileRestarting(environmentId: EnvironmentId) {
   const now = 1_800_000_000_000;
@@ -66,5 +73,56 @@ describe("startDesktopUpdateLaunchNotice", () => {
       release();
       stop();
     }
+  });
+});
+
+describe("retryFailedUpdateRunServers", () => {
+  it("closes a failed server that already restarted on the target instead of retrying it", async () => {
+    const environmentId = EnvironmentId.make("already-updated");
+    const targetVersion = "9.9.9";
+    using _config = vi
+      .spyOn(serverEnvironment, "configValueAtom")
+      .mockReturnValue(
+        Atom.make({ environment: { serverVersion: targetVersion } } as unknown as ServerConfig),
+      );
+    setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId,
+          label: "Remote",
+          updatesProviders: false,
+          server: {
+            environmentId,
+            serverLabel: "Remote",
+            selfUpdate: "boot-service",
+            targetVersion,
+          },
+          handedOffVersion: null,
+          startedAt: 0,
+          result: "failed",
+          failure: "Not back after 32 minutes",
+          providerFailure: null,
+        },
+      ],
+    }));
+    const update = vi.fn(async (): Promise<ServerUpdateOutcome> => ({
+      status: "failed",
+      message: "Remote updates must select a newer server version.",
+    }));
+
+    retryFailedUpdateRunServers(update);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    let run: UpdateEverythingRun | null = null;
+    setUpdateEverythingRun((current) => {
+      run = current;
+      return null;
+    });
+    expect(update).not.toHaveBeenCalled();
+    expect(run).toBeNull();
   });
 });
