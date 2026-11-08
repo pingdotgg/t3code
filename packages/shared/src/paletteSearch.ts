@@ -439,7 +439,8 @@ function matchSearchFields(
     if (bestPrimary) primaryRanges.push(...(bestPrimary.letters ?? [bestPrimary]));
     total += best;
     counted += 1;
-    shortToken ||= token.length < PICK_PREFIX_MIN_LENGTH;
+    shortToken ||=
+      token.length < PICK_PREFIX_MIN_LENGTH && !(fillerOptional && FILLER_WORDS.has(token));
   }
   let quality = total / counted;
   if (primary) {

@@ -55,6 +55,15 @@ describe("scoreThreadSearch", () => {
         thread("Polish UIs", { activityAt: NOW, opens: { openedAt: NOW, score: 12, picks: [] } }),
       ]),
     ).toEqual(["Polish UIs", "Parse ui tokens"]);
+    expect(
+      rankTitles("fix in sidebar", [
+        thread("Fix sidebar", { activityAt: NOW - 200 * DAY }),
+        thread("Fix crash in sidebar", {
+          activityAt: NOW,
+          opens: { openedAt: NOW, score: 12, picks: [] },
+        }),
+      ]),
+    ).toEqual(["Fix crash in sidebar", "Fix sidebar"]);
   });
 
   it("treats camelCase, kebab, path, and digit boundaries as word starts", () => {
