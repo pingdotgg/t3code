@@ -18,7 +18,7 @@ import {
   TextFieldSpeechControls,
   type TextFieldSpeech,
 } from "~/speech/useTextFieldSpeech";
-import { chooseAudioDestination, useAudioGrant } from "~/speech/voiceConsent";
+import { chooseAudioDestination, useAudioChoice } from "~/speech/voiceConsent";
 import { useEnvironment } from "~/state/environments";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Button } from "../ui/button";
@@ -51,10 +51,10 @@ function submitThinking(
 
 /** Voice is off per device until chosen; choosing here sends audio to the lesson's environment, as Settings → Voice would. */
 function VoiceOptIn(props: { readonly environmentId: EnvironmentId; readonly disabled: boolean }) {
-  const grant = useAudioGrant();
+  const choice = useAudioChoice();
   const environment = useEnvironment(props.environmentId);
   const supported = environment?.serverConfig?.environment.capabilities.voiceTranscription === true;
-  if (grant !== null || !supported) return null;
+  if ((choice !== null && choice !== "off") || !supported) return null;
   return (
     <div className="mt-2">
       <Button

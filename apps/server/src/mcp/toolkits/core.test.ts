@@ -1251,7 +1251,7 @@ it.effect("animation_render caches a concept clip and replays it without renderi
           Layer.mock(HtmlRender.HtmlRender)({
             publish: (input) =>
               Effect.sync(() => {
-                published.push(input.html);
+                published.push("html" in input ? input.html : input.path);
                 return { attachmentId: "clip", title: input.title, height: input.height };
               }),
           }),
