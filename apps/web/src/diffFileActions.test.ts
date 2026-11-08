@@ -45,14 +45,24 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("frontend/Dockerfile");
   });
 
-  it("handles Windows roots and mixed diff separators", () => {
+  it("handles Windows roots", () => {
     expect(
       resolveDiffPathForWorkspace({
-        filePath: "Frontend/src\\index.ts",
+        filePath: "Frontend/src/index.ts",
         workspaceRoot: "C:\\repo\\frontend",
         repositoryRoot: "C:\\repo",
       }),
     ).toBe("src/index.ts");
+  });
+
+  it("keeps a literal backslash in a Git file name", () => {
+    expect(
+      resolveDiffPathForWorkspace({
+        filePath: "frontend/back\\slash.txt",
+        workspaceRoot: "/repo/frontend",
+        repositoryRoot: "/repo",
+      }),
+    ).toBe("back\\slash.txt");
   });
 
   // regression: #6174 opening diff files broke for repositories at a filesystem root
@@ -69,23 +79,26 @@ describe("openDiffFilePrimaryAction", () => {
     ).toBe("index.ts");
   });
 
-  it.each(["backend/server.ts", "frontend2/app.ts", "frontend/../secret.ts", "C:secret.ts"])(
-    "does not open an out-of-project diff path: %s",
-    (filePath) => {
-      const openInEditor = vi.fn();
+  it.each([
+    "backend/server.ts",
+    "frontend2/app.ts",
+    "frontend/../secret.ts",
+    "frontend/..\\secret.ts",
+    "C:secret.ts",
+  ])("does not open an out-of-project diff path: %s", (filePath) => {
+    const openInEditor = vi.fn();
 
-      openDiffFilePrimaryAction({
-        threadRef: THREAD_REF,
-        filePath,
-        activeCwd: "/repo/frontend",
-        repositoryRoot: "/repo",
-        openInEditor,
-      });
+    openDiffFilePrimaryAction({
+      threadRef: THREAD_REF,
+      filePath,
+      activeCwd: "/repo/frontend",
+      repositoryRoot: "/repo",
+      openInEditor,
+    });
 
-      expect(
-        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
-      ).toMatchObject({ isOpen: false });
-      expect(openInEditor).not.toHaveBeenCalled();
-    },
-  );
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({ isOpen: false });
+    expect(openInEditor).not.toHaveBeenCalled();
+  });
 });

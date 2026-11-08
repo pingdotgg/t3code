@@ -17,11 +17,11 @@ function normalizedRelativePathSegments(filePath: string): ReadonlyArray<string>
     return null;
   }
 
-  const segments = filePath
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment.length > 0 && segment !== ".");
-  if (segments.length === 0 || segments.includes("..")) return null;
+  // Git separates directories with "/" on every platform, so a backslash is part of
+  // a file name. Windows paths still treat it as a separator, so reject ".." either way.
+  if (filePath.split(/[\\/]/).includes("..")) return null;
+  const segments = filePath.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length === 0) return null;
   return segments;
 }
 
