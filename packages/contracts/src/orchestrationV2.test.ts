@@ -2,11 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { CommandId, NodeId, ProjectId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
+import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
-  OrchestrationV2DispatchCommandError,
-  OrchestrationV2ThreadLaunchError,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -37,28 +35,6 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
-  it("preserves the failed attachment ID in dispatch and launch errors", () => {
-    const dispatch = Schema.toCodecJson(OrchestrationV2DispatchCommandError);
-    const launch = Schema.toCodecJson(OrchestrationV2ThreadLaunchError);
-    const dispatchError = new OrchestrationV2DispatchCommandError({
-      commandId: CommandId.make("command"),
-      commandType: "message.dispatch",
-      message: "failed",
-      attachmentId: "pending-1",
-    });
-    const launchError = new OrchestrationV2ThreadLaunchError({
-      commandId: CommandId.make("command"),
-      projectId: ProjectId.make("project"),
-      message: "failed",
-      attachmentId: "pending-2",
-    });
-    expect(
-      Schema.decodeUnknownSync(dispatch)(Schema.encodeSync(dispatch)(dispatchError)).attachmentId,
-    ).toBe("pending-1");
-    expect(
-      Schema.decodeUnknownSync(launch)(Schema.encodeSync(launch)(launchError)).attachmentId,
-    ).toBe("pending-2");
-  });
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),

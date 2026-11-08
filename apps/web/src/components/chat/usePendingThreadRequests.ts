@@ -22,16 +22,10 @@ import {
 import { create } from "zustand";
 import { useRef, useState, type RefObject, type SetStateAction } from "react";
 import { useShallow } from "zustand/react/shallow";
-import {
-  type ComposerFileAttachment,
-  type ComposerImageAttachment,
-  type DraftId,
-  useComposerDraftStore,
-} from "../../composerDraftStore";
+import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   getUploadedAttachments,
-  markAttachmentClaimFailure,
   refreshExpiredAttachmentUploads,
   useAttachmentUploadStore,
 } from "../../lib/attachmentUploadQueue";
@@ -321,7 +315,6 @@ export function usePendingThreadRequests(input: {
     );
     try {
       const attachmentsByQuestionId = new Map<string, UserInputAttachments[string]>();
-      const draftAttachments: Array<ComposerImageAttachment | ComposerFileAttachment> = [];
       const providerAnswers = { ...answers };
       for (const question of pendingInput.questions) {
         const target = questionAttachmentDraftId(
@@ -337,7 +330,6 @@ export function usePendingThreadRequests(input: {
           draft?.threadContexts ?? [],
         );
         const attachments = draft ? [...draft.images, ...draft.files] : [];
-        draftAttachments.push(...attachments);
         if (attachments.length === 0) continue;
         await refreshExpiredAttachmentUploads({
           environmentId,
@@ -379,7 +371,6 @@ export function usePendingThreadRequests(input: {
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        markAttachmentClaimFailure({ environmentId, attachments: draftAttachments, error });
         setThreadError(
           activeThreadId,
           error instanceof Error ? error.message : "Failed to submit user input.",

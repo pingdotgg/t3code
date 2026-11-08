@@ -23,7 +23,6 @@ import {
   stripAttachmentOnlyBootstrapPrompt,
 } from "@t3tools/shared/composerContextReferences";
 import { Atom } from "effect/reactivity";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { RefObject } from "react";
 import { useAssetUrls } from "../../assets/assetUrls";
 import {
@@ -37,7 +36,6 @@ import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   awaitAttachmentUploads,
   getUploadedAttachments,
-  markAttachmentClaimFailure,
   refreshExpiredAttachmentUploads,
   releaseDraftAttachments,
   startAttachmentUpload,
@@ -174,15 +172,7 @@ async function submitQueuedRunEdit(input: {
         },
       },
     });
-    if (result._tag === "Failure") {
-      markAttachmentClaimFailure({
-        environmentId,
-        attachments: newAttachments,
-        error: squashAtomCommandFailure(result),
-      });
-      return "Could not save the edited queued message.";
-    }
-    return null;
+    return result._tag === "Failure" ? "Could not save the edited queued message." : null;
   } catch (error) {
     return error instanceof Error ? error.message : "Could not save the edited queued message.";
   }

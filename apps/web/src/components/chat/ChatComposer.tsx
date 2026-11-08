@@ -1034,26 +1034,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const pasteAsTextShortcutUntilRef = useRef(0);
   const composerFormRef = useRef<HTMLFormElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
-  const previousFailedAttachmentIds = useRef(new Set<string>());
-  // Reveal the first newly failed attachment without moving focus away from the draft.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the mounted attachment element when an upload fails
-  useLayoutEffect(() => {
-    const failed = new Set(
-      [...composerImages, ...composerFiles]
-        .filter((attachment) => uploadsByImageId[attachment.id]?.status === "failed")
-        .map((attachment) => attachment.id),
-    );
-    const newlyFailed = new Set(
-      [...failed].filter((id) => !previousFailedAttachmentIds.current.has(id)),
-    );
-    previousFailedAttachmentIds.current = failed;
-    if (newlyFailed.size === 0) return;
-    const target = Array.from(
-      composerSurfaceRef.current?.querySelectorAll<HTMLElement>("[data-failed-attachment-id]") ??
-        [],
-    ).find((element) => newlyFailed.has(element.dataset.failedAttachmentId ?? ""));
-    target?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [composerImages, composerFiles, uploadsByImageId]);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
   const composerMenuOpenRef = useRef(false);

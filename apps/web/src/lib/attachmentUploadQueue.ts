@@ -85,38 +85,6 @@ export function readAttachmentUpload(imageId: string): AttachmentUploadState | u
   return useAttachmentUploadStore.getState().uploadsByImageId[imageId];
 }
 
-/** Associate a server claim failure with the local draft attachment, regardless of its name. */
-export function markAttachmentClaimFailure(input: {
-  readonly environmentId: EnvironmentId;
-  readonly attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>;
-  readonly error: unknown;
-}): void {
-  if (
-    typeof input.error !== "object" ||
-    input.error === null ||
-    !("attachmentId" in input.error) ||
-    typeof input.error.attachmentId !== "string"
-  )
-    return;
-  for (const attachment of input.attachments) {
-    const upload = readAttachmentUpload(attachment.id);
-    if (
-      upload?.status !== "ready" ||
-      upload.environmentId !== input.environmentId ||
-      upload.attachmentId !== input.error.attachmentId
-    )
-      continue;
-    setUploadState(attachment.id, {
-      status: "failed",
-      environmentId: input.environmentId,
-      ...(attachment.type !== "file" || attachment.uploadedAttachmentId !== upload.attachmentId
-        ? { attachmentId: upload.attachmentId }
-        : {}),
-      reason: input.error instanceof Error ? input.error.message : "Attachment could not be sent.",
-    });
-  }
-}
-
 function resolveCurrentFileDraftTarget(job: DraftFileOwner): ComposerThreadTarget | undefined {
   if (job.draftTarget === undefined || job.image.type !== "file") {
     return undefined;

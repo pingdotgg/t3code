@@ -18,10 +18,7 @@ import {
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
-import {
-  markAttachmentClaimFailure,
-  releaseDraftAttachments,
-} from "../../lib/attachmentUploadQueue";
+import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
 import type { buildMessageContext } from "../../lib/composerContextRecords";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { threadEnvironment } from "../../state/threads";
@@ -164,12 +161,6 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
             ]),
             model: target.selection.model,
             uncertainSubmissions: uncertainSubmissionsRef.current,
-            onFailure: (error) =>
-              markAttachmentClaimFailure({
-                environmentId,
-                attachments: attachmentsSnapshot,
-                error,
-              }),
             start: (targetThreadId) => {
               return startThreadTurn({
                 environmentId,

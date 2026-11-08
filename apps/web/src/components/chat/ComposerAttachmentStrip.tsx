@@ -177,7 +177,6 @@ export function ComposerAttachmentMediaRow({
           return (
             <SnapShotAttachmentFrame
               key={image.id}
-              data-failed-attachment-id={upload?.status === "failed" ? image.id : undefined}
               data-chat-composer-expanded-image="true"
               aria-hidden={snapShotAnimationPending || undefined}
               inert={snapShotAnimationPending || undefined}
@@ -230,12 +229,6 @@ export function ComposerAttachmentMediaRow({
                 <div className="flex h-full w-full items-center justify-center px-1 text-center text-3xs text-secondary-label">
                   {image.name}
                 </div>
-              )}
-              {upload?.status === "failed" && (
-                <span
-                  aria-hidden="true"
-                  className="pointer-events-none absolute inset-0 rounded-lg border-2 border-destructive"
-                />
               )}
               {source?.kind === "snap-shot" ? (
                 <SnapShotAttachmentDetails

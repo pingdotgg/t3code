@@ -21,7 +21,6 @@ export class AttachmentClaimError extends Schema.TaggedError<AttachmentClaimErro
   "AttachmentClaimError",
   {
     message: Schema.String,
-    attachmentId: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -100,7 +99,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           });
           if (!claim.ok) {
             return yield* new AttachmentClaimError({
-              attachmentId: attachment.id,
               message: `Attachment '${attachment.name}' cannot be sent: ${claim.reason}.`,
             });
           }
@@ -108,7 +106,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
             Effect.mapError(
               (cause) =>
                 new AttachmentClaimError({
-                  attachmentId: attachment.id,
                   message: `Attachment '${attachment.name}' cannot be sent: attachment not found.`,
                   cause,
                 }),
@@ -116,7 +113,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           );
           if (Number(info.size) !== attachment.sizeBytes) {
             return yield* new AttachmentClaimError({
-              attachmentId: attachment.id,
               message: `Attachment '${attachment.name}' cannot be sent: stored size does not match.`,
             });
           }
@@ -137,7 +133,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
           });
           if (expectedPath !== claim.finalPath) {
             return yield* new AttachmentClaimError({
-              attachmentId: attachment.id,
               message: `Attachment '${attachment.name}' cannot be sent: attachment type does not match the upload.`,
             });
           }
@@ -147,7 +142,6 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
             Effect.mapError(
               (cause) =>
                 new AttachmentClaimError({
-                  attachmentId: attachment.id,
                   message: `Failed to claim attachment '${attachment.name}' for this thread.`,
                   cause,
                 }),
