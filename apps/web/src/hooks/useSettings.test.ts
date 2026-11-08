@@ -38,13 +38,13 @@ afterEach(() => {
 const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
 const readFailure = new Error("storage unavailable");
 
-async function saveInOtherTab(failedReads = 0) {
+async function saveInOtherTab(failedReads = 0, saved: ClientSettings | null = otherTabSettings) {
   vi.stubGlobal("window", new EventTarget());
   await ensureClientSettingsHydrated();
   for (let read = 0; read < failedReads; read += 1) {
     persistenceMocks.getClientSettings.mockRejectedValueOnce(readFailure);
   }
-  persistenceMocks.getClientSettings.mockResolvedValue(otherTabSettings);
+  persistenceMocks.getClientSettings.mockResolvedValue(saved);
   window.dispatchEvent(Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }));
 }
 
@@ -211,12 +211,16 @@ describe("persistClientSettingsPatch", () => {
     expect(persistenceMocks.setClientSettings).toHaveBeenNthCalledWith(2, secondSettings);
   });
 
-  it("keeps a setting another tab saved after this tab loaded", async () => {
-    await saveInOtherTab();
+  it.each([
+    { change: "saved", loaded: null, saved: otherTabSettings },
+    { change: "cleared", loaded: otherTabSettings, saved: null },
+  ])("follows settings another tab $change after this tab loaded", async ({ loaded, saved }) => {
+    persistenceMocks.getClientSettings.mockResolvedValueOnce(loaded);
+    await saveInOtherTab(0, saved);
 
     await persistClientSettingsPatch({ wordWrap: false });
 
-    const expected = { ...otherTabSettings, wordWrap: false };
+    const expected = { ...(saved ?? DEFAULT_CLIENT_SETTINGS), wordWrap: false };
     expect(persistenceMocks.setClientSettings).toHaveBeenLastCalledWith(expected);
     expect(getClientSettings()).toEqual(expected);
   });

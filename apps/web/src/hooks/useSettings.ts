@@ -202,10 +202,7 @@ async function ensureFreshClientSettings(): Promise<void> {
     return hydrateClientSettings();
   }
   if (clientSettingsStale) {
-    const persistedSettings = await readPersistedClientSettings();
-    if (persistedSettings) {
-      replaceClientSettingsSnapshot(persistedSettings);
-    }
+    replaceClientSettingsSnapshot((await readPersistedClientSettings()) ?? DEFAULT_CLIENT_SETTINGS);
     clientSettingsStale = false;
   }
 }
