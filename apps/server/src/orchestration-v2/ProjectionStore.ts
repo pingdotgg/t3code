@@ -176,6 +176,7 @@ export interface HostAdmissionSnapshot {
     readonly runId: RunId;
     readonly threadId: ThreadId;
     readonly wait: OrchestrationV2AdmissionWait;
+    readonly requestedAtMillis: number;
     /** The thread has no active run, so only host admission holds this run back. */
     readonly ready: boolean;
   }>;
@@ -5786,23 +5787,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
+            // The full status list repeats the partial index's predicate, so SQLite uses it.
             const live = yield* sql<{ readonly run_id: RunId; readonly thread_id: ThreadId }>`
               SELECT run_id, thread_id FROM orchestration_v2_projection_runs
-              WHERE status IN ('preparing', 'starting', 'running')`;
+              WHERE status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                AND status IN ('preparing', 'starting', 'running')`;
             const waiting = yield* sql<{
               readonly run_id: RunId;
               readonly thread_id: ThreadId;
               readonly wait: OrchestrationV2AdmissionWait;
+              readonly requested_at: string;
               readonly ready: number;
             }>`
-              SELECT run.run_id, run.thread_id,
+              SELECT run.run_id, run.thread_id, run.requested_at,
                 json_extract(run.payload_json, '$.admissionWait') AS wait,
                 NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs AS other
                   WHERE other.thread_id = run.thread_id
                     AND other.status IN ('preparing', 'starting', 'running', 'waiting')) AS ready
               FROM orchestration_v2_projection_runs AS run
               JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = run.thread_id
-              WHERE run.status = 'queued'
+              WHERE run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+                AND run.status = 'queued'
                 AND json_extract(run.payload_json, '$.admissionWait') IS NOT NULL
                 AND json_extract(run.payload_json, '$.queueHeld') IS NOT 1
                 AND thread.archived_at IS NULL AND thread.deleted_at IS NULL
@@ -5813,6 +5818,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 runId: row.run_id,
                 threadId: row.thread_id,
                 wait: row.wait,
+                requestedAtMillis: Date.parse(row.requested_at),
                 ready: row.ready === 1,
               })),
             } satisfies HostAdmissionSnapshot;

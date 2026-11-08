@@ -9,6 +9,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -45,6 +46,8 @@ export class HostAdmission extends Context.Service<
     readonly decide: (input: {
       readonly runId: RunId;
       readonly threadId: ThreadId;
+      /** The thread's oldest waiting request; null for a run this dispatch creates. */
+      readonly requestedAt: DateTime.Utc | null;
     }) => Effect.Effect<AdmissionDecision>;
     /** Holds the slots `decide` reserved until `self` returns, which is after its events commit. */
     readonly scopedReservations: <A, E, R>(self: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
@@ -54,10 +57,14 @@ export class HostAdmission extends Context.Service<
     /** Pump triggers: settings, pressure, pacing timer, waits and `requestPump`. */
     readonly pumpRequests: Stream.Stream<void>;
     readonly requestPump: Effect.Effect<void>;
-    /** False while both controls are off and nothing waits, so run ends skip the pump. */
+    /**
+     * Off until startup recovery finishes and again from shutdown on: recovery cancels or holds
+     * runs that start while it reconciles.
+     */
+    readonly setPumpEnabled: (enabled: boolean) => Effect.Effect<void>;
+    /** False while paused, or while both controls are off and nothing waits. */
     readonly pumpNeeded: Effect.Effect<boolean>;
     readonly setWaiters: (waiting: boolean) => Effect.Effect<void>;
-    readonly state: Effect.Effect<HostAdmissionState>;
     /** Recomputes the state for listeners; no work without one. */
     readonly publishState: Effect.Effect<void>;
     /** Current state first, then changes only. */
@@ -100,6 +107,7 @@ const make = Effect.gen(function* () {
   const lastPacedAdmissionAt = yield* Ref.make<number | null>(null);
   const timerArmed = yield* Ref.make(false);
   const hasWaiters = yield* Ref.make(true);
+  const pumpEnabled = yield* Ref.make(false);
   const listeners = yield* Ref.make(0);
   const lastPublished = yield* Ref.make<HostAdmissionState | null>(null);
   const pumpPubSub = yield* PubSub.sliding<void>(1);
@@ -147,25 +155,45 @@ const make = Effect.gen(function* () {
 
   const decide: HostAdmission["Service"]["decide"] = Effect.fn("HostAdmission.decide")(function* ({
     runId,
+    threadId,
+    requestedAt,
   }) {
     const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
     const max = settings.maxRunningTurns;
     const pace = settings.paceNewTurnsByHostLoad;
     if (max === null && !pace) return ADMIT;
+    // Sampling can take a moment; only the count check and reservation need the gate.
+    const level = pace ? yield* currentLevel() : "none";
+    const paced = pace && (level === "elevated" || (yield* cpuBusy));
+    const requestedAtMillis = requestedAt === null ? null : DateTime.toEpochMillis(requestedAt);
     const collector = yield* Effect.serviceOption(DispatchReservations);
     const decision = yield* gate.withPermits(1)(
       Effect.gen(function* () {
-        if (max !== null) {
-          const snapshot = yield* projectionStore.getHostAdmissionSnapshot().pipe(Effect.orDie);
-          if ((yield* runningCount(snapshot, runId)) >= max) {
-            return { admit: false, wait: "capacity" } as const;
-          }
+        const snapshot = yield* projectionStore.getHostAdmissionSnapshot().pipe(Effect.orDie);
+        const reservedIds = yield* Ref.get(reserved);
+        // Threads with an older run that waits only on the host go first. A thread starts one
+        // run at a time, so each counts once; an admitted run not yet committed counts as running.
+        const ahead = new Set(
+          snapshot.waiting
+            .filter(
+              (waiting) =>
+                waiting.ready &&
+                waiting.threadId !== threadId &&
+                !reservedIds.has(waiting.runId) &&
+                (requestedAtMillis === null ||
+                  waiting.requestedAtMillis < requestedAtMillis ||
+                  (waiting.requestedAtMillis === requestedAtMillis && waiting.runId < runId)),
+            )
+            .map((waiting) => waiting.threadId),
+        );
+        if (max !== null && (yield* runningCount(snapshot, runId)) + ahead.size >= max) {
+          return { admit: false, wait: "capacity" } as const;
         }
         if (pace) {
-          const level = yield* currentLevel();
           if (level === "severe") return { admit: false, wait: "host_load" } as const;
           const now = DateTime.toEpochMillis(yield* DateTime.now);
-          if (level === "elevated" || (yield* cpuBusy)) {
+          if (paced) {
+            if (ahead.size > 0) return { admit: false, wait: "host_load" } as const;
             const last = yield* Ref.get(lastPacedAdmissionAt);
             const interval = Duration.toMillis(PACED_ADMISSION_INTERVAL);
             if (last !== null && now - last < interval) {
@@ -175,22 +203,17 @@ const make = Effect.gen(function* () {
           }
           yield* Ref.set(lastPacedAdmissionAt, now);
         }
-        yield* Ref.update(reserved, (ids) => new Set(ids).add(runId));
+        // Registered before the gate opens, so an interruption cannot strand the slot.
+        if (collector._tag === "Some") {
+          collector.value.touched = true;
+          collector.value.runIds.add(runId);
+          yield* Ref.update(reserved, (ids) => new Set(ids).add(runId));
+        }
         return ADMIT;
       }),
     );
     yield* Ref.set(hasWaiters, true);
-    if (collector._tag === "Some") {
-      collector.value.touched = true;
-      if (decision.admit) collector.value.runIds.add(runId);
-    } else if (decision.admit) {
-      // No enclosing dispatch to release it, so the slot must not leak.
-      yield* Ref.update(reserved, (ids) => {
-        const next = new Set(ids);
-        next.delete(runId);
-        return next;
-      });
-    }
+    if (collector._tag === "Some") collector.value.touched = true;
     return decision;
   });
 
@@ -198,13 +221,24 @@ const make = Effect.gen(function* () {
     Effect.suspend(() => {
       const collector = { runIds: new Set<RunId>(), touched: false };
       return Effect.provideService(self, DispatchReservations, collector).pipe(
-        Effect.ensuring(
+        Effect.onExit((exit) =>
           Ref.update(reserved, (ids) => {
             const next = new Set(ids);
             for (const runId of collector.runIds) next.delete(runId);
             return next;
           }).pipe(
-            Effect.andThen(Effect.suspend(() => (collector.touched ? requestPump : Effect.void))),
+            // A committed admission or a denial needs no pump: the run events trigger one, and
+            // the pump's own denials would otherwise request the next pass forever. A slot
+            // reserved by a dispatch that then failed may have turned another run away.
+            Effect.andThen(
+              Effect.suspend(() =>
+                Exit.isFailure(exit) && collector.runIds.size > 0
+                  ? requestPump
+                  : collector.touched
+                    ? publishState
+                    : Effect.void,
+              ),
+            ),
           ),
         ),
       );
@@ -241,7 +275,11 @@ const make = Effect.gen(function* () {
   });
 
   const publishState = Effect.gen(function* () {
-    if ((yield* Ref.get(listeners)) === 0) return;
+    if ((yield* Ref.get(listeners)) === 0) {
+      // States change unseen meanwhile; the next listener must not be compared with this one.
+      yield* Ref.set(lastPublished, null);
+      return;
+    }
     const next = yield* state();
     const previous = yield* Ref.getAndSet(lastPublished, next);
     if (previous !== null && sameState(previous, next)) return;
@@ -254,7 +292,6 @@ const make = Effect.gen(function* () {
       // Subscribe before reading, so a change between the two is not lost.
       const subscription = yield* PubSub.subscribe(statePubSub);
       const initial = yield* state();
-      yield* Ref.set(lastPublished, initial);
       return Stream.concat(Stream.make(initial), Stream.fromSubscription(subscription)).pipe(
         Stream.ensuring(Ref.update(listeners, (count) => Math.max(0, count - 1))),
       );
@@ -290,13 +327,16 @@ const make = Effect.gen(function* () {
     ),
     pumpRequests: Stream.fromPubSub(pumpPubSub),
     requestPump,
+    setPumpEnabled: Effect.fn("HostAdmission.setPumpEnabled")((enabled: boolean) =>
+      Ref.set(pumpEnabled, enabled),
+    ),
     pumpNeeded: Effect.gen(function* () {
+      if (!(yield* Ref.get(pumpEnabled))) return false;
       return (yield* settingsActive) || (yield* Ref.get(hasWaiters));
     }),
     setWaiters: Effect.fn("HostAdmission.setWaiters")((waiting: boolean) =>
       Ref.set(hasWaiters, waiting),
     ),
-    state: state().pipe(Effect.orDie),
     publishState,
     stateChanges,
   });

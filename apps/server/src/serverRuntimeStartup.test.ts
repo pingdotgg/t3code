@@ -32,6 +32,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as LegacyV1ThreadImporter from "./orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as HostAdmission from "./orchestration-v2/HostAdmission.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
@@ -116,6 +117,7 @@ it.effect.each([
           reconcile: () => Effect.succeed(recovery),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({ recoverDelegatedTasks: Effect.void }),
+        Layer.mock(HostAdmission.HostAdmission)({ setPumpEnabled: () => Effect.void }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ shutdown: Effect.void }),
         Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({ start: () => Effect.void }),
         Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({ runOnce: Effect.never }),
