@@ -135,7 +135,20 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
       </NativeText>
     </View>
   );
-  return props.onLongPress ? <Pressable onLongPress={props.onLongPress}>{row}</Pressable> : row;
+  const onLongPress = props.onLongPress;
+  return onLongPress ? (
+    <Pressable
+      onLongPress={onLongPress}
+      accessibilityActions={[{ name: "longpress", label: "Select text" }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "longpress") onLongPress();
+      }}
+    >
+      {row}
+    </Pressable>
+  ) : (
+    row
+  );
 };
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
