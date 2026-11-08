@@ -373,11 +373,13 @@ const readBackward = Effect.fn("cli.thread.readBackward")(function* (
   const pages = [newest.items];
   let previous = done(newest.items) ? null : newest.previousPosition;
   while (previous !== null) {
-    const page = yield* read(previous);
-    pages.push(page.items);
+    const before = previous;
+    const page = yield* read(before);
+    // A server that repeats a page, or a cursor that does not move back, would read forever.
+    const items = page.items.filter((item) => item.position < before);
+    pages.push(items);
     const next = page.previousPosition ?? null;
-    // A cursor that does not move back would read the same page forever.
-    previous = done(page.items) || next === null || next >= previous ? null : next;
+    previous = done(items) || next === null || next >= before ? null : next;
   }
   return { thread: newest.thread, pages };
 });

@@ -350,9 +350,13 @@ it.effect("show stops when a server's previousPosition does not move back", () =
     };
     const { tools, calls } = scriptedTools({ t3_thread_read: [page, page] });
 
-    yield* readLatestMessages(tools, threadId, 10);
+    const { messages } = yield* readLatestMessages(tools, threadId, 10);
 
     assert.lengthOf(calls, 2);
+    assert.deepStrictEqual(
+      messages.map((item) => item.itemId),
+      ["item-5"],
+    );
   }),
 );
 
