@@ -665,7 +665,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       const service = yield* ScheduledTaskRunReactor.ScheduledTaskRunReactor;
       yield* service.start();
     }),
-  ).pipe(Layer.provide(ScheduledTaskRunReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  ).pipe(
+    Layer.provide(ScheduledTaskRunReactor.layer),
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
+  ),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,

@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -44,6 +45,7 @@ function originalMessageId(
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const tasks = yield* ScheduledTaskService.ScheduledTaskService;
   const scope = yield* Effect.scope;
@@ -131,18 +133,28 @@ const make = Effect.gen(function* () {
 
   const start: ScheduledTaskRunReactor["Service"]["start"] = () =>
     forkParked(
-      // Events are live only and recovery runs before this fiber unparks, so runs that ended
-      // across the restart surface only through the reconcile.
-      Effect.all(
-        [
-          Stream.runForEach(engine.streamDomainEvents, handle).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logWarning("scheduled run event stream failed", { cause }),
-            ),
+      // Recovery runs before this fiber unparks. The cursor is taken before the reconcile reads,
+      // so a run that ends while the reconcile runs still reaches the stream.
+      eventSink.latestSequence().pipe(
+        Effect.flatMap((afterSequence) =>
+          Effect.all(
+            [
+              eventSink.stream({ afterSequence }).pipe(
+                Stream.runForEach((stored) => handle(stored.event)),
+                Effect.catchCause((cause) =>
+                  Effect.logWarning("scheduled run event stream failed", { cause }),
+                ),
+              ),
+              reconcile,
+            ],
+            { concurrency: "unbounded", discard: true },
           ),
-          reconcile,
-        ],
-        { concurrency: "unbounded", discard: true },
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("reading the scheduled run event cursor failed", { cause }).pipe(
+            Effect.andThen(reconcile),
+          ),
+        ),
       ),
     );
 

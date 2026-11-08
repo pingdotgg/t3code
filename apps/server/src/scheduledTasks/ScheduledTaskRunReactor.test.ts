@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   type OrchestrationV2RunStatus,
+  type OrchestrationV2StoredEvent,
   type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
@@ -21,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -99,7 +101,23 @@ const makeHarness = () => {
     sentMessageIds: [] as Array<MessageId>,
     reads: 0,
     onSend: (_messageId: MessageId) => {},
+    onRead: () => {},
+    events: [] as Array<OrchestrationV2StoredEvent>,
+    subscribe: Effect.void,
+    streamEnded: Effect.void,
   };
+  // A subscriber that attaches late: it sees what committed after its cursor, nothing earlier.
+  const eventsAfter = (cursor: () => number) =>
+    Stream.unwrap(
+      Effect.suspend(() => state.subscribe).pipe(
+        Effect.map(() => {
+          const afterSequence = cursor();
+          return Stream.fromIterable(
+            state.events.filter((stored) => stored.sequence > afterSequence),
+          );
+        }),
+      ),
+    ).pipe(Stream.ensuring(Effect.suspend(() => state.streamEnded)));
   const getThreadRecords = (
     _threadId: ThreadId,
     _fields: ReadonlyArray<string>,
@@ -110,7 +128,7 @@ const makeHarness = () => {
     },
   ) => {
     state.reads += 1;
-    return Effect.succeed({
+    const records = {
       runs: state.runs.filter((run) => filter?.runIds?.includes(run.id) ?? true),
       messages: state.messages.filter(
         (message) => filter?.messageIds?.includes(message.id) ?? true,
@@ -118,7 +136,9 @@ const makeHarness = () => {
       turnItems: state.turnItems.filter(
         (item) => filter?.turnItemRunIds?.includes(item.runId) ?? true,
       ),
-    } as never);
+    };
+    state.onRead();
+    return Effect.succeed(records as never);
   };
   const layer = ScheduledTaskRunReactor.layer.pipe(
     Layer.provideMerge(
@@ -130,7 +150,13 @@ const makeHarness = () => {
             const settled = state.continuationSettled.get(run.id);
             return settled === undefined ? Effect.void : Deferred.await(settled);
           },
-          streamDomainEvents: Stream.empty,
+          streamDomainEvents: eventsAfter(() => state.events.length).pipe(
+            Stream.map((stored) => stored.event),
+          ),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          latestSequence: () => Effect.sync(() => state.events.length),
+          stream: (input) => eventsAfter(() => input?.afterSequence ?? 0),
         }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({ getThreadRecords }),
         ScheduledTaskService.layer.pipe(
@@ -487,6 +513,46 @@ it.effect("catches up on a run that ended while the server was down", () =>
       })}`;
 
       yield* reconcile;
+
+      assert.deepEqual(yield* taskRow, { status: "failed", error: PROVIDER_ERROR });
+    }),
+  ),
+);
+
+it.effect("records a run that fails after the startup catch-up read it", () =>
+  scenario((state) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const { start } = yield* reactor;
+      const messageId = yield* fire(state);
+      const running = runRecord("run:1", messageId, "running");
+      state.runs.push(running);
+      state.messages.push(messageRecord(messageId, running.id));
+      yield* sql`INSERT INTO orchestration_v2_projection_messages ${sql.insert({
+        message_id: messageId,
+        thread_id: threadId,
+        run_id: running.id,
+        node_id: null,
+        role: "user",
+        streaming: 0,
+        created_at: "2026-09-09T12:00:00.000Z",
+        updated_at: "2026-09-09T12:00:00.000Z",
+        payload_json: "{}",
+      })}`;
+      const committed = yield* Deferred.make<void>();
+      const ended = yield* Deferred.make<void>();
+      state.subscribe = Deferred.await(committed);
+      state.streamEnded = Deferred.succeed(ended, undefined);
+      state.onRead = () => {
+        state.onRead = () => {};
+        const failed = { ...running, status: "failed" as const };
+        state.runs[state.runs.indexOf(running)] = failed;
+        state.turnItems.push(providerFailure(failed, PROVIDER_ERROR));
+        state.events.push({ sequence: 1, event: runUpdated(failed) } as OrchestrationV2StoredEvent);
+        Deferred.doneUnsafe(committed, Effect.void);
+      };
+
+      yield* Effect.scoped(start().pipe(Effect.andThen(Deferred.await(ended))));
 
       assert.deepEqual(yield* taskRow, { status: "failed", error: PROVIDER_ERROR });
     }),
