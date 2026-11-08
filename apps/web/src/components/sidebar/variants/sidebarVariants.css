@@ -401,11 +401,16 @@
   padding-inline: 0;
 }
 
-/* The pills are 18px tall with a 1px border, and this keeps their hit area at 24px. */
+/* The pills are 18px tall with a 1px border, and this keeps their hit area at 24px,
+   also on a coarse pointer, where Button's 44px area would cover the terminal beside them. */
 [data-row-answers] button::after {
   content: "";
   position: absolute;
   inset: -4px 0;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Keeps a focused or revealed row clear of the sticky Waiting on you list. */

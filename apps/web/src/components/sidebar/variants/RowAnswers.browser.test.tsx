@@ -4,7 +4,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 
@@ -134,7 +134,10 @@ it("offers the thread from the popover when the row cannot answer", async () => 
   expect(onOpenThread).toHaveBeenCalledOnce();
 });
 
-const rowShowingAnswers = (lineWidth: number) => (
+const rowShowingAnswers = (
+  lineWidth: number,
+  extra: Partial<Parameters<typeof resolveVariantRow>[0]> = {},
+) => (
   <div style={{ width: lineWidth + 20 }}>
     {
       resolveVariantRow({
@@ -176,6 +179,7 @@ const rowShowingAnswers = (lineWidth: number) => (
             <button type="button" aria-label="Settle thread" style={{ width: 28 }} />
           </span>
         ),
+        ...extra,
       }).body
     }
   </div>
@@ -207,6 +211,53 @@ it("gives answers that do not fit a full line under the chip, terminal and Settl
   for (const offset of [-11, 11]) {
     const hit = document.elementFromPoint(box.left + box.width / 2, middle + offset);
     expect(option.contains(hit)).toBe(true);
+  }
+});
+
+it("keeps a coarse pointer's answer areas off the terminal and Settle beside them", async () => {
+  setup({ approvals: [approval] });
+  const session = cdp();
+  // Chromium's touch emulation is what flips (pointer: coarse); emulated media features cannot.
+  await session.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+  try {
+    for (const workerCount of [null, 2]) {
+      await using screen = await render(
+        rowShowingAnswers(320, {
+          thread: { ...thread, title: "A thread", hasPendingApprovals: true },
+          workerCount,
+          workerSummary: workerCount === null ? null : "2 workers · 1 working",
+          terminal: (
+            <button type="button" aria-label="Open terminal" style={{ width: 20, height: 14 }} />
+          ),
+        }),
+      );
+      expect(matchMedia("(pointer: coarse)").matches).toBe(true);
+      const answers = screen.container.querySelector("[data-row-answers]")!;
+      const controls = ["Open terminal", "Settle thread"].map((name) =>
+        screen.getByRole("button", { name }).element(),
+      );
+      if (workerCount !== null)
+        controls.push(screen.container.querySelector("[data-worker-fold]")!);
+      for (const control of controls) {
+        const box = control.getBoundingClientRect();
+        const middle = box.top + box.height / 2;
+        for (const x of [box.left + 0.5, box.left + box.width / 2, box.right - 0.5]) {
+          const hit = document.elementFromPoint(x, middle);
+          expect(answers.contains(hit), `${control.ariaLabel} at ${x}`).toBe(false);
+        }
+      }
+      const approve = screen.getByRole("button", { name: "Approve", exact: true }).element();
+      const box = approve.getBoundingClientRect();
+      for (const offset of [-11, 11]) {
+        const hit = document.elementFromPoint(
+          box.left + box.width / 2,
+          box.top + box.height / 2 + offset,
+        );
+        expect(approve.contains(hit)).toBe(true);
+      }
+    }
+  } finally {
+    await session.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   }
 });
 
