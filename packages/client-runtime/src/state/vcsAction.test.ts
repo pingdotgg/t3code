@@ -265,6 +265,61 @@ describe("vcsActionState", () => {
             normalizeVcsActionProgressEvent(target, transportActionId, actionId, prEvent),
           ).toEqual({ ...prEvent, actionId, label: enabled ? label.replace("PR", "MR") : label });
         }
+        const url = "https://git.example.test/PR/pull/12";
+        const terminalResult: GitRunStackedActionResult = {
+          ...result,
+          commit: { ...result.commit, subject: "Fix PR rendering" },
+          pr: { status: "opened_existing", url, title: "Fix PR rendering" },
+          toast: {
+            title: "Opened PR #12",
+            description: "Fix PR rendering",
+            cta: { kind: "open_pr", label: "View PR", url },
+          },
+        };
+        expect(
+          normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+            cwd,
+            action,
+            actionId: transportActionId,
+            kind: "action_finished",
+            result: terminalResult,
+          }),
+        ).toEqual({
+          cwd,
+          action,
+          actionId,
+          kind: "action_finished",
+          result: {
+            ...terminalResult,
+            toast: {
+              ...terminalResult.toast,
+              title: enabled ? "Opened MR #12" : "Opened PR #12",
+              cta: { kind: "open_pr", label: enabled ? "View MR" : "View PR", url },
+            },
+          },
+        });
+        expect(
+          normalizeVcsActionProgressEvent(target, transportActionId, actionId, {
+            cwd,
+            action,
+            actionId: transportActionId,
+            kind: "action_finished",
+            result: {
+              ...result,
+              toast: {
+                title: "Pushed to feature/PR",
+                cta: { kind: "run_action", label: "Create PR", action: { kind: "create_pr" } },
+              },
+            },
+          }),
+        ).toMatchObject({
+          result: {
+            toast: {
+              title: "Pushed to feature/PR",
+              cta: { label: enabled ? "Create MR" : "Create PR" },
+            },
+          },
+        });
       }
     } finally {
       setMergeRequestTerms(false);

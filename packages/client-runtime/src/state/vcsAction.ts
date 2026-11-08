@@ -253,6 +253,28 @@ export function normalizeVcsActionProgressEvent(
   if (event.actionId !== transportActionId || event.cwd !== target.cwd) {
     return null;
   }
+  if (event.kind === "action_finished") {
+    const { toast, pr } = event.result;
+    return {
+      ...event,
+      actionId,
+      result: {
+        ...event.result,
+        toast: {
+          ...toast,
+          // Push summaries can contain user-authored branch names.
+          title:
+            pr.status === "created" || pr.status === "opened_existing"
+              ? formatChangeRequestText(toast.title)
+              : toast.title,
+          cta:
+            toast.cta.kind === "none"
+              ? toast.cta
+              : { ...toast.cta, label: formatChangeRequestText(toast.cta.label) },
+        },
+      },
+    };
+  }
   return {
     ...event,
     actionId,
