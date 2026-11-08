@@ -33,6 +33,7 @@ import { threadChipTargets } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
 import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
+import { orchestrationEnvironment } from "./orchestration";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom, serverEnvironment } from "./server";
 import { environmentThreadDetails, environmentThreadShells } from "./threads";
@@ -56,12 +57,22 @@ const EMPTY_THREAD_LINK_TITLES_ATOM = Atom.make<ReadonlyMap<string, string>>(new
 const decodeThreadKey = Schema.decodeUnknownSync(Schema.Tuple([EnvironmentId, ThreadId]));
 const threadKey = (ref: ScopedThreadRef) => JSON.stringify([ref.environmentId, ref.threadId]);
 
-// Null when this client doesn't know the thread. Keyed, so a link never walks an environment's threads.
+// Omitted and archived targets need only a metadata lookup, not their conversation history.
 const threadTitleAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
-  return Atom.make((get) => get(environmentThreadShells.threadShellAtom(ref))?.title ?? null).pipe(
-    Atom.withLabel(`mobile-thread-title:${key}`),
-  );
+  return Atom.make((get) => {
+    const shell = get(environmentThreadShells.threadShellAtom(ref));
+    if (shell !== null) return shell.title;
+    const titles = get(
+      orchestrationEnvironment.threadLinkMetadata({
+        environmentId: ref.environmentId,
+        input: { threadIds: [ref.threadId] },
+      }),
+    );
+    return AsyncResult.isSuccess(titles)
+      ? (titles.value[ref.threadId]?.title ?? (titles.waiting ? "Thread" : null))
+      : "Thread";
+  }).pipe(Atom.withLabel(`mobile-thread-title:${key}`));
 });
 
 const decodeThreadKeys = Schema.decodeUnknownSync(Schema.Array(Schema.String));
@@ -93,11 +104,22 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
   return Atom.make((get): string | null => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
-    const project = shell
+    const metadata =
+      shell ??
+      AsyncResult.getOrElse(
+        get(
+          orchestrationEnvironment.threadLinkMetadata({
+            environmentId: ref.environmentId,
+            input: { threadIds: [ref.threadId] },
+          }),
+        ),
+        () => null,
+      )?.[ref.threadId];
+    const project = metadata?.projectId
       ? get(
           environmentProjects.projectAtom({
             environmentId: ref.environmentId,
-            projectId: shell.projectId,
+            projectId: metadata.projectId,
           }),
         )
       : null;
@@ -224,13 +246,20 @@ export function resolveThreadLink(
   link: ThreadLink,
   messageEnvironmentId: EnvironmentId,
 ): ScopedThreadRef | null {
-  const known = threadLinkCandidates(link, messageEnvironmentId).find(
-    (ref) => read(threadTitleAtom(threadKey(ref))) !== null,
-  );
+  const known = threadLinkCandidates(link, messageEnvironmentId).find((ref) => {
+    if (read(environmentThreadShells.threadShellAtom(ref)) !== null) return true;
+    const metadata = read(
+      orchestrationEnvironment.threadLinkMetadata({
+        environmentId: ref.environmentId,
+        input: { threadIds: [ref.threadId] },
+      }),
+    );
+    return AsyncResult.getOrElse(metadata, () => null)?.[ref.threadId] !== undefined;
+  });
   if (known) return known;
   return link.environmentId === null
     ? guessThreadLinkRef(link, read(environmentThreadShells.threadRefsAtom))
-    : null;
+    : scopeThreadRef(link.environmentId, link.threadId);
 }
 
 export function useThreadChipIcons(

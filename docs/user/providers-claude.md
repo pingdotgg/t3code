@@ -24,6 +24,9 @@ Add another Claude instance in **Settings > Providers**:
 | Claude Work     | `claude`    | Leave empty            |
 | Claude Personal | `claude`    | `~/.claude_personal`   |
 
+On mobile, tap **Add Claude account** in **Settings > Providers** and enter a name and the
+config folder. The login itself still happens on the environment's machine.
+
 An empty config-directory setting uses Claude Code's normal configuration. The
 custom setting changes `CLAUDE_CONFIG_DIR`, leaving `HOME` and the system keychain
 location intact. Use the same variable for the login command. Setting `HOME`
@@ -57,7 +60,8 @@ When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
 sends your message. Click the chip to switch it to **Keep** and keep the full
-history for that message. The cache lasts about an hour on a Claude
+history for that message. The mobile app shows no chip: an eligible message sent
+from it summarizes first. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 

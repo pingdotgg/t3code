@@ -1,6 +1,7 @@
 import {
   AntigravitySettings,
   ClaudeSettings,
+  CloudSpeechCredentials,
   CodexSettings,
   EasDeviceHostConfig,
   type ProviderInstanceConfig,
@@ -45,6 +46,7 @@ const providerSecretFields = new Map([
   ),
 ]);
 const usageLimitSecretFields = secretSettingsFields(UsageLimitSourceConfig);
+const voiceSecretFields = secretSettingsFields(CloudSpeechCredentials);
 const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const encode = (value: string) => Buffer.from(value, "utf8").toString("base64url");
@@ -232,10 +234,45 @@ function mapSecretFieldGroups(
 
   return {
     ...settings,
+    cloudSpeechCredentials: mapFields(
+      settings.cloudSpeechCredentials,
+      voiceSecretFields,
+      (provider) => `voice-cloud-${provider}`,
+    ) as ServerSettings["cloudSpeechCredentials"],
     providerInstances,
     sourceControlHosts,
     usageLimitSources,
     easDeviceHosts,
     simlockDeviceHosts,
+  };
+}
+
+/**
+ * `next` with every secret reference to a secret provider that `current` has and `next` dropped
+ * unset: a credential field becomes empty, and a provider variable holding one is removed.
+ */
+export function withoutRemovedSecretProviderReferences(
+  current: ServerSettings,
+  next: ServerSettings,
+): ServerSettings {
+  const removed = new Set(
+    Object.keys(current.secretProviders).filter((id) => !Object.hasOwn(next.secretProviders, id)),
+  );
+  if (removed.size === 0) return next;
+  const isRemoved = (value: unknown) => isSecretReference(value) && removed.has(value.provider);
+  const fields = mapSettingsSecretValues(next, (value) => (isRemoved(value) ? "" : value));
+  return {
+    ...fields,
+    providerInstances: Object.fromEntries(
+      Object.entries(fields.providerInstances).map(([instanceId, instance]) => [
+        instanceId,
+        instance.environment?.some((variable) => isRemoved(variable.value))
+          ? {
+              ...instance,
+              environment: instance.environment.filter((variable) => !isRemoved(variable.value)),
+            }
+          : instance,
+      ]),
+    ),
   };
 }

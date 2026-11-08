@@ -16,6 +16,7 @@ vi.mock("@t3tools/shared/threadLinks", { spy: true });
 vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../native/ProjectChipIconImages", () => ({}));
 vi.mock("./assets", () => ({}));
+vi.mock("./orchestration", () => ({}));
 vi.mock("./projects", () => ({}));
 vi.mock("./server", () => ({}));
 vi.mock("./threads", async () => {
