@@ -2,6 +2,7 @@ import { pipe } from "effect/Function";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
+  PROVIDER_DISPLAY_NAMES,
   resolveProjectProviderInstanceEnabled,
   type ModelSelection,
   type ProjectId,
@@ -60,10 +61,17 @@ export function deriveProviderInstanceEntries(
     const driverKind = snapshot.driver;
     const defaultId = defaultInstanceIdForDriver(driverKind);
     const isDefault = instanceId === defaultId;
+    const resolvedName = resolveProviderInstanceDisplayName(snapshot);
+    // Two "Claude" rows read as one account; the unnamed default is the server's own login.
+    const needsHostLabel =
+      isDefault &&
+      driverKind !== "acpRegistry" &&
+      resolvedName === PROVIDER_DISPLAY_NAMES[driverKind] &&
+      providers.some((other) => other.driver === driverKind && other.instanceId !== instanceId);
     return {
       instanceId,
       driverKind,
-      displayName: resolveProviderInstanceDisplayName(snapshot),
+      displayName: needsHostLabel ? `${resolvedName} · this box` : resolvedName,
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
@@ -260,4 +268,17 @@ export function resolveProjectDefaultProviderModelSelection(
     ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
   const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
   return entry && model ? { instanceId: entry.instanceId, model } : null;
+}
+
+/** The confirm text for a send that would move a thread to another account of its provider. */
+export function accountSwitchConfirmMessage(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  currentInstanceId: ProviderInstanceId,
+  nextInstanceId: ProviderInstanceId,
+): string | null {
+  if (currentInstanceId === nextInstanceId) return null;
+  const current = entries.find((entry) => entry.instanceId === currentInstanceId);
+  const next = entries.find((entry) => entry.instanceId === nextInstanceId);
+  if (!current || !next || current.driverKind !== next.driverKind) return null;
+  return `Switch this thread to ${next.displayName}?\nIt runs on ${current.displayName} now.`;
 }

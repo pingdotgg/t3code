@@ -236,7 +236,16 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
-  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  // With two accounts for one provider, the chip names which one this thread runs on.
+  const accountLabel =
+    activeEntry &&
+    shouldShowInstanceBadge({ ...activeEntry, accentColor: undefined }, props.instanceEntries)
+      ? activeEntry.displayName.replace(/^.+?\s+[·—–-]\s+/u, "")
+      : undefined;
+  const triggerText =
+    props.triggerLabel ??
+    multipleLabel ??
+    (accountLabel ? `${triggerTitle} · ${accountLabel}` : triggerTitle);
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
@@ -308,6 +317,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ref={triggerRef}
             aria-label={[
               props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
+              accountLabel,
               props.triggerDetail,
             ]
               .filter(Boolean)

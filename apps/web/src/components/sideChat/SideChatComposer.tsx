@@ -58,7 +58,8 @@ import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import type { AssistantCitationSourceAnchor } from "../../lib/assistantTextSelection";
 import { isMacPlatform, newMessageId } from "../../lib/utils";
-import { providerInstanceEntriesFor } from "../../providerInstances";
+import { accountSwitchConfirmMessage, providerInstanceEntriesFor } from "../../providerInstances";
+import { readLocalApi } from "../../localApi";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { makeModelDisabledReason } from "../ChatView.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
@@ -340,6 +341,22 @@ export function SideChatComposer(props: {
         });
 
     sendInFlight.current = true;
+    const accountSwitchMessage = modelSelection
+      ? accountSwitchConfirmMessage(
+          instanceEntries,
+          shell.modelSelection.instanceId,
+          modelSelection.instanceId,
+        )
+      : null;
+    if (
+      accountSwitchMessage !== null &&
+      !(await readLocalApi()
+        ?.dialogs.confirm(accountSwitchMessage)
+        .catch(() => false))
+    ) {
+      sendInFlight.current = false;
+      return;
+    }
     setSending(true);
     const messageId = newMessageId();
     // oxlint-disable-next-line react/purity -- dispatch payloads need the creation timestamp
