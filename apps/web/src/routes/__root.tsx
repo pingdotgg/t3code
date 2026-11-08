@@ -28,6 +28,7 @@ import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPrompt
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
 import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAppActivationCoordinator";
 import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkCoordinator";
+import { QuickComposerLaunchCoordinator } from "../components/desktop/QuickComposerLaunchCoordinator";
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ReopenClosedViewShortcut } from "../components/ReopenClosedViewShortcut";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
@@ -50,6 +51,7 @@ import { useUiStateStore } from "../uiStateStore";
 import { configureClientTracing } from "../observability/clientTracing";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { GUEST_PAGE_PATH } from "../guestPage";
+import { QUICK_COMPOSER_PATH } from "../quickComposer";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { useHostedPromptLinkLanding } from "../components/promptLinks/HostedPromptLinkLanding";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -97,7 +99,8 @@ export const Route = createRootRoute({
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
       shouldResumeSnapShotSetupOnStartup() &&
-      location.pathname !== "/settings/snap-shot"
+      location.pathname !== "/settings/snap-shot" &&
+      location.pathname !== QUICK_COMPOSER_PATH
     ) {
       throw redirect({ to: "/settings/snap-shot", replace: true });
     }
@@ -159,6 +162,8 @@ function RootRouteBranch() {
     return <Outlet />;
   }
 
+  if (pathname === QUICK_COMPOSER_PATH) return <Outlet />;
+
   // Handle links before onboarding redirects lose them.
   if (hostedPromptLinkLanding !== null) {
     return hostedPromptLinkLanding;
@@ -199,7 +204,10 @@ function RootRouteBranch() {
       >
         {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
         {primaryEnvironmentAuthenticated || localEnvironmentDisabled ? (
-          <DesktopWebLinkCoordinator />
+          <>
+            <DesktopWebLinkCoordinator />
+            <QuickComposerLaunchCoordinator />
+          </>
         ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
         <RelayClientInstallDialog />

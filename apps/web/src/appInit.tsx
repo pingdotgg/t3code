@@ -56,6 +56,7 @@ import { installCommandPaletteCommands } from "./shortcuts/commandPaletteCommand
 import { registerOpenFavoriteEditorCommand } from "./components/chat/OpenInPickerShortcut";
 import { environmentThreadShells } from "./state/threads";
 import { resolveThreadRouteTarget } from "./threadRoutes";
+import { isQuickComposerWindow } from "./quickComposer";
 
 /** Writes appearance settings onto the document, touching only the groups that changed. */
 function startClientAppearance(): void {
@@ -178,6 +179,16 @@ export function startAppServices(): AppRouter {
   }
 
   installDesktopPasteAsText(window.desktopBridge, window);
+
+  // The Quick Composer is a second renderer: app-lifetime services (notifications, previews,
+  // prompts, draft promotion) belong to the main window, so it only needs the router and looks.
+  if (isQuickComposerWindow()) {
+    document.documentElement.classList.add("quick-composer");
+    startClientAppearance();
+    startHostEnvironmentLookup();
+    startEnvironmentThemeRepaint();
+    return router;
+  }
 
   startClientAppearance();
   startDocumentTitle();

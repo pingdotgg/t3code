@@ -16,6 +16,8 @@ import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
+import * as DesktopQuickComposer from "../window/DesktopQuickComposer.ts";
+import * as DesktopTray from "../window/DesktopTray.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
@@ -192,6 +194,9 @@ const bootstrap = Effect.gen(function* () {
   );
 
   yield* snapShot.initialize;
+  // Before the main window exists, so the composer can follow it out on close.
+  yield* (yield* DesktopQuickComposer.DesktopQuickComposer).initialize;
+  yield* (yield* DesktopTray.DesktopTray).initialize;
 
   if (!settings.localEnvironmentEnabled) {
     yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");

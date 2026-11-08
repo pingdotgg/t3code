@@ -3,19 +3,22 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeEvents from "node:events";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
+import { QUICK_COMPOSER_LAUNCH_CHANNEL, WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 const makeWindow = () => {
   const sent: Array<string> = [];
+  const launches: Array<unknown> = [];
   const revealed: Array<unknown> = [];
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
     isDestroyed: () => false,
-    send: (channel: string, url: string) => {
-      if (channel === WEB_LINK_OPEN_CHANNEL) sent.push(url);
+    send: (channel: string, payload: string) => {
+      if (channel === WEB_LINK_OPEN_CHANNEL) sent.push(payload);
+      if (channel === QUICK_COMPOSER_LAUNCH_CHANNEL) launches.push(payload);
     },
   });
   const window = { webContents } as unknown as Electron.BrowserWindow;
@@ -37,20 +40,28 @@ const makeWindow = () => {
       ),
     ),
   );
-  return { sent, revealed, layer, reload };
+  return { sent, launches, revealed, layer, reload };
 };
 
 describe("DesktopWebLinks", () => {
   it.effect("holds links until the renderer listens, then delivers them in order", () => {
-    const { sent, revealed, layer } = makeWindow();
+    const { sent, launches, revealed, layer } = makeWindow();
+    const launch = {
+      environmentId: EnvironmentId.make("environment"),
+      projectId: ProjectId.make("project"),
+      prompt: "Fix the build",
+    };
     return Effect.gen(function* () {
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
       yield* webLinks.receive("https://example.com/first");
+      yield* webLinks.receiveQuickComposerLaunch(launch);
       yield* webLinks.receive("https://example.com/second");
       assert.deepStrictEqual(sent, []);
+      assert.deepStrictEqual(launches, []);
 
       yield* webLinks.setRendererReady(true);
       assert.deepStrictEqual(sent, ["https://example.com/first", "https://example.com/second"]);
+      assert.deepStrictEqual(launches, [launch]);
       assert.strictEqual(revealed.length, 1);
 
       yield* webLinks.receive("https://example.com/third");

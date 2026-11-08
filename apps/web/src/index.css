@@ -732,6 +732,11 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   body {
     background-color: var(--app-chrome-background);
   }
+  /* The Quick Composer window is transparent; its card draws the only surface. */
+  html.quick-composer,
+  html.quick-composer body {
+    background-color: transparent;
+  }
   body {
     @apply text-foreground relative;
   }
