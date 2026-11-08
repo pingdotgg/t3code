@@ -987,9 +987,8 @@ describe("ApnsDeliveries", () => {
 
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        const fiber = yield* deliveries
-          .processSignedJob(signed)
-          .pipe(Effect.flip, Effect.forkChild);
+        const job = yield* signed;
+        const fiber = yield* deliveries.processSignedJob(job).pipe(Effect.flip, Effect.forkChild);
         yield* TestClock.adjust("1 second");
         const failure = yield* Fiber.join(fiber);
 
@@ -1001,7 +1000,7 @@ describe("ApnsDeliveries", () => {
         expect(failure).not.toHaveProperty("apnsReason");
         expect(attempts).toEqual([]);
 
-        const redelivered = yield* deliveries.processSignedJob(signed);
+        const redelivered = yield* deliveries.processSignedJob(job);
 
         expect(redelivered).toMatchObject({ ok: true, apnsStatus: 200 });
         expect(statuses).toEqual([]);
@@ -1060,7 +1059,9 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const fiber = yield* deliveries.processSignedJob(signed).pipe(Effect.flip, Effect.forkChild);
+      const fiber = yield* deliveries
+        .processSignedJob(yield* signed)
+        .pipe(Effect.flip, Effect.forkChild);
       yield* TestClock.adjust("1 second");
       const failure = yield* Fiber.join(fiber);
 
@@ -1121,7 +1122,8 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const failure = yield* deliveries.processSignedJob(signed).pipe(Effect.flip);
+      const job = yield* signed;
+      const failure = yield* deliveries.processSignedJob(job).pipe(Effect.flip);
 
       expect(failure).toMatchObject({
         _tag: "ApnsDeliveryJobRetryableFailure",
@@ -1131,7 +1133,7 @@ describe("ApnsDeliveries", () => {
       expect(attempts).toEqual([]);
       expect(markedDeliveries).toEqual([]);
 
-      const redelivered = yield* deliveries.processSignedJob(signed);
+      const redelivered = yield* deliveries.processSignedJob(job);
 
       expect(redelivered).toMatchObject({ ok: true, apnsStatus: 200 });
       expect(executeCount).toBe(2);
@@ -1294,10 +1296,6 @@ describe("APNs queue message isolation", () => {
         if (!outcomes.has(id)) outcomes.set(id, "retry");
       },
     });
-    const batch = [
-      message("throttled", signedPush("device-1", "throttled-token")),
-      message("healthy", signedPush("device-2", "healthy-token")),
-    ];
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
       Effect.sync(() => {
         const token = request.url.split("/").at(-1) ?? "";
@@ -1311,6 +1309,10 @@ describe("APNs queue message isolation", () => {
       });
 
     return Effect.gen(function* () {
+      const batch = [
+        message("throttled", yield* signedPush("device-1", "throttled-token")),
+        message("healthy", yield* signedPush("device-2", "healthy-token")),
+      ];
       yield* Stream.fromIterable(batch).pipe(
         Stream.runForEach(ApnsDeliveryQueueConsumer.processMessage),
       );
