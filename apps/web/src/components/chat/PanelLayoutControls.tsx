@@ -1,11 +1,19 @@
-import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
-import { Maximize2, Minimize2 } from "lucide";
+import { SquareMenuIcon } from "lucide-react";
+import {
+  Maximize2,
+  Minimize2,
+  PanelBottom,
+  PanelBottomClose,
+  PanelRight,
+  PanelRightClose,
+} from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
 import { memo, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -86,17 +94,17 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       {showTerminalControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
+            <Button
+              className="[-webkit-app-region:no-drag]"
+              aria-pressed={terminalOpen}
+              onClick={onToggleTerminal}
               aria-label="Toggle terminal drawer"
               variant="ghost"
-              size="sm"
+              size="icon-sm"
               disabled={!terminalAvailable}
             >
-              <PanelBottomIcon className="size-4" />
-            </Toggle>
+              <MorphIcon className="size-4" icon={terminalOpen ? PanelBottomClose : PanelBottom} />
+            </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
@@ -108,18 +116,18 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       {showRightPanelControl ? (
         <Tooltip>
           <TooltipTrigger render={<span className="flex shrink-0" />}>
-            <Toggle
-              className="shrink-0 [-webkit-app-region:no-drag]"
-              pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
+            <Button
+              className="[-webkit-app-region:no-drag]"
+              aria-pressed={rightPanelOpen}
+              onClick={onToggleRightPanel}
               aria-label="Toggle right panel"
               data-right-panel-toggle
               variant="ghost"
-              size="sm"
+              size="icon-sm"
               disabled={!rightPanelAvailable}
             >
-              <PanelRightIcon className="size-4" />
-            </Toggle>
+              <MorphIcon className="size-4" icon={rightPanelOpen ? PanelRightClose : PanelRight} />
+            </Button>
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {rightPanelAvailable
