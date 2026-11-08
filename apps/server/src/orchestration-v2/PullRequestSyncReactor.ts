@@ -364,10 +364,9 @@ export const make = Effect.gen(function* () {
           nowMs - Date.parse(snapshot.closedAt ?? "") >= CLOSED_FINAL_AFTER_MS;
     const last = lastSyncedAt.get(key);
     const sinceLastMs = last === undefined ? Number.POSITIVE_INFINITY : nowMs - last;
-    if (active.length === 0) {
+    if (active.every(isFinal)) {
       return !entries.every(isFinal) && sinceLastMs >= SETTLED_SYNC_INTERVAL_MS;
     }
-    if (active.every(isFinal)) return false;
     const open = active.filter((entry) => entry.link.snapshot?.state === "open");
     if (open.length > 0) {
       const quiet = open.every((entry) => {

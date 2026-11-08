@@ -1268,6 +1268,11 @@ describe("PullRequestSyncReactor", () => {
                 makeLink(7, { state: "merged", mergedAt: "2026-08-20T00:00:00.000Z" }),
               ],
             }),
+            makeThread("active", {
+              pullRequests: [
+                makeLink(5, { state: "merged", mergedAt: "2026-08-20T00:00:00.000Z" }),
+              ],
+            }),
           ]),
         });
         const readNumbers = Effect.map(Ref.getAndSet(fixture.summaryCalls, []), (calls) =>
