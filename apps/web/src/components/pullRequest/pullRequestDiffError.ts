@@ -90,5 +90,6 @@ export function describeSourceControlRateLimitError(
     .replace(/\s*\.\s*$/u, "")
     .trim();
   const resume = formatSourceControlRateLimitResume(resumeAt, timestampFormat, nowMs);
-  return resume === null ? withoutResume : `${withoutResume}. ${resume}.`;
+  // Keep a sentence terminator so list banners can append more copy.
+  return resume === null ? `${withoutResume}.` : `${withoutResume}. ${resume}.`;
 }

@@ -97,7 +97,7 @@ describe("describeSourceControlRateLimitError", () => {
         "12-hour",
         Date.parse("2026-11-07T19:00:00.000Z"),
       ),
-    ).toBe("GitHub API rate limit exceeded");
+    ).toBe("GitHub API rate limit exceeded.");
   });
 
   it("leaves unrelated errors alone", () => {
