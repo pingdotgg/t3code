@@ -686,7 +686,8 @@ describe("EnvironmentSupervisor", () => {
   it.effect("restarts connection setup that stalled while a web tab was hidden", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        prepare: (attempt) => (attempt === 2 ? Effect.never : Effect.succeed(PREPARED_CONNECTION)),
+        prepare: (attempt) =>
+          attempt === 2 || attempt === 3 ? Effect.never : Effect.succeed(PREPARED_CONNECTION),
       });
       const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
         initiallyDesired: true,
@@ -711,6 +712,14 @@ describe("EnvironmentSupervisor", () => {
         yield* Ref.get(harness.prepareCount),
         "a visible tab should start a fresh attempt instead of waiting out the stalled one",
       ).toBe(3);
+
+      yield* harness.wake("application-active");
+      yield* TestClock.adjust("1 second");
+
+      expect(
+        yield* Ref.get(harness.prepareCount),
+        "returning again should also restart the replacement attempt",
+      ).toBe(4);
       yield* awaitState(
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2 && state.attempt === 1,
