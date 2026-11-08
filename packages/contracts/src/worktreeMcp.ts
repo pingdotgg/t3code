@@ -1,10 +1,31 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  NodeId,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ManagedCloudSandboxResourceId } from "./managedCloudSandbox.ts";
+
+export const WorktreeIsolation = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("filesystem") }),
+  Schema.Struct({
+    kind: Schema.Literal("sandbox").annotate({
+      description:
+        "Create an owned disk fork. Requires Linked environments enabled on the source before allocation; selecting sandbox authorizes enabling it on the newly created child for its necessary peer link. Existing or attached environments are never enabled automatically.",
+    }),
+    operationId: ManagedCloudSandboxResourceId,
+    size: Schema.optionalKey(TrimmedNonEmptyString),
+    autoStopMinutes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
+]);
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
   branch: TrimmedNonEmptyString,
+  isolation: Schema.optionalKey(WorktreeIsolation),
   baseRef: Schema.optional(
     TrimmedNonEmptyString.annotate({
       description: "Default: checked-out branch.",
@@ -63,7 +84,8 @@ export const WorktreeMcpContinuationStatus = Schema.Union([
 ]);
 export type WorktreeMcpContinuationStatus = typeof WorktreeMcpContinuationStatus.Type;
 
-export const WorktreeMcpHandoffResult = Schema.Struct({
+export const FilesystemWorktreeHandoffResult = Schema.Struct({
+  kind: Schema.Literal("filesystem"),
   worktreePath: TrimmedNonEmptyString,
   branch: TrimmedNonEmptyString,
   baseRef: TrimmedNonEmptyString,
@@ -72,7 +94,30 @@ export const WorktreeMcpHandoffResult = Schema.Struct({
   continuation: WorktreeMcpContinuationStatus,
   note: Schema.String,
 });
+export const SandboxWorktreeHandoffResult = Schema.Struct({
+  kind: Schema.Literal("sandbox"),
+  workspaceId: TrimmedNonEmptyString,
+  resourceId: TrimmedNonEmptyString,
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  threadId: ThreadId,
+  taskId: NodeId,
+  workspacePath: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  note: Schema.String,
+});
+export type SandboxWorktreeHandoffResult = typeof SandboxWorktreeHandoffResult.Type;
+export const WorktreeMcpHandoffResult = Schema.Union([
+  FilesystemWorktreeHandoffResult,
+  SandboxWorktreeHandoffResult,
+]);
 export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
+
+export const SandboxWorkspaceDeleteInput = Schema.Struct({ workspaceId: TrimmedNonEmptyString });
+export const SandboxWorkspaceDeleteResult = Schema.Struct({
+  workspaceId: TrimmedNonEmptyString,
+  deleted: Schema.Boolean,
+});
 
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean,

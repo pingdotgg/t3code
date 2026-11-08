@@ -171,9 +171,9 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
-    Schema.Literals(["shared", "worktree"]).annotate({
+    Schema.Literals(["shared", "worktree", "sandbox"]).annotate({
       description:
-        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child. Uncommitted edits stay out.",
+        "'shared' (default): parent checkout. 'worktree': new prepared checkout from the parent commit, for a separate checkout or PR per child; uncommitted edits stay out. 'sandbox': a fresh disposable cloud sandbox per child, provisioned from the server's configured cloud sandbox profile; heavier, use for isolated builds/tests or dirty-tree experiments; async only, never with mode 'wait'.",
     }),
   ),
   mode: Schema.optional(

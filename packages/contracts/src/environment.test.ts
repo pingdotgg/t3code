@@ -33,4 +33,28 @@ describe("ExecutionEnvironmentDescriptor", () => {
       ).toBeUndefined();
     }
   });
+
+  it("decodes CloudSandboxCapabilities and CloudSandboxConnectionTargetSchema", () => {
+    const decodeCapabilities = Schema.decodeUnknownSync(
+      Schema.Struct({
+        diskForking: Schema.Boolean,
+        desktopStreaming: Schema.Boolean,
+        autoStopKeepalive: Schema.Boolean,
+        publicPortHosting: Schema.Boolean,
+        hotResize: Schema.Boolean,
+        rootAccess: Schema.Boolean,
+      }),
+    );
+
+    const capabilities = decodeCapabilities({
+      diskForking: true,
+      desktopStreaming: true,
+      autoStopKeepalive: true,
+      publicPortHosting: true,
+      hotResize: true,
+      rootAccess: true,
+    });
+    expect(capabilities.diskForking).toBe(true);
+    expect(capabilities.desktopStreaming).toBe(true);
+  });
 });

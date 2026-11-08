@@ -239,3 +239,245 @@ export const ScopedThreadRef = Schema.Struct({
   threadId: ThreadId,
 });
 export type ScopedThreadRef = typeof ScopedThreadRef.Type;
+
+export const BoatSandboxSize = Schema.Literals(["small", "default", "large", "xlarge"]);
+export type BoatSandboxSize = typeof BoatSandboxSize.Type;
+
+export const BOAT_SANDBOX_HOURLY_USD = {
+  small: 0.018,
+  default: 0.036,
+  large: 0.072,
+  xlarge: 0.144,
+} as const satisfies Record<BoatSandboxSize, number>;
+
+export const DEFAULT_MAX_CONCURRENT_SANDBOXES = 3;
+
+export const CloudSandboxState = Schema.Literals([
+  "starting",
+  "ready",
+  "stopping",
+  "stopped",
+  "degraded",
+  "error",
+]);
+export type CloudSandboxState = typeof CloudSandboxState.Type;
+export const BoatSandboxState = CloudSandboxState;
+export type BoatSandboxState = CloudSandboxState;
+
+export const BoatSandboxSummary = Schema.Struct({
+  sandboxId: Schema.String,
+  name: Schema.String,
+  size: BoatSandboxSize,
+  state: BoatSandboxState,
+  autoStopDeadline: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  hourlyRateUsd: Schema.NullOr(Schema.Number),
+});
+export type BoatSandboxSummary = typeof BoatSandboxSummary.Type;
+
+export const BoatDesktopStreamSession = Schema.Struct({
+  desktopUrl: Schema.String,
+  expiresAt: Schema.NullOr(Schema.String),
+  viewMode: Schema.Literals(["desktop", "browser"]),
+});
+export type BoatDesktopStreamSession = typeof BoatDesktopStreamSession.Type;
+
+export const CloudSandboxDriverKind = Schema.Literals([
+  "boat",
+  "daytona",
+  "e2b",
+  "modal",
+  "custom",
+]);
+export type CloudSandboxDriverKind = typeof CloudSandboxDriverKind.Type;
+
+export const SandboxAutoStopMinutes = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: 43200 }),
+);
+export const SandboxProfileId = TrimmedNonEmptyString.check(
+  Schema.isPattern(/^[a-zA-Z0-9_-]{1,64}$/u),
+).pipe(Schema.brand("SandboxProfileId"));
+export type SandboxProfileId = typeof SandboxProfileId.Type;
+
+/**
+ * A named provider configuration the server provisions ephemeral sandboxes
+ * from. The API key never leaves the server's secret store, so the public
+ * shape exposes only whether one is set.
+ */
+export const CloudSandboxProfile = Schema.Struct({
+  profileId: SandboxProfileId,
+  name: TrimmedNonEmptyString,
+  driverKind: CloudSandboxDriverKind,
+  apiKeySet: Schema.Boolean,
+  defaultSize: Schema.NullOr(BoatSandboxSize),
+  autoStopMinutes: SandboxAutoStopMinutes,
+  /** Boot template saved snapshot; null creates each sandbox from scratch. */
+  template: Schema.NullOr(TrimmedNonEmptyString),
+  monthlyBudgetUsd: Schema.NullOr(Schema.Number.check(Schema.isGreaterThan(0))),
+  maxConcurrentSandboxes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+});
+export type CloudSandboxProfile = typeof CloudSandboxProfile.Type;
+
+/** Setting `apiKey` replaces the stored key; omitting it keeps the current one. */
+export const CloudSandboxProfileSaveInput = Schema.Struct({
+  profileId: SandboxProfileId,
+  name: TrimmedNonEmptyString,
+  driverKind: CloudSandboxDriverKind,
+  apiKey: Schema.optionalKey(TrimmedNonEmptyString),
+  defaultSize: Schema.NullOr(BoatSandboxSize),
+  autoStopMinutes: SandboxAutoStopMinutes,
+  template: Schema.NullOr(TrimmedNonEmptyString),
+  monthlyBudgetUsd: Schema.NullOr(Schema.Number.check(Schema.isGreaterThan(0))),
+  maxConcurrentSandboxes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
+});
+export type CloudSandboxProfileSaveInput = typeof CloudSandboxProfileSaveInput.Type;
+
+export const CloudSandboxProfileTestInput = Schema.Union([
+  Schema.Struct({ profileId: SandboxProfileId }),
+  Schema.Struct({ driverKind: CloudSandboxDriverKind, apiKey: TrimmedNonEmptyString }),
+]);
+export type CloudSandboxProfileTestInput = typeof CloudSandboxProfileTestInput.Type;
+
+/** Spend accumulated against a profile since the period began. */
+export const CloudSandboxProfileSpend = Schema.Struct({
+  /** UTC calendar month in `YYYY-MM` form. */
+  period: TrimmedNonEmptyString,
+  usd: Schema.Number,
+  /** Sandboxes currently billed hourly; their running cost is not yet included. */
+  running: Schema.Int,
+});
+export type CloudSandboxProfileSpend = typeof CloudSandboxProfileSpend.Type;
+
+export const CloudSandboxProfileStatus = Schema.Struct({
+  profile: CloudSandboxProfile,
+  spend: Schema.NullOr(CloudSandboxProfileSpend),
+});
+export type CloudSandboxProfileStatus = typeof CloudSandboxProfileStatus.Type;
+
+export const CloudSandboxCapabilities = Schema.Struct({
+  diskForking: Schema.Boolean,
+  desktopStreaming: Schema.Boolean,
+  browserStreaming: Schema.optionalKey(Schema.Boolean),
+  recording: Schema.optionalKey(Schema.Boolean),
+  usage: Schema.optionalKey(Schema.Boolean),
+  resizeMode: Schema.optionalKey(Schema.Literals(["none", "restart", "hot"])),
+  autoStopKeepalive: Schema.Boolean,
+  publicPortHosting: Schema.Boolean,
+  protectedPortHosting: Schema.optionalKey(Schema.Boolean),
+  hotResize: Schema.Boolean,
+  rootAccess: Schema.Boolean,
+});
+export type CloudSandboxCapabilities = typeof CloudSandboxCapabilities.Type;
+
+export const CloudSandboxSummary = Schema.Struct({
+  sandboxId: Schema.String,
+  name: Schema.String,
+  driverKind: CloudSandboxDriverKind,
+  state: CloudSandboxState,
+  size: Schema.optionalKey(Schema.String),
+  autoStopDeadline: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  hourlyRateUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+});
+export type CloudSandboxSummary = typeof CloudSandboxSummary.Type;
+
+export const CloudSandboxDetails = Schema.Struct({
+  sandboxId: Schema.String,
+  name: Schema.String,
+  driverKind: CloudSandboxDriverKind,
+  state: CloudSandboxState,
+  size: Schema.optionalKey(Schema.String),
+  autoStopDeadline: Schema.NullOr(Schema.String),
+  createdAt: Schema.String,
+  hourlyRateUsd: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  sshHost: Schema.optionalKey(Schema.String),
+  sshPort: Schema.optionalKey(Schema.Int),
+  sshUsername: Schema.optionalKey(Schema.String),
+});
+export type CloudSandboxDetails = typeof CloudSandboxDetails.Type;
+
+export const SandboxDesktopStreamSession = Schema.Struct({
+  desktopUrl: Schema.String,
+  expiresAt: Schema.NullOr(Schema.String),
+  viewMode: Schema.Literals(["desktop", "browser"]),
+});
+export type SandboxDesktopStreamSession = typeof SandboxDesktopStreamSession.Type;
+
+export const SandboxForkOptions = Schema.Struct({
+  size: Schema.optionalKey(Schema.String),
+  autoStopMinutes: Schema.optionalKey(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 43200 })),
+  ),
+  requestId: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+});
+export type SandboxForkOptions = typeof SandboxForkOptions.Type;
+
+export const SandboxSnapshot = Schema.Struct({
+  name: Schema.String,
+  state: Schema.Literals(["saving", "ready", "failed"]),
+  sourceSandboxId: Schema.String,
+  error: Schema.optionalKey(Schema.String),
+});
+export type SandboxSnapshot = typeof SandboxSnapshot.Type;
+export const SandboxDeletionOperation = Schema.Struct({
+  operationId: Schema.String,
+  sandboxId: Schema.String,
+  state: Schema.Literals(["pending", "processing", "blocked", "completed"]),
+});
+export type SandboxDeletionOperation = typeof SandboxDeletionOperation.Type;
+export const SandboxUsage = Schema.Struct({
+  sandboxId: Schema.String,
+  listRateUsdPerHour: Schema.Number,
+  billableSeconds: Schema.Number,
+  listValueUsd: Schema.Number,
+  running: Schema.Boolean,
+  since: Schema.String,
+  until: Schema.String,
+});
+export type SandboxUsage = typeof SandboxUsage.Type;
+export const SandboxRecordingId = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/u));
+export const SandboxRecording = Schema.Struct({
+  recordingId: SandboxRecordingId,
+  state: Schema.Literals(["recording", "completed", "failed"]),
+  path: Schema.String,
+  mimeType: Schema.Literal("video/mp4"),
+});
+export type SandboxRecording = typeof SandboxRecording.Type;
+
+export const SandboxHostedPortResult = Schema.Struct({
+  port: Schema.Int,
+  url: Schema.String,
+  isPublic: Schema.Boolean,
+});
+export type SandboxHostedPortResult = typeof SandboxHostedPortResult.Type;
+
+export const CloudSandboxSelection = Schema.Struct({
+  requestId: Schema.optionalKey(Schema.String),
+  template: Schema.optionalKey(Schema.String),
+  name: TrimmedNonEmptyString,
+  size: BoatSandboxSize,
+  autoStopMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 43200 })),
+});
+export type CloudSandboxSelection = typeof CloudSandboxSelection.Type;
+export const CloudSandboxPrepareInput = Schema.Struct({
+  profile: SandboxProfileId,
+  sandbox: CloudSandboxSelection,
+});
+export type CloudSandboxPrepareInput = typeof CloudSandboxPrepareInput.Type;
+
+export const CloudSandboxOperationResult = Schema.Union([
+  Schema.TaggedStruct("list", { sandboxes: Schema.Array(CloudSandboxSummary) }),
+  Schema.TaggedStruct("status", {
+    sandbox: CloudSandboxDetails,
+    capabilities: CloudSandboxCapabilities,
+  }),
+  Schema.TaggedStruct("desktop", { session: SandboxDesktopStreamSession }),
+  Schema.TaggedStruct("fork", { sandbox: CloudSandboxDetails }),
+  Schema.TaggedStruct("host", { port: SandboxHostedPortResult }),
+  Schema.TaggedStruct("deleted", {}),
+]);
+export type CloudSandboxOperationResult = typeof CloudSandboxOperationResult.Type;
+
+export const CLOUD_SANDBOX_ACTIVITY_PATH = "/api/cloud-sandboxes/activity";
+export const CloudSandboxActivity = Schema.Struct({ active: Schema.Boolean });

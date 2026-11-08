@@ -383,11 +383,19 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   bootstrapToken: Schema.optionalKey(Schema.String),
 });
 
+export const SshServerHomeKey = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)).pipe(
+  Schema.brand("SshServerHomeKey"),
+);
+
 export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
   alias: Schema.String,
   hostname: Schema.String,
   username: Schema.NullOr(Schema.String),
   port: Schema.NullOr(Schema.Number),
+  serverHomeKey: Schema.optionalKey(SshServerHomeKey),
+  identityFile: Schema.optionalKey(Schema.String),
+  knownHostsFile: Schema.optionalKey(Schema.String),
+  hostKeyAlias: Schema.optionalKey(Schema.String),
 });
 export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
