@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -406,7 +407,11 @@ it("bounds long partial lines and joins surrogate pairs across chunk boundaries"
 });
 
 it.layer(
-  Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    ProcessRunner.layer.pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  ),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
   it.effect("spawns lazily and reuses running terminal per thread", () =>
@@ -735,34 +740,76 @@ it.layer(
     }),
   );
 
-  it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
+  it.effect(
+    "closes idle shells and opted-in actions on settlement without stopping other commands",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 100, ppid: 9000, name: "zsh" },
+            { pid: 9001, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9001, name: "node" },
+            { pid: 9002, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9002, name: "zsh" },
+            { pid: 301, ppid: 300, name: "sleep" },
+            { pid: 9003, ppid: 1, name: "zsh" },
+            { pid: 9004, ppid: 1, name: "zsh" },
+            { pid: 400, ppid: 9004, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+        yield* manager.open(openInput({ terminalId: "idle" }));
+        yield* manager.open(openInput({ terminalId: "dev-server" }));
+        yield* manager.open(openInput({ terminalId: "subshell" }));
+        yield* manager.open(openInput({ threadId: "thread-2", stopOnSettle: true }));
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+
+        yield* manager.closeIdle({ threadId: "thread-1" });
+
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          false,
+        ]);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: false }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes[4]?.killed).toBe(false);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          true,
+        ]);
+      }),
+  );
+
+  it.effect("labels a running command by its whole process name, spaces included", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
+      const { manager } = yield* createManager(5, {
+        subprocessPollIntervalMs: 1_000,
+        processKillGraceMs: 0,
         processTable: Effect.succeed([
           { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 100, ppid: 9000, name: "zsh" },
-          { pid: 9001, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9001, name: "node" },
-          { pid: 9002, ppid: 1, name: "zsh" },
-          { pid: 300, ppid: 9002, name: "zsh" },
-          { pid: 301, ppid: 300, name: "sleep" },
-          { pid: 9003, ppid: 1, name: "zsh" },
+          { pid: 200, ppid: 9000, name: "Google Chrome" },
         ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      yield* manager.open(openInput({ terminalId: "idle" }));
-      yield* manager.open(openInput({ terminalId: "dev-server" }));
-      yield* manager.open(openInput({ terminalId: "subshell" }));
-      yield* manager.open(openInput({ threadId: "thread-2" }));
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      const label = yield* Deferred.make<string>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "activity"
+          ? Deferred.succeed(label, event.label).pipe(Effect.asVoid)
+          : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      yield* manager.open(openInput());
+      yield* TestClock.adjust("1 second");
 
-      yield* manager.closeIdle({ threadId: "thread-1" });
-
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
-        true,
-        false,
-        false,
-        false,
-      ]);
-    }),
+      expect(yield* Deferred.await(label)).toBe("Google Chrome");
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   // Answers process-table queries after `queryDuration`, honoring the caller's
@@ -1086,7 +1133,8 @@ it.layer(
       const { manager, ptyAdapter } = yield* createManager();
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0]!;
-      const before = "café\t界🙂\u0007\u009c\u0085";
+      // Mojibake like "â€\u009d" (for ”) carries C1 code points that libghostty prints as text.
+      const before = "café\t界🙂\u0007\u009c\u0085 â€\u009d Ð\u0090 \u009e\u009f\u009b6n";
       const after = "e\u0301\r\n";
 
       process.emitData(before);
@@ -1110,17 +1158,18 @@ it.layer(
       process.emitData("\u001b[?2026$p\u001b[?2026;2$y\u001b[>q\u001b[?u\u001b[?31u");
       process.emitData("\u001bP$q m\u001b\\\u001bP1$r0m\u001b\\");
       process.emitData("\u001bP+q544e\u001b\\\u001bP1+r544e=1b\u001b\\");
-      process.emitData("\u0090$q m\u009c\u00901$r0m\u009c");
-      process.emitData("\u0090+q544e\u009c\u00901+r544e=1b\u009c");
       process.emitData('\u001b[!p\u001b["p\u001b[4 q\u001b[u');
+      process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
       process.emitData("done\n");
 
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      expect(reopened.history.startsWith('prompt \u001b[!p\u001b["p\u001b[4 q\u001b[udone\n')).toBe(
-        true,
-      );
+      expect(
+        reopened.history.startsWith(
+          'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u\u001b]0;x\u001bdone\n',
+        ),
+      ).toBe(true);
     }),
   );
 
@@ -1130,17 +1179,13 @@ it.layer(
     { name: "PM", sequence: "\u001b^unfinished" },
     { name: "APC", sequence: "\u001b_unfinished" },
     { name: "CSI", sequence: "\u001b[5" },
-    { name: "C1 OSC", sequence: "\u009d0;unfinished" },
-    { name: "C1 DCS", sequence: "\u0090unfinished" },
-    { name: "C1 PM", sequence: "\u009eunfinished" },
-    { name: "C1 APC", sequence: "\u009funfinished" },
-    { name: "C1 CSI", sequence: "\u009b5" },
   ])("keeps output after a cancelled $name sequence in history", ({ sequence }) =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager(10);
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0]!;
-      for (const cancel of ["\u0018", "\u001a"]) {
+      // A new escape sequence also aborts one, as in xterm.js; keep it last so CAN cannot end it.
+      for (const cancel of ["\u0018", "\u001a", "\u001b[0m"]) {
         process.emitData(sequence);
         process.emitData(cancel);
         process.emitData("next line\n");
@@ -1149,7 +1194,7 @@ it.layer(
       yield* manager.close({ threadId: "thread-1" });
 
       const reopened = yield* manager.open(openInput());
-      expect(reopened.history.match(/next line/g)).toHaveLength(4);
+      expect(reopened.history.match(/next line/g)).toHaveLength(6);
     }),
   );
 
@@ -1167,10 +1212,10 @@ it.layer(
       process.emitData("\u001bP$q ");
       process.emitData("m\u001b");
       process.emitData("\\after ");
-      process.emitData("\u009b?3");
+      process.emitData("\u001b[?3");
       process.emitData("1uafter ");
-      process.emitData("\u0090+q544e");
-      process.emitData("\u009cafter\n");
+      process.emitData("\u001bP+q544e");
+      process.emitData("\u001b\\after\n");
 
       yield* manager.close({ threadId: "thread-1" });
 
@@ -1193,10 +1238,10 @@ it.layer(
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const sequences = [
         { prefix: `\u001b]52;c;${"YWJj".repeat(16_384)}\u001b`, terminator: "\\" },
-        { prefix: `\u0090q${"?".repeat(65_536)}`, terminator: "\u009c" },
+        { prefix: `\u001bPq${"?".repeat(65_536)}`, terminator: "\u001b\\" },
       ];
-      const stripped = "\u001b]11;?\u0007\u0090$q m\u009c";
-      const preserved = "\u001b[31m\u009d52;c;YWJj\u009c";
+      const stripped = "\u001b]11;?\u0007\u001bP$q m\u001b\\";
+      const preserved = "\u001b[31m\u001b]52;c;YWJj\u0007";
       const expected =
         sequences.map(({ prefix, terminator }) => prefix + terminator + preserved).join("") +
         "done\n";
@@ -2019,6 +2064,25 @@ it.layer(
     }),
   );
 
+  it.effect("starts bash as a login shell on macOS only", () =>
+    Effect.gen(function* () {
+      for (const [platform, shell, args] of [
+        ["darwin", "/bin/bash", ["-l"]],
+        ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
+        ["linux", "/bin/bash", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["win32", "pwsh.exe", ["-NoLogo"]],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => shell,
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        expect.soft(ptyAdapter.spawnInputs[0]?.args, `${platform} ${shell}`).toEqual(args);
+      }
+    }),
+  );
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();

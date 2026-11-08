@@ -15,7 +15,7 @@ program that runs on it.
 
 ```typescript
 // src/api.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 export default class Api extends Fly.Service<Api>()(
@@ -40,7 +40,7 @@ this file with Rolldown, builds a Docker image (default
 Return `fetch` from the constructor Effect to boot an HTTP server.
 
 ```diff lang="typescript"
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 +import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -395,7 +395,7 @@ Return a `run` Effect for a long-running loop:
 
 ```typescript
 // src/worker.ts
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 
 export default class Worker extends Fly.Service<Worker>()(
