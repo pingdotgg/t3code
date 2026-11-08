@@ -1,5 +1,6 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  PROVIDER_DISPLAY_NAMES,
   type ProviderInstanceId,
   type EnvironmentId,
   type ProviderDriverKind,
@@ -236,7 +237,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     .filter(Boolean)
     .join(" · ");
 
-  const triggerText = props.triggerLabel ?? multipleLabel ?? triggerTitle;
+  // With two accounts for one provider, the chip names which one this thread runs on.
+  const accountLabel =
+    props.triggerLabel === undefined &&
+    !selectedEntries &&
+    activeEntry &&
+    shouldShowInstanceBadge({ ...activeEntry, accentColor: undefined }, props.instanceEntries)
+      ? activeEntry.displayName.replace(/^(.+?)\s+[·—–-]\s+/u, (prefix, head: string) =>
+          head === PROVIDER_DISPLAY_NAMES[activeEntry.driverKind] ? "" : prefix,
+        )
+      : undefined;
+  const triggerText =
+    props.triggerLabel ??
+    multipleLabel ??
+    (accountLabel ? `${triggerTitle} · ${accountLabel}` : triggerTitle);
   const triggerTextProps = {
     className: cn(
       "min-w-0 flex-1 overflow-hidden truncate",
@@ -308,6 +322,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ref={triggerRef}
             aria-label={[
               props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
+              accountLabel,
               props.triggerDetail,
             ]
               .filter(Boolean)
