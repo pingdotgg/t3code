@@ -336,12 +336,14 @@ choose **Link**, and pick the other machine or enter its address. The list
 holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
-**Settings → Sharing & access**. From a terminal, use
-the environment variable before running the link:
+**Settings → Sharing & access**. From a terminal, read the code into the
+environment variable without echoing it, then run the link:
 
 ```sh
-export T3CODE_PAIRING_CODE=<code>
+IFS= read -rs T3CODE_PAIRING_CODE   # paste the code, then press Enter
+export T3CODE_PAIRING_CODE
 t3 environment link <address> --access <mode>
+unset T3CODE_PAIRING_CODE
 ```
 
 You can pass the code with `--pairing-code <code>` instead, but entering it on
