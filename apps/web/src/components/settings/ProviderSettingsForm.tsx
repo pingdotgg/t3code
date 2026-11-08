@@ -421,7 +421,8 @@ function ProviderSettingsTextInput({
   const saved = readProviderConfigString(value, field.key);
   const [rejection, setRejection] = useState<{ draft: string; saved: string } | null>(null);
   // A rejected draft stays only until the saved value changes underneath it.
-  const rejected = rejection?.saved === saved ? rejection.draft : null;
+  if (rejection !== null && rejection.saved !== saved) setRejection(null);
+  const rejected = rejection?.draft ?? null;
   const errorId = `${inputId}-error`;
   return (
     <div className="flex w-full min-w-0 flex-col gap-1 @min-[32rem]/settings-row:w-56">
