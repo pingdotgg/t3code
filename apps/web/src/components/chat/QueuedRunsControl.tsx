@@ -351,6 +351,8 @@ export function QueuedRunsControl({
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
+                // Puts the grip's ink, not its padding, on the composer's text line.
+                className="-ms-2 sm:-ms-1.5"
                 aria-label={`Reorder queued message ${position + 1}`}
                 disabled={item.runId === null || busyRunId !== null}
                 draggable={item.runId !== null}
@@ -476,6 +478,7 @@ export function QueuedRunsControl({
                             size="icon-xs"
                             variant="ghost-muted"
                             aria-label="Remove queued message"
+                            className="-me-1 sm:-me-[3px]"
                             disabled={item.runId === null || busyRunId !== null}
                             onClick={() => {
                               if (item.runId !== null) void remove(item.runId);
@@ -495,7 +498,7 @@ export function QueuedRunsControl({
         })}
       </ol>
       {collapsible ? (
-        <div className="self-end pe-1 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+        <div className="self-end pe-2.25 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
           <InlineButton
             tone="muted"
             aria-expanded={showAll}
