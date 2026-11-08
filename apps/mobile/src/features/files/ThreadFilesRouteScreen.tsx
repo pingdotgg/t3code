@@ -2,7 +2,12 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useNavigation,
+  usePreventRemove,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { type ReactNode, useId, useState } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -214,6 +219,7 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly selectable: boolean;
+  readonly onLongPressLine?: (line: number) => void;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -315,6 +321,7 @@ function FileContent(props: {
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
           selectable={props.selectable}
+          onLongPressLine={props.onLongPressLine}
           onRefresh={props.onRefresh}
         />
       )}
@@ -713,13 +720,21 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
-  // Android numbered rows are separate text views, so selection spanning lines needs the
-  // continuous renderer. It stays opt-in because it lays out the whole file at once.
-  const selectionScope = JSON.stringify([environmentId, cwd, relativePath]);
-  const [textSelectionScope, setTextSelectionScope] = useState<string | null>(null);
+  // Android numbered rows are separate text views, so a long-press opens the whole file as
+  // one selectable text at that line. Back returns to the numbered rows at the same line.
+  const selectionScope = JSON.stringify([environmentId, cwd, relativePath, targetLine]);
+  const [textSelection, setTextSelection] = useState<{
+    readonly scope: string;
+    readonly line: number;
+    readonly active: boolean;
+  } | null>(null);
+  const scopedTextSelection = textSelection?.scope === selectionScope ? textSelection : null;
   const canSelectText =
     Platform.OS === "android" && resolvedActiveMode === "source" && fileData?.contents != null;
-  const selectingText = canSelectText && textSelectionScope === selectionScope;
+  const selectingText = canSelectText && scopedTextSelection?.active === true;
+  usePreventRemove(selectingText, () =>
+    setTextSelection((current) => current && { ...current, active: false }),
+  );
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -808,15 +823,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
           } as const)
         : null,
-      canSelectText
-        ? ({
-            id: "select-text",
-            title: selectingText ? "Done selecting text" : "Select text",
-            icon: selectingText ? "checkmark" : "doc.text",
-            inline: false,
-            onPress: () => setTextSelectionScope(selectingText ? null : selectionScope),
-          } as const)
-        : null,
       ...(mediaSource
         ? mediaActions.actions
             .filter(({ id }) => id !== "open-file")
@@ -875,19 +881,14 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => tryOpenExternalUrl(assetPreviewUri, "file-preview"),
           } as const)
         : null,
-      selectingText ||
-      (resolvedActiveMode === "preview" &&
-        (isBrowserFile || isImageFile || isVideoFile || isAudioFile))
+      resolvedActiveMode === "preview" &&
+      (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
         ? ({
             id: "refresh",
             title: "Refresh",
             icon: "arrow.clockwise",
             inline: false,
             onPress: async () => {
-              if (selectingText) {
-                await fileQuery.refresh();
-                return;
-              }
               if (isVideoFile || isAudioFile) await assetPreview.refresh();
               setPreviewRevision((current) => current + 1);
             },
@@ -1017,11 +1018,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           resolveVideoUri={assetPreview.refresh}
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
-          initialLine={targetLine}
+          initialLine={scopedTextSelection?.line ?? targetLine}
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
           selectable={selectingText}
+          onLongPressLine={
+            canSelectText
+              ? (line) => setTextSelection({ scope: selectionScope, line, active: true })
+              : undefined
+          }
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>

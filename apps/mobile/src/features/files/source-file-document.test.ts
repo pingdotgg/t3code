@@ -16,4 +16,5 @@ it("preserves source whitespace and markup as literal selectable text", () => {
 
   expect(page.querySelector("script")).toBeNull();
   expect(page.body.textContent).toBe("\n\tlead\n<script>alert(1)</script> &amp; > 😀\u00a0end\n");
+  expect(page.getElementById("L2")?.textContent).toBe("\tlead");
 });

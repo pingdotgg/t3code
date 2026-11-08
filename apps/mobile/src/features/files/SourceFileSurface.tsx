@@ -6,6 +6,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   Text as NativeText,
@@ -51,6 +52,7 @@ interface SourceFileSurfaceProps {
   readonly initialLine?: number | null;
   readonly headerInsetTop?: number;
   readonly selectable?: boolean;
+  readonly onLongPressLine?: (line: number) => void;
   readonly onRefresh?: () => Promise<void> | void;
 }
 
@@ -63,8 +65,10 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly tokens: ReadonlyArray<HighlightedToken> | null;
   readonly highlighted: boolean;
   readonly wordBreak: boolean;
+  readonly onLongPress?: () => void;
 }) {
-  return (
+  const selectable = props.onLongPress === undefined;
+  const row = (
     <View
       className={cn("flex-row", props.highlighted && "bg-primary/10")}
       style={{ minHeight: props.codeSurface.rowHeight }}
@@ -81,7 +85,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
         {props.index + 1}
       </NativeText>
       <NativeText
-        selectable
+        selectable={selectable}
         selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
         numberOfLines={props.wordBreak ? undefined : 1}
         className="flex-1 font-normal text-foreground"
@@ -111,7 +115,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                 return (
                   <NativeText
                     key={`${start}:${token.content.length}:${token.color ?? ""}`}
-                    selectable
+                    selectable={selectable}
                     selectionColorClassName={
                       Platform.OS === "android" ? "accent-focus/32" : undefined
                     }
@@ -131,6 +135,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
       </NativeText>
     </View>
   );
+  return props.onLongPress ? <Pressable onLongPress={props.onLongPress}>{row}</Pressable> : row;
 };
 
 function useSourceFileModel(props: SourceFileSurfaceProps) {
@@ -190,7 +195,7 @@ function NativeSourceFileSurface(
     readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
   },
 ) {
-  const { NativeView, onRefresh } = props;
+  const { NativeView, onLongPressLine, onRefresh } = props;
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
@@ -229,6 +234,18 @@ function NativeSourceFileSurface(
         styleJson={styleJson}
         themeJson={themeJson}
         tokensJson={tokensJson}
+        {...(onLongPressLine
+          ? {
+              onPressLine: ({ nativeEvent }) => {
+                if (
+                  nativeEvent.gesture === "longPress" &&
+                  nativeEvent.newLineNumber !== undefined
+                ) {
+                  onLongPressLine(nativeEvent.newLineNumber);
+                }
+              },
+            }
+          : {})}
         {...(onRefresh
           ? {
               refreshing: isPullRefreshing,
@@ -270,6 +287,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
   }, [lineScroll, props.path, targetIndex, usesLineList]);
 
+  const { onLongPressLine } = props;
   const renderLine = ({ item, index }: { item: string; index: number }) => (
     <HighlightedSourceLine
       codeSurface={codeSurface}
@@ -278,6 +296,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       tokens={tokens?.[index] ?? null}
       highlighted={index === targetIndex}
       wordBreak={codeWordBreak}
+      onLongPress={onLongPressLine ? () => onLongPressLine(index + 1) : undefined}
     />
   );
 
@@ -346,7 +365,14 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         }),
       }}
       originWhitelist={["*"]}
-      javaScriptEnabled={false}
+      javaScriptEnabled
+      // Android pastes copied HTML as styled text with collapsed whitespace, so copy plain text.
+      // Wrapped text reflows once the WebView reaches its final width, so scroll again then.
+      injectedJavaScript={`addEventListener("copy",(event)=>{event.clipboardData.setData("text/plain",getSelection().toString());event.preventDefault();});${
+        targetIndex === null
+          ? ""
+          : `const line=document.getElementById("L${targetIndex + 1}");const reveal=()=>line?.scrollIntoView({block:"center"});reveal();addEventListener("resize",reveal,{once:true});`
+      }true;`}
       domStorageEnabled={false}
       cacheEnabled={false}
       setSupportMultipleWindows={false}

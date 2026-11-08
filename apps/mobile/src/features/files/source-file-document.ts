@@ -77,9 +77,15 @@ export interface SelectableSourceHtmlStyle {
 
 // A <pre> would drop a leading newline, so whitespace is preserved on a plain <div>.
 export function selectableSourceHtml(contents: string, style: SelectableSourceHtmlStyle): string {
-  const text = contents.replace(/[&<>]/g, (char) =>
-    char === "&" ? "&amp;" : char === "<" ? "&lt;" : "&gt;",
-  );
+  const text = contents
+    .split("\n")
+    .map(
+      (line, index) =>
+        `<span id="L${index + 1}">${line.replace(/[&<>]/g, (char) =>
+          char === "&" ? "&amp;" : char === "<" ? "&lt;" : "&gt;",
+        )}</span>`,
+    )
+    .join("\n");
   const wrap = style.wordBreak
     ? "white-space:pre-wrap;overflow-wrap:anywhere"
     : "white-space:pre;width:max-content";
