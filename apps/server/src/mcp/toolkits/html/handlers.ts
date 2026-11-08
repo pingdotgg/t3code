@@ -7,6 +7,8 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { HtmlPreviewToolkit, HtmlRenderToolkit, type HtmlToolkit } from "./tools.ts";
 
 const INVALID_PAGE_ERRORS = new Set([
+  "HtmlRenderFileError",
+  "HtmlRenderFileTooLargeError",
   "HtmlRenderImagesNotFoundError",
   "HtmlRenderImageTooLargeError",
   "HtmlRenderPageTooLargeError",
@@ -19,12 +21,33 @@ const toFailure = (error: { readonly _tag: string; readonly message: string }) =
     message: error.message,
   });
 
+const pageSource = (input: {
+  readonly html?: string | undefined;
+  readonly path?: string | undefined;
+}): Effect.Effect<HtmlRender.HtmlRenderSource, OrchestratorMcpFailure> => {
+  if (input.html !== undefined && input.path === undefined) {
+    return Effect.succeed({ html: input.html });
+  }
+  if (input.path !== undefined && input.html === undefined) {
+    return Effect.succeed({ path: input.path });
+  }
+  return Effect.fail(
+    new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: "Pass exactly one of html or path.",
+    }),
+  );
+};
+
 const handlers = {
   // Local-file access limits this host browser to T3-launched agents.
   html_preview: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const htmlRender = yield* HtmlRender.HtmlRender;
-      const { png, ...preview } = yield* htmlRender.preview(input).pipe(Effect.mapError(toFailure));
+      const source = yield* pageSource(input);
+      const { png, ...preview } = yield* htmlRender
+        .preview({ ...source, width: input.width, appearance: input.appearance })
+        .pipe(Effect.mapError(toFailure));
       return {
         ...preview,
         screenshot: {
@@ -41,8 +64,9 @@ const handlers = {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const { thread } = yield* McpInvocationContext.requireThreadScope(scope, "html_render");
       const htmlRender = yield* HtmlRender.HtmlRender;
+      const source = yield* pageSource(input);
       const reference = yield* htmlRender
-        .publish({ threadId: thread.threadId, ...input })
+        .publish({ ...source, threadId: thread.threadId, title: input.title, height: input.height })
         .pipe(Effect.mapError(toFailure));
       return {
         htmlRender: reference,
