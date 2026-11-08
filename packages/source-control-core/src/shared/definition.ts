@@ -708,6 +708,14 @@ export function makeSourceControlDefinitionRegistry(
     }
     return null;
   };
+  const findByPublicDomain = (hostname: string) => {
+    const host = hostname.toLowerCase();
+    return definitions.find(
+      (definition) =>
+        definition.publicHost !== null &&
+        (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
+    );
+  };
   return {
     definitions,
     get: (kind) =>
@@ -717,14 +725,7 @@ export function makeSourceControlDefinitionRegistry(
       const host = hostname.toLowerCase();
       return definitions.find((definition) => definition.publicHost === host);
     },
-    findByPublicDomain: (hostname) => {
-      const host = hostname.toLowerCase();
-      return definitions.find(
-        (definition) =>
-          definition.publicHost !== null &&
-          (host === definition.publicHost || host.endsWith(`.${definition.publicHost}`)),
-      );
-    },
+    findByPublicDomain,
     parseChangeRequestUrl,
     parseCommitUrl: (value, kind) => {
       const url = httpUrl(value);
@@ -739,7 +740,10 @@ export function makeSourceControlDefinitionRegistry(
     repositoryUrlFromPageUrl: (value) => {
       const url = httpUrl(value);
       if (url === null) return null;
-      for (const definition of claimOrder) {
+      // Another host's any-hostname pattern can misread a public host's path, such as a GitLab
+      // group named `src`, so a public host's URLs are read only by that host.
+      const owner = findByPublicDomain(url.hostname);
+      for (const definition of owner ? [owner] : claimOrder) {
         const repositoryUrl = definition.repositoryUrlFromPageUrl?.(url);
         if (repositoryUrl != null) return repositoryUrl;
       }
