@@ -171,6 +171,7 @@ function layerFor(input: {
 }) {
   let releaseFailuresLeft = input.releaseFailures ?? 0;
   return ApnsDeliveries.layer.pipe(
+    Layer.provideMerge(NodeCryptoLayer.layerMac),
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),
@@ -613,7 +614,7 @@ describe("ApnsDeliveries", () => {
       });
       return Effect.gen(function* () {
         const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-        const result = yield* deliveries.processSignedJob(signedEnd);
+        const result = yield* deliveries.processSignedJob(yield* signedEnd);
         expect(result.ok).toBe(true);
         expect(requests).toHaveLength(sends ? 1 : 0);
         if (sends) {
@@ -675,7 +676,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("push_notification");
       expect(result.ok).toBe(true);
@@ -740,7 +741,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "push_notification",
@@ -787,7 +788,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "live_activity_update",
@@ -855,7 +856,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result).toMatchObject({
         kind: "live_activity_update",
@@ -921,7 +922,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* Effect.exit(deliveries.processSignedJob(signed));
+      const result = yield* Effect.exit(deliveries.processSignedJob(yield* signed));
 
       expect(result._tag).toBe("Failure");
       if (result._tag === "Failure") {
@@ -1176,7 +1177,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("push_notification");
       expect(result.ok).toBe(false);
@@ -1236,7 +1237,7 @@ describe("ApnsDeliveries", () => {
 
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
 
       expect(result.kind).toBe("live_activity_update");
       expect(result.ok).toBe(false);
@@ -1529,7 +1530,7 @@ describe("signed APNs registration metadata", () => {
     });
     return Effect.gen(function* () {
       const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
-      const result = yield* deliveries.processSignedJob(signed);
+      const result = yield* deliveries.processSignedJob(yield* signed);
       expect(result.ok).toBe(true);
       expect(requests).toHaveLength(1);
       expect(requests[0]?.url).toBe(
