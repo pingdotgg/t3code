@@ -172,22 +172,17 @@ describe("quiz cards", () => {
       ).size,
     ).toBeGreaterThan(1);
   });
-  it("labels only shuffled wrong ideas for reveal", () => {
+  it("labels only the wrong options' ideas, in shuffled order", () => {
     const shuffled = shuffledQuizOptions(card, "one");
+    const wrongIdea: Record<string, string> = { Low: "Mistake", Medium: "Another" };
     expect(quizRevealWrongIdeas(shuffled)).toEqual(
       shuffled
-        .filter(
-          (option): option is Extract<(typeof shuffled)[number], { wrongIdea: string }> =>
-            !option.correct && "wrongIdea" in option,
-        )
-        .map((option) => ({
-          option: option.option,
-          label: `Wrong idea behind ${option.option}:`,
-          wrongIdea: option.wrongIdea,
+        .filter((option) => !option.correct)
+        .map(({ option }) => ({
+          option,
+          label: `Wrong idea behind ${option}:`,
+          wrongIdea: wrongIdea[option],
         })),
-    );
-    expect(quizRevealWrongIdeas(shuffled).every(({ label }) => label.includes("Wrong idea"))).toBe(
-      true,
     );
   });
   it("formats answer messages", () => {
