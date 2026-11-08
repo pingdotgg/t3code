@@ -704,12 +704,19 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
-[data-chat-composer-expanded-image][data-failed-attachment-id] {
+.composer-attachment-failure-frame[data-failed-attachment-id] {
+  outline: 1px solid var(--destructive);
+  outline-offset: -1px;
+}
+
+[data-chat-composer-expanded-image][data-failed-attachment-id],
+.composer-attachment-failure-frame[data-failed-attachment-id] {
   animation: composer-attachment-failure-glow 3s ease-in-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-chat-composer-expanded-image][data-failed-attachment-id] {
+  [data-chat-composer-expanded-image][data-failed-attachment-id],
+  .composer-attachment-failure-frame[data-failed-attachment-id] {
     animation: none;
   }
 

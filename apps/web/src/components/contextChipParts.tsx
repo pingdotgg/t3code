@@ -289,7 +289,7 @@ function SvgFileChip(props: ComponentProps<typeof FileChip>) {
             onPreviewError={() => setFailedPreviewUrl(url)}
             data-markdown-copy={props.copyMarkdown}
             data-failed-attachment-id={props.failedAttachmentId}
-            aria-label={props.accessibleLabel}
+            aria-label={[props.accessibleLabel, props.suffix].filter(Boolean).join(", ")}
             {...(props.error ? { state: "invalid" as const } : {})}
           />
         }
