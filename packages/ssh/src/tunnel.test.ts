@@ -156,6 +156,32 @@ describe("ssh tunnel scripts", () => {
     }).pipe(Effect.provide(layerProcess));
   });
 
+  it.effect("gives node-script pairing the launch timeout to wait on a Tailscale check", () => {
+    const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+    return Effect.gen(function* () {
+      const spawned = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Deferred.succeed(spawned, undefined).pipe(Effect.as(makeRunningProcess(() => {}))),
+      );
+      const pairing = yield* SshTunnel.issueRemotePairingToken(target, undefined, {
+        nodeScriptPath: "/opt/t3/bin.mjs",
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            NodeServices.layer,
+            Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ),
+        Effect.flip,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(spawned);
+      yield* TestClock.adjust(Duration.seconds(90));
+      const error = yield* Fiber.join(pairing);
+      assert.equal(error.message, "SSH command timed out after 90000ms.");
+    });
+  });
+
   it.effect("opens the Tailscale SSH check link and hands it to retries while approval waits", () =>
     Effect.gen(function* () {
       const url = "https://login.tailscale.com/a/1a2b3c4d5e6f";
