@@ -3,6 +3,7 @@ import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -14,14 +15,17 @@ import { startMainAppLocationTracking } from "~/components/sidebar/mainAppLocati
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { getRouter } from "~/router";
+import { useUiStateStore } from "~/uiStateStore";
 import {
   ENVIRONMENT_ID,
   PROJECT_ID,
+  emitThreadShell,
   installFakeEnvironment,
+  shellOf,
   threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -109,9 +113,34 @@ it("preserves the current conversation and draft across Pull requests and Back",
     await expect.element(page.elementLocator(conversationNode)).not.toBeVisible();
     await expect.element(page.elementLocator(questionNode)).not.toBeVisible();
 
+    // A run that finishes out of sight stays unseen until the conversation shows again.
+    const finishedAt = `2026-03-18T00:00:0${threads.indexOf(thread)}.000Z`;
+    const visitedOn: string[] = [];
+    using _visits = {
+      [Symbol.dispose]: useUiStateStore.subscribe((state) => {
+        if (
+          visitedOn.length === 0 &&
+          Object.values(state.threadLastVisitedAtById).includes(finishedAt)
+        )
+          visitedOn.push(router.state.location.pathname);
+      }),
+    };
+    // Hiding unmounts what the hidden view pauses once React runs its effects.
+    await act(async () => {});
+    // Without a server watermark the tracker records visits locally, where the test reads them.
+    const { lastVisitedAt: _watermark, ...shell } = shellOf(thread);
+    const finishedTitle = `${thread.title} finished`;
+    await emitThreadShell({
+      ...shell,
+      title: finishedTitle,
+      updatedAt: DateTime.makeUnsafe(finishedAt),
+    });
+    await expect.element(page.getByText(finishedTitle).first()).toBeInTheDocument();
+
     await userEvent.click(page.getByRole("button", { name: "Back to threads" }));
     await expect.element(editor).toBeVisible();
     await expect.element(question).toBeVisible();
+    await vi.waitFor(() => expect(visitedOn).toEqual([`/${ENVIRONMENT_ID}/${thread.id}`]));
     expect(router.state.location.pathname).toBe(`/${ENVIRONMENT_ID}/${thread.id}`);
     expect(page.getByRole("region", { name: "Conversation", exact: true }).element()).toBe(
       conversationNode,

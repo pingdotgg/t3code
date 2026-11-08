@@ -3,6 +3,7 @@ import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-r
 import { useState } from "react";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
+import { HiddenThreadContext } from "../components/chat/backgroundThread";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { resolveThreadRouteTarget, type ThreadRouteTarget } from "../threadRoutes";
@@ -42,11 +43,13 @@ function ChatRouteLayout() {
         <ThreadLinkPrompt threadRef={shownTarget.threadRef} />
       ) : null}
       <div style={{ display: threadHidden ? "none" : "contents" }}>
-        {shownTarget ? (
-          <ThreadRouteView target={shownTarget} background={modalOpen || pullRequestsOpen} />
-        ) : modalOpen ? (
-          <SidebarInset className="h-dvh" />
-        ) : null}
+        <HiddenThreadContext value={threadHidden}>
+          {shownTarget ? (
+            <ThreadRouteView target={shownTarget} background={modalOpen || pullRequestsOpen} />
+          ) : modalOpen ? (
+            <SidebarInset className="h-dvh" />
+          ) : null}
+        </HiddenThreadContext>
       </div>
       {modalOpen || pullRequestsOpen || !shownTarget ? <Outlet /> : null}
     </>
