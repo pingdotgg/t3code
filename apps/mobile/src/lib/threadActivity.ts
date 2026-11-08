@@ -240,6 +240,8 @@ type ThreadFeedEntryContent =
       readonly createdAt: string;
       readonly runId: RunId;
       readonly label: string;
+      /** Tool calls and commands the fold hides, shown as "· 23 steps". */
+      readonly stepCount?: number;
       readonly expanded: boolean;
     }
   | {
@@ -1027,6 +1029,44 @@ interface ThreadFeedRunFold {
   readonly createdAt: string;
   readonly hiddenEntryIds: ReadonlySet<string>;
   readonly label: string;
+  readonly stepCount?: number;
+}
+
+/** Item types web shows as standalone events rather than work log steps. */
+const NON_STEP_ITEM_TYPES = new Set([
+  "compaction",
+  "fork",
+  "handoff",
+  "run_interrupt_request",
+  "run_interrupt_result",
+  "secret_request",
+  "link_request",
+  "subagent",
+]);
+
+/**
+ * Tool calls and commands a fold hides, matching web's fold step count:
+ * every hidden work item except compaction and standalone events.
+ * Interim assistant messages fold too but are not steps.
+ */
+function runFoldStepCount(
+  entries: ReadonlyArray<ThreadFeedEntry>,
+  hiddenEntryIds: ReadonlySet<string>,
+): number {
+  let count = 0;
+  for (const entry of entries) {
+    if (entry.type !== "activity-group" || !hiddenEntryIds.has(entry.id)) continue;
+    for (const activity of entry.activities) {
+      if (!NON_STEP_ITEM_TYPES.has(activity.projectedItem.item.type)) count += 1;
+    }
+  }
+  return count;
+}
+
+/** The " · 23 steps" suffix for a run fold label, or "" when it has none. */
+export function runFoldStepSuffix(stepCount: number | undefined): string {
+  if (!stepCount) return "";
+  return ` · ${stepCount} ${stepCount === 1 ? "step" : "steps"}`;
 }
 
 export function failedFeedRunIds(
@@ -1223,8 +1263,10 @@ function deriveThreadFeedRunFolds(
           )
         : [],
     );
+    const stepCount = runFoldStepCount(group.entries, hiddenEntryIds);
     foldsByAnchorId.set(firstHiddenEntry.id, {
       ...(deferredWorkItemIds.length > 0 ? { deferredWorkItemIds } : {}),
+      ...(stepCount > 0 ? { stepCount } : {}),
       runId,
       createdAt: firstHiddenEntry.createdAt,
       hiddenEntryIds,
@@ -1639,6 +1681,7 @@ export function deriveThreadFeedPresentation(
         row.runId !== fold.runId ||
         row.createdAt !== fold.createdAt ||
         row.label !== fold.label ||
+        row.stepCount !== fold.stepCount ||
         row.expanded !== expanded ||
         row.deferredWorkItemIds?.join("|") !== fold.deferredWorkItemIds?.join("|")
       ) {
@@ -1649,6 +1692,7 @@ export function deriveThreadFeedPresentation(
           createdAt: fold.createdAt,
           runId: fold.runId,
           label: fold.label,
+          ...(fold.stepCount ? { stepCount: fold.stepCount } : {}),
           expanded,
         };
         runFoldRowsCache.set(entry, row);

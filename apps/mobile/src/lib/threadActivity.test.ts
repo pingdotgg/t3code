@@ -30,6 +30,7 @@ import {
   createThreadFeedCache,
   deriveThreadFeedPresentation,
   messageFoldRunId,
+  runFoldStepSuffix,
   type ThreadFeedCache,
   type ThreadFeedEntry,
   type ThreadFeedLatestRun,
@@ -368,6 +369,40 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
     streaming: false,
   };
 }
+
+describe("run fold step count", () => {
+  it("counts each hidden tool call and command", () => {
+    const second = {
+      ...command("2026-06-20T00:00:02.200Z"),
+      id: TurnItemId.make("item-command-2"),
+      ordinal: 2,
+      input: "vp test",
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(second, 2),
+      projected({ ...assistantMessage(), ordinal: 3 }, 3),
+    ]);
+    const latestRun = {
+      runId,
+      status: "completed" as const,
+      startedAt: "2026-06-20T00:00:01.000Z",
+      completedAt: "2026-06-20T00:00:03.000Z",
+    };
+    const fold = deriveThreadFeedPresentation(feed, latestRun, new Set()).find(
+      (entry) => entry.type === "run-fold",
+    );
+    expect(fold).toMatchObject({ label: "Worked for 2s", stepCount: 2 });
+  });
+
+  it("formats the fold suffix with a singular step and omits zero", () => {
+    expect(runFoldStepSuffix(23)).toBe(" · 23 steps");
+    expect(runFoldStepSuffix(1)).toBe(" · 1 step");
+    expect(runFoldStepSuffix(0)).toBe("");
+    expect(runFoldStepSuffix(undefined)).toBe("");
+  });
+});
 
 describe("buildThreadFeed", () => {
   it("keeps async answers in question history instead of user bubbles", () => {
@@ -866,6 +901,8 @@ describe("buildThreadFeed", () => {
       type: "run-fold",
       createdAt: "2026-06-20T00:00:01.500Z",
       label: "Worked for 2s",
+      // The interim assistant messages fold too but are not steps.
+      stepCount: 1,
     });
 
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
