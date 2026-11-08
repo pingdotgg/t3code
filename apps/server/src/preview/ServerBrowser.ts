@@ -61,6 +61,7 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Exit from "effect/Exit";
 import * as HttpServer from "effect/http/HttpServer";
+import * as NetAddress from "effect/net/NetAddress";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -337,6 +338,8 @@ interface ServerTab {
   recording: Recording | null;
   initialNavigation: Promise<void> | null;
   navigationGeneration: number;
+  /** Bumped by every navigation this server requests, so a stale URL resolution never navigates. */
+  requestedNavigation: number;
 
   abortedNavigation: {
     readonly url: string;
@@ -486,15 +489,28 @@ const make = Effect.gen(function* () {
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   const runAssetPromise = Effect.runPromiseWith(yield* Effect.context<AssetSigner.AssetSigner>());
   const { address } = yield* HttpServer.HttpServer;
-  const loopbackOrigin =
+  const listenOrigin =
     typeof address === "string" || !("port" in address)
       ? null
-      : `http://${loopbackUrlHostForAddress(address)}:${address.port}`;
+      : `http://${
+          NetAddress.isUnspecified(address.address)
+            ? loopbackUrlHostForAddress(address)
+            : NetAddress.formatUrlHost(address.address)
+        }:${address.port}`;
   // Clients resolve this server's file links on their own origin, which this machine may not reach.
-  const reachableUrl = (tab: ServerTab, url: string) =>
-    tab.desktop !== null || loopbackOrigin === null
-      ? Promise.resolve(url)
-      : runAssetPromise(AssetAccess.rebaseSignedAssetUrl(url, loopbackOrigin));
+  const gotoReachable = (tab: ServerTab, url: string, options: Parameters<Page["goto"]>[1]) => {
+    const request = ++tab.requestedNavigation;
+    return (
+      tab.desktop !== null || listenOrigin === null
+        ? Promise.resolve(url)
+        : runAssetPromise(AssetAccess.rebaseSignedAssetUrl(url, listenOrigin))
+    ).then((reachable) => {
+      if (request !== tab.requestedNavigation) {
+        throw new Error(`Navigation to ${url} is interrupted by another navigation`);
+      }
+      return tab.page.goto(reachable, options);
+    });
+  };
   // sudo resets the environment, so the command has to name this server's home.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND, [
     "--base-dir",
@@ -908,6 +924,7 @@ const make = Effect.gen(function* () {
       recordingStart: null,
       initialNavigation: null,
       navigationGeneration: 0,
+      requestedNavigation: 0,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
       capturing: 0,
@@ -1047,7 +1064,7 @@ const make = Effect.gen(function* () {
       tab.initialNavigation = (
         (desktop || adopted) && page.url() === snapshot.navStatus.url
           ? page.reload(options)
-          : reachableUrl(tab, snapshot.navStatus.url).then((url) => page.goto(url, options))
+          : gotoReachable(tab, snapshot.navStatus.url, options)
       ).then(constVoid, (cause: unknown) => {
         throw ServerBrowserPage.toOperationError(cause, NAVIGATION_TIMEOUT_MS);
       });
@@ -1694,17 +1711,15 @@ const make = Effect.gen(function* () {
     readiness: "load" | "domContentLoaded" | "none",
     timeout: number,
   ) => {
-    const navigation = reachableUrl(tab, url).then((reachable) =>
-      tab.page.goto(reachable, {
-        timeout,
-        waitUntil:
-          readiness === "domContentLoaded"
-            ? "domcontentloaded"
-            : readiness === "none"
-              ? "commit"
-              : "load",
-      }),
-    );
+    const navigation = gotoReachable(tab, url, {
+      timeout,
+      waitUntil:
+        readiness === "domContentLoaded"
+          ? "domcontentloaded"
+          : readiness === "none"
+            ? "commit"
+            : "load",
+    });
     if (readiness === "none") {
       tab.control.track(navigation);
       return;
@@ -2373,7 +2388,10 @@ const make = Effect.gen(function* () {
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
             if (request?.clear === "cache") await tab.cdp.send("Network.clearBrowserCache");
-            if (request?.hardReload) await tab.cdp.send("Page.reload", { ignoreCache: true });
+            if (request?.hardReload) {
+              tab.requestedNavigation++;
+              await tab.cdp.send("Page.reload", { ignoreCache: true });
+            }
           })
           .catch((cause: unknown) =>
             runFork(Effect.logWarning("server preview could not apply a tab setting", { cause })),
@@ -2507,14 +2525,11 @@ const make = Effect.gen(function* () {
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
-          tab.control.trackUntilHandoff(
-            reachableUrl(tab, url).then((reachable) =>
-              tab.page.goto(reachable, VIEWER_NAVIGATION_OPTIONS),
-            ),
-          );
+          tab.control.trackUntilHandoff(gotoReachable(tab, url, VIEWER_NAVIGATION_OPTIONS));
         }
         return;
       case "history":
+        tab.requestedNavigation++;
         tab.control.trackUntilHandoff(
           num(message.delta) < 0
             ? tab.page.goBack(VIEWER_NAVIGATION_OPTIONS)
@@ -2522,6 +2537,7 @@ const make = Effect.gen(function* () {
         );
         return;
       case "reload":
+        tab.requestedNavigation++;
         if (message.ignoreCache === true) {
           await session.send("Page.reload", { ignoreCache: true });
           return;

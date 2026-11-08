@@ -16,6 +16,7 @@ import {
   type PreviewAutomationSnapshot,
   type PreviewAutomationStatus,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -35,6 +36,7 @@ import { beforeEach, expect, vi } from "vite-plus/test";
 
 import { issueAssetUrl } from "../assets/AssetAccess.ts";
 import * as AssetSigner from "../assets/AssetSigner.ts";
+import * as PayloadSigner from "../auth/PayloadSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -1080,47 +1082,114 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
   ).pipe(Effect.provide(layer)),
 );
 
-it.effect("a server tab opens this server's file link on an origin the server cannot reach", () =>
-  Effect.scoped(
+it.effect.each([
+  { listen: "0.0.0.0", origin: /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/api\/assets\// },
+  { listen: "100.64.0.5", origin: /^http:\/\/100\.64\.0\.5:3773\/api\/assets\// },
+])(
+  "a server tab opens this server's file link on an origin the server cannot reach ($listen)",
+  ({ listen, origin }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* Manager.PreviewManager;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const events = yield* manager.subscribeEvents;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+          prefix: "t3-server-browser-ws-",
+        });
+        yield* fs.writeFileString(path.join(workspaceRoot, "report.html"), "<h1>report</h1>");
+        const { relativeUrl } = yield* issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: scope.thread.threadId,
+            path: "report.html",
+          },
+          workspaceRoot,
+        });
+        // The client resolves the asset against its own public origin, as behind tailscale serve.
+        yield* manager.open({
+          threadId: scope.thread.threadId,
+          runtime: "server",
+          url: `http://unreachable.invalid${relativeUrl}`,
+        });
+        let settled;
+        do {
+          settled = yield* PubSub.take(events);
+        } while (
+          settled.type !== "failed" &&
+          (settled.type !== "navigated" || settled.snapshot.navStatus._tag === "Loading")
+        );
+        const navStatus =
+          settled.type === "failed"
+            ? { _tag: "LoadFailed", url: settled.url, description: settled.description }
+            : settled.snapshot.navStatus;
+        expect(navStatus).toEqual({
+          _tag: "Success",
+          url: expect.stringMatching(origin),
+          title: "test page",
+        });
+        expect("url" in navStatus && navStatus.url.endsWith(relativeUrl)).toBe(true);
+      }),
+    ).pipe(
+      Effect.provide(
+        ServerBrowser.layer.pipe(
+          Layer.provideMerge(
+            Layer.mock(HttpServer.HttpServer)({
+              address: NetAddress.inetAddressFromIpStringUnsafe(listen, 3773),
+            }),
+          ),
+          Layer.provideMerge(dependencies),
+        ),
+      ),
+    ),
+);
+
+it.live("a newer viewer navigation wins over a file link still being verified", () => {
+  const verifying = Deferred.makeUnsafe<void>();
+  const verified = Deferred.makeUnsafe<void>();
+  const gatedSigner = Layer.effect(
+    AssetSigner.AssetSigner,
     Effect.gen(function* () {
-      const manager = yield* Manager.PreviewManager;
+      const signer = yield* PayloadSigner.make("asset-access-signing-key");
+      return {
+        ...signer,
+        verify: (payload: string, signature: string) =>
+          Deferred.succeed(verifying, undefined).pipe(
+            Effect.andThen(Deferred.await(verified)),
+            Effect.andThen(signer.verify(payload, signature)),
+          ),
+      };
+    }),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const events = yield* manager.subscribeEvents;
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-browser-ws-" });
       yield* fs.writeFileString(path.join(workspaceRoot, "report.html"), "<h1>report</h1>");
       const { relativeUrl } = yield* issueAssetUrl({
         resource: { _tag: "workspace-file", threadId: scope.thread.threadId, path: "report.html" },
         workspaceRoot,
       });
-      // The client resolves the asset against its own public origin, as behind tailscale serve.
-      yield* manager.open({
-        threadId: scope.thread.threadId,
-        runtime: "server",
-        url: `http://unreachable.invalid${relativeUrl}`,
-      });
-      let settled;
-      do {
-        settled = yield* PubSub.take(events);
-      } while (
-        settled.type !== "failed" &&
-        (settled.type !== "navigated" || settled.snapshot.navStatus._tag === "Loading")
-      );
-      const navStatus =
-        settled.type === "failed"
-          ? { _tag: "LoadFailed", url: settled.url, description: settled.description }
-          : settled.snapshot.navStatus;
-      expect(navStatus).toEqual({
-        _tag: "Success",
-        url: expect.stringMatching(
-          /^http:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?\/api\/assets\//,
-        ),
-        title: "test page",
-      });
-      expect("url" in navStatus && navStatus.url.endsWith(relativeUrl)).toBe(true);
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      yield* viewer.input({ type: "navigate", url: `http://unreachable.invalid${relativeUrl}` });
+      yield* Deferred.await(verifying);
+      yield* viewer.input({ type: "navigate", url: "http://localhost:5173/newer" });
+      yield* Deferred.succeed(verified, undefined);
+      // Releasing control drains every viewer navigation, including the superseded one.
+      yield* viewer.input({ type: "releaseControl" });
+      const page = contexts[0]!.page;
+      expect(page.goto).toHaveBeenLastCalledWith("http://localhost:5173/newer", expect.anything());
+      expect(page.url()).toBe("http://localhost:5173/newer");
     }),
-  ).pipe(Effect.provide(layer)),
-);
+  ).pipe(
+    Effect.provide(
+      ServerBrowser.layer.pipe(Layer.provideMerge(gatedSigner), Layer.provideMerge(dependencies)),
+    ),
+  );
+});
 
 it.live(
   "a late failure from a request that predates tracking leaves a newer navigation loading",
