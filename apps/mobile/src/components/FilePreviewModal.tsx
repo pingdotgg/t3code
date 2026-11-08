@@ -1,3 +1,4 @@
+import { AssetWorkspaceAssetNotFoundError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Dialog from "./ui/Dialog";
 import { useContext, useEffect, useEffectEvent, useState } from "react";
@@ -33,6 +34,15 @@ class PreviewResolutionError extends Schema.TaggedError<PreviewResolutionError>(
 }
 
 const isPreviewResolutionError = Schema.is(PreviewResolutionError);
+const isAssetNotFoundError = Schema.is(AssetWorkspaceAssetNotFoundError);
+
+function remotePreviewFailureMessage(error: unknown): string {
+  if (!isAssetNotFoundError(error)) {
+    return "Reconnect to this environment and try again. The file may have been moved or deleted.";
+  }
+  const path = error.checkedPath ?? ("path" in error.resource ? error.resource.path : undefined);
+  return path ? `The file was not found at ${path}.` : error.message;
+}
 
 interface ResolvedPreviewUri {
   readonly uri: string;
@@ -61,8 +71,7 @@ async function resolvePreviewUri(
     .catch((error: unknown) => {
       throw new PreviewResolutionError({
         cause: error,
-        fallbackMessage:
-          "Reconnect to this environment and try again. The file may have been moved or deleted.",
+        fallbackMessage: remotePreviewFailureMessage(error),
       });
     });
   return { uri: url + (item.srcFragment ?? "") };
