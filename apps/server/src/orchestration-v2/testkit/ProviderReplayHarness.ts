@@ -563,10 +563,15 @@ export function layerWithRegistry<Error>(
   const layerEffectWorkerProvided = EffectWorker.layer.pipe(
     Layer.provide(Layer.merge(layerStores, layerEffectExecutorProvided)),
   );
+  // Exported only with host capacity: callers that provide their own settings must not get this one.
+  const layerHostCapacitySettings: Layer.Layer<ServerSettings.ServerSettingsService> =
+    options.hostCapacity === undefined
+      ? (Layer.empty as Layer.Layer<ServerSettings.ServerSettingsService>)
+      : layerServerSettings;
   const layerReplayRuntime = Layer.mergeAll(
     layerOrchestratorProvided,
     layerHostAdmission,
-    layerServerSettings,
+    layerHostCapacitySettings,
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
