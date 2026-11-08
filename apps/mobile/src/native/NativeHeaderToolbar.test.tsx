@@ -299,3 +299,25 @@ it.each([
     "New chat",
   ]);
 });
+
+it("leaves the visible tab's header alone when a retained inactive tab's toolbar unmounts", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  const toolbar = (active: boolean) => (
+    <NativeWorkspaceTabActivityContext value={{ active, isActive: () => active }}>
+      <NativeHeaderToolbar placement="right">
+        <NativeHeaderToolbar.Button label="New chat" onPress={() => undefined} />
+      </NativeHeaderToolbar>
+    </NativeWorkspaceTabActivityContext>
+  );
+  act(() => root!.render(toolbar(true)));
+  act(() => root!.render(toolbar(false)));
+  const setOptionsCalls = harness.setOptionsCalls;
+
+  act(() => root!.render(null));
+
+  expect(harness.setOptionsCalls).toBe(setOptionsCalls);
+  expect(harness.renderedItems.map((item) => item.type === "button" && item.label)).toEqual([
+    "New chat",
+  ]);
+});
