@@ -337,7 +337,7 @@ holds the machines this app knows and those on your T3 Connect account. If this
 app is connected to that machine with a session that manages access there, it
 makes the pairing code itself; otherwise paste one from that machine's
 **Settings → Sharing & access**. From a terminal, read the code into the
-environment variable without echoing it, then run the link:
+environment variable without echoing it, then run the link. In bash or zsh:
 
 ```sh
 IFS= read -rs T3CODE_PAIRING_CODE   # paste the code, then press Enter
@@ -345,6 +345,17 @@ export T3CODE_PAIRING_CODE
 t3 environment link <address> --access <mode>
 unset T3CODE_PAIRING_CODE
 ```
+
+In PowerShell 7.1 or later:
+
+```powershell
+$env:T3CODE_PAIRING_CODE = Read-Host -MaskInput "Pairing code"
+t3 environment link <address> --access <mode>
+Remove-Item Env:T3CODE_PAIRING_CODE
+```
+
+In fish, read it with `read --silent --export T3CODE_PAIRING_CODE` and clear it
+afterwards with `set --erase T3CODE_PAIRING_CODE`.
 
 You can pass the code with `--pairing-code <code>` instead, but entering it on
 the command line exposes it in process arguments and shell history.
