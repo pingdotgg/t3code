@@ -166,6 +166,12 @@ const makeHarness = () => {
               Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
               Layer.mock(ThreadManagementService.ThreadManagementService)({
                 getThreadRecords,
+                getThreadShell: () =>
+                  Effect.succeed({
+                    projectId: ProjectId.make("project:test"),
+                    archivedAt: null,
+                    deletedAt: null,
+                  } as never),
                 sendToThread: (input) =>
                   Effect.sync(() => {
                     state.sentMessageIds.push(input.messageId);
