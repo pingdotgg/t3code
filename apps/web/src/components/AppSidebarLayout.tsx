@@ -41,6 +41,8 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { WorkspaceTabs } from "./workspaceTabs/WorkspaceTabs";
+import { WorkspaceSurfaceView } from "./workspaceTabs/WorkspaceSurfaceView";
+import { UsageFooter } from "./usage/UsageFooter";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
@@ -475,9 +477,13 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {/* The inset shell: open-thread tabs sit above the routed card, as in monocode. */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col md:pr-1.5 md:pb-1.5 md:[[data-sidebar-state=collapsed]_&]:pl-1.5">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col md:pr-1.5 md:[[data-sidebar-state=collapsed]_&]:pl-1.5">
           <WorkspaceTabs />
-          {children}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {children}
+            <WorkspaceSurfaceView />
+          </div>
+          <UsageFooter />
         </div>
         <BackgroundThreadAnnouncer />
         <SidebarControl />

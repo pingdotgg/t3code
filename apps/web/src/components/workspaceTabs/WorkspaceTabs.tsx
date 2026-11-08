@@ -1,8 +1,9 @@
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import type { ProviderInstanceId } from "@t3tools/contracts";
 import {
+  FileCodeIcon,
   MessageSquareIcon,
   NotebookTextIcon,
   PlusIcon,
@@ -12,7 +13,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import { isElectron } from "../../env";
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
@@ -21,16 +22,22 @@ import { usePrimarySettings } from "../../hooks/useSettings";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
-import { runChatCommand } from "../chat/chatCommandBus";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { cn } from "../../lib/utils";
 import { openCommandPalette } from "../../commandPaletteBus";
-import { useThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../../workspaceTitlebar";
-import { neighborTabKey, useWorkspaceTabsStore } from "./workspaceTabsStore";
+import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
+import { useNewTerminalTab } from "./WorkspaceSurfaceView";
+import {
+  neighborTabKey,
+  parseWorkspaceTab,
+  useWorkspaceTabsStore,
+  type WorkspaceTab,
+} from "./workspaceTabsStore";
 
 const TAB_CLASS =
   "group/tab relative flex h-7.5 min-w-0 max-w-56 flex-1 items-center rounded-md text-sm [-webkit-app-region:no-drag]";
@@ -40,17 +47,49 @@ const ACTIVE_TAB_CLASS = "bg-foreground/10 text-foreground";
 const IDLE_TAB_CLASS =
   "bg-foreground/4 text-foreground opacity-65 hover:bg-foreground/7 hover:opacity-100";
 
-function ThreadTab({
-  threadRef,
+function Tab({
+  icon,
+  label,
   active,
   onSelect,
   onClose,
 }: {
-  threadRef: ScopedThreadRef;
+  icon: ReactNode;
+  label: string;
   active: boolean;
   onSelect: () => void;
   onClose: () => void;
 }) {
+  // The close button is a sibling, not a child, so assistive technology can reach it.
+  return (
+    <div className={cn(TAB_CLASS, active ? ACTIVE_TAB_CLASS : IDLE_TAB_CLASS)}>
+      <button
+        type="button"
+        aria-current={active ? "page" : undefined}
+        onClick={onSelect}
+        onAuxClick={(event) => {
+          if (event.button === 1) onClose();
+        }}
+        className={TAB_BODY_CLASS}
+      >
+        {icon}
+        <span className="truncate">{label}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Close ${label}`}
+        onClick={onClose}
+        className="absolute right-1 grid size-5 place-items-center rounded-sm text-muted-foreground opacity-0 outline-hidden group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      >
+        <XIcon aria-hidden className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+type TabProps = { active: boolean; onSelect: () => void; onClose: () => void };
+
+function ThreadTab({ threadRef, ...props }: TabProps & { threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
   const providers = useAtomValue(primaryServerProvidersAtom);
   if (!thread) return null;
@@ -66,56 +105,95 @@ function ThreadTab({
   ) : (
     <MessageSquareIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
   );
-  // The close button is a sibling, not a child, so assistive technology can reach it.
+  return <Tab icon={icon} label={thread.title} {...props} />;
+}
+
+function TerminalTabButton({
+  threadRef,
+  terminalId,
+  onClose,
+  ...props
+}: TabProps & { threadRef: ScopedThreadRef; terminalId: string }) {
+  const terminalActions = useThreadTerminalActions(threadRef);
   return (
-    <div className={cn(TAB_CLASS, active ? ACTIVE_TAB_CLASS : IDLE_TAB_CLASS)}>
-      <button
-        type="button"
-        aria-current={active ? "page" : undefined}
-        onClick={onSelect}
-        onAuxClick={(event) => {
-          if (event.button === 1) onClose();
-        }}
-        className={TAB_BODY_CLASS}
-      >
-        {icon}
-        <span className="truncate">{thread.title}</span>
-      </button>
-      <button
-        type="button"
-        aria-label={`Close ${thread.title}`}
-        onClick={onClose}
-        className="absolute right-1 grid size-5 place-items-center rounded-sm text-muted-foreground opacity-0 outline-hidden group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      >
-        <XIcon aria-hidden className="size-3" />
-      </button>
-    </div>
+    <Tab
+      icon={<SquareTerminalIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+      label="Terminal"
+      onClose={() => {
+        // Closing a terminal tab ends its shell, as in monocode.
+        terminalActions.closeTerminalSession(terminalId);
+        onClose();
+      }}
+      {...props}
+    />
   );
+}
+
+function WorkspaceTabButton({ tab, ...props }: TabProps & { tab: WorkspaceTab }) {
+  switch (tab.kind) {
+    case "thread":
+      return <ThreadTab threadRef={tab.threadRef} {...props} />;
+    case "file":
+      return (
+        <Tab
+          icon={<FileCodeIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+          label={tab.path.split("/").pop() ?? tab.path}
+          {...props}
+        />
+      );
+    case "terminal":
+      return <TerminalTabButton threadRef={tab.threadRef} terminalId={tab.terminalId} {...props} />;
+  }
 }
 
 export function WorkspaceTabs() {
   const navigate = useNavigate();
   const routeTarget = useThreadRouteTarget();
   const keys = useWorkspaceTabsStore((state) => state.keys);
+  const surfaceKey = useWorkspaceTabsStore((state) => state.surfaceKey);
   const openTab = useWorkspaceTabsStore((state) => state.open);
   const closeTab = useWorkspaceTabsStore((state) => state.close);
+  const showSurface = useWorkspaceTabsStore((state) => state.showSurface);
+  const hideSurface = useWorkspaceTabsStore((state) => state.hideSurface);
   const newThreadContext = useHandleNewThread();
-  const activeKey = routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
+  const newTerminalTab = useNewTerminalTab();
+  const routedKey = routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
+  const activeKey = surfaceKey ?? routedKey;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread in the persisted tab store
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread in the persisted tab store, and leaves a file or terminal tab once another thread is routed
   useEffect(() => {
-    if (activeKey) openTab(activeKey);
-  }, [activeKey, openTab]);
+    if (!routedKey) return;
+    openTab(routedKey);
+    const { surfaceKey: shown } = useWorkspaceTabsStore.getState();
+    const surface = shown ? parseWorkspaceTab(shown) : null;
+    if (surface && scopedThreadKey(surface.threadRef) !== routedKey) hideSurface();
+  }, [routedKey, openTab, hideSurface]);
 
   const showThread = (ref: ScopedThreadRef) =>
     void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) });
 
+  const select = (key: string, tab: WorkspaceTab) => {
+    if (tab.kind === "thread") {
+      hideSurface();
+      showThread(tab.threadRef);
+      return;
+    }
+    showSurface(key);
+    // A draft's thread has no route of its own; its tabs open over whatever is routed.
+    if (scopedThreadKey(tab.threadRef) !== routedKey && readThreadShell(tab.threadRef)) {
+      showThread(tab.threadRef);
+    }
+  };
+
   const close = (key: string) => {
     if (key === activeKey) {
       const next = neighborTabKey(keys, key);
-      const nextRef = next ? parseScopedThreadKey(next) : null;
-      if (nextRef) showThread(nextRef);
-      else void navigate({ to: "/" });
+      const nextTab = next ? parseWorkspaceTab(next) : null;
+      if (next && nextTab) select(next, nextTab);
+      else {
+        hideSurface();
+        if (key === routedKey) void navigate({ to: "/" });
+      }
     }
     closeTab(key);
   };
@@ -160,23 +238,26 @@ export function WorkspaceTabs() {
         isElectron && "drag-region",
         COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
       )}
-      aria-label="Open threads"
+      aria-label="Open tabs"
     >
       {keys.map((key) => {
-        const ref = parseScopedThreadKey(key);
-        if (!ref) return null;
+        const tab = parseWorkspaceTab(key);
+        if (!tab) return null;
         return (
-          <ThreadTab
+          <WorkspaceTabButton
             key={key}
-            threadRef={ref}
+            tab={tab}
             active={key === activeKey}
-            onSelect={() => showThread(ref)}
+            onSelect={() => select(key, tab)}
             onClose={() => close(key)}
           />
         );
       })}
       {routeTarget?.kind === "draft" ? (
-        <div aria-current="page" className={cn(TAB_CLASS, ACTIVE_TAB_CLASS, "gap-1.5 px-2")}>
+        <div
+          aria-current={surfaceKey ? undefined : "page"}
+          className={cn(TAB_CLASS, surfaceKey ? IDLE_TAB_CLASS : ACTIVE_TAB_CLASS, "gap-1.5 px-2")}
+        >
           <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">New thread</span>
         </div>
@@ -198,10 +279,7 @@ export function WorkspaceTabs() {
             <SquarePenIcon />
             New thread
           </MenuItem>
-          <MenuItem
-            disabled={!routeTarget}
-            onClick={() => runChatCommand("terminal.new", "right-panel")}
-          >
+          <MenuItem disabled={!newTerminalTab} onClick={() => newTerminalTab?.()}>
             <SquareTerminalIcon />
             New terminal
           </MenuItem>

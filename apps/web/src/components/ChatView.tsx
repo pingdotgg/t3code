@@ -264,7 +264,6 @@ import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { DraftDashboard } from "./chat/DraftDashboard";
-import { ComposerUsageChip } from "./chat/ComposerUsageChip";
 import { ChatBackgroundLayer } from "./chatBackground/ChatBackgroundLayer";
 import { useHasChatBackground } from "./chatBackground/chatBackgroundStore";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
@@ -3603,15 +3602,6 @@ export default function ChatView(props: ChatViewProps) {
                   >
                     <ChildThreadApprovals threadRef={activeThreadRef} />
                     <div className="relative">
-                      {embedded ? null : (
-                        <div className="pointer-events-auto absolute right-2 bottom-full z-20 mb-1.5">
-                          <ComposerUsageChip
-                            providerInstanceId={activeProviderInstanceId}
-                            providers={providerStatuses}
-                            sources={serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES}
-                          />
-                        </div>
-                      )}
                       <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                         <ComposerSurface.Host
                           inert={queuedRunEdit.isSaving}

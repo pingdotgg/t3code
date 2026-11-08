@@ -3,7 +3,8 @@ import { useState, type ReactNode } from "react";
 
 import { useActiveProjectTarget, type ActiveProjectTarget } from "~/hooks/useActiveProjectTarget";
 import { useTheme } from "~/hooks/useTheme";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { fileTabKey, useWorkspaceTabsStore } from "../workspaceTabs/workspaceTabsStore";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 import { PierreEntryIcon } from "../chat/PierreEntryIcon";
@@ -102,10 +103,10 @@ function OpenProjectFilePicker(props: ProjectFilePickerProps & { target: ActiveP
     ),
     icon: <PierreEntryIcon pathValue={match.path} kind="file" theme={resolvedTheme} />,
     run: async () => {
-      // Go to file reads as opening a tab: the code takes the whole content area.
-      const panel = useRightPanelStore.getState();
-      panel.openFile(target.threadRef, match.path);
-      panel.setMaximized(target.threadRef, true);
+      // Go to file opens a top-level tab, as in monocode, rather than the side panel.
+      useWorkspaceTabsStore
+        .getState()
+        .showSurface(fileTabKey(scopedThreadKey(target.threadRef), match.path));
     },
   }));
 
