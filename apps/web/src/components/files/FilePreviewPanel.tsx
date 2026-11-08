@@ -57,7 +57,7 @@ import { shouldShowOpenInPicker } from "~/components/chat/OpenInPicker.logic";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { MorphIcon } from "~/components/MorphIcon";
-import { useRemoteOpenState } from "~/remoteOpen";
+import { useRemoteOpenResolution } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
@@ -1028,7 +1028,7 @@ export default function FilePreviewPanel({
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const remoteOpenState = useRemoteOpenState(environmentId);
+  const remoteOpenResolution = useRemoteOpenResolution(environmentId);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(environmentId);
   const previewAvailable = usePreviewAvailable(environmentId);
@@ -1287,7 +1287,8 @@ export default function FilePreviewPanel({
           shouldShowOpenInPicker({
             environmentId,
             primaryEnvironmentId,
-            remoteOpenMode: remoteOpenState.mode,
+            remoteOpenMode: remoteOpenResolution.state.mode,
+            isSameHomeBearer: remoteOpenResolution.isSameHomeBearer,
           }) ? (
             <OpenInPicker
               environmentId={environmentId}

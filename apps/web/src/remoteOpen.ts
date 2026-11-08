@@ -32,6 +32,7 @@ export type RemoteOpenMode = RemoteOpenState["mode"];
 export interface RemoteOpenResolution {
   readonly state: RemoteOpenState;
   readonly isResolved: boolean;
+  readonly isSameHomeBearer: boolean;
 }
 
 const LOCAL_EXEC: RemoteOpenState = { mode: "local-exec" };
@@ -39,6 +40,7 @@ const REMOTE_UNAVAILABLE: RemoteOpenState = { mode: "remote-unavailable" };
 const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   state: LOCAL_EXEC,
   isResolved: false,
+  isSameHomeBearer: false,
 };
 
 function parseHostname(url: string): string | null {
@@ -149,23 +151,30 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
       return UNRESOLVED_REMOTE_OPEN;
     }
     const profile = Option.getOrNull(entry.profile);
+    const desktopHomeEnvironmentId =
+      entry.target._tag === "BearerConnectionTarget"
+        ? get(desktopHomeEnvironmentIdAtom(environmentId))
+        : null;
+    const state = resolveRemoteOpenState({
+      target: entry.target,
+      sshTarget:
+        profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
+      remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
+      isDesktopRenderer: window.desktopBridge !== undefined,
+      desktopHomeEnvironmentId,
+    });
     const next: RemoteOpenResolution = {
-      state: resolveRemoteOpenState({
-        target: entry.target,
-        sshTarget:
-          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
-        remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
-        isDesktopRenderer: window.desktopBridge !== undefined,
-        desktopHomeEnvironmentId:
-          entry.target._tag === "BearerConnectionTarget"
-            ? get(desktopHomeEnvironmentIdAtom(environmentId))
-            : null,
-      }),
+      state,
       isResolved: true,
+      isSameHomeBearer:
+        state.mode === "local-exec" &&
+        entry.target._tag === "BearerConnectionTarget" &&
+        entry.target.environmentId === desktopHomeEnvironmentId,
     };
     const previous = Option.getOrNull(get.self<RemoteOpenResolution>());
     return previous !== null &&
       previous.isResolved &&
+      previous.isSameHomeBearer === next.isSameHomeBearer &&
       remoteOpenStatesEqual(previous.state, next.state)
       ? previous
       : next;
