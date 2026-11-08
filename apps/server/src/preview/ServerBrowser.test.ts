@@ -1419,12 +1419,12 @@ it.live("text the page copies after the controlling viewer's click is only offer
         Effect.forkScoped({ startImmediately: true }),
       );
       yield* Effect.promise(() => started.promise);
-      const releasingControl = yield* viewer.input({ type: "releaseControl" }).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      const retakingControl = yield* viewer.input({ type: "takeControl" }).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      const releasingControl = yield* viewer
+        .input({ type: "releaseControl" })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      const retakingControl = yield* viewer
+        .input({ type: "takeControl" })
+        .pipe(Effect.forkScoped({ startImmediately: true }));
       finish.resolve();
       yield* Effect.forEach([releasingMouse, releasingControl, retakingControl], Fiber.join);
       yield* advance(5_000);

@@ -126,7 +126,8 @@ describe("server browser page copies", () => {
       expect(await inPage("document.body.dataset.conversions")).toBe(
         text === "converted" || conversionFailure ? "1" : "0",
       );
-      if (conversionFailure) expect(await inPage("document.body.dataset.originalError")).toBe("true");
+      if (conversionFailure)
+        expect(await inPage("document.body.dataset.originalError")).toBe("true");
     },
   );
 
