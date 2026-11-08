@@ -29,6 +29,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import {
   CalendarClockIcon,
   ChevronDownIcon,
+  ChevronRightIcon,
   DownloadIcon,
   EyeIcon,
   type LucideIcon,
@@ -79,6 +80,7 @@ import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
+import { WorkLogDetails, WorkLogRow } from "./WorkLog";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
@@ -451,8 +453,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
   const userMessage = resolveUserMessagePresentation(row.message);
-  // Messages from other agents fold to one line so the user's own messages stay easy to find.
-  const folded = userMessage.attribution === "agent";
+  // Messages from other agents and from T3 Code answer the agent, not the user: they read as a
+  // folded work-log row so the user's own messages stay easy to find.
+  const folded = userMessage.attribution === "agent" || userMessage.attribution === "t3code";
   const [expanded, setExpanded] = useState(false);
   const revealFoldRef = findRevealRef(() => setExpanded(true));
   const senderShell = useQuietThreadShell(
@@ -460,7 +463,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ? { environmentId: ctx.activeThreadEnvironmentId, threadId: senderThreadId }
       : null,
   );
-  const senderLabel = senderShell?.title.trim() || "Agent";
+  const senderLabel =
+    userMessage.attribution === "t3code" ? "T3 Code" : senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
@@ -782,11 +786,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         floatActions ? "flex-wrap" : "shrink-0",
       )}
     >
-      {folded && senderThreadId ? (
-        <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
-          Open thread
-        </InlineButton>
-      ) : null}
       <Tooltip>
         <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
           {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
@@ -823,19 +822,193 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
     </div>
   );
-  return (
-    <div
-      className="group @container flex flex-col items-end gap-1"
-      data-user-message-attribution={folded ? "agent" : undefined}
-    >
-      {userMessage.attribution === "t3code" ? (
-        <p
-          className="me-1 text-2xs text-muted-foreground/70"
-          data-user-message-attribution="t3code"
-        >
-          Sent by T3 Code
-        </p>
+  const body = (
+    <>
+      {!mediaAboveText && mediaBlock}
+      {userAudio.length > 0 ? (
+        <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
+          {userAudio.map((file) => (
+            <InlineAudioPreview
+              key={file.id}
+              name={file.name}
+              variant={audioOnly ? "bubble" : "chip"}
+              environmentId={ctx.activeThreadEnvironmentId}
+              resource={{
+                _tag: "attachment",
+                attachmentId: file.id,
+                fileName: file.name,
+                mimeType: file.mimeType,
+                disposition: "inline",
+              }}
+              onOpen={() => ctx.onFileOpen(file)}
+            />
+          ))}
+        </div>
       ) : null}
+      {fileCardsOnly ? (
+        <div className="flex flex-col items-end gap-1" onCopyCapture={onBodyCopyCapture}>
+          {otherUserFiles.map((file) => (
+            <UserFileCard
+              key={file.id}
+              file={file}
+              copyMarkdown={
+                attachmentReferences.find((reference) => reference.attachmentId === file.id)?.source
+              }
+            />
+          ))}
+        </div>
+      ) : null}
+      {!fileCardsOnly && (unchippedFiles.length > 0 || unknownAttachments.length > 0) ? (
+        <div className="mb-2 flex flex-col gap-1">
+          {unchippedFiles.map((file) => {
+            const pastedText = file.source?._tag === "pasted-text";
+            const label = userMessageFileLabel(file);
+            const fileIdentity = (
+              <>
+                <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{label}</span>
+                  {file.downloadable === false || pastedText ? (
+                    <span className="block text-xs text-muted-foreground tabular-nums">
+                      {file.downloadable === false ? "Sending…" : formatBytes(file.sizeBytes)}
+                    </span>
+                  ) : null}
+                </span>
+              </>
+            );
+            if (file.downloadable !== false) {
+              return (
+                <div key={file.id} className="flex min-w-0 items-center gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Preview ${label}`}
+                    onClick={() => ctx.onFileOpen(file)}
+                    className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
+                  >
+                    {fileIdentity}
+                    <EyeIcon className="size-4 shrink-0" />
+                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label={`Download ${label}`}
+                          onClick={() => ctx.onFileDownload(file)}
+                        />
+                      }
+                    >
+                      <DownloadIcon />
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">Download {label}</TooltipPopup>
+                  </Tooltip>
+                </div>
+              );
+            }
+
+            return (
+              <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                {fileIdentity}
+              </div>
+            );
+          })}
+          {unknownAttachments.map((attachment) => (
+            <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+              <PierreEntryIcon pathValue={attachment.name} kind="file" theme={ctx.resolvedTheme} />
+              <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {fileCardsOnly || audioOnly ? null : (
+        <div onCopyCapture={onBodyCopyCapture}>
+          <CollapsibleUserMessageBody
+            text={resolvedContext.text}
+            renderContextReference={renderContextReference}
+            skills={ctx.skills}
+            markdownCwd={ctx.markdownCwd}
+            collapsible={!folded}
+          />
+        </div>
+      )}
+    </>
+  );
+  if (folded) {
+    const toggleExpanded = () => setExpanded((value) => !value);
+    return (
+      <div data-user-message-attribution={userMessage.attribution}>
+        <MessageAuthorHeading>{senderLabel}</MessageAuthorHeading>
+        <WorkLogRow
+          role="button"
+          tabIndex={0}
+          aria-label={`${senderLabel}: ${foldSummary}`}
+          aria-expanded={expanded}
+          data-scroll-anchor-ignore
+          onClick={toggleExpanded}
+          onKeyDown={(event) => {
+            if (
+              event.target === event.currentTarget &&
+              (event.key === "Enter" || event.key === " ")
+            ) {
+              event.preventDefault();
+              toggleExpanded();
+            }
+          }}
+          icon={<MessagesSquareIcon className="size-4 shrink-0 stroke-2 text-icon-muted" />}
+          label={
+            <span className="flex min-w-0 items-baseline gap-1.5">
+              <span className="max-w-1/2 shrink-0 truncate text-foreground/80">{senderLabel}</span>
+              <span className="min-w-0 truncate">{foldSummary}</span>
+            </span>
+          }
+          trailing={
+            <>
+              {senderThreadId ? (
+                <InlineButton
+                  tone="muted"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    ctx.onOpenThread(senderThreadId);
+                  }}
+                  onKeyDown={(event) => event.stopPropagation()}
+                >
+                  Open thread
+                </InlineButton>
+              ) : null}
+              <TimelineRowTimestamp
+                createdAt={row.message.createdAt}
+                timestampFormat={ctx.timestampFormat}
+              />
+              <ChevronRightIcon
+                aria-hidden
+                className={cn(
+                  "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                  expanded && "rotate-90",
+                )}
+              />
+            </>
+          }
+        >
+          {/* Find reads the DOM, so a folded message stays mounted but hidden while find is open. */}
+          {expanded || ctx.findActive ? (
+            <div
+              ref={revealFoldRef}
+              hidden={!expanded}
+              dir={markdownProseDirection(resolvedContext.text)}
+            >
+              <WorkLogDetails>
+                <div>{body}</div>
+              </WorkLogDetails>
+            </div>
+          ) : null}
+        </WorkLogRow>
+        <UserMessageProjectedStatus row={row} />
+      </div>
+    );
+  }
+  return (
+    <div className="group @container flex flex-col items-end gap-1">
       {/* The row's heading already names the guest for screen readers. */}
       {userMessage.guestName !== undefined ? (
         <div aria-hidden>
@@ -863,159 +1036,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           userMessage.attribution === "guest"
             ? guestBubbleClassName(false)
             : !mediaOnly && !fileCardsOnly && !audioOnly && "bg-message",
-          !folded && !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
-          folded && expanded && "w-full",
+          !mediaOnly && !fileCardsOnly && !audioOnly && "p-3",
         )}
       >
-        {/* Outside the fold so a collapsed message still has a heading to navigate to. */}
         {mediaAboveText ? null : (
           <MessageAuthorHeading>
-            {folded
-              ? senderLabel
-              : userMessage.guestName === undefined
-                ? "You"
-                : `${userMessage.guestName} (guest)`}
+            {userMessage.guestName === undefined ? "You" : `${userMessage.guestName} (guest)`}
           </MessageAuthorHeading>
         )}
-        {folded ? (
-          <FoldedMessageHeader
-            icon={MessagesSquareIcon}
-            label={senderLabel}
-            summary={foldSummary}
-            expanded={expanded}
-            onToggle={() => setExpanded((value) => !value)}
-          />
-        ) : null}
-        {/* Find reads the DOM, so a folded message stays mounted but hidden while find is open. */}
-        {!folded || expanded || ctx.findActive ? (
-          <div
-            ref={folded ? revealFoldRef : undefined}
-            hidden={folded && !expanded}
-            dir={markdownProseDirection(resolvedContext.text)}
-            className={cn(
-              folded && "px-3 pb-3",
-              folded && !ctx.findActive && "max-h-96 overflow-auto",
-            )}
-          >
-            {!mediaAboveText && mediaBlock}
-            {userAudio.length > 0 ? (
-              <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
-                {userAudio.map((file) => (
-                  <InlineAudioPreview
-                    key={file.id}
-                    name={file.name}
-                    variant={audioOnly ? "bubble" : "chip"}
-                    environmentId={ctx.activeThreadEnvironmentId}
-                    resource={{
-                      _tag: "attachment",
-                      attachmentId: file.id,
-                      fileName: file.name,
-                      mimeType: file.mimeType,
-                      disposition: "inline",
-                    }}
-                    onOpen={() => ctx.onFileOpen(file)}
-                  />
-                ))}
-              </div>
-            ) : null}
-            {fileCardsOnly ? (
-              <div className="flex flex-col items-end gap-1" onCopyCapture={onBodyCopyCapture}>
-                {otherUserFiles.map((file) => (
-                  <UserFileCard
-                    key={file.id}
-                    file={file}
-                    copyMarkdown={
-                      attachmentReferences.find((reference) => reference.attachmentId === file.id)
-                        ?.source
-                    }
-                  />
-                ))}
-              </div>
-            ) : null}
-            {!fileCardsOnly && (unchippedFiles.length > 0 || unknownAttachments.length > 0) ? (
-              <div className="mb-2 flex flex-col gap-1">
-                {unchippedFiles.map((file) => {
-                  const pastedText = file.source?._tag === "pasted-text";
-                  const label = userMessageFileLabel(file);
-                  const fileIdentity = (
-                    <>
-                      <PierreEntryIcon
-                        pathValue={file.name}
-                        kind="file"
-                        theme={ctx.resolvedTheme}
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate">{label}</span>
-                        {file.downloadable === false || pastedText ? (
-                          <span className="block text-xs text-muted-foreground tabular-nums">
-                            {file.downloadable === false ? "Sending…" : formatBytes(file.sizeBytes)}
-                          </span>
-                        ) : null}
-                      </span>
-                    </>
-                  );
-                  if (file.downloadable !== false) {
-                    return (
-                      <div key={file.id} className="flex min-w-0 items-center gap-1">
-                        <button
-                          type="button"
-                          aria-label={`Preview ${label}`}
-                          onClick={() => ctx.onFileOpen(file)}
-                          className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:outline-none"
-                        >
-                          {fileIdentity}
-                          <EyeIcon className="size-4 shrink-0" />
-                        </button>
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                size="icon-xs"
-                                variant="ghost-muted"
-                                aria-label={`Download ${label}`}
-                                onClick={() => ctx.onFileDownload(file)}
-                              />
-                            }
-                          >
-                            <DownloadIcon />
-                          </TooltipTrigger>
-                          <TooltipPopup side="top">Download {label}</TooltipPopup>
-                        </Tooltip>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                      {fileIdentity}
-                    </div>
-                  );
-                })}
-                {unknownAttachments.map((attachment) => (
-                  <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                    <PierreEntryIcon
-                      pathValue={attachment.name}
-                      kind="file"
-                      theme={ctx.resolvedTheme}
-                    />
-                    <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {fileCardsOnly || audioOnly ? null : (
-              <div onCopyCapture={onBodyCopyCapture}>
-                <CollapsibleUserMessageBody
-                  text={resolvedContext.text}
-                  renderContextReference={renderContextReference}
-                  skills={ctx.skills}
-                  markdownCwd={ctx.markdownCwd}
-                  collapsible={!folded}
-                />
-              </div>
-            )}
-          </div>
-        ) : null}
+        <div dir={markdownProseDirection(resolvedContext.text)}>{body}</div>
         {floatActions ? (
           <div
             className={cn(
@@ -1028,17 +1057,15 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         ) : null}
       </div>
       <UserMessageProjectedStatus row={row} />
-      {!folded || expanded ? (
-        <div
-          className={cn(
-            "flex w-full max-w-[80%] justify-end pe-1",
-            floatActions && "@min-[37rem]:hidden",
-            ACTIONS_REVEAL_CLASS_NAME,
-          )}
-        >
-          {messageActions}
-        </div>
-      ) : null}
+      <div
+        className={cn(
+          "flex w-full max-w-[80%] justify-end pe-1",
+          floatActions && "@min-[37rem]:hidden",
+          ACTIONS_REVEAL_CLASS_NAME,
+        )}
+      >
+        {messageActions}
+      </div>
     </div>
   );
 }

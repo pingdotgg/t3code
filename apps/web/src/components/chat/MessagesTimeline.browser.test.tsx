@@ -837,7 +837,7 @@ const SENDER_THREAD_ID = ThreadId.make("thread-sender");
 const AGENT_MESSAGE = "Review finished\n\nThe migration drops the index before backfilling it.";
 
 describe("MessagesTimeline agent messages", () => {
-  it("folds a message from another agent into a one-line preview", async () => {
+  it("folds a message from another agent into a work-log row", async () => {
     setup();
     const onOpenThread = vi.fn();
     await using screen = await renderTimeline(
@@ -848,23 +848,28 @@ describe("MessagesTimeline agent messages", () => {
     expect(row.textContent).toContain("Review finished");
     expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(screen.text()).not.toContain("drops the index");
-    expect(screen.buttons("Open thread")).toHaveLength(0);
+
+    await click(screen.button("Open thread"));
+    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
 
     await click(row);
     expect(screen.text()).toContain("The migration drops the index before backfilling it.");
-    await click(screen.button("Open thread"));
-    expect(onOpenThread).toHaveBeenCalledWith(SENDER_THREAD_ID);
-
     await click(screen.button(/^Agent/));
     expect(screen.text()).not.toContain("drops the index");
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("folds a message sent by T3 Code into a work-log row", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
     ]);
-    expect(screen.buttons(/^Agent/)).toHaveLength(0);
+    const row = screen.button(/^T3 Code/);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.text()).not.toContain("drops the index");
+    expect(screen.buttons("Open thread")).toHaveLength(0);
+
+    await click(row);
     expect(screen.text()).toContain("drops the index");
   });
 
