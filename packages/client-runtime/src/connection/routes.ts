@@ -593,12 +593,34 @@ export function desiredGatewayPeers(
   return peers;
 }
 
+/** Peers the catalog already reaches through this gateway (paired or learned); never unregister them. */
+export function retainedGatewayPeerIds(
+  catalog: Iterable<ConnectionCatalogEntry>,
+  gatewayEnvironmentId: EnvironmentId,
+): ReadonlySet<EnvironmentId> {
+  const ids = new Set<EnvironmentId>();
+  for (const entry of catalog) {
+    const environmentId = entry.target.environmentId;
+    if (environmentId === gatewayEnvironmentId) continue;
+    if (
+      connectionRoutes(entry).some(
+        (route) => routeGatewayEnvironmentId(route) === gatewayEnvironmentId,
+      )
+    ) {
+      ids.add(environmentId);
+    }
+  }
+  return ids;
+}
+
 export function planGatewayPeerReconcile(input: {
   readonly desired: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
   readonly listed: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly httpBaseUrl: string;
   }>;
+  /** Peers the catalog reaches through this gateway; never unregister them. */
+  readonly retain?: ReadonlySet<EnvironmentId>;
 }): {
   readonly add: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
   readonly remove: ReadonlyArray<EnvironmentId>;
@@ -616,7 +638,10 @@ export function planGatewayPeerReconcile(input: {
     if (listedOrigin !== url) add.push({ environmentId, url });
   }
   const remove = input.listed
-    .filter((peer) => !desiredById.has(peer.environmentId))
+    .filter(
+      (peer) =>
+        !desiredById.has(peer.environmentId) && input.retain?.has(peer.environmentId) !== true,
+    )
     .map((peer) => peer.environmentId);
   return { add, remove };
 }

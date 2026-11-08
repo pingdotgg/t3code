@@ -22,6 +22,7 @@ import {
   mergeLearnedRoutes,
   pendingRouteOrder,
   planGatewayPeerReconcile,
+  retainedGatewayPeerIds,
   removedWithRelay,
   routesAfterRemoving,
   sendsTokenInClear,
@@ -775,5 +776,48 @@ describe("gateway peer upstream selection", () => {
       add: [{ environmentId: move, url: "http://192.168.1.20:3773" }],
       remove: [drop],
     });
+  });
+
+  it("does not remove peers the catalog still reaches through this gateway", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const pairedThroughGateway = EnvironmentId.make("env_gateway_only");
+    const drop = EnvironmentId.make("env_drop");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [{ environmentId: keep, url: "http://192.168.1.10:3773" }],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: pairedThroughGateway, httpBaseUrl: "http://192.168.1.40:3773/" },
+          { environmentId: drop, httpBaseUrl: "http://192.168.1.30:3773/" },
+        ],
+        retain: new Set([pairedThroughGateway]),
+      }),
+    ).toEqual({
+      add: [],
+      remove: [drop],
+    });
+
+    const gatewayOnly: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: pairedThroughGateway,
+        label: "Peer",
+        connectionId: "bearer:peer:https://connect-host.example",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "bearer:peer:https://connect-host.example",
+          environmentId: pairedThroughGateway,
+          label: "Peer",
+          httpBaseUrl: `https://connect-host.example/__t3_gateway/${pairedThroughGateway}/`,
+          wsBaseUrl: `wss://connect-host.example/__t3_gateway/${pairedThroughGateway}/`,
+          gatewayEnvironmentId: GATEWAY_ID,
+        }),
+      ),
+      enabled: true,
+    };
+    expect(retainedGatewayPeerIds([gatewayOnly], GATEWAY_ID)).toEqual(
+      new Set([pairedThroughGateway]),
+    );
+    expect(desiredGatewayPeers([gatewayOnly], GATEWAY_ID)).toEqual([]);
   });
 });

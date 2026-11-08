@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import { gatewayPathPrefix } from "@t3tools/shared/advertisedEndpoint";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
@@ -228,6 +229,21 @@ export function parseManualDesktopSshTarget(input: {
     username,
     port,
   };
+}
+
+/** True when the host still names a `/__t3_gateway/:peer` path (prefill may outlive edits). */
+export function hostUsesGatewayPath(host: string): boolean {
+  const trimmed = host.trim();
+  if (!trimmed) return false;
+  try {
+    const urlLikeInput =
+      /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//u.test(trimmed) || trimmed.startsWith("//")
+        ? trimmed
+        : `https://${trimmed}`;
+    return gatewayPathPrefix(new URL(urlLikeInput)) !== "";
+  } catch {
+    return false;
+  }
 }
 
 export function parsePairingUrlFields(

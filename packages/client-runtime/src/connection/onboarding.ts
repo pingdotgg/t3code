@@ -112,7 +112,8 @@ export const preparePairingRegistration = Effect.fn(
   const target = yield* resolvePairingTarget(input);
   const presentation = yield* ClientCapabilities.ClientPresentation;
   const gatewayPrefix = gatewayPathPrefix(new URL(target.httpBaseUrl));
-  const gatewayEnvironmentId = input.gatewayEnvironmentId;
+  // Prefill can leave a host id after the user edits to a direct URL; only hop when the path says so.
+  const gatewayEnvironmentId = gatewayPrefix.length > 0 ? input.gatewayEnvironmentId : undefined;
   if (gatewayPrefix.length > 0 && gatewayEnvironmentId === undefined) {
     return yield* new ConnectionBlockedError({
       reason: "configuration",
