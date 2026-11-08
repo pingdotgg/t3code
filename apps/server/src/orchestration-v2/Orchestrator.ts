@@ -1796,6 +1796,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: input.now,
         payload: {
           ...input.run,
+          admissionWait: undefined,
           status: "cancelled",
           queuePosition: null,
           completedAt: input.now,
@@ -14715,6 +14716,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
       ),
     );
+    // A run left waiting by the previous process gets no run event. Pumping before recovery
+    // finishes would start it into a reconcile that cancels unstarted runs.
+    if (hostAdmission._tag === "Some") yield* hostAdmission.value.requestPump;
   });
 
   const delegatedTaskResultPending = Effect.fn("Orchestrator.delegatedTaskResultPending")(

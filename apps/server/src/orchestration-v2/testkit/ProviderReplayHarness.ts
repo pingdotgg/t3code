@@ -487,9 +487,10 @@ export function layerWithRegistry<Error>(
       }),
     }),
   );
+  // Without host capacity there is no service; the orchestrator reads it as optional.
   const layerHostAdmission: Layer.Layer<HostAdmission.HostAdmission> =
     options.hostCapacity === undefined
-      ? Layer.empty
+      ? (Layer.empty as Layer.Layer<HostAdmission.HostAdmission>)
       : HostAdmission.layer.pipe(
           Layer.provide(
             Layer.mergeAll(
@@ -499,6 +500,7 @@ export function layerWithRegistry<Error>(
               options.hostCapacity.hostResources ?? Layer.empty,
             ),
           ),
+          Layer.orDie,
         );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(

@@ -155,8 +155,8 @@ const complete = (run: OrchestrationV2Run, eventId: string) =>
  * trigger that satisfies `until`. The stream replays its current state first, so the trigger
  * never races the subscription.
  */
-const stateAfter = (
-  trigger: Effect.Effect<unknown, unknown, unknown>,
+const stateAfter = <E, R>(
+  trigger: Effect.Effect<unknown, E, R>,
   until: (state: HostAdmissionState) => boolean,
 ) =>
   Effect.gen(function* () {
@@ -168,7 +168,7 @@ const stateAfter = (
           ? Effect.succeed(state)
           : Effect.gen(function* () {
               triggered = true;
-              yield* trigger as Effect.Effect<unknown>;
+              yield* trigger;
               return null;
             }),
       ),
@@ -241,6 +241,7 @@ it.layer(layerTest({ maxRunningTurns: 1 }))("host admission cap: start now", (it
           runId: (yield* onlyRun(c)).id,
         });
         assert.equal((yield* onlyRun(c)).status, "cancelled");
+        assert.isUndefined((yield* onlyRun(c)).admissionWait);
         assert.equal((yield* onlyRun(d)).status, "queued");
       }),
   );
