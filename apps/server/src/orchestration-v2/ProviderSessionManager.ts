@@ -305,22 +305,18 @@ function providerThreadRuntimeKey(
 }
 
 function providerThreadLoadKey(input: {
+  readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
   readonly providerThread: Parameters<
     ProviderAdapter.ProviderAdapterV2SessionRuntime["resumeThread"]
   >[0]["providerThread"];
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): string {
-  let modelSelection = input.modelSelection;
-  if (input.providerThread.driver === "codex" && modelSelection !== undefined) {
-    // Codex applies effort on turn/start. Resuming here discards its pinned request effort.
-    const { options, ...selection } = modelSelection;
-    const loadOptions = options?.filter((option) => option.id !== "reasoningEffort");
-    modelSelection = {
-      ...selection,
-      ...(loadOptions?.length ? { options: loadOptions } : {}),
-    };
-  }
+  const modelSelection =
+    input.modelSelection === undefined
+      ? undefined
+      : (input.runtime.normalizeThreadLoadModelSelection?.(input.modelSelection) ??
+        input.modelSelection);
   return JSON.stringify({
     providerThread: providerThreadRuntimeKey(input.providerThread),
     modelSelection: modelSelection ?? null,
@@ -1946,6 +1942,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId: input.threadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
@@ -1961,6 +1958,7 @@ export const layerWithOptions = (
               return runtime.resumeThread(input);
             }
             const providerThreadKey = providerThreadLoadKey({
+              runtime,
               providerThread: input.providerThread,
               ...(input.modelSelection === undefined
                 ? {}
@@ -2005,6 +2003,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     ...(input.modelSelection === undefined
                       ? {}
@@ -2034,6 +2033,7 @@ export const layerWithOptions = (
                   providerSessionId,
                   threadId: input.targetThreadId,
                   providerThreadKey: providerThreadLoadKey({
+                    runtime,
                     providerThread,
                     ...(input.modelSelection === undefined
                       ? {}
