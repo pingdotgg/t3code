@@ -438,6 +438,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly startTurn?: Effect.Effect<void>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly rejectErroredResume?: boolean;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
   } = {},
@@ -542,7 +543,20 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             Ref.update(state, (current) => ({
               ...current,
               resumeCount: current.resumeCount + 1,
-            })).pipe(Effect.as(threadInput.providerThread)),
+            })).pipe(
+              Effect.andThen(
+                options.rejectErroredResume && threadInput.providerThread.status === "error"
+                  ? Effect.fail(
+                      new ProviderAdapter.ProviderAdapterResumeThreadError({
+                        driver: CODEX_DRIVER,
+                        providerSessionId: input.providerSessionId,
+                        providerThreadId: threadInput.providerThread.id,
+                        cause: "Codex conversation is not reusable.",
+                      }),
+                    )
+                  : Effect.succeed(threadInput.providerThread),
+              ),
+            ),
           startTurn: () => options.startTurn ?? Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
@@ -600,6 +614,7 @@ function layerTest(input: {
   readonly startTurn?: Effect.Effect<void>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly rejectErroredResume?: boolean;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
@@ -639,6 +654,9 @@ function layerTest(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.rejectErroredResume === undefined
+        ? {}
+        : { rejectErroredResume: input.rejectErroredResume }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
         ? {}
@@ -4062,6 +4080,68 @@ it.effect(
       });
 
       yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 unloads a rejected errored thread while its shared session stays live",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("rejected-resume");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "rejected-native-thread",
+        });
+        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        const rejection = yield* runtime
+          .resumeThread({
+            providerThread: { ...providerThread, status: "error" },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.flip);
+        assert.equal(rejection._tag, "ProviderAdapterResumeThreadError");
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+
+        yield* TestClock.adjust("1 second");
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "rejected-native-thread",
+        ]);
+        yield* TestClock.adjust("1 second");
+        assert.equal((yield* Ref.get(state)).unloadedNativeThreadIds.length, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            rejectErroredResume: true,
+            hasPendingBackgroundWork: Effect.succeed(true),
+          }),
+        ),
+      );
     }),
 );
 

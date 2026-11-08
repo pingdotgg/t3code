@@ -1788,6 +1788,11 @@ export const layerWithOptions = (
                   ? Effect.succeed(input.providerThread)
                   : runtime.resumeThread(input),
               ),
+              Effect.onError(() =>
+                input.providerThread.status === "error"
+                  ? scheduleThreadUnload(providerSessionId, input.providerThread.id)
+                  : Effect.void,
+              ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
