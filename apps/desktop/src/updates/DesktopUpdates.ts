@@ -520,12 +520,7 @@ export const make = Effect.gen(function* () {
     // An older build can lack migrations this one ran. Only a guarded track switch's own check
     // may offer one.
     yield* electronUpdater.setAllowDowngrade(false);
-    yield* electronUpdater.setFullChangelog(allowsPrerelease);
-    yield* logUpdaterInfo("using update channel", {
-      channel,
-      allowPrerelease: allowsPrerelease,
-      fullChangelog: allowsPrerelease,
-    });
+    yield* logUpdaterInfo("using update channel", { channel, allowPrerelease: allowsPrerelease });
   });
 
   const checkForUpdates = Effect.fn("desktop.updates.checkForUpdates")(function* (
@@ -1159,6 +1154,9 @@ export const make = Effect.gen(function* () {
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
+      // Without it, a release missing from the feed's first page gets the newest entry's notes,
+      // untagged. Tagged notes let normalizeDesktopUpdateReleaseNotes drop other channels.
+      yield* electronUpdater.setFullChangelog(true);
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
