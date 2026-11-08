@@ -15,6 +15,7 @@ import { useInlineActionConfirm } from "./useInlineActionConfirm";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   MenuGroup,
   MenuGroupLabel,
@@ -243,10 +244,11 @@ export function PullRequestPrimaryAction({
     ) : null;
   const primaryStatus =
     primaryButton !== null ? null : primaryAction === "auto-merge-armed" ? (
-      <PullRequestStateBadge tone="info">
-        <PullRequestGlyph.merged aria-hidden className="size-3.5" />
-        {armedAutoMergeLabel}
-      </PullRequestStateBadge>
+      <PullRequestStateBadge
+        tone="info"
+        icon={<PullRequestGlyph.merged aria-hidden className="size-3.5" />}
+        label={armedAutoMergeLabel}
+      />
     ) : null; // Merged and closed show their own badge in the same slot.
   return primaryButton ?? primaryStatus;
 }
@@ -260,21 +262,31 @@ const STATE_BADGE_TONES = {
 /** What happened to the pull request, in the readiness card's action slot and its tint. */
 export function PullRequestStateBadge({
   tone,
-  children,
+  icon,
+  label,
 }: {
   tone: keyof typeof STATE_BADGE_TONES;
-  children: ReactNode;
+  icon: ReactNode;
+  label: string;
 }) {
   return (
-    <div
-      data-slot="state-badge"
-      className={cn(
-        "surface-tint flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control px-3 text-label sm:h-7",
-        STATE_BADGE_TONES[tone],
-      )}
-    >
-      {children}
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <div
+            data-slot="state-badge"
+            className={cn(
+              "surface-tint flex h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control px-3 text-label sm:h-7 [&>svg]:shrink-0",
+              STATE_BADGE_TONES[tone],
+            )}
+          />
+        }
+      >
+        {icon}
+        <span className="min-w-0 truncate">{label}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
