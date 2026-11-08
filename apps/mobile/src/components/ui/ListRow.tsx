@@ -16,7 +16,7 @@ export function ListRow(props: ListRowContentProps & { readonly onPress: () => v
       onPress={props.onPress}
       android_ripple={{ color: rippleStyle.backgroundColor }}
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
-      className="bg-grouped-card"
+      className={Platform.OS === "android" ? "bg-transparent" : "bg-grouped-card"}
     >
       <ListRowLayout
         {...props}

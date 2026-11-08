@@ -1,4 +1,4 @@
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 import type { ReactNode } from "react";
 
 import { AppText as Text } from "./AppText";
@@ -15,11 +15,18 @@ export function EmptyState(props: {
   if (props.variant === "plain") {
     return (
       <View className="items-center px-8 py-8">
-        <Text textRole="title" className="text-center font-t3-bold text-foreground">
+        <Text
+          textRole={Platform.OS === "android" ? "headline" : "title"}
+          className={
+            Platform.OS === "android"
+              ? "text-center font-t3-medium text-foreground"
+              : "text-center font-t3-bold text-foreground"
+          }
+        >
           {props.title}
         </Text>
         <Text
-          textRole="body"
+          textRole={Platform.OS === "android" ? "footnote" : "body"}
           className="mt-2 text-center font-sans leading-normal text-foreground-muted"
         >
           {props.detail}

@@ -148,7 +148,10 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   const editorWidth = useSharedValue(0);
   const inset =
     Platform.OS === "android" ? COLLAPSED_EDITOR_DEFAULT_INSET : collapsedEditorInset(text);
-  const minimum = Math.max(INLINE_EDITOR_HEIGHT, Math.ceil(text.lineHeight) + 2 * inset);
+  const minimum = Math.max(
+    INLINE_EDITOR_HEIGHT,
+    Math.ceil(text.lineHeight) * (Platform.OS === "android" ? 2 : 1) + 2 * inset,
+  );
   const height = Math.max(
     minimum,
     Math.min(text.lineHeight * 4 + 2 * inset, contentHeight + 2 * inset),
@@ -156,9 +159,10 @@ function useCompactComposerEditor(text: ScaledTextRole, value: string) {
   // A line that fits the expanded editor may still overflow its compact slot.
   // Compare its measured width too so widening cannot trigger a collapse loop.
   const isExpanded =
-    value.length > 0 &&
-    (contentHeight > text.lineHeight * 1.5 ||
-      (compactWidth > 0 && contentSize.width > compactWidth));
+    Platform.OS === "android" ||
+    (value.length > 0 &&
+      (contentHeight > text.lineHeight * 1.5 ||
+        (compactWidth > 0 && contentSize.width > compactWidth)));
   const compactRowHeight = Math.max(44, minimum);
   const isRTL = I18nManager.isRTL;
   const editorStyle = useAnimatedStyle(() => ({
@@ -884,7 +888,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         <ComposerSurface
           animateLayout={false}
           style={{
-            borderRadius: usesLargeControls ? 31 : 27,
+            borderRadius: Platform.OS === "android" ? 16 : usesLargeControls ? 31 : 27,
             borderCurve: "circular",
             overflow: "hidden",
             paddingVertical: surfacePaddingVertical,

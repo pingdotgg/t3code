@@ -31,7 +31,11 @@ export function ListSection(props: {
         </View>
       ) : null}
       <View
-        className="overflow-hidden border-continuous bg-grouped-card"
+        className={
+          Platform.OS === "android"
+            ? "overflow-hidden border border-border-subtle bg-input"
+            : "overflow-hidden border-continuous bg-grouped-card"
+        }
         style={{
           borderRadius:
             Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,

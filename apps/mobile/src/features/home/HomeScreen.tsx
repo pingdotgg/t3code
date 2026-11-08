@@ -37,7 +37,7 @@ import {
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
 import { EmptyState } from "../../components/ui/EmptyState";
-import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
+import { Button } from "../../components/ui/Button";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
@@ -252,7 +252,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const contentBackground = sidebarSurface ? "bg-drawer" : "bg-screen";
   const containerClassName = cn(
     "flex-1",
-    Platform.OS === "android" ? "bg-header" : contentBackground,
+    Platform.OS === "android" ? "bg-screen" : contentBackground,
   );
   const columnMetrics = useNativeColumnLayoutMetrics();
   const activeNewTask = useActiveNewTask();
@@ -700,10 +700,9 @@ export function HomeScreen(props: HomeScreenProps) {
                 }
                 action={
                   Platform.OS === "android" && !props.catalogState.hasReadyEnvironment ? (
-                    <FloatingActionButton
+                    <Button
                       label="Add environment"
                       icon="plus"
-                      variant="extended"
                       tone="primary"
                       onPress={props.onAddConnection}
                     />

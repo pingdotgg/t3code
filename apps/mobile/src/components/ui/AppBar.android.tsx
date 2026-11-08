@@ -255,7 +255,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
         </View>
         {searching ? (
           <View
-            className="absolute inset-0 bg-header"
+            className="absolute inset-0 bg-screen"
             // Match Material TopAppBar's 4dp icon inset so buttons stay where the bar drew them.
             style={{ paddingTop, paddingBottom, paddingHorizontal: 4 }}
           >

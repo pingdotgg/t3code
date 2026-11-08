@@ -34,7 +34,7 @@ export function ListRowLayout({
     <View
       className={cn(
         "min-h-14 flex-row items-center gap-3 px-4 py-3",
-        description && "min-h-18",
+        description && Platform.OS !== "android" && "min-h-18",
         disabled && "opacity-45",
       )}
     >
@@ -42,13 +42,13 @@ export function ListRowLayout({
         <View
           className={
             Platform.OS === "android"
-              ? "size-9 items-center justify-center rounded-xl bg-subtle"
+              ? "size-5 items-center justify-center"
               : "size-6 items-center justify-center"
           }
         >
           <SymbolView
             name={icon}
-            size={Platform.OS === "android" ? 20 : 22}
+            size={Platform.OS === "android" ? 18 : 22}
             tintColorClassName={tone === "danger" ? "accent-danger-foreground" : "accent-icon"}
             type="monochrome"
             weight="regular"
@@ -59,7 +59,7 @@ export function ListRowLayout({
       ) : null}
       <View className="min-w-0 flex-1 gap-1">
         <AppText
-          textRole="body"
+          textRole={Platform.OS === "android" ? "footnote" : "body"}
           className={cn(
             tone === "danger" ? "text-danger-foreground" : "text-foreground",
             Platform.OS === "android" && "font-t3-medium",
@@ -68,20 +68,26 @@ export function ListRowLayout({
           {label}
         </AppText>
         {description ? (
-          <AppText textRole="footnote" className="text-foreground-muted">
+          <AppText
+            textRole={Platform.OS === "android" ? "caption" : "footnote"}
+            className="text-foreground-muted"
+          >
             {description}
           </AppText>
         ) : null}
         {meta}
         {detail && stackDetail ? (
-          <AppText textRole="footnote" className="text-foreground-muted">
+          <AppText
+            textRole={Platform.OS === "android" ? "caption" : "footnote"}
+            className="text-foreground-muted"
+          >
             {detail}
           </AppText>
         ) : null}
       </View>
       {detail && !stackDetail ? (
         <AppText
-          textRole="footnote"
+          textRole={Platform.OS === "android" ? "caption" : "footnote"}
           className="max-w-[40%] shrink text-right text-foreground-muted"
           numberOfLines={1}
           ellipsizeMode="middle"

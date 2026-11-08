@@ -189,7 +189,7 @@ function ThreadListV2Section(props: {
     <>
       <Text
         className={cn(
-          "text-xs font-t3-medium",
+          "text-xs android:text-2xs font-t3-medium",
           sidebarPane
             ? "text-drawer-foreground-muted"
             : snoozed
@@ -328,8 +328,8 @@ export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(pro
       <Text
         className={
           props.pane === "sidebar"
-            ? "text-xs font-t3-medium text-drawer-foreground-muted"
-            : "text-xs font-t3-medium text-foreground-muted"
+            ? "text-xs android:text-2xs font-t3-medium text-drawer-foreground-muted"
+            : "text-xs android:text-2xs font-t3-medium text-foreground-muted"
         }
       >
         {label}
@@ -366,8 +366,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 }) {
   const { pendingTask, onSelectPendingTask, onDeletePendingTask } = props;
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const titleTypography = useScaledTextRole("body");
-  const metadataTypography = useScaledTextRole("label");
+  const titleTypography = useScaledTextRole(Platform.OS === "android" ? "footnote" : "body");
+  const metadataTypography = useScaledTextRole(Platform.OS === "android" ? "caption" : "label");
   const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
@@ -428,11 +428,30 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
     [onDeletePendingTask, pendingTask],
   );
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const titleTextInset = props.project && Platform.OS !== "android" ? projectIconSize + 8 : 0;
   const rowContent = (
     <>
+      {Platform.OS === "android" && props.project ? (
+        <View className="mb-1.5 flex-row items-center gap-2">
+          <ProjectFavicon
+            environmentId={pendingTask.environmentId}
+            faviconPath={props.project.faviconPath}
+            projectIcon={props.project.projectIcon}
+            size={14}
+            projectTitle={projectTitle}
+            workspaceRoot={props.project.workspaceRoot}
+          />
+          <Text
+            textRole="caption"
+            numberOfLines={1}
+            className="min-w-0 flex-1 text-foreground-muted"
+          >
+            {projectTitle}
+          </Text>
+        </View>
+      ) : null}
       <View className="flex-row items-start gap-2">
-        {props.project ? (
+        {props.project && Platform.OS !== "android" ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
             <ProjectFavicon
               environmentId={pendingTask.environmentId}
@@ -446,7 +465,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         ) : null}
         <Text
           className={cn(
-            "flex-1 text-base font-t3-medium",
+            "flex-1 text-base android:text-sm font-t3-medium",
             selected
               ? selectedThreadRowColors.foregroundClassName
               : rowAppearance.foregroundClassName,
@@ -480,7 +499,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             />
             <Text
               className={cn(
-                "text-xs font-t3-bold",
+                "text-xs android:text-2xs font-t3-bold",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
                   : "text-adaptive-amber-700-300",
@@ -495,7 +514,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
         <View className="mt-1" style={{ paddingLeft: titleTextInset }}>
           <Text
             className={cn(
-              "text-xs",
+              "text-xs android:text-2xs",
               selected
                 ? selectedThreadRowColors.foregroundClassName
                 : rowAppearance.tertiaryForegroundClassName,
@@ -520,7 +539,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
           ) : null}
           <Text
             className={cn(
-              "shrink text-xs text-foreground-muted",
+              "shrink text-xs android:text-2xs text-foreground-muted",
               selected
                 ? selectedThreadRowColors.mutedForegroundClassName
                 : rowAppearance.mutedForegroundClassName,
@@ -530,7 +549,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             {branch ? (
               <Text
                 className={cn(
-                  "text-xs",
+                  "text-xs android:text-2xs",
                   selected
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.mutedForegroundClassName,
@@ -544,7 +563,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
             {props.environmentLabel ? (
               <Text
                 className={cn(
-                  "text-xs",
+                  "text-xs android:text-2xs",
                   selected
                     ? selectedThreadRowColors.mutedForegroundClassName
                     : rowAppearance.tertiaryForegroundClassName,
@@ -678,8 +697,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly simultaneousSwipeGesture?: ComponentProps<typeof ThreadSwipeable>["simultaneousWith"];
 }) {
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const titleTypography = useScaledTextRole("body");
-  const metadataTypography = useScaledTextRole("label");
+  const titleTypography = useScaledTextRole(Platform.OS === "android" ? "footnote" : "body");
+  const metadataTypography = useScaledTextRole(Platform.OS === "android" ? "caption" : "label");
   const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
   const machineIconSize = metadataTypography.fontSize * fontScale;
   // Android's nonlinear system text scaling can differ from the fontScale estimate.
@@ -1124,11 +1143,30 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
-  const titleTextInset = props.project ? projectIconSize + 8 : 0;
+  const titleTextInset = props.project && Platform.OS !== "android" ? projectIconSize + 8 : 0;
   const cardContent = (
     <>
+      {Platform.OS === "android" && props.project ? (
+        <View className="mb-1.5 flex-row items-center gap-2">
+          <ProjectFavicon
+            environmentId={thread.environmentId}
+            faviconPath={props.project.faviconPath}
+            projectIcon={props.project.projectIcon}
+            size={14}
+            projectTitle={props.project.title}
+            workspaceRoot={props.project.workspaceRoot}
+          />
+          <Text
+            textRole="caption"
+            numberOfLines={1}
+            className="min-w-0 flex-1 text-foreground-muted"
+          >
+            {props.project.title}
+          </Text>
+        </View>
+      ) : null}
       <View className="flex-row items-start gap-2">
-        {props.project ? (
+        {props.project && Platform.OS !== "android" ? (
           <View className="justify-center" style={{ height: titleLineHeight }}>
             <ProjectFavicon
               environmentId={thread.environmentId}
@@ -1142,7 +1180,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         ) : null}
         <Text
           className={cn(
-            "flex-1 text-base",
+            "flex-1 text-base android:text-sm",
             !recede && "font-t3-medium",
             selected
               ? selectedThreadRowColors.foregroundClassName
@@ -1193,7 +1231,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
               <Text
                 className={cn(
-                  "text-xs font-t3-bold",
+                  "text-xs android:text-2xs font-t3-bold",
                   selected
                     ? selectedThreadRowColors.foregroundClassName
                     : "text-warning-foreground",
@@ -1217,7 +1255,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
               <Text
                 className={cn(
-                  "text-xs font-t3-bold",
+                  "text-xs android:text-2xs font-t3-bold",
                   (status === "working" || status === "waiting") && "tabular-nums",
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
@@ -1233,7 +1271,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           ) : (
             <Text
               className={cn(
-                "text-xs tabular-nums",
+                "text-xs android:text-2xs tabular-nums",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
@@ -1258,7 +1296,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
           <Text
             className={cn(
-              "flex-1 text-xs",
+              "flex-1 text-xs android:text-2xs",
               selected
                 ? selectedThreadRowColors.mutedForegroundClassName
                 : status === "limited"
@@ -1284,7 +1322,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ) : null}
             <Text
               className={cn(
-                "shrink text-xs",
+                "shrink text-xs android:text-2xs",
                 selected
                   ? selectedThreadRowColors.mutedForegroundClassName
                   : rowAppearance.tertiaryForegroundClassName,
@@ -1330,7 +1368,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
+              className={cn("text-xs android:text-2xs", pr.textClassName)}
               style={{ fontFamily: MONO_FONT }}
             >
               {pr.label}
@@ -1441,7 +1479,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           <View className="min-w-0 flex-1">
             <Text
               className={cn(
-                "text-base",
+                "text-base android:text-sm",
                 selected
                   ? selectedThreadRowColors.foregroundClassName
                   : rowAppearance.mutedForegroundClassName,

@@ -1474,7 +1474,7 @@ function ThreadDetailBody(
             pointerEvents="none"
             className={
               Platform.OS === "android"
-                ? "absolute inset-0 bg-thread-canvas"
+                ? "absolute inset-0 bg-card-alt"
                 : "absolute inset-0 bg-screen"
             }
           />

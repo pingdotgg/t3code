@@ -26,7 +26,7 @@ export function NativeAppBar(props: {
         // Every header shares the list toolbar's height, so titles line up across panes.
         modifiers={[fillMaxWidth(), height(layout.height)]}
         colors={{
-          containerColor: colors["--color-header"],
+          containerColor: colors["--color-screen"],
           titleContentColor: colors["--color-header-foreground"],
           navigationIconContentColor: colors["--color-header-foreground"],
           actionIconContentColor: colors["--color-header-foreground"],

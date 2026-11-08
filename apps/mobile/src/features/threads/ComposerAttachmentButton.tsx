@@ -1,5 +1,5 @@
 import type { MenuAction } from "@react-native-menu/menu";
-import { Pressable } from "react-native";
+import { Platform, Pressable } from "react-native";
 
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -29,7 +29,9 @@ export function ComposerAttachmentButton(props: {
     >
       <SymbolView
         name="plus"
-        size={Math.round((props.size === "large" ? 26 : 20) * scale)}
+        size={
+          Platform.OS === "android" ? 20 : Math.round((props.size === "large" ? 26 : 20) * scale)
+        }
         weight="regular"
         tintColorClassName="accent-icon"
         type="monochrome"

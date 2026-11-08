@@ -5,9 +5,9 @@ import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-works
 import { MOBILE_SHAPE } from "../../lib/designTokens";
 
 const SURFACE_CLASS_NAMES = {
-  sheet: "bg-sheet-solid",
-  screen: "bg-screen",
-  canvas: "bg-thread-canvas",
+  sheet: "bg-card-alt",
+  screen: "bg-card-alt",
+  canvas: "bg-card-alt",
   drawer: "bg-drawer",
 } as const;
 
@@ -41,7 +41,7 @@ export function ScreenContent({
   }
 
   return (
-    <View className={fitToContents ? "shrink bg-header" : "flex-1 bg-header"}>
+    <View className={fitToContents ? "shrink bg-screen" : "flex-1 bg-screen"}>
       <View
         className={`overflow-hidden ${SURFACE_CLASS_NAMES[surface]}`}
         collapsable={false}

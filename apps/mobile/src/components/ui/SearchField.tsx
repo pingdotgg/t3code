@@ -28,7 +28,7 @@ export function SearchField({
     <View
       className={
         Platform.OS === "android"
-          ? "min-w-0 flex-1 flex-row items-center rounded-2xl bg-input"
+          ? "min-w-0 flex-1 flex-row items-center rounded-lg border border-border-subtle bg-input"
           : "min-w-0 flex-1 flex-row items-center rounded-full border border-input-border bg-input"
       }
       style={{
@@ -54,7 +54,11 @@ export function SearchField({
         selectionColorClassName="accent-focus/32"
         cursorColorClassName="accent-focus"
         selectionHandleColorClassName="accent-focus"
-        className="min-w-0 flex-1 font-sans text-base text-foreground"
+        className={
+          Platform.OS === "android"
+            ? "min-w-0 flex-1 font-sans text-sm text-foreground"
+            : "min-w-0 flex-1 font-sans text-base text-foreground"
+        }
         style={{ paddingVertical: 7 * scale }}
         value={value}
         onChangeText={onChangeText}

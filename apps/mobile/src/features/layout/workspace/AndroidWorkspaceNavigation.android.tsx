@@ -3,6 +3,7 @@ import { requireNativeView } from "expo";
 import { CommonActions, useNavigation } from "@react-navigation/native";
 import {
   Keyboard,
+  Pressable,
   processColor,
   useWindowDimensions,
   View,
@@ -27,6 +28,9 @@ import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
+import { NAVIGATION_TAB_ICONS, WORKSPACE_TAB_LABELS } from "./navigation-tabs";
+import { AppText } from "../../../components/ui/AppText";
+import { SymbolView } from "../../../components/ui/AppSymbol";
 
 // Matches RAIL_WIDTH in the native rail.
 export const ANDROID_WORKSPACE_RAIL_WIDTH = 72;
@@ -87,7 +91,10 @@ export function AndroidWorkspaceNavigation(props: {
   const window = useWindowDimensions();
   const rail = Boolean(props.rail);
   const floating = !rail && Boolean(props.floating);
-  const tabs = [...visibleNavigationTabs(order, hidden, rail ? 5 : 4), "settings"];
+  const tabs: readonly AndroidWorkspaceNavigationTab[] = [
+    ...visibleNavigationTabs(order, hidden, rail ? 5 : 4),
+    "settings",
+  ];
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail, floating);
   const selectedTab = selectedNavigationTab(
@@ -102,24 +109,113 @@ export function AndroidWorkspaceNavigation(props: {
     (props.paneWidth ?? window.width) -
     (Math.max(insets.left, FLOATING_TABS.edge) - FLOATING_TABS.edge);
   const metrics = floatingTabsMetrics(tabs.length, scale, fabSize, barWidth, props.fillWidth);
+  const selectTab = (tab: AndroidWorkspaceNavigationTab) => {
+    Keyboard.dismiss();
+    if (tab !== "settings") workspace.dispatch({ type: "select", tab });
+    const rootState = rootNavigationRef.getRootState();
+    if (root && rootState) {
+      navigation.dispatch({
+        ...CommonActions.reset(
+          androidWorkspaceTabNavigationState(rootState, tab, layout.usesSplitView),
+        ),
+        target: root.key,
+      });
+    }
+    props.onSelect?.();
+  };
   // The composer's keyboard slides the sidebar away with the bar on it; other keyboards don't.
   if (!rail && keyboardVisible && !keyboardHoldsSidebar) return null;
 
+  if (!rail) {
+    return (
+      <View
+        style={
+          floating
+            ? {
+                width: metrics.pill + 2 * FLOATING_TABS.shadow,
+                height: metrics.height + 2 * FLOATING_TABS.shadow,
+                padding: FLOATING_TABS.shadow,
+              }
+            : { backgroundColor: colors["--color-screen"], paddingBottom: insets.bottom }
+        }
+      >
+        <View
+          className={
+            floating
+              ? "flex-1 flex-row items-center rounded-2xl border border-border-subtle bg-card-alt px-1"
+              : "mx-2 mb-2 flex-row items-center gap-1"
+          }
+          style={floating ? undefined : { minHeight: 56 * Math.max(1, scale) }}
+          accessibilityRole="tablist"
+        >
+          {tabs.map((tab) => {
+            const selected = selectedTab === tab;
+            const label = tab === "settings" ? "Settings" : WORKSPACE_TAB_LABELS[tab];
+            return (
+              <Pressable
+                key={tab}
+                accessibilityRole="tab"
+                accessibilityLabel={label}
+                accessibilityState={{ selected }}
+                onPress={() => selectTab(tab)}
+                android_ripple={{ color: colors["--color-subtle-strong"] }}
+                className={
+                  selected
+                    ? "flex-1 items-center justify-center gap-1 overflow-hidden rounded-xl bg-subtle-strong py-1.5"
+                    : "flex-1 items-center justify-center gap-1 overflow-hidden rounded-xl py-1.5"
+                }
+                style={{ minHeight: floating ? metrics.height : 48 * Math.max(1, scale) }}
+              >
+                <SymbolView
+                  name={tab === "settings" ? "gearshape" : NAVIGATION_TAB_ICONS[tab]}
+                  size={20 * scale}
+                  tintColorClassName={selected ? "accent-foreground" : "accent-foreground-muted"}
+                />
+                {!floating ? (
+                  <AppText
+                    textRole="micro"
+                    numberOfLines={1}
+                    className={
+                      selected ? "font-t3-medium text-foreground" : "text-foreground-muted"
+                    }
+                  >
+                    {label}
+                  </AppText>
+                ) : null}
+              </Pressable>
+            );
+          })}
+          {!floating ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New thread"
+              accessibilityState={{ disabled: !connectionState.hasConnections }}
+              disabled={!connectionState.hasConnections}
+              onPress={() => {
+                Keyboard.dismiss();
+                props.onNewThread();
+              }}
+              android_ripple={{ color: colors["--color-primary-foreground"] }}
+              className="ml-1 items-center justify-center overflow-hidden rounded-xl bg-primary disabled:opacity-35"
+              style={{ width: 48 * Math.max(1, scale), height: 48 * Math.max(1, scale) }}
+            >
+              <SymbolView
+                name="plus"
+                size={22 * scale}
+                tintColorClassName="accent-primary-foreground"
+              />
+            </Pressable>
+          ) : null}
+        </View>
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={
-        // The rail draws its own surface and pads the system bars; while open it spans the
-        // workspace, so the rest of it must stay transparent.
-        rail
-          ? { flex: 1 }
-          : floating
-            ? undefined
-            : { backgroundColor: containerColor, paddingBottom: insets.bottom }
-      }
-    >
+    <View style={{ flex: 1 }}>
       <NativeNavigation
         rail={rail}
-        floating={floating}
+        floating={false}
         tabs={tabs}
         selectedTab={selectedTab}
         dark={themeAppearance === "dark"}
@@ -134,39 +230,13 @@ export function AndroidWorkspaceNavigation(props: {
         unselectedColor={nativeColor(unselectedColor)}
         actionColor={nativeColor(colors["--color-primary"])}
         actionContentColor={nativeColor(colors["--color-primary-foreground"])}
-        onTabSelected={(event) => {
-          Keyboard.dismiss();
-          const tab = event.nativeEvent.tab;
-          if (tab !== "settings") workspace.dispatch({ type: "select", tab });
-          // Reset the root stack even when a nested settings navigator has focus.
-          // The provider renders inside the root stack's layout, so the container's root state is
-          // that stack's current state.
-          const rootState = rootNavigationRef.getRootState();
-          if (root && rootState) {
-            navigation.dispatch({
-              ...CommonActions.reset(
-                androidWorkspaceTabNavigationState(rootState, tab, layout.usesSplitView),
-              ),
-              target: root.key,
-            });
-          }
-          props.onSelect?.();
-        }}
+        onTabSelected={(event) => selectTab(event.nativeEvent.tab)}
         onNewThread={() => {
           Keyboard.dismiss();
           props.onNewThread();
         }}
         onOverlayChange={(event) => props.onOverlayChange?.(event.nativeEvent.overlay)}
-        style={
-          rail
-            ? { flex: 1 }
-            : floating
-              ? {
-                  width: metrics.pill + 2 * FLOATING_TABS.shadow,
-                  height: metrics.height + 2 * FLOATING_TABS.shadow,
-                }
-              : { height: 80 * Math.max(1, scale) }
-        }
+        style={{ flex: 1 }}
       />
     </View>
   );

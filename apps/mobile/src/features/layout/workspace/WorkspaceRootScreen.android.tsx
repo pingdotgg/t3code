@@ -37,22 +37,20 @@ function WorkspaceRoot() {
   const workspace = useWorkspaceTabs()!;
   const enabled = useEnabledNavigationTabs();
   const insets = useSafeAreaInsets();
-  const { fabClearance, fabSize } = useAndroidControlSizing();
+  const { fabSize } = useAndroidControlSizing();
   const context = {
     ...workspace,
     bottomClearance: layout.usesSplitView
       ? workspace.bottomClearance
       : floatingTabsEnabled
         ? insets.bottom + FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
-        : workspace.state.selectedTab === "threads"
-          ? fabClearance + 16
-          : 16,
+        : 16,
   };
   const tab = workspace.state.selectedTab;
 
   return (
     <WorkspaceTabsContext value={context}>
-      <View className={layout.usesSplitView ? "flex-1 bg-screen" : "flex-1 bg-header"}>
+      <View className="flex-1 bg-screen">
         {!layout.usesSplitView ? (
           <NativeStackScreenOptions options={{ headerShown: false }} />
         ) : null}

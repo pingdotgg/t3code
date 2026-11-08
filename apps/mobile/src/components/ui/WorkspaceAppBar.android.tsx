@@ -162,7 +162,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
     </AndroidAnchoredMenu>
   ) : null;
   return (
-    <View className="bg-header" style={{ paddingTop, paddingBottom }}>
+    <View className="bg-screen" style={{ paddingTop, paddingBottom }}>
       <View
         pointerEvents={searching ? "none" : "auto"}
         accessibilityElementsHidden={searching}
@@ -174,7 +174,11 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
             <RNHostView matchContents={{ vertical: true }}>
               <View collapsable={false} className="justify-center" style={{ height: ACTION_SIZE }}>
                 {props.titleContent ?? (
-                  <AppText textRole="title" numberOfLines={1} className="text-header-foreground">
+                  <AppText
+                    textRole="headline"
+                    numberOfLines={1}
+                    className="font-t3-medium text-header-foreground"
+                  >
                     {props.title}
                   </AppText>
                 )}
@@ -188,7 +192,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
               <IconButton enabled={search !== undefined} onClick={search?.onOpen}>
                 <Icon
                   source={SEARCH_ICON}
-                  size={24}
+                  size={20}
                   tint={search ? tint : "transparent"}
                   contentDescription={search?.accessibilityLabel}
                 />
@@ -196,7 +200,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
               <Box contentAlignment="center" modifiers={[size(ACTION_SIZE, ACTION_SIZE)]}>
                 <Icon
                   source={filter?.customized ? FILTER_FILLED_ICON : FILTER_ICON}
-                  size={24}
+                  size={20}
                   tint={filter ? tint : "transparent"}
                 />
               </Box>
@@ -214,7 +218,7 @@ function WorkspaceAppBarView(props: WorkspaceAppBarProps) {
       </View>
       {searching ? (
         <View
-          className="absolute inset-0 bg-header"
+          className="absolute inset-0 bg-screen"
           style={{ paddingTop, paddingBottom, paddingHorizontal: ACTION_END_INSET }}
         >
           <View className="flex-1 flex-row items-center gap-1">

@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { useCallback, useRef, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   View,
@@ -46,7 +47,7 @@ export function ComposerInlineControl(props: {
   const reducedMotion = useReducedMotion();
   // Keep the picker anchored to its parent while the editor changes height.
   const animatesLabel = props.iconOnly !== undefined;
-  const iconSize = props.size === "large" ? 20 : smallIconSize;
+  const iconSize = Platform.OS === "android" ? 18 : props.size === "large" ? 20 : smallIconSize;
   return (
     <Animated.View
       style={{
@@ -276,7 +277,8 @@ export function ComposerActionButton(props: {
   readonly onTouchStart?: PressableProps["onTouchStart"];
 }) {
   const { scale, smallIconSize } = useAndroidControlSizing();
-  const circleSize = Math.round((props.size === "large" ? 44 : 30) * scale);
+  const circleSize =
+    Platform.OS === "android" ? 32 : Math.round((props.size === "large" ? 44 : 30) * scale);
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -290,7 +292,11 @@ export function ComposerActionButton(props: {
       onTouchStart={props.onTouchStart}
     >
       <View
-        style={{ width: circleSize, height: circleSize }}
+        style={{
+          width: circleSize,
+          height: circleSize,
+          borderRadius: Platform.OS === "android" ? 10 : circleSize / 2,
+        }}
         className={cn(
           "items-center justify-center rounded-full",
           props.variant === "danger"
@@ -302,7 +308,13 @@ export function ComposerActionButton(props: {
       >
         <SymbolView
           name={props.icon}
-          size={props.size === "large" ? Math.round(20 * scale) : smallIconSize}
+          size={
+            Platform.OS === "android"
+              ? 18
+              : props.size === "large"
+                ? Math.round(20 * scale)
+                : smallIconSize
+          }
           weight="semibold"
           tintColorClassName={
             props.variant === "danger"

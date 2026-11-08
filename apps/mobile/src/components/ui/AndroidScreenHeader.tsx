@@ -50,7 +50,7 @@ export function AndroidScreenHeader(props: {
   readonly compact?: boolean;
 }) {
   const { colors } = useControlTheme();
-  const titleTypography = useScaledTextRole("title");
+  const titleTypography = useScaledTextRole("headline");
   const subtitleTypography = useScaledTextRole("label");
   const inFormSheet = use(RoutedFormSheetContext);
   const { paddingTop, paddingBottom } = useToolbarLayout(props.embedded || inFormSheet);
@@ -63,7 +63,7 @@ export function AndroidScreenHeader(props: {
   return (
     <View
       onLayout={(event) => setHeaderWidth(event.nativeEvent.layout.width)}
-      className="border-b border-header-border bg-header"
+      className="border-b border-header-border bg-screen"
       style={{
         paddingTop,
         paddingBottom,

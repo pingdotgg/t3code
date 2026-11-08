@@ -9,6 +9,7 @@ import {
   RNHostView,
   Text,
   TextButton,
+  Shape,
 } from "@expo/ui/jetpack-compose";
 import { defaultMinSize, fillMaxWidth, size } from "@expo/ui/jetpack-compose/modifiers";
 import { View } from "react-native";
@@ -17,6 +18,8 @@ import { useControlTheme } from "./useControlTheme";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import type { ButtonProps } from "./Button";
 import { useAndroidControlSizing } from "./useAndroidControlSizing";
+
+const roundedCorner = Shape.RoundedCorner;
 
 export function Button(props: ButtonProps) {
   const { colors } = useControlTheme();
@@ -68,6 +71,9 @@ export function Button(props: ButtonProps) {
           style={props.fullWidth ? { width: "100%" } : { alignSelf: "flex-start" }}
         >
           <Component
+            shape={roundedCorner({
+              cornerRadii: { topStart: 10, topEnd: 10, bottomStart: 10, bottomEnd: 10 },
+            })}
             enabled={!props.disabled && !props.loading}
             onClick={props.onPress}
             modifiers={[

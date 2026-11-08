@@ -161,7 +161,11 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   // UIKit's scroll-edge material takes the scroll view's own color; like the chat list, match
   // the sidebar's surface so the bar doesn't darken over content at rest.
   // Grouped cards only lift off the screen surface; the drawer is as dark as they are.
-  const listSurface = use(SettingsSidebarContext) ? "bg-drawer" : "bg-screen";
+  const listSurface = use(SettingsSidebarContext)
+    ? "bg-drawer"
+    : Platform.OS === "android"
+      ? "bg-card-alt"
+      : "bg-screen";
   const insets = useSafeAreaInsets();
   // UIKit insets the scroll view by its column's safe area, which this context can report as 0.
   const bottomSafeArea = useNativeColumnLayoutMetrics()?.safeArea.bottom ?? insets.bottom;
@@ -181,7 +185,9 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         className={`flex-1 ${listSurface}`}
-        contentContainerClassName="gap-4 px-5 pt-4"
+        contentContainerClassName={
+          Platform.OS === "android" ? "gap-7 px-4 pt-5" : "gap-4 px-5 pt-4"
+        }
         contentContainerStyle={{
           // The workspace's clearance keeps the last row above its search field and keyboard.
           paddingBottom:

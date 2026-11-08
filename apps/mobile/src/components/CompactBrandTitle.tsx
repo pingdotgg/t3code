@@ -55,7 +55,10 @@ export function CompactBrandTitle(
         allowFontScaling={props.allowFontScaling}
         maxFontSizeMultiplier={BRAND_MAX_FONT_SCALE}
         className="font-t3-medium text-foreground-muted"
-        style={{ fontSize: 21 * scale, letterSpacing: -0.5 * scale }}
+        style={{
+          fontSize: (Platform.OS === "android" ? 18 : 21) * scale,
+          letterSpacing: -0.5 * scale,
+        }}
       >
         Code
       </Text>
