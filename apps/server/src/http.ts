@@ -1,5 +1,8 @@
+import * as ProjectionStoreV2 from "./orchestration-v2/ProjectionStore.ts";
+import * as CloudSandboxActivity from "./cloudSandbox/CloudSandboxActivity.ts";
 import * as Mime from "effect/http/Mime";
 import {
+  CLOUD_SANDBOX_ACTIVITY_PATH,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
@@ -727,3 +730,28 @@ export const layerStaticAndDevRoute = Layer.unwrap(
     Effect.map((assets) => HttpRouter.add("GET", "*", handleStaticAndDevRequest(assets))),
   ),
 );
+
+export const layerCloudSandboxActivityRoute = Layer.unwrap(
+  Effect.gen(function* () {
+    const service = yield* CloudSandboxActivity.CloudSandboxActivity;
+    return HttpRouter.add(
+      "GET",
+      CLOUD_SANDBOX_ACTIVITY_PATH,
+      Effect.gen(function* () {
+        yield* authenticateRawRouteWithScope(AuthOrchestrationReadScope);
+        return yield* service.isActive.pipe(
+          Effect.flatMap((active) => HttpServerResponse.json({ active })),
+        );
+      }).pipe(
+        Effect.catchTags({
+          EnvironmentAuthInvalidError: HttpServerRespondable.toResponse,
+          EnvironmentInternalError: HttpServerRespondable.toResponse,
+          EnvironmentScopeRequiredError: HttpServerRespondable.toResponse,
+        }),
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.text("Cloud activity unavailable.", { status: 503 }),
+        ),
+      ),
+    );
+  }),
+).pipe(Layer.provide(CloudSandboxActivity.layer.pipe(Layer.provide(ProjectionStoreV2.layer))));

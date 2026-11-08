@@ -1,3 +1,5 @@
+import * as CloudSandboxManager from "./cloudSandbox/CloudSandboxManager.ts";
+import * as CloudSandboxProfiles from "./cloudSandbox/CloudSandboxProfiles.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -764,6 +766,16 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(CloudSandboxManager.CloudSandboxManager)({}),
+  Layer.mock(CloudSandboxProfiles.CloudSandboxProfiles)({
+    list: Effect.succeed([]),
+    save: () => Effect.die("not used"),
+    remove: () => Effect.die("not used"),
+    resolve: () => Effect.die("not used"),
+    recordSpend: () => Effect.die("not used"),
+    spendOf: () => Effect.die("not used"),
+    test: () => Effect.die("not used"),
+  }),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(WorkspacePaths.WorkspacePaths)({}),

@@ -1,4 +1,11 @@
+import * as WorktreeMcpService from "./mcp/WorktreeMcpService.ts";
+import * as CloudSandboxController from "./workspace/CloudSandboxController.ts";
+import * as CloudSandboxProfiles from "./cloudSandbox/CloudSandboxProfiles.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ManagedCloudSandboxRoutes from "./cloudSandbox/ManagedCloudSandboxRoutes.ts";
+import * as CloudSandboxPreview from "./cloudSandbox/CloudSandboxPreview.ts";
+import * as CloudSandboxManager from "./cloudSandbox/CloudSandboxManager.ts";
+import * as CloudSandboxWorkspaces from "./workspace/CloudSandboxWorkspaces.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Random from "effect/Random";
 import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
@@ -776,6 +783,8 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
     ServerHttp.layerOtlpTracesProxyRoute,
+    ServerHttp.layerCloudSandboxActivityRoute,
+    ManagedCloudSandboxRoutes.layer,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
@@ -793,9 +802,28 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.effectDiscard(
     RemoteDelegation.RemoteDelegation.pipe(Effect.flatMap((remote) => remote.start())),
   ),
+  // Reclaims finished sandbox workspaces on a timer, like the delegation follower.
+  Layer.effectDiscard(
+    CloudSandboxWorkspaces.CloudSandboxWorkspaces.pipe(
+      Effect.flatMap((workspaces) => workspaces.start()),
+    ),
+  ),
 ).pipe(
   Layer.provide(
     PullRequestReviewGuideService.layer.pipe(Layer.provide(PullRequestReviewGuides.layer)),
+  ),
+  Layer.provide(WorktreeMcpService.layer),
+  Layer.provide(CloudSandboxWorkspaces.layer.pipe(Layer.provide(CloudSandboxController.layer))),
+  Layer.provide(CloudSandboxProfiles.layer),
+  // Memoized single manager/profile instances for every layer above (the
+  // request-scoped provide below shares them by layer reference).
+  Layer.provide(CloudSandboxManager.layer),
+  // provideRequest builds the preview routes' layer once in middleware, reusing the memoized Manager/Profiles above.
+  HttpRouter.provideRequest(
+    CloudSandboxPreview.layer.pipe(
+      Layer.provideMerge(CloudSandboxManager.layer),
+      Layer.provideMerge(CloudSandboxProfiles.layer),
+    ),
   ),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
