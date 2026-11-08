@@ -1,7 +1,7 @@
 import type { MenuAction, MenuComponentProps } from "@react-native-menu/menu";
 import type { ReactNode } from "react";
 import { use, useRef, useState } from "react";
-import type { StyleProp, ViewInstance, ViewStyle } from "react-native";
+import type { AccessibilityProps, StyleProp, ViewInstance, ViewStyle } from "react-native";
 import { Pressable, ScrollView, View } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
 
@@ -38,7 +38,10 @@ export type AndroidAnchoredMenuProps = {
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
   readonly children: ReactNode | ((open: () => void) => ReactNode);
-};
+} & Pick<
+  AccessibilityProps,
+  "accessible" | "accessibilityLabel" | "accessibilityRole" | "accessibilityState"
+>;
 
 export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
   const { scale, menuWidth: desiredMenuWidth } = useAndroidControlSizing();
@@ -143,13 +146,20 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
           collapsable={false}
           className={props.className}
           style={props.style}
+          accessible={props.accessible}
+          accessibilityLabel={props.accessibilityLabel}
+          accessibilityRole={props.accessibilityRole}
+          accessibilityState={props.accessibilityState}
         >
           {props.children(open)}
         </View>
       ) : (
         <Pressable
           ref={setAnchorNode}
-          accessibilityRole="button"
+          accessible={props.accessible}
+          accessibilityLabel={props.accessibilityLabel}
+          accessibilityRole={props.accessibilityRole ?? "button"}
+          accessibilityState={props.accessibilityState}
           className={props.className}
           collapsable={false}
           style={props.style}

@@ -4,6 +4,12 @@ import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import type { MenuProps } from "./Menu.types";
 
 export function Menu(props: MenuProps) {
+  const accessibility = {
+    accessible: props.accessible,
+    accessibilityLabel: props.accessibilityLabel,
+    accessibilityRole: props.accessibilityRole,
+    accessibilityState: props.accessibilityState,
+  };
   if (props.shouldOpenOnLongPress && isValidElement(props.children)) {
     const child = props.children as ReactElement<{ onLongPress?: () => void }>;
     return (
@@ -13,6 +19,7 @@ export function Menu(props: MenuProps) {
         title={props.title}
         style={props.style}
         onPressAction={props.onPressAction}
+        {...accessibility}
       >
         {(open) =>
           cloneElement(child, {
@@ -32,6 +39,7 @@ export function Menu(props: MenuProps) {
       title={props.title}
       style={props.style}
       onPressAction={props.onPressAction}
+      {...accessibility}
     >
       {props.children}
     </AndroidAnchoredMenu>
