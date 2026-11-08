@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -78,10 +78,12 @@ it("keeps a Cursor thread's stored model and options when the user re-picks its 
   await using _screen = await render(<Picker thread={thread} runtime={null} />);
   await page.getByRole("button", { name: "Pick the stored model" }).click();
 
-  const draft = useComposerDraftStore
-    .getState()
-    .getComposerDraft(scopeThreadRef(environmentId, thread.id));
-  expect(draft?.modelSelectionByProvider[cursor] ?? thread.modelSelection).toEqual(stored);
+  await vi.waitFor(() => {
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(environmentId, thread.id));
+    expect(draft?.modelSelectionByProvider[cursor] ?? thread.modelSelection).toEqual(stored);
+  });
 });
 
 it("switches back to the thread's stored model while the session runs on another instance", async () => {
@@ -92,8 +94,10 @@ it("switches back to the thread's stored model while the session runs on another
   await using _screen = await render(<Picker thread={thread} runtime={runtime} />);
   await page.getByRole("button", { name: "Pick the stored model" }).click();
 
-  const draft = useComposerDraftStore
-    .getState()
-    .getComposerDraft(scopeThreadRef(environmentId, thread.id));
-  expect(draft?.activeProvider).toBe(cursor);
+  await vi.waitFor(() => {
+    const draft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(scopeThreadRef(environmentId, thread.id));
+    expect(draft?.activeProvider).toBe(cursor);
+  });
 });
