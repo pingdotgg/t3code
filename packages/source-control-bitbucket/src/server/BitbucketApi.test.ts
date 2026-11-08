@@ -397,6 +397,9 @@ it.effect.each([false, true])(
         "pingdotgg/.git",
         "pingdotgg/.git/",
         "https://bitbucket.org/pingdotgg/.git/",
+        "scm/acme/.git",
+        "scm/acme/.git/",
+        "https://bitbucket.org/scm/acme/.git/",
       ]) {
         const error = yield* bitbucket
           .getRepositoryCloneUrls({

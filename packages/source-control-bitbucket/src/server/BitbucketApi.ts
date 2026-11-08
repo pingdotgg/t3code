@@ -439,11 +439,9 @@ function bitbucketStateFilter(states: ReadonlyArray<string>): string {
 function parseBitbucketRepositorySlug(value: string): BitbucketRepositoryLocator | null {
   const trimmed = value.trim();
   const path = trimmed.includes("://") ? (URL.parse(trimmed)?.pathname ?? "") : trimmed;
-  const normalized = path.replace(/\.git\/*$/u, "");
-  const parts = normalized.split("/").filter((part) => part.length > 0);
-  if (parts.length < 2) return null;
+  const parts = path.split("/").filter((part) => part.length > 0);
   const workspace = parts.at(-2);
-  const repoSlug = parts.at(-1);
+  const repoSlug = parts.at(-1)?.replace(/\.git$/u, "");
   return workspace && repoSlug ? { workspace, repoSlug } : null;
 }
 
