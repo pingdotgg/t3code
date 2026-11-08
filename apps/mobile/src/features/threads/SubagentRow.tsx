@@ -41,16 +41,16 @@ export function SubagentRow(props: {
   readonly elapsed: ReactNode;
   /** The task runs in a linked environment this app is connected to. */
   readonly canOpenRemote?: boolean;
-  /** Actions after elapsed on the title row, before the open-thread chevron. */
+  /** Vertically centered on the trailing edge of the full row. */
   readonly trailing?: ReactNode;
 }) {
   const presentation = resolveSubagentRowPresentation(props.subagent, props.canOpenRemote);
   const detail = subagentCardDetail(presentation.detail);
   return (
-    <View className="gap-1">
-      <View className="flex-row items-center gap-3">
-        <SubagentStatusDot tone={presentation.tone} placement="sheet" />
-        <View className="min-w-0 flex-1 flex-row items-center gap-2">
+    <View className="flex-row items-center gap-3">
+      <View className="min-w-0 flex-1 gap-1">
+        <View className="flex-row items-center gap-3">
+          <SubagentStatusDot tone={presentation.tone} placement="sheet" />
           <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
             <Text
               numberOfLines={1}
@@ -73,33 +73,30 @@ export function SubagentRow(props: {
             >
               {presentation.statusLabel}
             </Text>
+            {props.elapsed}
             {presentation.runsOn !== null ? (
               <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
                 on {presentation.runsOn}
               </Text>
             ) : null}
           </View>
-          {props.elapsed}
-          {props.trailing}
-          {presentation.canOpenThread ? (
-            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
+        </View>
+        <View className="gap-1 pl-5">
+          <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
+          {detail ? (
+            <Text
+              numberOfLines={3}
+              className={cn(
+                "text-xs text-foreground-muted",
+                presentation.tone === "failed" && SUBAGENT_TONE_TEXT_CLASS.failed,
+              )}
+            >
+              {detail}
+            </Text>
           ) : null}
         </View>
       </View>
-      <View className="gap-1 pl-5">
-        <SubagentMetadata environmentId={props.environmentId} subagent={props.subagent} />
-        {detail ? (
-          <Text
-            numberOfLines={3}
-            className={cn(
-              "text-xs text-foreground-muted",
-              presentation.tone === "failed" && SUBAGENT_TONE_TEXT_CLASS.failed,
-            )}
-          >
-            {detail}
-          </Text>
-        ) : null}
-      </View>
+      {props.trailing}
     </View>
   );
 }
