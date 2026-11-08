@@ -12,7 +12,7 @@ One gateway serves one beta domain. It is a single point of failure: when it res
    go build -o t3-connect-gateway .
    ```
 
-2. Point a wildcard DNS record for `*.<domain>` at the gateway, and terminate TLS for it in front of the gateway. Forward HTTP requests and WebSocket upgrades to `127.0.0.1:7443`, preserving Host, path, and query. Disable query, header, and body logging at ingress: these fields can carry environment credentials.
+2. Point a wildcard DNS record for `*.<domain>` at the gateway, and terminate TLS for it in front of the gateway. Forward HTTP requests and WebSocket upgrades to `127.0.0.1:7443`, preserving Host, path, and query. Disable path, query, header, and body logging at ingress: these fields can carry environment credentials and webhook tokens.
 
 3. Generate a random secret of at least 32 characters. Set it as `RELAY_BETA_GATEWAY_SECRET` on the relay and `T3_CONNECT_RELAY_SECRET` on the gateway. For production, `RELAY_BETA_GATEWAY_SECRET` is a GitHub secret.
 

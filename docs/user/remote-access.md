@@ -76,7 +76,8 @@ now; the Labs option appears only on invited accounts.
 - **Terminal:** run `t3 connect --beta`.
 
 A machine that is already linked keeps its current connection. To switch, unlink
-it and link it again. An offline machine keeps its slot until you unlink it.
+it and link it again. To go back to regular T3 Connect, turn the Labs option off
+first. An offline machine keeps its slot until you unlink it.
 
 ## Pair over a LAN or private network
 
