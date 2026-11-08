@@ -5,20 +5,20 @@ const sources = {
 
 export async function playVoiceInputCue(cue: "start" | "stop"): Promise<void> {
   const audio = new Audio(sources[cue]);
+  let finish!: () => void;
+  const done = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  audio.onended = () => finish();
+  audio.onerror = () => finish();
+  const timeout = setTimeout(finish, 1_500);
   try {
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(finish, 1_500);
-      function finish() {
-        clearTimeout(timeout);
-        audio.onended = null;
-        audio.onerror = null;
-        resolve();
-      }
-      audio.onended = finish;
-      audio.onerror = finish;
-      void audio.play().catch(finish);
-    });
+    void audio.play().catch(() => finish());
+    await done;
   } finally {
+    clearTimeout(timeout);
+    audio.onended = null;
+    audio.onerror = null;
     audio.pause();
     audio.removeAttribute("src");
     audio.load();

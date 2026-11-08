@@ -377,6 +377,27 @@ describe("VoiceInputController", () => {
     expect(harness.controller.currentState.phase).toBe("idle");
   });
 
+  it("does not replay recording cues when retrying a saved recording", async () => {
+    const playRecordingCue = vi.fn(async (_cue: "start" | "stop") => undefined);
+    let attempts = 0;
+    const harness = createHarness({
+      retryFailedRecording: true,
+      playRecordingCue,
+      getTranscriber: () => ({
+        prepare: async () =>
+          preparedTranscription(async () => {
+            if (++attempts === 1) throw new Error("offline");
+            return "new text";
+          }),
+      }),
+    });
+    await harness.controller.start();
+    await harness.controller.stop();
+    await harness.controller.start();
+    expect(harness.commits).toHaveLength(1);
+    expect(playRecordingCue.mock.calls).toEqual([["start"], ["stop"]]);
+  });
+
   it("does not chime when microphone permission is denied", async () => {
     const playRecordingCue = vi.fn(async () => undefined);
     const harness = createHarness({
