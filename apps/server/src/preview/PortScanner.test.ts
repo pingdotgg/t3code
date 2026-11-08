@@ -915,6 +915,66 @@ effectIt.effect.each(["linux", "darwin"] as const)(
   },
 );
 
+effectIt.effect("labels a terminal's servers on macOS by their process titles", () => {
+  // lsof reports the kernel's exec-time name; `process.title` only rewrites argv, which ps reads.
+  const servers = [
+    { pid: 1234, port: 4321, title: "api" },
+    { pid: 1235, port: 4322, title: "web" },
+  ];
+  const layer = PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, {
+          run: (input) => {
+            if (input.command === "lsof") {
+              return Effect.succeed(
+                processOutput(
+                  servers.map(({ pid, port }) => `p${pid}\ncnode\nn*:${port}\n`).join(""),
+                ),
+              );
+            }
+            const format = input.args[input.args.indexOf("-o") + 1] ?? "";
+            if (input.command !== "ps" || !/\b(?:command|args)=/.test(format)) {
+              return Effect.succeed(processOutput(""));
+            }
+            const listed = input.args.includes("-p")
+              ? (input.args[input.args.indexOf("-p") + 1] ?? "").split(",").map(Number)
+              : servers.map(({ pid }) => pid);
+            const environment = input.args.includes("-E") ? " PATH=/usr/bin HOME=/Users/dev" : "";
+            return Effect.succeed(
+              processOutput(
+                listed
+                  .flatMap((pid) => {
+                    const title = servers.find((server) => server.pid === pid)?.title;
+                    return title === undefined ? [] : [`${pid} ${title}${environment}\n`];
+                  })
+                  .join(""),
+              ),
+            );
+          },
+        }),
+        Layer.succeed(HostProcess.Platform, "darwin"),
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const scanner = yield* ownedScanner(servers.map(({ pid }) => pid));
+    expect(
+      (yield* scanner.scan()).map(({ port, processName, terminal }) => ({
+        port,
+        processName,
+        terminalId: terminal?.terminalId,
+      })),
+    ).toEqual([
+      { port: 4321, processName: "api", terminalId: "scanner-terminal" },
+      { port: 4322, processName: "web", terminalId: "scanner-terminal" },
+    ]);
+  }).pipe(Effect.provide(layer));
+});
+
 effectIt.effect("stops only a job's own process group", () =>
   Effect.sync(() => {
     const serverPid = 100;
