@@ -3279,7 +3279,6 @@ function replaceStreamingMessageRows(
   } = input;
   // Shell/checkpoint selectors rebuild summaries per event; compare contents.
   if (
-    timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||
     !shallow(previousRun, latestRun) ||
     !shallow(previousExpandedRuns, expandedRunIds) ||
@@ -3291,7 +3290,25 @@ function replaceStreamingMessageRows(
   ) {
     return null;
   }
-  const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
+  const replacements = streamedMessageEntries(previousEntries, timelineEntries);
+  if (replacements === null) return null;
+  return replacements.size === 0
+    ? previous.rows
+    : withStreamedMessages(previous.rows, replacements);
+}
+
+type StreamedMessageEntries = Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>;
+
+/**
+ * The message entries a streamed text update changed, keyed by their previous message, or
+ * null when anything else in the entries changed.
+ */
+function streamedMessageEntries(
+  previousEntries: ReadonlyArray<TimelineEntry>,
+  timelineEntries: ReadonlyArray<TimelineEntry>,
+): StreamedMessageEntries | null {
+  if (timelineEntries.length !== previousEntries.length) return null;
+  const replacements: StreamedMessageEntries = new Map();
   for (let index = 0; index < timelineEntries.length; index += 1) {
     const entry = timelineEntries[index]!;
     const previousEntry = previousEntries[index]!;
@@ -3321,8 +3338,14 @@ function replaceStreamingMessageRows(
     if (!isStreamingMessageTextUpdate(previousEntry.message, entry.message)) return null;
     replacements.set(previousEntry.message, entry);
   }
-  if (replacements.size === 0) return previous.rows;
-  return previous.rows.map((row) => {
+  return replacements;
+}
+
+function withStreamedMessages(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  replacements: StreamedMessageEntries,
+): MessagesTimelineRow[] {
+  return rows.map((row) => {
     if (row.kind !== "message" && row.kind !== "assistant-meta") return row;
     const entry = replacements.get(row.message);
     return entry
@@ -3385,6 +3408,131 @@ function withPreviousWindowItems(
     return previousItem;
   });
   return reused ? { ...row, window: { ...row.window, items } } : row;
+}
+
+export type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[1] & {
+  readonly pendingApprovalRequestIds: NonNullable<
+    MessagesTimelineRowsInput["pendingApprovalRequestIds"]
+  >;
+  readonly isWorking: boolean;
+  readonly runlessWorkActive: boolean;
+  readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;
+  readonly revealedMessageId: Exclude<MessagesTimelineRowsInput["revealedMessageId"], undefined>;
+  readonly workingHistoryKey: string | null;
+  readonly windowlessCitation: boolean;
+  readonly activeFindEntryId: string | null;
+};
+
+export interface StableTimelineRowsProjection {
+  readonly source: MessagesTimelineRow[];
+  readonly input: StableTimelineRowsInput;
+  readonly stable: StableMessagesTimelineRowsState;
+}
+
+/** Everything the passes read besides the entries, compared by content where selectors rebuild it. */
+function sameStableRowsContext(
+  previous: StableTimelineRowsInput,
+  next: StableTimelineRowsInput,
+): boolean {
+  const {
+    timelineEntries: _previousEntries,
+    latestRun: previousRun,
+    expandedWorkGroupIds: previousGroups,
+    pendingApprovalRequestIds: previousApprovals,
+    ...previousContext
+  } = previous;
+  const {
+    timelineEntries: _nextEntries,
+    latestRun: nextRun,
+    expandedWorkGroupIds: nextGroups,
+    pendingApprovalRequestIds: nextApprovals,
+    ...nextContext
+  } = next;
+  return (
+    shallow(previousRun, nextRun) &&
+    shallow(previousGroups, nextGroups) &&
+    shallow(previousApprovals, nextApprovals) &&
+    shallow(previousContext, nextContext)
+  );
+}
+
+/**
+ * The working window, background groups and stable identities over derived rows. A streamed
+ * text update changes only its message rows, which those passes keep as they are, so the
+ * previous result takes the new rows instead of the passes running over the whole thread.
+ */
+export function deriveStableTimelineRows(
+  rows: MessagesTimelineRow[],
+  input: StableTimelineRowsInput,
+  previous: StableTimelineRowsProjection | null,
+): StableTimelineRowsProjection {
+  if (
+    previous !== null &&
+    previous.source === rows &&
+    previous.input.timelineEntries === input.timelineEntries &&
+    sameStableRowsContext(previous.input, input)
+  ) {
+    return previous;
+  }
+  const stable =
+    (previous === null ? null : streamedStableRows(rows, input, previous)) ??
+    passStableRows(rows, input, previous?.stable ?? { byId: new Map(), result: [] });
+  return { source: rows, input, stable };
+}
+
+function passStableRows(
+  rows: MessagesTimelineRow[],
+  input: StableTimelineRowsInput,
+  previous: StableMessagesTimelineRowsState,
+): StableMessagesTimelineRowsState {
+  const windowed = input.windowlessCitation
+    ? rows
+    : applyWorkingWindow(rows, input, input.workingHistoryKey);
+  const visibleRows =
+    input.activeFindEntryId !== null &&
+    windowed.some(
+      (row) =>
+        row.kind === "working" &&
+        row.window?.items.some((item) => item.id === input.activeFindEntryId),
+    )
+      ? rows
+      : windowed;
+  const groupedRows = applyBackgroundActivityGroups(visibleRows, input, previous.result);
+  return computeStableMessagesTimelineRows(groupedRows, previous);
+}
+
+function streamedStableRows(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  input: StableTimelineRowsInput,
+  previous: StableTimelineRowsProjection,
+): StableMessagesTimelineRowsState | null {
+  if (rows.length !== previous.source.length || !sameStableRowsContext(previous.input, input)) {
+    return null;
+  }
+  const replacements = streamedMessageEntries(
+    previous.input.timelineEntries,
+    input.timelineEntries,
+  );
+  if (replacements === null || replacements.size === 0) return null;
+  // The rows must be the previous ones with those messages patched, as the row step patches them.
+  const patchedSource = withStreamedMessages(previous.source, replacements);
+  let changedRows = 0;
+  for (const [index, row] of rows.entries()) {
+    const before = previous.source[index]!;
+    if (row === before) continue;
+    if (patchedSource[index] === before || !shallow(row, patchedSource[index])) return null;
+    changedRows += 1;
+  }
+  const result = withStreamedMessages(previous.stable.result, replacements);
+  const byId = new Map(previous.stable.byId);
+  let patchedRows = 0;
+  for (const [index, row] of result.entries()) {
+    if (row === previous.stable.result[index]) continue;
+    byId.set(row.id, row);
+    patchedRows += 1;
+  }
+  // A message the working window or a collapsed group took out of the rows keeps the full path.
+  return patchedRows === changedRows ? { byId, result } : null;
 }
 
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {

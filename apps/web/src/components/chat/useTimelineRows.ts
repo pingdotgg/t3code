@@ -1,18 +1,16 @@
 import { useState } from "react";
 import {
-  computeStableMessagesTimelineRows,
+  deriveStableTimelineRows,
   handoffRunsSignature,
   type MessagesTimelineRowsInput,
   sameRowsInput,
   deriveMessagesTimelineRowsWithState,
-  type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
-  applyWorkingWindow,
-  applyBackgroundActivityGroups,
+  type StableTimelineRowsInput,
+  type StableTimelineRowsProjection,
 } from "./MessagesTimeline.logic";
 import { type HandoffTimelineRun } from "./V2LifecycleRow";
 import { type SlashCommandCatalog } from "./timelineSlashCommands";
-import { shallow } from "zustand/vanilla/shallow";
 
 const EMPTY_TIMELINE_RUNS: ReadonlyArray<HandoffTimelineRun> = [];
 
@@ -70,60 +68,13 @@ export function useStableRows(
 ): MessagesTimelineRow[] {
   const [state, setState] = useState<{
     readonly identity: string;
-    readonly source: MessagesTimelineRow[] | null;
-    readonly input: StableTimelineRowsInput | null;
-    readonly stable: StableMessagesTimelineRowsState;
-  }>({ identity, source: null, input: null, stable: { byId: new Map(), result: [] } });
-  if (state.identity === identity && state.source === rows && state.input !== null) {
-    const {
-      expandedWorkGroupIds: previousGroups,
-      pendingApprovalRequestIds: previousApprovals,
-      ...previousInput
-    } = state.input;
-    const {
-      expandedWorkGroupIds: nextGroups,
-      pendingApprovalRequestIds: nextApprovals,
-      ...nextInput
-    } = input;
-    if (
-      shallow(previousGroups, nextGroups) &&
-      shallow(previousApprovals, nextApprovals) &&
-      shallow(previousInput, nextInput)
-    ) {
-      return state.stable.result;
-    }
-  }
-  const previous = state.identity === identity ? state.stable : { byId: new Map(), result: [] };
-  const windowed = input.windowlessCitation
-    ? rows
-    : applyWorkingWindow(rows, input, input.workingHistoryKey);
-  const visibleRows =
-    input.activeFindEntryId !== null &&
-    windowed.some(
-      (row) =>
-        row.kind === "working" &&
-        row.window?.items.some((item) => item.id === input.activeFindEntryId),
-    )
-      ? rows
-      : windowed;
-  const groupedRows = applyBackgroundActivityGroups(visibleRows, input, previous.result);
-  const stable = computeStableMessagesTimelineRows(groupedRows, previous);
-  setState({ identity, source: rows, input, stable });
-  return stable.result;
+    readonly projection: StableTimelineRowsProjection | null;
+  }>({ identity, projection: null });
+  const previous = state.identity === identity ? state.projection : null;
+  const projection = deriveStableTimelineRows(rows, input, previous);
+  if (projection !== previous) setState({ identity, projection });
+  return projection.stable.result;
 }
-
-type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[1] & {
-  readonly pendingApprovalRequestIds: NonNullable<
-    MessagesTimelineRowsInput["pendingApprovalRequestIds"]
-  >;
-  readonly isWorking: boolean;
-  readonly runlessWorkActive: boolean;
-  readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;
-  readonly revealedMessageId: Exclude<MessagesTimelineRowsInput["revealedMessageId"], undefined>;
-  readonly workingHistoryKey: string | null;
-  readonly windowlessCitation: boolean;
-  readonly activeFindEntryId: string | null;
-};
 
 export function useTimelineSlashCommandCatalog(
   commands: SlashCommandCatalog["commands"],
