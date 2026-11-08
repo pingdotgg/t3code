@@ -8,6 +8,7 @@ import {
   numberAnswerRight,
   parseNumberAnswer,
   quizAnswerMessage,
+  quizRevealWrongIdeas,
   shuffledQuizOptions,
   type LessonCard,
   type QuizCard as QuizCardData,
@@ -408,9 +409,7 @@ function MultipleChoiceCard(props: {
     setSending(false);
   };
   const needsThinking = selected !== "__unknown__";
-  const wrongOptions = options.filter(
-    (option): option is Extract<(typeof options)[number], { wrongIdea: string }> => !option.correct,
-  );
+  const wrongOptions = quizRevealWrongIdeas(options);
   return (
     <div
       data-quiz-card-seed={props.seed}
@@ -517,7 +516,7 @@ function MultipleChoiceCard(props: {
           <p>{props.card.explanation}</p>
           {wrongOptions.map((option) => (
             <p key={option.option}>
-              <strong>{option.option}:</strong> {option.wrongIdea}
+              <strong>{option.label}</strong> {option.wrongIdea}
             </p>
           ))}
         </div>

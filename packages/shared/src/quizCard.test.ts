@@ -11,6 +11,7 @@ import {
   quizAnswerGrade,
   quizAnswerMessage,
   quizCardProblem,
+  quizRevealWrongIdeas,
   readQuizCard,
   readQuestionCard,
   parseNumberAnswer,
@@ -170,6 +171,19 @@ describe("quiz cards", () => {
         ),
       ).size,
     ).toBeGreaterThan(1);
+  });
+  it("labels only the wrong options' ideas, in shuffled order", () => {
+    const shuffled = shuffledQuizOptions(card, "one");
+    const wrongIdea: Record<string, string> = { Low: "Mistake", Medium: "Another" };
+    expect(quizRevealWrongIdeas(shuffled)).toEqual(
+      shuffled
+        .filter((option) => !option.correct)
+        .map(({ option }) => ({
+          option,
+          label: `Wrong idea behind ${option}:`,
+          wrongIdea: wrongIdea[option],
+        })),
+    );
   });
   it("formats answer messages", () => {
     expect(
