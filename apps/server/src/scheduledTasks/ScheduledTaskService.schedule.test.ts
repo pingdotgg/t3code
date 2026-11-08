@@ -121,6 +121,58 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("a cron task waits for its next slot in local time, then runs", () =>
+  Effect.gen(function* () {
+    // Saturday 2026-07-04 12:00 local: a weekday business-hours task waits for Monday.
+    const saturdayNoon = DateTime.makeZonedUnsafe(
+      { year: 2026, month: 7, day: 4, hour: 12, minute: 0, second: 0, millisecond: 0 },
+      { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+    );
+    const mondayAtNine = DateTime.setParts(DateTime.add(saturdayNoon, { days: 2 }), { hour: 9 });
+    yield* TestClock.setTime(DateTime.toEpochMillis(saturdayNoon));
+    const launched = yield* Deferred.make<string>();
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Scheduler.layer,
+      ManagedPolicy.layerTest(),
+      Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+        launch: (input) =>
+          Deferred.succeed(launched, input.title).pipe(
+            Effect.as({ threadId: "thread-cron", resumed: false } as never),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        isScratchProject: () => Effect.succeed(false),
+      }),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(SecretRequests.SecretRequests)({}),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const created = yield* service.upsert(
+        yield* decodeUpsertInput({
+          title: "Business hours review",
+          prompt: "Review the open pull requests.",
+          enabled: true,
+          schedule: { type: "cron", expression: "*/30 9-16 * * 1-5" },
+          projectId: "project-cron",
+          workspaceStrategy: { type: "root" },
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+        }),
+      );
+      expect(created.task.schedule).toEqual({ type: "cron", expression: "*/30 9-16 * * 1-5" });
+      expect(created.task.nextRunAt).toBe(DateTime.formatIso(DateTime.toUtc(mondayAtNine)));
+
+      yield* TestClock.setTime(DateTime.toEpochMillis(mondayAtNine) - 1_000);
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Deferred.await(launched)).toBe("Business hours review");
+    }).pipe(Effect.provide(ScheduledTaskService.layer.pipe(Layer.provide(layerDependencies))));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("keeps the task list order when a toggle or edit rewrites updated_at", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(Date.parse("2026-07-01T09:00:00.000Z"));

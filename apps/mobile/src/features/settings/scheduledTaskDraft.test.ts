@@ -20,6 +20,21 @@ describe("scheduleDraftForTask", () => {
     expect(scheduleFromDraft(draft)).toEqual({ type: "interval", everyMs: 60_000 });
   });
 
+  it("round-trips a cron expression, sends it trimmed, and refuses one the server would reject", () => {
+    const draft = scheduleDraftForTask({
+      schedule: { type: "cron", expression: "*/30 9-16 * * MON-FRI" },
+    });
+    expect(draft.mode).toBe("cron");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "cron", expression: "*/30 9-16 * * MON-FRI" });
+    expect(scheduleFromDraft({ ...draft, cronExpression: " 0 9 * * 1 " })).toEqual({
+      type: "cron",
+      expression: "0 9 * * 1",
+    });
+    for (const cronExpression of ["* * * * * *", "0 25 * * *", "0 9 30 2 *"]) {
+      expect(scheduleFromDraft({ ...draft, cronExpression })).toBeNull();
+    }
+  });
+
   it("round-trips dedupe settings and rejects invalid windows", () => {
     const dedupe = {
       replayKey: "{{headers.delivery-id}}",

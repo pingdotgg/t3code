@@ -1,4 +1,8 @@
-import { isListedThreadLineage, isWebhookDedupeTemplate } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  isWebhookDedupeTemplate,
+  scheduledTaskCronError,
+} from "@t3tools/contracts";
 import {
   EnvironmentId,
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -56,7 +60,7 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
   };
 }
 
-export type ScheduleMode = "fixed" | "once" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "once" | "interval" | "cron" | "webhook";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -71,6 +75,8 @@ export interface DraftState {
   readonly runAt: string;
   /** The stored ISO run time, sent back unchanged when the field was not edited. */
   readonly savedRunAt: string;
+  /** Five-field cron, read in the environment's time zone. */
+  readonly cronExpression: string;
   readonly weekdays: ReadonlySet<number>;
   readonly projectId: string;
   readonly threadId: string;
@@ -111,7 +117,14 @@ export function toDateTimeLocalValue(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+/** Weekdays every 30 minutes from 09:00 to 16:30, a starting point for the cron field. */
+export const DEFAULT_CRON_EXPRESSION = "*/30 9-16 * * 1-5";
+
 export function scheduleDraftErrors(draft: DraftState) {
+  if (draft.scheduleMode === "cron") {
+    const error = scheduledTaskCronError(draft.cronExpression);
+    return error === null ? [] : [{ title: "Invalid cron expression", description: error }];
+  }
   if (draft.scheduleMode === "once") {
     const runAt = new Date(draft.runAt);
     if (Number.isNaN(runAt.getTime()))
@@ -226,6 +239,8 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
         : {}),
     };
   }
+  if (draft.scheduleMode === "cron")
+    return { type: "cron", expression: draft.cronExpression.trim() };
   if (draft.scheduleMode === "interval") {
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
@@ -256,6 +271,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
     runAt: schedule.type === "once" ? toDateTimeLocalValue(new Date(schedule.runAt)) : "",
     savedRunAt: schedule.type === "once" ? schedule.runAt : "",
+    cronExpression: schedule.type === "cron" ? schedule.expression : DEFAULT_CRON_EXPRESSION,
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",

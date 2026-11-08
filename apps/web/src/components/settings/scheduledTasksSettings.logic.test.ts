@@ -21,6 +21,7 @@ import {
   scheduledTaskDefaultModel,
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
+  scheduleDraftErrors,
   scheduleFromDraft,
   taskToDraft,
   unbindDraftFromThread,
@@ -220,6 +221,33 @@ describe("one-time scheduled tasks", () => {
       type: "once",
       runAt: "2026-11-01T09:35:00.000Z",
     });
+  });
+});
+
+describe("cron scheduled tasks", () => {
+  it("round-trips the expression and sends it trimmed", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "cron", expression: "*/30 9-16 * * MON-FRI" },
+    });
+    expect(draft.scheduleMode).toBe("cron");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "cron", expression: "*/30 9-16 * * MON-FRI" });
+    expect(scheduleFromDraft({ ...draft, cronExpression: "  0 9 * * 1  " })).toEqual({
+      type: "cron",
+      expression: "0 9 * * 1",
+    });
+  });
+
+  it("refuses to save an expression the server would reject, and says why", () => {
+    const draft = { ...taskToDraft(legacyTask), scheduleMode: "cron" as const };
+    for (const [cronExpression, reason] of [
+      ["* * * * * *", /five fields/],
+      ["0 25 * * *", /between 0 and 23/],
+      ["0 9 30 2 *", /never matches/],
+    ] as const) {
+      expect(scheduleFromDraft({ ...draft, cronExpression })).toBeNull();
+      expect(scheduleDraftErrors({ ...draft, cronExpression })[0]?.description).toMatch(reason);
+    }
   });
 });
 

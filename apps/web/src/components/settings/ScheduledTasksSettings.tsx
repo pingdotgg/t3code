@@ -41,6 +41,7 @@ import {
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
   resolveEnvironmentMachineKind,
+  scheduledTaskCronError,
   scheduledTaskThreadMode,
 } from "@t3tools/contracts";
 import {
@@ -94,6 +95,7 @@ import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
+  DEFAULT_CRON_EXPRESSION,
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
   moveDraftToThread,
@@ -173,6 +175,7 @@ const EMPTY_DRAFT: DraftState = {
   timeOfDay: "09:00",
   runAt: "",
   savedRunAt: "",
+  cronExpression: DEFAULT_CRON_EXPRESSION,
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
@@ -330,6 +333,7 @@ const ONCE_FORMATTER = new Intl.DateTimeFormat(undefined, {
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "once") return `Once, ${ONCE_FORMATTER.format(new Date(schedule.runAt))}`;
+  if (schedule.type === "cron") return `Cron ${schedule.expression}`;
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
     return Number.isInteger(minutes)
@@ -344,6 +348,43 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
         ? "Weekdays"
         : weekdays.map((day) => WEEKDAY_LABELS[day]).join(", ");
   return `${days} at ${schedule.timeOfDay}`;
+}
+
+function CronExpressionField({
+  value,
+  onChange,
+}: {
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  const error = scheduledTaskCronError(value);
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <Label htmlFor="scheduled-task-cron">Expression</Label>
+        <Input
+          id="scheduled-task-cron"
+          nativeInput
+          className="w-56"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          placeholder={DEFAULT_CRON_EXPRESSION}
+          aria-invalid={error !== null}
+          aria-describedby="scheduled-task-cron-help"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+      <p
+        id="scheduled-task-cron-help"
+        className={error === null ? "text-xs text-muted-foreground" : "text-xs text-destructive"}
+      >
+        {error ??
+          "Minute, hour, day of month, month, weekday, in the environment's time zone. */30 9-16 * * 1-5 runs every 30 minutes from 9:00 to 16:30 on weekdays."}
+      </p>
+    </div>
+  );
 }
 
 /** formatRelativeTime handles only the past; upcoming runs need future labels. */
@@ -1371,6 +1412,9 @@ function ScheduledTaskEditorForm({
   const offersOnce =
     environment?.serverConfig?.environment.capabilities.oneTimeSchedules === true ||
     task?.schedule.type === "once";
+  const offersCron =
+    environment?.serverConfig?.environment.capabilities.cronSchedules === true ||
+    task?.schedule.type === "cron";
   const offersThreadModes =
     environment?.serverConfig?.environment.capabilities.scheduledTaskThreadModes === true;
   const connected =
@@ -1505,6 +1549,13 @@ function ScheduledTaskEditorForm({
       reportFailure(
         "Once is not available here",
         "This environment runs an older T3 Code. Update it to schedule a one-time task, or pick another schedule.",
+      );
+      return;
+    }
+    if (schedule.type === "cron" && !offersCron) {
+      reportFailure(
+        "Cron is not available here",
+        "This environment runs an older T3 Code. Update it to schedule a cron task, or pick another schedule.",
       );
       return;
     }
@@ -1821,6 +1872,7 @@ function ScheduledTaskEditorForm({
                     mode === "fixed" ||
                     mode === "once" ||
                     mode === "interval" ||
+                    mode === "cron" ||
                     mode === "webhook"
                   )
                     setDraft((current) => {
@@ -1851,6 +1903,9 @@ function ScheduledTaskEditorForm({
                   <Toggle value="once">Once</Toggle>
                 ) : null}
                 <Toggle value="interval">Every interval</Toggle>
+                {offersCron || draft.scheduleMode === "cron" ? (
+                  <Toggle value="cron">Cron</Toggle>
+                ) : null}
                 <Toggle
                   value="webhook"
                   disabled={webhookDenial !== undefined && draft.scheduleMode !== "webhook"}
@@ -2056,6 +2111,13 @@ function ScheduledTaskEditorForm({
                   }
                 />
               </div>
+            ) : draft.scheduleMode === "cron" ? (
+              <CronExpressionField
+                value={draft.cronExpression}
+                onChange={(cronExpression) =>
+                  setDraft((current) => ({ ...current, cronExpression }))
+                }
+              />
             ) : draft.scheduleMode === "fixed" ? (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">

@@ -47,7 +47,12 @@ const threadFamilyRead = {
   threads: [{ id: task.threadId, title: "Fix login bug" }],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  cron: true,
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
@@ -55,6 +60,7 @@ function setup() {
   state.connected = true;
   state.tasksLoaded = true;
   state.secondary = false;
+  state.cron = true;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -71,7 +77,12 @@ function environment() {
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: {
+            platform: "linux",
+            capabilities: { oneTimeSchedules: true, cronSchedules: state.cron },
+          },
+        }
       : null,
   };
 }
@@ -173,6 +184,31 @@ describe("ScheduledTasksSettings", () => {
     await using screen = await render(<ScheduledTasksSettings />);
     await screen.getByRole("button", { name: "New task" }).click();
     await expect.element(page.getByLabelText("Runs on")).toHaveTextContent("Laptop");
+  });
+
+  it("hides cron where the server is too old to run it", async () => {
+    setup();
+    state.cron = false;
+    await using screen = await render(<ScheduledTasksSettings />);
+    await screen.getByRole("button", { name: "New task" }).click();
+    const schedule = page.getByRole("group", { name: "Schedule type" });
+    await expect.element(schedule.getByRole("button", { name: "Every interval" })).toBeVisible();
+    await expect.element(schedule.getByRole("button", { name: "Cron" })).not.toBeInTheDocument();
+  });
+
+  it("says why a cron expression cannot save", async () => {
+    setup();
+    await using screen = await render(<ScheduledTasksSettings />);
+    await screen.getByRole("button", { name: "New task" }).click();
+    await page
+      .getByRole("group", { name: "Schedule type" })
+      .getByRole("button", { name: "Cron" })
+      .click();
+    const expression = page.getByRole("textbox", { name: "Expression" });
+    await expect.element(expression).toHaveValue("*/30 9-16 * * 1-5");
+    await expect.element(expression).toHaveAccessibleDescription(/environment's time zone/);
+    await userEvent.fill(expression, "*/30 9-16 * * 1-5 *");
+    await expect.element(expression).toHaveAccessibleDescription(/five fields/);
   });
 
   it("disables creation without a connected target", async () => {
