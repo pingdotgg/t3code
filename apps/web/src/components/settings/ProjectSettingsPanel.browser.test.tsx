@@ -124,7 +124,7 @@ vi.mock(import("./ProjectDefaultsSettings"), async (original) => ({
 }));
 vi.mock(import("./ProjectActionsSettings"), async (original) => ({
   ...(await original()),
-  ProjectActionsSettings: (() => null) as never,
+  ProjectActionsSettings: (() => <section aria-label="Actions" />) as never,
 }));
 
 vi.mock(import("../files/projectFilesQueryState"), async (original) => ({
@@ -586,6 +586,7 @@ describe("project settings scope", () => {
     state.projects = state.projects.filter((project) => project.environmentId === primaryId);
     await using _screen = await mountSettings({});
 
+    await expect.element(page.getByRole("region", { name: "Actions" })).toBeInTheDocument();
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
