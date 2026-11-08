@@ -593,6 +593,7 @@ export const ClientSettingsSchema = Schema.Struct({
   // Opt-in TeX typesetting in rendered Markdown. Off keeps math parsing and
   // KaTeX out of the render path entirely.
   mathRenderingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  smoothTextReveal: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   // The image itself lives in IndexedDB (chatBackground/imageStore); it is too large for these settings.
   chatBackgroundEffect: ChatBackgroundEffect.pipe(
     Schema.withDecodingDefault(Effect.succeed("dither" as const)),
@@ -1969,6 +1970,7 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
   mathRenderingEnabled: Schema.optionalKey(Schema.Boolean),
+  smoothTextReveal: Schema.optionalKey(Schema.Boolean),
   chatBackgroundEffect: Schema.optionalKey(ChatBackgroundEffect),
   chatBackgroundScope: Schema.optionalKey(ChatBackgroundScope),
   chatBackgroundOpacity: Schema.optionalKey(ChatBackgroundOpacity),

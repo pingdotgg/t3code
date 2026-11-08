@@ -458,6 +458,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
+    ...(settings.smoothTextReveal !== DEFAULT_UNIFIED_SETTINGS.smoothTextReveal
+      ? ["Smooth text reveal"]
+      : []),
     ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
       ? ["Panel animations"]
       : []),
@@ -640,6 +643,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       effortDisplay: DEFAULT_UNIFIED_SETTINGS.effortDisplay,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
+      smoothTextReveal: DEFAULT_UNIFIED_SETTINGS.smoothTextReveal,
       chatBackgroundEffect: DEFAULT_UNIFIED_SETTINGS.chatBackgroundEffect,
       chatBackgroundScope: DEFAULT_UNIFIED_SETTINGS.chatBackgroundScope,
       chatBackgroundOpacity: DEFAULT_UNIFIED_SETTINGS.chatBackgroundOpacity,
