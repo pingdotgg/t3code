@@ -7,7 +7,6 @@ export const User = Schema.Struct({
   email: Schema.String,
 });
 
-export class CurrentUser extends Context.Service<
-  CurrentUser,
-  typeof User.Type
->()("app/CurrentUser") {}
+export class CurrentUser extends Context.Service<CurrentUser, typeof User.Type>()(
+  "app/CurrentUser",
+) {}

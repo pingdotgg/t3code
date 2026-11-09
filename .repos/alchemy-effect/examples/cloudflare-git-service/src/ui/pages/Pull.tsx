@@ -18,13 +18,7 @@ import {
   type Comparison,
   type PullDetail,
 } from "../client.ts";
-import {
-  Button,
-  CopyButton,
-  ErrorBox,
-  Markdown,
-  Spinner,
-} from "../components.tsx";
+import { Button, CopyButton, ErrorBox, Markdown, Spinner } from "../components.tsx";
 import { shortOid, subject, timeAgo } from "../format.ts";
 import { href, Link } from "../router.tsx";
 import FileDiffList from "./DiffList.tsx";
@@ -96,13 +90,7 @@ const mergeStatus = (
 
 type CompareState = Comparison | "unavailable" | null; // null = loading
 
-const PullPage = ({
-  context,
-  number,
-}: {
-  context: RepoContext;
-  number: number;
-}) => {
+const PullPage = ({ context, number }: { context: RepoContext; number: number }) => {
   const [detail, setDetail] = useState<PullDetail | null>(null);
   const [compare, setCompare] = useState<CompareState>(null);
   const [error, setError] = useState<unknown>(null);
@@ -126,12 +114,10 @@ const PullPage = ({
         // Live compare only when both branches still exist (merged PRs
         // return null tips — their record is the merge commit).
         if (pull.baseOid !== null && pull.headOid !== null) {
-          const comparison = await compareCommits(
-            connection,
-            repo.owner,
-            repo.name,
-            { base: pull.baseRef, head: pull.headRef },
-          );
+          const comparison = await compareCommits(connection, repo.owner, repo.name, {
+            base: pull.baseRef,
+            head: pull.headRef,
+          });
           if (!cancelled) setCompare(comparison);
         } else {
           setCompare("unavailable");
@@ -182,8 +168,7 @@ const PullPage = ({
       {/* header */}
       <div className="mb-4 border-b border-border-muted pb-4">
         <h1 className="text-xl font-semibold">
-          {detail.title}{" "}
-          <span className="font-normal text-fg-muted">#{detail.number}</span>
+          {detail.title} <span className="font-normal text-fg-muted">#{detail.number}</span>
         </h1>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-fg-muted">
           <PullStateBadge state={detail.state} />
@@ -221,8 +206,8 @@ const PullPage = ({
               {detail.aheadBy !== null && detail.behindBy !== null && (
                 <>
                   {" · "}
-                  {detail.aheadBy} commit{detail.aheadBy === 1 ? "" : "s"}{" "}
-                  ahead, {detail.behindBy} behind
+                  {detail.aheadBy} commit{detail.aheadBy === 1 ? "" : "s"} ahead, {detail.behindBy}{" "}
+                  behind
                 </>
               )}
             </span>
@@ -261,9 +246,7 @@ const PullPage = ({
                     mergePull(connection, owner, name, number, {
                       // Race guard: fail 409 RefConflict if the head tip
                       // moved since this page loaded.
-                      ...(detail.headOid !== null
-                        ? { expectedHeadOid: detail.headOid }
-                        : {}),
+                      ...(detail.headOid !== null ? { expectedHeadOid: detail.headOid } : {}),
                     }),
                   )
                 }
@@ -289,16 +272,12 @@ const PullPage = ({
               )}
             </div>
           )}
-          {actionError !== null && (
-            <p className="mt-2 text-sm text-danger">{actionError}</p>
-          )}
+          {actionError !== null && <p className="mt-2 text-sm text-danger">{actionError}</p>}
         </div>
       )}
       {detail.state === "closed" && (
         <div className="mb-4 rounded-md border border-border-muted bg-canvas-subtle px-4 py-3 text-sm">
-          <p className="text-fg-muted">
-            This pull request is closed without being merged.
-          </p>
+          <p className="text-fg-muted">This pull request is closed without being merged.</p>
           {signedIn && (
             <div className="mt-3">
               <Button
@@ -315,9 +294,7 @@ const PullPage = ({
               </Button>
             </div>
           )}
-          {actionError !== null && (
-            <p className="mt-2 text-sm text-danger">{actionError}</p>
-          )}
+          {actionError !== null && <p className="mt-2 text-sm text-danger">{actionError}</p>}
         </div>
       )}
 
@@ -328,8 +305,7 @@ const PullPage = ({
         <div className="rounded-md border border-border-muted px-4 py-8 text-center text-sm text-fg-muted">
           {detail.state === "merged" && detail.mergeCommit !== null ? (
             <>
-              Live comparison is not available for merged pull requests — see
-              the{" "}
+              Live comparison is not available for merged pull requests — see the{" "}
               <Link
                 to={href(owner, name, "commit", detail.mergeCommit)}
                 className="font-mono text-accent hover:underline"
@@ -381,8 +357,7 @@ const PullPage = ({
                       {subject(commit.message)}
                     </Link>
                     <p className="mt-0.5 text-xs text-fg-muted">
-                      {commit.author.name} committed{" "}
-                      {timeAgo(commit.author.date * 1000)}
+                      {commit.author.name} committed {timeAgo(commit.author.date * 1000)}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
@@ -411,8 +386,8 @@ const PullPage = ({
             <>
               {compare.filesTruncated && (
                 <div className="mb-3 rounded-md border border-attention/40 bg-attention/5 px-4 py-2 text-sm text-attention">
-                  This pull request changes more files than shown — the list was
-                  truncated at {compare.files.length} files by the server.
+                  This pull request changes more files than shown — the list was truncated at{" "}
+                  {compare.files.length} files by the server.
                 </div>
               )}
               <FileDiffList context={context} files={compare.files} />

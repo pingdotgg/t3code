@@ -1,6 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { useNavigation } from "@react-navigation/native";
 import {
   executeAtomQuery,
   settlePromise,
@@ -9,7 +8,7 @@ import {
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { use, useRef, useState } from "react";
-import { Linking, Platform } from "react-native";
+import { Linking } from "react-native";
 import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -27,14 +26,15 @@ import {
 } from "./pullRequestList";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { useOpenWorkspaceDetail } from "../layout/useOpenWorkspaceDetail";
 
 const ROW_ACTION_IMAGES = {
-  ready: ["pencil", "edit"],
-  draft: ["pencil", "edit"],
-  close: ["xmark", "close"],
-  reopen: ["arrow.clockwise", "refresh"],
-} as const satisfies Record<PullRequestListRowAction, readonly [string, string]>;
+  ready: "pencil",
+  draft: "pencil",
+  close: "xmark",
+  reopen: "arrow.clockwise",
+} as const satisfies Record<PullRequestListRowAction, string>;
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -45,8 +45,8 @@ export function usePullRequestListActions(
   hostActions: ReadonlyMap<string, ReadonlySet<PullRequestAction>>,
 ) {
   const registry = use(RegistryContext);
-  const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
+  const openDetail = useOpenWorkspaceDetail();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = (() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -92,12 +92,10 @@ export function usePullRequestListActions(
           !pr.viewerPermissions.requestReviewers
         )
           throw new Error(`Review requests aren't available for this ${terminology.singular}.`);
-        if (Platform.OS === "android") {
-          selectDetail(
-            { name: "PullRequest", params: params(entry) },
-            { name: "PullRequestReviewers", params: params(entry) },
-          );
-        } else navigation.navigate("PullRequestReviewers", params(entry));
+        openDetail(
+          { name: "PullRequest", params: params(entry) },
+          { name: "PullRequestReviewers", params: params(entry) },
+        );
         return;
       }
       if (
@@ -107,6 +105,7 @@ export function usePullRequestListActions(
         throw new Error(`This action isn't available for this ${terminology.singular}.`);
       const result = await run({ ...target, input: { ...target.input, action } });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      if (result.value !== undefined) return;
       onChanged(
         entry,
         action === "close"
@@ -170,14 +169,14 @@ export function usePullRequestListActions(
       {
         id: "open",
         title: `Open ${terminology.singular}`,
-        image: Platform.OS === "ios" ? "arrow.up.right" : "open_in_new",
+        image: "arrow.up.right",
       },
       ...(writableEnvironments.has(entry.environmentId) && entry.state === "open"
         ? [
             {
               id: "request-review",
               title: "Request review",
-              image: Platform.OS === "ios" ? "person.badge.plus" : "person_add",
+              image: "person.badge.plus",
             },
           ]
         : []),
@@ -185,20 +184,20 @@ export function usePullRequestListActions(
         ? pullRequestListRowActions(entry, hostActions).map((action) => ({
             id: action,
             title: pullRequestActionLabel(action, terminology),
-            image: ROW_ACTION_IMAGES[action][Platform.OS === "ios" ? 0 : 1],
+            image: ROW_ACTION_IMAGES[action],
             ...(action === "close" ? { attributes: { destructive: true } } : {}),
           }))
         : []),
       {
         id: "share",
         title: "Share…",
-        image: Platform.OS === "ios" ? "square.and.arrow.up" : "share",
+        image: "square.and.arrow.up",
       },
-      { id: "copy", title: "Copy link", image: Platform.OS === "ios" ? "link" : "link" },
+      { id: "copy", title: "Copy link", image: "link" },
       {
         id: "provider",
         title: openOnProviderLabel(entry.provider),
-        image: Platform.OS === "ios" ? "safari" : "open_in_browser",
+        image: "safari",
       },
     ];
   };
