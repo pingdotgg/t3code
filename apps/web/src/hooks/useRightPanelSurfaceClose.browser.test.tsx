@@ -59,6 +59,7 @@ vi.mock("../state/terminal", () => ({ terminalEnvironment: { open: {}, close: {}
 vi.mock("../state/preview", () => ({ previewEnvironment: { close: {} } }));
 vi.mock("../state/threads", () => ({ threadEnvironment: { delete: {} } }));
 vi.mock("../state/shell", () => ({ environmentShell: { stateValueAtom: () => null } }));
+vi.mock("../browser/browserTargetResolver", () => ({ releaseExternalServerUrl: async () => {} }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   isAtomCommandInterrupted: () => false,
 }));
