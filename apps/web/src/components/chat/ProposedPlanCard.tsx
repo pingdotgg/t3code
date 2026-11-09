@@ -43,6 +43,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   environmentId,
   threadRef,
   cwd,
+  fileLinkBaseDir,
   workspaceRoot,
   findActive = false,
 }: {
@@ -50,6 +51,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | undefined;
   cwd: string | undefined;
+  fileLinkBaseDir?: string | undefined;
   workspaceRoot: string | undefined;
   findActive?: boolean;
 }) {
@@ -198,6 +200,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={collapsedPreview ?? ""}
               cwd={cwd}
+              fileLinkBaseDir={fileLinkBaseDir}
               environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}
@@ -207,6 +210,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             <ChatMarkdown
               text={displayedPlanMarkdown}
               cwd={cwd}
+              fileLinkBaseDir={fileLinkBaseDir}
               environmentId={environmentId}
               threadRef={threadRef}
               isStreaming={false}

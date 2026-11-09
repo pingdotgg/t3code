@@ -194,7 +194,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
-import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { ThreadFeed, type ThreadFeedHistoryControls, type ThreadFeedProps } from "./ThreadFeed";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
@@ -270,6 +270,8 @@ export interface ThreadDetailScreenProps {
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
+  readonly runs?: ThreadFeedProps["runs"];
+  readonly runFolders?: ThreadFeedProps["runFolders"];
   readonly selectedThreadQueueCount: number;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
@@ -1444,6 +1446,8 @@ function ThreadDetailBody(
                 threadId={props.selectedThread.id}
                 detailRef={props.selectedThreadDetailRef}
                 workspaceRoot={props.threadCwd}
+                runs={props.runs}
+                runFolders={props.runFolders}
                 feed={props.selectedThreadFeed}
                 pendingHandoff={props.pendingHandoff}
                 worktreeSetup={props.worktreeSetup}

@@ -55,6 +55,10 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
+    "./timeline-row-folders": {
+      "types": "./src/timelineRowFolders.ts",
+      "default": "./src/timelineRowFolders.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"

@@ -56,6 +56,7 @@ import {
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 
 import { layerReaderDatabase, traceSqlRouting } from "../persistence/testkit/SqliteRouting.ts";
+import { runCreated, threadCreated } from "../project/ThreadMove.testkit.ts";
 
 const layerTest = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
@@ -2761,6 +2762,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
               completedAt: nowIso,
               checkpointId: null,
               contextHandoffId: null,
+              cwd: `/repo/run-${ordinal}`,
             })}
           )
         `;
@@ -2931,6 +2933,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const bytePage = yield* projectionStore.getThreadHistoryPage(threadId, byteCursor);
       assert.isAbove(bytePage.items.length, 0);
       assert.isBelow(bytePage.items.length, 70);
+      assert.deepEqual(
+        bytePage.runFolders?.map((run) => `${run.id} ${run.cwd}`),
+        bytePage.items.map(({ item }) => `${item.runId} /repo/run-${item.ordinal}`),
+      );
       assert.isAtMost(
         Buffer.byteLength(JSON.stringify(bytePage.items), "utf8"),
         THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
@@ -6767,7 +6773,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const sourceThreadId = ThreadId.make("thread:projection-imported-fork-shell:source");
       const targetThreadId = ThreadId.make("thread:projection-imported-fork-shell:target");
       const sideChatThreadId = ThreadId.make("thread:projection-imported-fork-shell:side-chat");
+      const emptyForkThreadId = ThreadId.make("thread:projection-imported-fork-shell:empty-fork");
       const sourceRunId = RunId.make("run:projection-imported-fork-shell:source");
+      const emptyRunId = RunId.make("run:projection-imported-fork-shell:empty");
       const rootNodeId = NodeId.make("node:projection-imported-fork-shell:source");
 
       yield* projectionStore.apply({
@@ -6804,9 +6812,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           deletedAt: null,
         },
       });
-      for (const [threadId, sideChat] of [
-        [targetThreadId, false],
-        [sideChatThreadId, true],
+      for (const [threadId, sideChat, runId] of [
+        [targetThreadId, false, sourceRunId],
+        [sideChatThreadId, true, sourceRunId],
+        [emptyForkThreadId, false, emptyRunId],
       ] as const) {
         yield* projectionStore.apply({
           id: EventId.make(`event:projection-imported-fork-shell:created:${threadId}`),
@@ -6835,7 +6844,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             forkedFrom: {
               type: "run",
               threadId: sourceThreadId,
-              runId: sourceRunId,
+              runId,
             },
             createdAt: now,
             updatedAt: now,
@@ -6847,6 +6856,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           },
         });
       }
+      yield* projectionStore.apply(
+        runCreated({
+          id: emptyRunId,
+          threadId: sourceThreadId,
+          ordinal: 1,
+          providerInstanceId,
+          occurredAt: now,
+        }),
+      );
       yield* projectionStore.apply({
         id: EventId.make("event:projection-imported-fork-shell:source-run"),
         type: "run.created",
@@ -6858,7 +6876,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: {
           id: sourceRunId,
           threadId: sourceThreadId,
-          ordinal: 1,
+          ordinal: 2,
           providerInstanceId,
           modelSelection,
           providerThreadId: null,
@@ -6916,6 +6934,21 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.equal(targetShell.visibleItemCount, 4);
       assert.equal(targetProjection.visibleTurnItems.length, 4);
 
+      const emptyFork = yield* projectionStore.getThreadProjection(emptyForkThreadId);
+      assert.deepEqual(
+        emptyFork.visibleTurnItems.map((row) =>
+          row.item.type === "assistant_message" ? row.item.text : row.item.type,
+        ),
+        ["imported-one", "imported-two", "fork"],
+      );
+      const emptyForkPage = yield* projectionStore.getTimelinePage(emptyForkThreadId, {
+        limit: 20,
+        view: "activity",
+      });
+      assert.deepEqual(emptyForkPage.items, emptyFork.visibleTurnItems);
+      const emptyForkShell = shell.threads.find((thread) => thread.id === emptyForkThreadId);
+      assert.equal(emptyForkShell?.visibleItemCount, 3);
+
       const sideChatShell = shell.threads.find((thread) => thread.id === sideChatThreadId);
       assert.equal(sideChatShell?.visibleItemCount, 0);
       const sideChatProjection = yield* projectionStore.getThreadProjection(sideChatThreadId);
@@ -6925,6 +6958,162 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         view: "activity",
       });
       assert.equal(sideChatTimeline.totalItems, 0);
+    }),
+  );
+
+  it.effect("inherits a native source's move receipts before the fork point", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:projection-fork-receipt");
+      const thread = (name: string) => ThreadId.make(`thread:projection-fork-receipt:${name}`);
+      const run = (name: string) => RunId.make(`run:projection-fork-receipt:${name}`);
+      const item = (name: string) => TurnItemId.make(`turn-item:projection-fork-receipt:${name}`);
+      const createThread = (
+        threadId: ThreadId,
+        fork: { readonly threadId: ThreadId; readonly runId: RunId } | null,
+        historyOrigin?: "v1_import",
+      ) => {
+        const created = threadCreated({
+          threadId,
+          projectId,
+          worktreePath: null,
+          providerInstanceId,
+          parent: fork?.threadId,
+          kind: fork === null ? undefined : "fork",
+        });
+        return projectionStore.apply({
+          ...created,
+          occurredAt: now,
+          payload: {
+            ...created.payload,
+            ...(historyOrigin === undefined ? {} : { historyOrigin }),
+            forkedFrom: fork === null ? null : { type: "run", ...fork },
+          },
+        });
+      };
+      const createRun = (threadId: ThreadId, runId: RunId, ordinal: number, cwd?: string) =>
+        projectionStore.apply(
+          runCreated({
+            id: runId,
+            threadId,
+            ordinal,
+            providerInstanceId,
+            rootNodeId: NodeId.make(`node:${runId}`),
+            cwd,
+            occurredAt: now,
+          }),
+        );
+      const addItem = (threadId: ThreadId, name: string, runId: RunId | null, ordinal: number) =>
+        projectionStore.apply({
+          id: EventId.make(`event:projection-fork-receipt:item:${name}`),
+          type: "turn-item.updated",
+          threadId,
+          ...(runId === null ? {} : { runId }),
+          occurredAt: now,
+          payload: {
+            id: item(name),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            ...(runId === null
+              ? { type: "system_notice", message: name, previousFolder: `/${name}` }
+              : {
+                  type: "assistant_message",
+                  messageId: MessageId.make(`message:projection-fork-receipt:${name}`),
+                  text: name,
+                  streaming: false,
+                }),
+          },
+        });
+      // A source whose run 1 stayed home and run 2 moved to /b; its run-less items are receipts.
+      const fixture = Effect.fnUntraced(function* (
+        name: string,
+        items: Readonly<Record<string, "legacy" | "moved" | null>>,
+        forks: Readonly<Record<string, "legacy" | "moved">>,
+        historyOrigin?: "v1_import",
+      ) {
+        const source = thread(name);
+        yield* createThread(source, null, historyOrigin);
+        for (const [fork, at] of Object.entries(forks)) {
+          yield* createThread(thread(fork), { threadId: source, runId: run(`${name}-${at}`) });
+        }
+        yield* createRun(source, run(`${name}-legacy`), 1);
+        yield* createRun(source, run(`${name}-moved`), 2, "/b");
+        for (const [index, [suffix, at]] of Object.entries(items).entries()) {
+          yield* addItem(source, suffix, at === null ? null : run(`${name}-${at}`), index + 1);
+        }
+      });
+      yield* fixture(
+        "source",
+        { legacy: "legacy", a: null, "moved-one": "moved", "moved-two": "moved" },
+        { target: "moved", "legacy-fork": "legacy" },
+      );
+      yield* fixture(
+        "late",
+        { "late-moved": "moved", "late-a": null, "late-legacy": "legacy", "late-c": null },
+        { "late-fork": "moved" },
+      );
+      yield* fixture(
+        "imported",
+        {
+          "imported-legacy": "legacy",
+          "imported-a": null,
+          "imported-moved-one": "moved",
+          "imported-moved-two": "moved",
+          "imported-b": null,
+          "imported-c": null,
+        },
+        { "imported-fork": "legacy" },
+        "v1_import",
+      );
+
+      const shape = (rows: ReadonlyArray<{ readonly item: OrchestrationV2TurnItem }>) =>
+        rows.map((row) =>
+          row.item.type === "system_notice"
+            ? row.item.previousFolder
+            : row.item.type === "assistant_message"
+              ? row.item.text
+              : row.item.type,
+        );
+      const window = (threadId: ThreadId, rowLimit: number, anchorItemId?: TurnItemId) =>
+        Effect.map(
+          projectionStore.getThreadSnapshotWindow(threadId, { rowLimit, anchorItemId }),
+          (snapshot) => shape(snapshot.projection.visibleTurnItems),
+        );
+      const expectFork = Effect.fnUntraced(function* (
+        fork: ThreadId,
+        expected: ReadonlyArray<string | undefined>,
+      ) {
+        const projection = yield* projectionStore.getThreadProjection(fork);
+        const page = yield* projectionStore.getTimelinePage(fork, { view: "activity", limit: 10 });
+        assert.deepEqual(page.items, projection.visibleTurnItems);
+        assert.deepEqual(shape(projection.visibleTurnItems), expected);
+        assert.deepEqual(yield* window(fork, 2), expected.slice(-3));
+        assert.deepEqual(yield* window(fork, 3), expected.slice(-4));
+        return projection;
+      });
+
+      const target = thread("target");
+      const main = yield* expectFork(target, ["legacy", "/a", "moved-one", "moved-two", "fork"]);
+      assert.equal(main.visibleTurnItems[1]?.visibility, "inherited");
+      const folders = main.runFolders?.map((folder) => [folder.id, folder.cwd]);
+      assert.deepEqual(folders, [[run("source-moved"), "/b"]]);
+      assert.deepEqual(yield* window(target, 2, item("moved-one")), ["/a", "moved-one", "fork"]);
+      assert.deepEqual(yield* window(target, 2, item("a")), ["legacy", "/a", "fork"]);
+      yield* expectFork(thread("legacy-fork"), ["legacy", "/a", "fork"]);
+      yield* expectFork(thread("late-fork"), ["late-moved", "/late-a", "fork"]);
+      yield* expectFork(thread("imported-fork"), ["imported-legacy", "/imported-a", "fork"]);
     }),
   );
 
@@ -7460,6 +7649,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt: now,
             checkpointId: null,
             contextHandoffId: null,
+            cwd: `/repo/source-${ordinal}`,
           },
         });
         yield* projectionStore.apply({
@@ -7557,6 +7747,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           completedAt: now,
           checkpointId: null,
           contextHandoffId: null,
+          cwd: "/repo/source-2",
         },
       });
 
@@ -7798,6 +7989,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           completedAt: now,
           checkpointId: null,
           contextHandoffId: null,
+          cwd: "/repo/target",
         },
       });
       for (let ordinal = 1; ordinal <= 102; ordinal += 1) {
@@ -7973,6 +8165,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           "fork",
         ],
       );
+      assert.sameDeepMembers(
+        boundedNested.projection.runFolders?.map((run) => [run.id, run.cwd]) ?? [],
+        [
+          [sourceRun2Id, "/repo/source-2"],
+          [targetRunId, "/repo/target"],
+        ],
+      );
 
       const nestedInitial = buildBoundedThreadProjection({
         policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
@@ -7989,6 +8188,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const nestedIds = nestedInitial.projection.visibleTurnItems.map((row) =>
         String(row.sourceItemId),
       );
+      const nestedPage = yield* projectionStore.getThreadHistoryPage(
+        nestedThreadId,
+        nestedInitial.historyCursor!,
+      );
+      assert.deepEqual(nestedPage.runFolders?.map((run) => run.cwd).sort(), [
+        "/repo/source-1",
+        "/repo/source-2",
+        "/repo/target",
+      ]);
       let nestedCursor = nestedInitial.historyCursor;
       let nestedPages = 1;
       while (nestedCursor !== null) {

@@ -107,6 +107,11 @@ describe("orchestration V2 contracts", () => {
     });
     const known = item("item-known", "system_notice", { message: "Hello" });
     const future = item("item-future", "hologram", { beam: "ref-1" });
+    const notice = item("item-notice", "system_notice", { message: "Moved", previousFolder: "/a" });
+    expect(decodeOrchestrationV2TurnItemJson(known)).not.toHaveProperty("previousFolder");
+    expect(encodeOrchestrationV2TurnItemJson(decodeOrchestrationV2TurnItemJson(notice))).toEqual(
+      notice,
+    );
     const projected = (position: number, turnItem: { readonly id: string }) => ({
       position,
       visibility: "local",

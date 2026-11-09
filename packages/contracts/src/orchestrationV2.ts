@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 
 import {
   CheckpointId,
@@ -1750,6 +1751,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    previousFolder: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2034,9 +2036,14 @@ export const OrchestrationV2DomainEvent = Schema.Union([
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
+const OrchestrationV2RunFolder = OrchestrationV2Run.mapFields(
+  Struct.pick(["id", "cwd", "repositoryRoot"]),
+);
+
 export const OrchestrationV2ThreadProjection = Schema.Struct({
   thread: OrchestrationV2AppThread,
   runs: Schema.Array(OrchestrationV2Run),
+  runFolders: Schema.optional(Schema.Array(OrchestrationV2RunFolder)),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
   subagents: Schema.Array(OrchestrationV2Subagent),
@@ -2587,6 +2594,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("system_notice"),
     message: Schema.String,
+    previousFolder: Schema.optional(Schema.String),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -3898,6 +3906,7 @@ export const OrchestrationV2ThreadHistoryPage = withRecordIdTable(
         item: ForwardCompatibleUnion(OrchestrationV2TurnItem.members, "type"),
       })),
     ),
+    runFolders: Schema.optional(Schema.Array(OrchestrationV2RunFolder)),
     nextCursor: Schema.NullOr(TrimmedNonEmptyString),
     hasMoreHistory: Schema.Boolean,
     idTable: IdTableMarker,

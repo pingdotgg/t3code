@@ -1,4 +1,9 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
+import {
+  timelineRowFolder as rowFolder,
+  type TimelineRowFolders,
+  type TimelineRunFolder,
+} from "@t3tools/client-runtime/timeline-row-folders";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
@@ -2670,6 +2675,22 @@ export function shouldCollapseUserMessage(text: string): boolean {
     visible.length > MAX_COLLAPSED_USER_MESSAGE_LENGTH ||
     visible.split("\n").length > MAX_COLLAPSED_USER_MESSAGE_LINES
   );
+}
+
+export function timelineEntryPreviousFolder(entry: TimelineEntry): string | undefined {
+  const item = entry.kind === "work" ? entry.entry.structuredPayload : undefined;
+  return item?.type === "system_notice" ? item.previousFolder : undefined;
+}
+
+export function timelineRowFolder(
+  row: MessagesTimelineRow,
+  folders: TimelineRowFolders,
+): TimelineRunFolder | undefined {
+  const entry =
+    row.kind === "work" ? row.groupedEntries[0] : row.kind === "work-live" ? row.entry : undefined;
+  const source =
+    row.kind === "message" ? row.message : row.kind === "proposed-plan" ? row.proposedPlan : entry;
+  return rowFolder(folders, source?.runId, entry?.id ?? row.id);
 }
 
 export function handoffRunsSignature(runs: ReadonlyArray<HandoffTimelineRun>): string {

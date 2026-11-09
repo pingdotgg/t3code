@@ -22,6 +22,7 @@ import { createContext, type MouseEvent, type ReactNode } from "react";
 import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
+import type { TimelineRunFolder } from "@t3tools/client-runtime/timeline-row-folders";
 import { type ChatFileAttachment } from "../../types";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
@@ -113,6 +114,8 @@ export interface TimelineRowActivityState {
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+
+export const TimelineRowFolderCtx = createContext<TimelineRunFolder | undefined>(undefined);
 
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;

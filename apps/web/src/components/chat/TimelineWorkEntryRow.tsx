@@ -50,6 +50,7 @@ import { SubagentNotificationLink } from "./V2LifecycleRow";
 import {
   TimelineRowCtx,
   TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
   WorkGroupViewCtx,
   type TimelineWorkEntry,
 } from "./timelineRowContext";
@@ -118,6 +119,7 @@ const stopRowToggle = (e: { stopPropagation: () => void }) => e.stopPropagation(
 
 export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWorkEntry> }) {
   const ctx = use(TimelineRowCtx);
+  const rowFolder = use(TimelineRowFolderCtx)?.cwd;
   const { isWorking, latestRunId } = use(TimelineRowActivityCtx);
   const isStreaming = (entry: TimelineWorkEntry) =>
     isWorking && entry.runId === latestRunId && entry.toolLifecycleStatus === "inProgress";
@@ -129,6 +131,7 @@ export function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<Time
           className="text-foreground"
           text={entry.detail ?? ""}
           cwd={ctx.markdownCwd}
+          fileLinkBaseDir={rowFolder}
           threadRef={ctx.threadRef ?? undefined}
           skills={ctx.skills}
           isStreaming={isStreaming(entry)}

@@ -79,7 +79,12 @@ import { markdownProseDirection } from "~/textDirection";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
-import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
+import {
+  TimelineRowCtx,
+  TimelineRowActivityCtx,
+  TimelineRowFolderCtx,
+  type TimelineRow,
+} from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
   MessageAuthorHeading,
@@ -1188,6 +1193,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     <ChatMarkdown
       text={props.text}
       cwd={props.markdownCwd}
+      fileLinkBaseDir={use(TimelineRowFolderCtx)?.cwd}
       threadRef={ctx.threadRef ?? undefined}
       skills={props.skills}
       className="text-foreground"
