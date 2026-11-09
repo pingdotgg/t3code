@@ -4198,10 +4198,29 @@ describe("PiAdapterV2", () => {
           ["Question", title, options],
           id,
         );
+        const answer = options.at(-1) ?? "";
+        yield* runtime.respondToRuntimeRequest({
+          requestId: event.turnItem.requestId,
+          answers: { [id]: answer },
+        });
+        assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+          type: "extension_ui_response",
+          id,
+          value: answer,
+        });
       });
 
       yield* startTool("call_area", { questions: [areaQuestion] });
       yield* expectFlattened("ui-unrelated", "Pick a tag", ["stable", "beta"]);
+
+      yield* startTool("call_other", { questions: [areaQuestion] }, "ask_question");
+      yield* expectFlattened("ui-other-overlap", areaTitle, areaOptions);
+      yield* expectFlattened("ui-other-unrelated", "Pick a tag", ["stable", "beta"]);
+      yield* endTool("call_other");
+
+      yield* startTool("call_malformed", { questions: [{ question: "Broken" }] });
+      yield* expectFlattened("ui-malformed-overlap", areaTitle, areaOptions);
+      yield* endTool("call_malformed");
 
       // Both calls render the same select, so neither can claim it.
       yield* startTool("call_header", {
@@ -4209,6 +4228,7 @@ describe("PiAdapterV2", () => {
           { header: "Area", question: "Pick?", options: [{ label: "A", description: "x — y" }] },
         ],
       });
+      yield* expectFlattened("ui-different-ask-overlap", areaTitle, areaOptions);
       yield* startTool("call_label", {
         questions: [{ question: "[Area] Pick?", options: [{ label: "A — x", description: "y" }] }],
       });
@@ -4222,9 +4242,20 @@ describe("PiAdapterV2", () => {
         ],
       });
       yield* expectFlattened("ui-blank", "[Blank] Which?", ["1.   — b", "2. Type something."]);
+      yield* endTool("call_blank");
 
       yield* endTool("call_area");
       yield* expectFlattened("ui-ended", areaTitle, areaOptions);
+      yield* fake.emit({
+        type: "tool_execution_update",
+        toolCallId: "call_area",
+        toolName: "ask_user_question",
+        args: { questions: [areaQuestion] },
+        partialResult: { content: [] },
+      });
+      yield* expectFlattened("ui-late-update", areaTitle, areaOptions);
+      yield* endTool("call_area");
+      yield* expectFlattened("ui-late-end", areaTitle, areaOptions);
 
       yield* startTool("call_other", { questions: [areaQuestion] }, "ask_question");
       yield* expectFlattened("ui-other-tool", areaTitle, areaOptions);

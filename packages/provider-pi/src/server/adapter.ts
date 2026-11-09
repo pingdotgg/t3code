@@ -356,8 +356,8 @@ interface ActivePiTurn {
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
-  /** Questions of ask_user_question calls that have started and not ended, by tool call id. */
-  readonly askUserQuestions: Map<string, ReadonlyArray<PiAskUserQuestion>>;
+  /** Active calls, with decoded questions only for recognized ask_user_question arguments. */
+  readonly activeToolQuestions: Map<string, ReadonlyArray<PiAskUserQuestion>>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
   nativeAborted: boolean;
@@ -1172,12 +1172,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (toolCallId === undefined) return;
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
-          if (toolName === PI_ASK_USER_QUESTION_TOOL) {
-            const ask = decodePiAskUserQuestionArgs(event["args"]);
-            if (Option.isSome(ask)) turn.askUserQuestions.set(toolCallId, ask.value.questions);
-          }
+          const ask =
+            toolName === PI_ASK_USER_QUESTION_TOOL
+              ? decodePiAskUserQuestionArgs(event["args"])
+              : Option.none();
+          turn.activeToolQuestions.set(toolCallId, Option.isSome(ask) ? ask.value.questions : []);
         }
-        if (phase === "end") turn.askUserQuestions.delete(toolCallId);
+        if (phase === "end") turn.activeToolQuestions.delete(toolCallId);
         const args = event["args"] ?? turn.toolArgs.get(toolCallId);
         const emittedAt = yield* DateTime.now;
         const startedAt = turn.toolStartedAt.get(toolCallId) ?? emittedAt;
@@ -1574,8 +1575,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 type: "user_input_request",
                 requestId,
                 questions: [
-                  (method === "select" && turn !== null
-                    ? piAskUserQuestion(turn.askUserQuestions.values(), nativeRequestId, event)
+                  // UI requests have no tool id; overlapping calls cannot safely claim a select.
+                  (method === "select" && turn !== null && turn.activeToolQuestions.size === 1
+                    ? piAskUserQuestion(turn.activeToolQuestions.values(), nativeRequestId, event)
                     : undefined) ?? piQuestion(nativeRequestId, method, title, event),
                 ],
               };
@@ -2789,7 +2791,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),
-              askUserQuestions: new Map(),
+              activeToolQuestions: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
               nativeAborted: false,
