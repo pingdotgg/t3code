@@ -349,7 +349,9 @@ export function buildCheckedAcpRegistrySnapshot(
       ? { documentationUrl: input.inspection.documentationUrl }
       : {}),
     installed: readiness.installed,
-    version: readiness.version,
+    // Inspecting a local executable or a command override cannot know the agent
+    // version; the probe's initialize answer is the only live source.
+    version: readiness.version ?? input.probe?.probe.version ?? null,
     // Failed discovery is a warning: an installed agent may still run real turns.
     status: probeFailed ? "warning" : readiness.status,
     auth: input.probe
@@ -619,7 +621,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (
         cached !== null &&
         cached.expiresAt > now &&
-        cached.provider.version === baseSnapshot.version
+        // A local executable or command override has no inspected version, and
+        // the cached snapshot carries the probed agent version; only a known
+        // inspection version can invalidate the entry.
+        (baseSnapshot.version === null || cached.provider.version === baseSnapshot.version)
       ) {
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },

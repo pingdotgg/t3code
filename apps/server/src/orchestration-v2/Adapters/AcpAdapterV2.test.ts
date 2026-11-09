@@ -75,6 +75,7 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -5819,6 +5820,50 @@ describe("AcpAdapterV2", () => {
         )
         .map((event) => rawProtocolRequestParam(event, "value"));
       assert.deepEqual(sentAgentValues, ["example", ""]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("fails a session whose model the agent never advertises", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-model-unadvertised");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            environment: {
+              T3_ACP_OMIT_MODEL_CONFIG_OPTION: "1",
+              T3_ACP_OMIT_INITIALIZE_MODEL_STATE: "1",
+            },
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const failure = yield* adapter
+        .openSession({
+          threadId: ThreadId.make("thread-acp-model-unadvertised"),
+          providerSessionId: ProviderSessionId.make("provider-session-acp-model-unadvertised"),
+          modelSelection: { instanceId, model: "composer-2" },
+          runtimePolicy,
+        })
+        .pipe(Effect.flip);
+
+      assert.equal(
+        makeProviderFailure({ cause: failure }).message,
+        'The agent did not accept the model "composer-2". Choose another model for this provider, then retry.',
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

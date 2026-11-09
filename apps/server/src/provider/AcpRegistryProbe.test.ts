@@ -34,6 +34,7 @@ describe("ACP Registry probe", () => {
       sessionId: "probe-session",
       initializeResult: {
         protocolVersion: 1,
+        agentInfo: { name: "mock-agent", version: "18.16.0" },
         agentCapabilities: {
           loadSession: true,
           auth: { logout: {} },
@@ -72,6 +73,7 @@ describe("ACP Registry probe", () => {
     expect(result).toEqual({
       instanceId,
       ready: true,
+      version: "18.16.0",
       icon: null,
       authMethods: [
         { id: "chatgpt", name: "ChatGPT", description: null, type: "agent" },
@@ -319,6 +321,45 @@ describe("ACP Registry probe", () => {
         },
       ],
     });
+  });
+
+  it("routes skill-prefixed ACP commands to the provider skill menu", () => {
+    expect(
+      normalizeAcpRegistryCommands([
+        { name: "skill:code-review", description: " Review a change " },
+        { name: "skill:CODE-REVIEW", description: "duplicate" },
+        { name: "$code-review", description: "the same skill under the legacy prefix" },
+        { name: "skill:", description: "empty" },
+        { name: "review", description: "Review changes" },
+      ]),
+    ).toEqual({
+      slashCommands: [{ name: "review", description: "Review changes" }],
+      skills: [
+        {
+          name: "code-review",
+          description: "Review a change",
+          path: "acp://skill/code-review",
+          scope: "agent",
+          enabled: true,
+        },
+      ],
+    });
+  });
+
+  it("keeps skills out of the slash-command budget", () => {
+    const commands = normalizeAcpRegistryCommands([
+      ...Array.from({ length: 140 }, (_, index) => ({
+        name: `command_${index}`,
+        description: "",
+      })),
+      ...Array.from({ length: 50 }, (_, index) => ({
+        name: `skill:skill-${index}`,
+        description: "",
+      })),
+    ]);
+
+    expect(commands.slashCommands).toHaveLength(128);
+    expect(commands.skills).toHaveLength(50);
   });
 
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {

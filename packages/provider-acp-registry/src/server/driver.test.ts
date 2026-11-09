@@ -59,6 +59,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         probe: {
           instanceId: identity.instanceId,
           ready: true,
+          version: null,
           icon: null,
           authMethods: [],
           models: [],
@@ -89,6 +90,37 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
+  it("reports the probed agent version where inspection cannot know it", () => {
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ source: "local", commandPath: "/opt/agents/omp" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "/opt/agents/omp",
+        version: null,
+        distribution: "local",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          version: "18.16.0",
+          icon: null,
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(snapshot.version).toBe("18.16.0");
+  });
+
   it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,
@@ -104,6 +136,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         probe: {
           instanceId: identity.instanceId,
           ready: true,
+          version: null,
           icon: null,
           authMethods: [{ id: "browser", name: "Browser", description: null, type: "agent" }],
           models: [],
@@ -141,6 +174,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         probe: {
           instanceId: identity.instanceId,
           ready: true,
+          version: null,
           icon: null,
           authMethods: [],
           models: [{ id: "probe-model", name: "Probe model", description: null }],
@@ -226,6 +260,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         probe: {
           instanceId: identity.instanceId,
           ready: true,
+          version: null,
           icon: null,
           authMethods: [],
           models: [{ id: "gpt-discovered", name: "GPT Discovered", description: null }],
@@ -284,6 +319,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         probe: {
           instanceId: identity.instanceId,
           ready: true,
+          version: null,
           icon: null,
           authMethods: [],
           models: [],
@@ -371,6 +407,7 @@ describe("acpRegistrySnapshotReadiness", () => {
               probe: {
                 instanceId: identity.instanceId,
                 ready: true as const,
+                version: null,
                 icon: null,
                 authMethods: [],
                 models: [{ id: "agent-model", name: "Agent Model", description: null }],

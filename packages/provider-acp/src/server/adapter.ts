@@ -7279,6 +7279,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               appliedModel = requestedModel;
             }
           }
+          // An agent that advertises no model option or model state cannot apply a
+          // concrete selection. Silently keeping the session's own model would leave
+          // the UI labelled with a model the agent never ran, so fail like any other
+          // rejected selection. "default"/"auto" mean "the agent decides".
+          if (
+            appliedModel === undefined &&
+            flavor.applyModelSelection === undefined &&
+            requestedModel.length > 0 &&
+            requestedModel !== "default" &&
+            requestedModel !== "auto"
+          ) {
+            return yield* new AcpModelSelectionError({
+              model: modelSelection.model,
+              cause: EffectAcpErrors.AcpRequestError.invalidParams(
+                "The session does not advertise the requested model.",
+              ),
+            });
+          }
           if (appliedModel !== undefined) {
             const applied = appliedModel;
             yield* Ref.update(activeSessionSetup, (setup) => {

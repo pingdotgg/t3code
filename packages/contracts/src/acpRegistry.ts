@@ -272,6 +272,9 @@ export const AcpRegistryProbeResult = Schema.Struct({
   instanceId: ProviderInstanceId,
   // `ready` requires a disposable ACP session/new probe, not passive auth detection.
   ready: Schema.Literal(true),
+  // The agent's own `initialize` answer. Registry installs keep the registry's
+  // pinned version; local executables have no other source.
+  version: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
   icon: Schema.NullOr(AcpRegistryUrl),
   authMethods: Schema.Array(AcpRegistryProbeAuthMethod).check(Schema.isMaxLength(32)),
   models: Schema.Array(AcpRegistryProbeModel).check(Schema.isMaxLength(256)),

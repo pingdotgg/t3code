@@ -41,7 +41,14 @@ const MAX_MODELS = 256;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
-const MAX_COMMANDS = 128;
+// Slash commands and skills each get their own bound: agents such as omp
+// advertise both together (50 skills among 101 entries), and one shared budget
+// dropped entries. 128 skills is at most ~25 KB in the provider snapshot.
+const MAX_SLASH_COMMANDS = 128;
+const MAX_SKILLS = 128;
+// Skill conventions agents advertise: ACP registries commonly use `skill:<name>`,
+// and the `$<name>` form predates it.
+const SKILL_COMMAND_PREFIXES = ["skill:", "$"] as const;
 const MAX_COMMAND_LINE_LENGTH = 2_048;
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
@@ -215,18 +222,28 @@ export function normalizeAcpRegistryCommands(
   const seen = new Set<string>();
   const slashCommands: Array<ServerProviderSlashCommand> = [];
   const skills: Array<ServerProviderSkill> = [];
-  let accepted = 0;
   for (const command of commands) {
+    if (slashCommands.length === MAX_SLASH_COMMANDS && skills.length === MAX_SKILLS) break;
     const name = boundedOpaqueValue(command.name, MAX_ID_LENGTH);
     if (name === undefined) continue;
-    const key = name.toLowerCase();
+    const skillPrefix = SKILL_COMMAND_PREFIXES.find((prefix) => name.startsWith(prefix));
+    const skillName =
+      skillPrefix === undefined
+        ? undefined
+        : boundedOpaqueValue(name.slice(skillPrefix.length), MAX_ID_LENGTH);
+    // A bare prefix such as "$" is a malformed skill, not a slash command.
+    if (skillPrefix !== undefined && skillName === undefined) continue;
+    // De-duplicate on the published name: `$foo` and `skill:foo` are one skill.
+    const key = skillName === undefined ? name.toLowerCase() : `skill:${skillName.toLowerCase()}`;
     if (seen.has(key)) continue;
+    if (skillName !== undefined) {
+      if (skills.length === MAX_SKILLS) continue;
+    } else if (slashCommands.length === MAX_SLASH_COMMANDS) {
+      continue;
+    }
     seen.add(key);
     const description = boundedText(command.description, MAX_DESCRIPTION_LENGTH);
-    const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
-    if (name.startsWith("$")) {
-      const skillName = boundedOpaqueValue(name.slice(1), MAX_ID_LENGTH);
-      if (skillName === undefined) continue;
+    if (skillName !== undefined) {
       skills.push({
         name: skillName,
         ...(description ? { description } : {}),
@@ -235,14 +252,13 @@ export function normalizeAcpRegistryCommands(
         enabled: true,
       });
     } else {
+      const hint = command.input ? boundedText(command.input.hint, MAX_DESCRIPTION_LENGTH) : "";
       slashCommands.push({
         name,
         ...(description ? { description } : {}),
         ...(hint ? { input: { hint } } : {}),
       });
     }
-    accepted += 1;
-    if (accepted === MAX_COMMANDS) break;
   }
   return { slashCommands, skills };
 }
@@ -258,9 +274,12 @@ export function acpRegistryProbeResult(
     parseSessionModeState(started.sessionSetupResult),
     started.sessionSetupResult.models,
   );
+  // The ACP client normalizes v2 `info` onto v1 `agentInfo`, so one read covers both.
+  const agentVersion = started.initializeResult.agentInfo?.version;
   return AcpRegistryProbeResult.make({
     instanceId,
     ready: true,
+    version: agentVersion === undefined ? null : (boundedOpaqueValue(agentVersion, 128) ?? null),
     icon,
     authMethods: normalizeAcpRegistryAuthMethods(started.initializeResult.authMethods, spawn),
     sessionManagement: {
