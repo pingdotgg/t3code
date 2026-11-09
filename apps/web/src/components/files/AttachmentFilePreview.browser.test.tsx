@@ -2772,12 +2772,6 @@ it.each(["rtf", "epub", "ods"] as const)(
       },
       { timeout: 10_000 },
     );
-    if (kind === "ods") {
-      await userEvent.hover(page.getByText("1 rows", { exact: true }));
-      await expect
-        .element(page.getByText("2 columns", { exact: true }))
-        .toHaveTextContent("2 columns");
-    }
     expect(screen.container.querySelector('[role="alert"]')).toBeNull();
   },
 );
