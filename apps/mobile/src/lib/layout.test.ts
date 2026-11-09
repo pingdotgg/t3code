@@ -155,21 +155,28 @@ describe("isPrimarySidebarPinned", () => {
 
 describe("deriveWorkspacePaneLayout", () => {
   it.each([
-    { width: 1_194, height: 834, suppressed: false },
-    { width: 1_032, height: 1_376, suppressed: true },
+    { width: 1_194, height: 834, horizontalSafeArea: 0, fraction: 0.4, suppressed: false },
+    { width: 1_032, height: 1_376, horizontalSafeArea: 0, fraction: 0.4, suppressed: true },
+    // The unfolded Duo's system bar leaves no room for the sidebar beside even the narrowest inspector.
+    { width: 951, height: 669, horizontalSafeArea: 76, fraction: 0, suppressed: true },
   ])(
     "steps the sidebar aside for the native inspector only when the page gets too narrow ($width wide)",
-    ({ width, height, suppressed }) => {
+    ({ width, height, horizontalSafeArea, fraction, suppressed }) => {
       const layout = deriveLayout({ width, height });
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({
             layout,
             viewportWidth: width,
+            horizontalSafeArea,
             nativeWorkspace: true,
             primarySidebarPreferredVisible,
             auxiliaryPanePreferredVisible: true,
-            nativeInspectorWidth: nativeInspectorColumnWidth(width, 0.4),
+            nativeInspectorWidth: nativeInspectorColumnWidth({
+              viewportWidth: width,
+              horizontalSafeArea,
+              fraction,
+            }),
           }),
         ).toMatchObject({
           primarySidebarVisible: primarySidebarPreferredVisible && !suppressed,
@@ -177,6 +184,17 @@ describe("deriveWorkspacePaneLayout", () => {
           auxiliaryPaneVisible: true,
         });
       }
+    },
+  );
+
+  it.each([
+    { viewportWidth: 1_376, horizontalSafeArea: 0 },
+    { viewportWidth: 951, horizontalSafeArea: 76 },
+  ])(
+    "never widens the native inspector past the page's minimum ($viewportWidth wide)",
+    ({ viewportWidth, horizontalSafeArea }) => {
+      const width = nativeInspectorColumnWidth({ viewportWidth, horizontalSafeArea, fraction: 1 });
+      expect(viewportWidth - horizontalSafeArea - width).toBeGreaterThanOrEqual(320);
     },
   );
 
