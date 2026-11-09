@@ -118,12 +118,10 @@ export function extractToolActivityPresentation(
       ? payload.toolSurface
       : retainedSource?.kind === "computer" || retainedSource?.kind === "browser"
         ? retainedSource.kind
-        : payload?.type === "dynamic_tool"
-          ? dynamicToolSurface(
-              typeof payload.toolName === "string" ? payload.toolName : undefined,
-              payload.input,
-            )
-          : undefined;
+        : dynamicToolSurface(
+            typeof payload?.toolName === "string" ? payload.toolName : undefined,
+            payload?.input,
+          );
   const toolSource =
     toolSurface === "computer" && retainedSource?.kind !== "computer"
       ? COMPUTER_USE_TOOL_SOURCE

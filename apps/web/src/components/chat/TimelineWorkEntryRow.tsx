@@ -545,6 +545,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               onOpenToolDiff={ctx.onOpenToolDiff}
               onImageExpand={ctx.onImageExpand}
               source={ctx.turnItemSource}
+              toolSurface={workEntry.toolSurface}
             />
           ) : (
             <>

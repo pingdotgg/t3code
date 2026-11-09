@@ -77,4 +77,17 @@ describe("extractToolActivityPresentation", () => {
       }),
     ).toEqual({});
   });
+
+  it("marks screen-control tools that arrive as ordinary tool calls", () => {
+    expect(
+      extractToolActivityPresentation({
+        type: "tool_call",
+        toolName: "computer_screenshot",
+        input: {},
+      }),
+    ).toEqual({
+      toolSurface: "computer",
+      toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+    });
+  });
 });

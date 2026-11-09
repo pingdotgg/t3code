@@ -1,5 +1,9 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
-import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  OrchestrationV2ProjectedTurnItem,
+  ToolActivitySurface,
+} from "@t3tools/contracts";
 import {
   isJsonToolText,
   toolCallLines,
@@ -22,6 +26,7 @@ import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { Button } from "../ui/button";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
+import { ComputerUseInspector } from "./ComputerUseInspector";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { CommandOutputPanel, useCommandOutputStreaming } from "./CommandOutputPanel";
 import { resolveExternalWebLinkHref } from "./externalLinkContextMenu";
@@ -31,6 +36,7 @@ import type { TurnItemSource } from "./timelineRowContext";
 
 interface V2ItemInspectorProps {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
+  readonly toolSurface?: ToolActivitySurface | undefined;
   readonly environmentId: EnvironmentId;
   readonly cwd?: string | undefined;
   readonly workspaceRoot?: string | undefined;
@@ -373,12 +379,25 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
 
       {item.type === "dynamic_tool" ? (
-        <ToolCallBody
-          toolName={item.toolName}
-          args={item.input}
-          {...outputState}
-          onImageExpand={props.onImageExpand}
-        />
+        props.toolSurface === "computer" ? (
+          <ComputerUseInspector
+            toolName={item.toolName}
+            input={item.input}
+            running={item.status === "running" || item.status === "pending"}
+            images={outputState.images}
+            environmentId={props.environmentId}
+            pending={outputState.pending}
+            error={outputState.error}
+            onImageExpand={props.onImageExpand}
+          />
+        ) : (
+          <ToolCallBody
+            toolName={item.toolName}
+            args={item.input}
+            {...outputState}
+            onImageExpand={props.onImageExpand}
+          />
+        )
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}

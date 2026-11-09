@@ -34,14 +34,142 @@ export const COMPUTER_USE_TOOL_SOURCE = {
   kind: "computer",
 } as const;
 
+/**
+ * Screen-control tools that computer-use MCP servers expose. Compared after separators and case
+ * are stripped, so `computer_click`, `computer.click`, and `ComputerClick` all match.
+ */
+const COMPUTER_USE_TOOL_TOKENS = new Set([
+  "computer",
+  "computeruse",
+  "cua",
+  "screenshot",
+  "takescreenshot",
+  "capturescreen",
+  "capturescreenshot",
+  "screencapture",
+]);
+
+function computerUseToolToken(toolName: string | null | undefined): string | undefined {
+  const trimmed = asTrimmedString(toolName);
+  if (!trimmed) {
+    return undefined;
+  }
+  // Harnesses namespace MCP tools as `mcp__server__tool`; the action is the last segment.
+  const leaf = trimmed.includes("__") ? trimmed.slice(trimmed.lastIndexOf("__") + 2) : trimmed;
+  const token = toolNameToken(leaf);
+  if (token) {
+    return token;
+  }
+  return leaf === trimmed ? undefined : toolNameToken(trimmed);
+}
+
+/** A computer-use MCP server's namespace, e.g. `mcp__computer-use__left_click`. */
+const COMPUTER_USE_SERVER = /(?:^|[^a-z])(?:computer[-_ ]?use|cua)(?:[^a-z]|$)/iu;
+
+function isComputerUseToolName(toolName: string | null | undefined): boolean {
+  const token = computerUseToolToken(toolName);
+  if (token !== undefined) {
+    if (COMPUTER_USE_TOOL_TOKENS.has(token)) {
+      return true;
+    }
+    if (token.startsWith("computer") || (token.startsWith("cua") && token.length > "cua".length)) {
+      return true;
+    }
+  }
+  const trimmed = asTrimmedString(toolName);
+  return trimmed !== undefined && COMPUTER_USE_SERVER.test(trimmed);
+}
+
 export function dynamicToolSurface(toolName: string | null | undefined, input: unknown) {
   if (toolName === "cua_repl.js") return "computer" as const;
   const code = asRecord(input)?.code;
-  return isJavaScriptReplTool(toolName) &&
+  if (
+    isJavaScriptReplTool(toolName) &&
     typeof code === "string" &&
     (/\bsky\s*\./u.test(code) || /["']@oai\/sky["']/u.test(code))
-    ? ("computer" as const)
-    : undefined;
+  ) {
+    return "computer" as const;
+  }
+  return isComputerUseToolName(toolName) ? ("computer" as const) : undefined;
+}
+
+function roundedNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : undefined;
+}
+
+/** Screen coordinates from the shapes computer-use servers accept: a pair or a named point. */
+function computerUsePoint(input: unknown): string | undefined {
+  const record = asRecord(input);
+  if (!record) {
+    return undefined;
+  }
+  const pair = [record.coordinate, record.position, record.point].find(Array.isArray);
+  const nested =
+    [record.coordinate, record.position, record.point, record.to]
+      .map(asRecord)
+      .find(recordHasKeys) ?? record;
+  const x = roundedNumber(nested.x) ?? (pair ? roundedNumber(pair[0]) : undefined);
+  const y = roundedNumber(nested.y) ?? (pair ? roundedNumber(pair[1]) : undefined);
+  return x === undefined || y === undefined ? undefined : `${x}, ${y}`;
+}
+
+function shortTypedText(input: unknown): string | undefined {
+  const text = asTrimmedString(asRecord(input)?.text);
+  if (!text) {
+    return undefined;
+  }
+  const singleLine = text.replace(/\s+/gu, " ");
+  return `“${singleLine.length > 40 ? `${singleLine.slice(0, 40)}…` : singleLine}”`;
+}
+
+/** Longest match first, so `doubleclick` wins over `click`. */
+const COMPUTER_USE_VERBS: ReadonlyArray<readonly [string, string]> = [
+  ["doubleclick", "Double-clicked"],
+  ["rightclick", "Right-clicked"],
+  ["screenshot", "Viewed the screen"],
+  ["capture", "Viewed the screen"],
+  ["scroll", "Scrolled"],
+  ["launch", "Opened"],
+  ["click", "Clicked"],
+  ["press", "Pressed"],
+  ["write", "Typed"],
+  ["focus", "Focused"],
+  ["move", "Moved to"],
+  ["drag", "Dragged to"],
+  ["type", "Typed"],
+  ["open", "Opened"],
+  ["zoom", "Zoomed"],
+  ["wait", "Waited"],
+  ["key", "Pressed"],
+];
+
+/**
+ * A short sentence for what a screen-control tool call did, so computer-use rows read as actions
+ * rather than raw argument JSON.
+ */
+export function computerUseActionLabel(
+  toolName: string | null | undefined,
+  input: unknown,
+): string | undefined {
+  if (!isComputerUseToolName(toolName)) {
+    return undefined;
+  }
+  const token = computerUseToolToken(toolName);
+  if (token === undefined) {
+    return undefined;
+  }
+  const verb = COMPUTER_USE_VERBS.find(([needle]) => token.includes(needle))?.[1];
+  if (verb === undefined) {
+    return "Used the computer";
+  }
+  const point = computerUsePoint(input);
+  if (verb === "Typed") {
+    return [verb, shortTypedText(input)].filter(Boolean).join(" ");
+  }
+  if (verb === "Pressed") {
+    return [verb, asTrimmedString(asRecord(input)?.key)].filter(Boolean).join(" ");
+  }
+  return point === undefined ? verb : `${verb} ${point}`;
 }
 
 export function dynamicToolTitle(
