@@ -160,6 +160,36 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("flags the parent while a live subagent waits on a secret card", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    const root = v2ThreadShell;
+    const child = {
+      ...root,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      status: "running" as const,
+      activityRunStatus: "running" as const,
+      lineage: {
+        ...root.lineage,
+        parentThreadId: root.id,
+        relationshipToParent: "subagent" as const,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("secret-card"),
+        kind: "user_input" as const,
+        createdAt: v2Now,
+        blocking: true,
+        userOnly: true,
+      },
+    };
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(
+      registry.get(threads.threadShellAtom({ environmentId, threadId: root.id }))
+        ?.pendingSubagentRequest,
+    ).toBe("user_input");
+    registry.dispose();
+  });
+
   it("rolls a side chat's questions and approvals up to its parent row", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const root = v2ThreadShell;

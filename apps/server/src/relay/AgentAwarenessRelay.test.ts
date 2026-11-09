@@ -375,6 +375,28 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("publishes the parent as needing input while its subagent waits on a secret card", () =>
+    Effect.gen(function* () {
+      const child = waitingChild({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("child-secret-card"),
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(NOW),
+          blocking: true,
+          userOnly: true,
+        },
+      });
+      const parent = shell({ status: "completed" });
+      const { relay, publications } = yield* makeTestRelay({
+        readShell: (threadId) => Effect.succeed(threadId === child.id ? child : parent),
+      });
+      yield* relay.publishThread(CHILD_THREAD_ID);
+      assert.equal(publications.length, 1);
+      assert.isTrue(publications[0]?.url.includes(`/threads/${THREAD_ID}/`) ?? false);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_input");
+    }),
+  );
+
   it.effect("republishes a completed parent for its waiting child after a relink", () =>
     Effect.gen(function* () {
       const parent = shell({ status: "completed" });

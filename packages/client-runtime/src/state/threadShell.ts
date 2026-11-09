@@ -105,6 +105,7 @@ function pendingSubagentRequestsByThread(
   delegated: ReadonlyArray<{
     readonly parentThreadId: ThreadId;
     readonly request: PendingSubagentRequest;
+    readonly userOnly?: boolean;
   }> = [],
 ): ReadonlyMap<ThreadId, PendingSubagentRequest> {
   const requests = new Map<ThreadId, PendingSubagentRequest>();
@@ -113,9 +114,10 @@ function pendingSubagentRequestsByThread(
     firstParentId: ThreadId | null,
     request: PendingSubagentRequest,
     seen: Set<ThreadId>,
+    userOnly = false,
   ) => {
-    // The coordinator answers child questions; only approvals need user attention.
-    if (request === "user_input") return;
+    // The coordinator answers child questions; approvals and user-only cards need the user.
+    if (request === "user_input" && !userOnly) return;
     byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
     let parentId = firstParentId;
     while (parentId !== null && !seen.has(parentId)) {
@@ -139,9 +141,11 @@ function pendingSubagentRequestsByThread(
     }
     if (child.lineage.relationshipToParent !== "subagent") continue;
     const request = subagentRequest(child);
-    if (request !== null) flag(parentId, request, new Set([child.id]));
+    if (request !== null) {
+      flag(parentId, request, new Set([child.id]), child.pendingRuntimeRequest?.userOnly === true);
+    }
   }
-  for (const task of delegated) flag(task.parentThreadId, task.request, new Set());
+  for (const task of delegated) flag(task.parentThreadId, task.request, new Set(), task.userOnly);
   return requests.size === 0 ? EMPTY_SUBAGENT_REQUESTS : requests;
 }
 
@@ -316,7 +320,8 @@ export function createEnvironmentThreadShellAtoms(input: {
           const own = subagentRequest(thread);
           const nested = requestsOf(runsIn).get(thread.id);
           const request = own === "approval" ? own : (nested ?? own);
-          return request === null ? [] : [{ parentThreadId, request }];
+          const userOnly = request === own && thread.pendingRuntimeRequest?.userOnly === true;
+          return request === null ? [] : [{ parentThreadId, request, userOnly }];
         });
         if (delegated.length === 0) continue;
         const requests = pendingSubagentRequestsByThread(
