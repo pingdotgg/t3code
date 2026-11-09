@@ -19,6 +19,7 @@ internal object T3DpopKeys {
   private const val SCALAR_BYTES = 32
   private const val CURVE = "secp256r1"
   private const val ALGORITHM = "SHA256withECDSA"
+
   // AlgorithmParameters("EC") needs API 26; a generated key carries the same spec on any level.
   private val curve: ECParameterSpec by lazy { (newKeyPair().public as ECPublicKey).params }
 
