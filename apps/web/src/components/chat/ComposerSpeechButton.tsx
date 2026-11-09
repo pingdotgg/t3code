@@ -65,7 +65,9 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
           ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
           : ""}
       </span>
-      <VoiceWaveform level={props.level} />
+      <div className="me-1.5 flex w-16 min-w-0 shrink">
+        <VoiceWaveform level={props.level} />
+      </div>
     </>
   );
 }
@@ -124,6 +126,8 @@ export function ComposerSpeechRecordingPill(props: {
   cancelShortcutLabel?: string | null;
   level: number;
   recordingLimitSeconds?: number | undefined;
+  /** Compact matches the `xs` buttons beside text-field editors. */
+  size?: "default" | "compact";
   onStart(): void;
   disabled?: boolean;
   onStop(): void;
@@ -131,9 +135,11 @@ export function ComposerSpeechRecordingPill(props: {
   onSkipPostProcessing(): void;
 }) {
   const { phase } = props.state;
+  const compact = props.size === "compact";
   if (phase === "error") {
     return (
       <VoiceInputErrorPill
+        size={props.size}
         error={props.state.error}
         errorAction={props.state.errorAction}
         disabled={props.disabled ?? false}
@@ -149,11 +155,11 @@ export function ComposerSpeechRecordingPill(props: {
   const trailing = recording || phase === "post-processing";
 
   return (
-    <VoiceInputPill>
+    <VoiceInputPill size={props.size}>
       <ShortcutTooltip label="Cancel voice input" shortcut={props.cancelShortcutLabel}>
         <Button
           type="button"
-          size="icon-sm-pill"
+          size={compact ? "icon-xs" : "icon-sm-pill"}
           variant="ghost"
           aria-label="Cancel voice input"
           onPointerDown={keepFocus}
@@ -164,7 +170,10 @@ export function ComposerSpeechRecordingPill(props: {
         </Button>
       </ShortcutTooltip>
       <div
-        className={cn("flex min-w-0 flex-1 items-center gap-2", !trailing && "pe-3")}
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2 overflow-hidden",
+          !trailing && "pe-2.5",
+        )}
         role="status"
         aria-live={recording ? "off" : "polite"}
         aria-label={presentation.status ?? undefined}
@@ -186,7 +195,7 @@ export function ComposerSpeechRecordingPill(props: {
       {phase === "post-processing" ? (
         <Button
           type="button"
-          size="sm-pill"
+          size={compact ? "xs" : "sm-pill"}
           variant="ghost"
           onPointerDown={keepFocus}
           onClick={props.onSkipPostProcessing}
@@ -198,7 +207,7 @@ export function ComposerSpeechRecordingPill(props: {
         <ShortcutTooltip label="Finish voice input" shortcut={props.finishShortcutLabel}>
           <Button
             type="button"
-            size="icon-sm-pill"
+            size={compact ? "icon-xs" : "icon-sm-pill"}
             aria-label="Finish voice input"
             onPointerDown={keepFocus}
             onClick={props.onStop}

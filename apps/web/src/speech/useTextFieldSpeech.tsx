@@ -84,6 +84,7 @@ export function TextFieldSpeechControls({
         </p>
       ) : null}
       <ComposerSpeechRecordingPill
+        size="compact"
         state={speech.state}
         progress={null}
         level={speech.level}

@@ -44,24 +44,29 @@ export const VoiceWaveform = memo(function VoiceWaveform(props: { level: number 
 });
 
 /**
- * The capsule every dictation state renders in. It matches the composer's pill buttons
- * (h-8, h-7 from sm), so starting a recording never resizes the toolbar it sits in.
+ * The capsule every dictation state renders in. Default matches the composer's send button
+ * and insets its pill buttons; compact matches the `xs` buttons in text-field action rows.
  */
 export function VoiceInputPill({
   children,
   tone = "default",
+  size = "default",
 }: {
   children: ReactNode;
   tone?: "default" | "error";
+  size?: "default" | "compact" | undefined;
 }) {
   return (
     <div
       data-slot="voice-input-pill"
       className={cn(
-        "flex h-8 items-center gap-1.5 rounded-full ring-1 ring-inset sm:h-7",
+        "flex min-w-0 items-center gap-1.5 ring-1 ring-inset",
+        size === "compact"
+          ? "h-7 rounded-md sm:h-6"
+          : "h-9 max-w-fit grow-[1.5] basis-0 rounded-full p-0.5 sm:h-8",
         tone === "error"
-          ? "max-w-fit min-w-0 grow-2 basis-0 bg-destructive/6 text-destructive ring-destructive/24"
-          : "max-w-60 min-w-32 flex-1 bg-muted/48 ring-border",
+          ? "bg-destructive/6 text-destructive ring-destructive/24"
+          : "bg-muted/48 ring-border",
       )}
     >
       {children}

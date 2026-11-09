@@ -36,25 +36,27 @@ export function VoiceInputErrorPill(props: {
   errorAction: "retry" | "settings" | null;
   disabled?: boolean;
   cancelShortcutLabel?: string | null;
+  size?: "default" | "compact" | undefined;
   onRetry(): void;
   onDismiss(): void;
 }) {
   const navigate = useNavigate();
   const message = props.error ?? "Voice input failed";
   const openSettings = props.errorAction === "settings";
+  const compact = props.size === "compact";
   const action = openSettings
     ? { label: "Open voice settings", text: "Settings" }
     : props.error && RETRYABLE_TRANSCRIPTIONS.has(props.error)
       ? { label: "Retry transcription", text: "Retry" }
       : { label: "Record again", text: "Record again" };
   return (
-    <VoiceInputPill tone="error">
+    <VoiceInputPill tone="error" size={props.size}>
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
               type="button"
-              size="icon-sm-pill"
+              size={compact ? "icon-xs" : "icon-sm-pill"}
               variant="ghost"
               aria-label="Dismiss voice input error"
               onPointerDown={(event) => event.preventDefault()}
@@ -77,7 +79,7 @@ export function VoiceInputErrorPill(props: {
               tabIndex={0}
               role="status"
               aria-label={message}
-              className="flex min-w-0 items-center gap-1.5 text-sm font-medium outline-none focus-visible:underline"
+              className="flex min-w-0 items-center gap-1.5 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
             />
           }
         >
@@ -91,8 +93,8 @@ export function VoiceInputErrorPill(props: {
       {props.errorAction ? (
         <Button
           type="button"
-          size="sm-pill"
-          variant="ghost"
+          size={compact ? "xs" : "sm-pill"}
+          variant="outline"
           aria-label={action.label}
           disabled={props.disabled}
           onPointerDown={(event) => event.preventDefault()}
