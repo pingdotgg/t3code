@@ -482,7 +482,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<GitHubPullRequestWatchFingerprint | null, GitHubPullRequestApiError>;
-    readonly pullRequestEvents: ReturnType<typeof GitHubPullRequestEvents.make>;
+    readonly pullRequestEvents: Effect.Success<typeof GitHubPullRequestEvents.make>;
 
     readonly revalidateChecks: Effect.Success<typeof makeChecksRevalidator>;
 
@@ -2021,7 +2021,7 @@ export const make = Effect.gen(function* () {
 
     getPullRequestSummary,
     getPullRequestWatchFingerprint,
-    pullRequestEvents: GitHubPullRequestEvents.make(api, httpClient),
+    pullRequestEvents: yield* GitHubPullRequestEvents.make,
 
     getPullRequestDetail,
     getPullRequestPreview: Effect.fn("GitHubPullRequestApi.getPullRequestPreview")(

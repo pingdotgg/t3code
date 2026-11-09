@@ -252,19 +252,10 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
-  /** The last sweep's groups, which host change events read from between sweeps. */
+  /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
-  // A change event can land while the sweep reads the same group.
-  const groupLocks = new Map<string, Semaphore.Semaphore>();
-  const locked = <A, E>(key: string, effect: Effect.Effect<A, E>) =>
-    Effect.suspend(() => {
-      let lock = groupLocks.get(key);
-      if (lock === undefined) {
-        lock = Semaphore.makeUnsafe(1);
-        groupLocks.set(key, lock);
-      }
-      return lock.withPermit(effect);
-    });
+  // A pass reads watches and records new ones, so passes must not overlap.
+  const passes = Semaphore.makeUnsafe(1);
   const lastReads = new Map<string, LastRead>();
   const threadTails = new Map<
     string,
@@ -596,19 +587,26 @@ export const make = Effect.gen(function* () {
     });
   });
 
-  const sweep = Effect.gen(function* () {
+  /** Every watch, or with `changed`, only that pull request's after its host reported a change. */
+  // The sweep and change reads each name their own span.
+  const pass = Effect.fnUntraced(function* (changed: string | undefined) {
     const threads = yield* projections.getThreadsWithPullRequests();
     const targets = threads.flatMap((thread) =>
       visibleThreadPullRequests(thread.pullRequests ?? []).flatMap((link) =>
-        link.watch === undefined ? [] : [{ thread, link, watch: link.watch }],
+        link.watch === undefined ||
+        (changed !== undefined && threadPullRequestKeyOf(link) !== changed)
+          ? []
+          : [{ thread, link, watch: link.watch }],
       ),
     );
-    const present = new Set(targets.map(lifeKey));
-    yield* Effect.forEach(
-      [...lives].filter(([key]) => !present.has(key)),
-      ([key, life]) => reportEnd(key, life, "stopped"),
-      { discard: true },
-    );
+    if (changed === undefined) {
+      const present = new Set(targets.map(lifeKey));
+      yield* Effect.forEach(
+        [...lives].filter(([key]) => !present.has(key)),
+        ([key, life]) => reportEnd(key, life, "stopped"),
+        { discard: true },
+      );
+    }
     for (const target of targets) lifeOf(target);
     const byPullRequest = new Map<string, Array<WatchTarget>>();
     const ending: Array<readonly [WatchTarget, WatchEndReason]> = [];
@@ -627,9 +625,11 @@ export const make = Effect.gen(function* () {
       targets: members,
       fingerprint: [...new Set(members.map(snapshotFingerprint))].toSorted().join("\n"),
     }));
-    currentGroups = groups;
-    for (const cache of [readFailures, lastReads, threadTails, groupLocks]) {
-      for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
+    if (changed === undefined) {
+      currentGroups = groups;
+      for (const cache of [readFailures, lastReads, threadTails]) {
+        for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
+      }
     }
     yield* Effect.forEach(
       ending,
@@ -651,12 +651,29 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       groups,
       (group) =>
-        fingerprintOf(group).pipe(
+        // The host just reported a change, so a cached fingerprint may predate it.
+        (changed === undefined
+          ? Effect.void
+          : pullRequests.invalidate({ reference: referenceOf(group) })
+        ).pipe(
+          Effect.andThen(fingerprintOf(group)),
+          Effect.tap((fingerprint) => {
+            const last = lastReads.get(group.key);
+            // Open pull request views refresh only when the host state moved.
+            return changed !== undefined &&
+              fingerprint !== null &&
+              fingerprint !== "paused" &&
+              (last === undefined ||
+                last.status !== fingerprint.status ||
+                last.remarks !== fingerprint.remarks)
+              ? pullRequests.invalidate({ reference: referenceOf(group) }, { notifyReaders: true })
+              : Effect.void;
+          }),
           Effect.flatMap((fingerprint) =>
             fingerprint === "paused"
               ? Effect.void
               : reads.withPermit(
-                  locked(group.key, readGroup(group, fingerprint)).pipe(
+                  readGroup(group, fingerprint).pipe(
                     Effect.catchCause(
                       logFailure("pull request watch check failed", { pullRequest: group.key }),
                     ),
@@ -666,35 +683,20 @@ export const make = Effect.gen(function* () {
         ),
       { concurrency: "unbounded", discard: true },
     );
-  }).pipe(
+  }, passes.withPermit);
+
+  const sweep = pass(undefined).pipe(
     Effect.catchCause(logFailure("pull request watch sweep failed", {})),
     Effect.withSpan("PullRequestWatchReactor.sweep"),
   );
 
   const pullRequestOf = (group: WatchGroup) => threadPullRequestKeyOf(group.targets[0]!.link);
 
-  /** A host event can come from any change, so reread now rather than at the next sweep. */
-  const readOnChange = Effect.fn("PullRequestWatchReactor.readOnChange")(function* (
-    pullRequest: string,
-  ) {
-    const groups = currentGroups.filter((group) => pullRequestOf(group) === pullRequest);
-    yield* Effect.forEach(
-      groups,
-      (group) =>
-        pullRequests.invalidate({ reference: referenceOf(group) }, { notifyReaders: true }).pipe(
-          Effect.andThen(fingerprintOf(group)),
-          Effect.flatMap((fingerprint) =>
-            fingerprint === "paused"
-              ? Effect.void
-              : locked(group.key, readGroup(group, fingerprint)).pipe(Effect.asVoid),
-          ),
-          Effect.catchCause(
-            logFailure("pull request watch change read failed", { pullRequest: group.key }),
-          ),
-        ),
-      { discard: true },
+  const readOnChange = (pullRequest: string) =>
+    pass(pullRequest).pipe(
+      Effect.catchCause(logFailure("pull request watch change read failed", { pullRequest })),
+      Effect.withSpan("PullRequestWatchReactor.readOnChange"),
     );
-  });
 
   const start: PullRequestWatchReactor["Service"]["start"] = Effect.fn(
     "PullRequestWatchReactor.start",

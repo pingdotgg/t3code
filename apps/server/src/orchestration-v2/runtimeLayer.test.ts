@@ -3855,7 +3855,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
   );
 
   it.effect(
-    "reads a watched pull request when the host reports a change, not at the next sweep",
+    "reads a watched pull request when the host reports a change, and wakes once per change",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -3893,26 +3893,29 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
           });
 
-          let headSha = "aaaaaaaaaa";
+          let checks: PullRequestDetail["checks"] = [
+            { name: "lint", status: "pending", description: null, url: null, required: true },
+          ];
+          let fingerprints = 0;
           const events = yield* Queue.unbounded<void>();
           const following = yield* Deferred.make<void>();
-          const readPush = yield* Deferred.make<void>();
+          const detailReads = yield* Queue.unbounded<void>();
           const host = Layer.mergeAll(
             NodeServices.layer,
             NodeCrypto.layer,
             Layer.mock(PullRequestService.PullRequestService)({
               detail: () =>
-                Effect.sync(() => {
-                  if (headSha !== "aaaaaaaaaa") Deferred.doneUnsafe(readPush, Effect.void);
-                  return {
+                Queue.offer(detailReads, undefined).pipe(
+                  Effect.as({
                     ...watchedPullRequestDetail({
                       projectId,
                       number: 15,
                       at: "2026-10-02T12:00:00.000Z",
                     }),
-                    headSha,
-                  };
-                }),
+                    headSha: "aaaaaaaaaa",
+                    checks,
+                  }),
+                ),
               activity: () =>
                 Effect.succeed({
                   comments: [],
@@ -3921,7 +3924,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   reviewThreads: [],
                   commits: [],
                 }),
-              watchFingerprint: () => Effect.sync(() => ({ status: headSha, remarks: "" })),
+              // A fresh fingerprint every time, so every pass reads the detail.
+              watchFingerprint: () =>
+                Effect.sync(() => ({ status: String(++fingerprints), remarks: "" })),
               invalidate: () => Effect.void,
               changes: () =>
                 Stream.fromEffectDrain(Deferred.succeed(following, undefined)).pipe(
@@ -3929,15 +3934,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 ),
             }),
           );
+          const wakes = Effect.map(
+            orchestrator.getThreadRecords(threadId, ["messages"]),
+            ({ messages }) =>
+              messages.filter(
+                (message) => message.notification !== undefined && message.notification !== null,
+              ),
+          );
           const reactor = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
           yield* reactor.start();
           // The feed starts after the first sweep has read the pull request.
           yield* Deferred.await(following);
+          yield* Queue.take(detailReads);
 
-          headSha = "bbbbbbbbbb";
+          checks = [
+            { name: "lint", status: "failure", description: null, url: null, required: true },
+          ];
           yield* Queue.offer(events, undefined);
-          // The clock never moves, so no sweep can be the one that reads the push.
-          yield* Deferred.await(readPush);
+          // The clock never moves, so no sweep can be the one that reads the failure.
+          yield* Queue.take(detailReads);
+          // Nothing new: this read must compare against the watch the last one recorded.
+          yield* Queue.offer(events, undefined);
+          yield* Queue.take(detailReads);
+          // A sweep waits for the change read in flight.
+          yield* reactor.sweep;
+          yield* worker.drain();
+          const woken = yield* wakes;
+          assert.lengthOf(woken, 1);
+          assert.include(woken[0]!.notification?.summary ?? "", "failed");
 
           yield* orchestrator.dispatch({
             type: "thread.pull-request.watch",

@@ -1,4 +1,5 @@
 import { normalizeHost } from "@t3tools/source-control-core/server/pullRequestUtils";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -9,7 +10,7 @@ import * as Stream from "effect/Stream";
 import * as Sse from "effect/encoding/Sse";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
-import type * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 
 /** Events only say that something changed; readers fetch the pull request for what. */
 const EVENT_TYPES = [
@@ -19,9 +20,15 @@ const EVENT_TYPES = [
   "com.github.pull_request.merge_conflict.v1",
 ];
 const API_ORIGIN = "https://api.github.com";
-/** GitHub sends a heartbeat at least every 15 seconds while a stream is idle. */
+/** GitHub sends a keep-alive at least every 15 seconds while a stream is idle. */
 const SILENCE_LIMIT = Duration.seconds(45);
-const MAX_DROPS = 6;
+/** A connection open this long was healthy, however it ended. */
+const HEALTHY_AFTER = Duration.minutes(2);
+/** GitHub enables event streams per account, so a refusal holds for a while. */
+const REFUSED_PAUSE = Duration.hours(1);
+/** Another watch ending may free a slot under the per-account subscription limit. */
+const LIMIT_PAUSE = Duration.minutes(10);
+const MAX_FAILURES = 6;
 const MAX_BACKOFF_MS = 60_000;
 
 const Subscription = Schema.Struct({
@@ -35,11 +42,10 @@ const decodeStreamEnd = Schema.decodeUnknownOption(
 );
 
 /**
- * How a connection ended. `reconnect` is GitHub closing it on purpose and `dropped` is anything
- * else; `renew` means the subscription itself expired, and `personal` that the app's token was
- * refused where the user's own may still read.
+ * How a connection ended. `renew` means the subscription expired or lost access, and `personal`
+ * that the app's token was refused where the user's own may still read.
  */
-type Ending = "reconnect" | "dropped" | "renew" | "personal" | "stop";
+type Ending = "reconnect" | "renew" | "personal" | "stop";
 
 const endingOf = (data: string): Ending =>
   Option.match(decodeStreamEnd(data), {
@@ -57,24 +63,43 @@ export interface PullRequestEventsInput {
  * Emits when a connection opens, so a reader catches up on what it missed, then once per change
  * GitHub reports. Ends quietly when GitHub refuses the subscription; the caller polls meanwhile.
  */
-export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpClient.HttpClient) => {
+export const make = Effect.gen(function* () {
+  const rest = yield* GitHubRest.GitHubRest;
+  const httpClient = yield* HttpClient.HttpClient;
+  /** Keyed by host for account-wide refusals, and by pull request for one it cannot read. */
+  const pausedUntil = new Map<string, number>();
+
   const subscribe = Effect.fn("GitHubPullRequestEvents.subscribe")(function* (
     input: PullRequestEventsInput,
   ) {
+    const resourceUrl = `https://${input.host}/${input.repository}/pull/${input.number}`;
+    const now = yield* Clock.currentTimeMillis;
+    if (Math.max(pausedUntil.get(input.host) ?? 0, pausedUntil.get(resourceUrl) ?? 0) > now) {
+      return Option.none();
+    }
+    const pause = (key: string, duration: Duration.Duration) =>
+      Effect.sync(() => pausedUntil.set(key, now + Duration.toMillis(duration)));
     const response = yield* rest
       .rest({
         host: input.host,
         operation: "subscribePullRequestEvents",
         method: "POST",
         path: "event-subscriptions",
-        body: {
-          resource_url: `https://${input.host}/${input.repository}/pull/${input.number}`,
-          event_types: EVENT_TYPES,
-        },
+        body: { resource_url: resourceUrl, event_types: EVENT_TYPES },
       })
       .pipe(
         Effect.asSome,
-        // Past the per-user subscription limit too; the next sweep asks again.
+        Effect.catchTags({
+          GitHubApiResponseError: (error) =>
+            (error.status === 403
+              ? pause(input.host, REFUSED_PAUSE)
+              : error.status === 404
+                ? pause(resourceUrl, REFUSED_PAUSE)
+                : error.status === 422
+                  ? pause(input.host, LIMIT_PAUSE)
+                  : Effect.void
+            ).pipe(Effect.as(Option.none())),
+        }),
         Effect.catch((error) =>
           Effect.logDebug("pull request event subscription failed", { error }).pipe(
             Effect.as(Option.none()),
@@ -82,14 +107,17 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
         ),
       );
     if (Option.isNone(response)) return Option.none();
-    // The stream URL carries the token, so it must stay on GitHub's API.
+    // The stream request carries the token, so its URL must stay on GitHub's API.
     return decodeSubscription(response.value.body).pipe(
       Option.filter(({ events_url }) => URL.parse(events_url)?.origin === API_ORIGIN),
     );
   });
 
-  const unsubscribe = (host: string, id: string | number) =>
-    rest
+  const unsubscribe = Effect.fn("GitHubPullRequestEvents.unsubscribe")(function* (
+    host: string,
+    id: string | number,
+  ) {
+    yield* rest
       .rest({
         host,
         operation: "unsubscribePullRequestEvents",
@@ -97,8 +125,9 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
         path: `event-subscriptions/${encodeURIComponent(String(id))}`,
       })
       .pipe(Effect.ignore);
+  });
 
-  /** One SSE connection: "changed" per event, and last, how it ended. */
+  /** One SSE connection: "changed" when it opens and per event, and last, how it ended. */
   const connection = (
     host: string,
     eventsUrl: string,
@@ -123,7 +152,7 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
         if (response.status === 403 || response.status === 404) {
           return Stream.succeed<Ending>(held.source === "app" ? "personal" : "stop");
         }
-        if (response.status !== 200) return Stream.succeed<Ending>("dropped");
+        if (response.status !== 200) return Stream.succeed<Ending>("reconnect");
         return response.stream.pipe(
           Stream.timeoutOrElse({ duration: SILENCE_LIMIT, orElse: () => Stream.fail("silent") }),
           Stream.decodeText,
@@ -132,97 +161,115 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
             frame.event === "github.stream.end" ? endingOf(frame.data) : "changed",
           ),
           Stream.prepend(["changed" as const]),
-          Stream.concat(Stream.succeed<Ending>("dropped")),
+          // A close without GitHub's end frame is reconnected like one with it.
+          Stream.concat(Stream.succeed<Ending>("reconnect")),
           Stream.takeUntil((element) => element !== "changed"),
         );
       }),
-    ).pipe(Stream.catchCause(() => Stream.succeed<Ending>("dropped")));
-
-  const backoff = (drops: number) =>
-    Random.next.pipe(
-      Effect.flatMap((jitter) =>
-        Effect.sleep(
-          Duration.millis(Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** drops) * (0.5 + jitter / 2)),
+    ).pipe(
+      Stream.catchCause((cause) =>
+        Stream.fromEffect(
+          Effect.logDebug("pull request event stream failed", { cause }).pipe(
+            Effect.as<Ending>("reconnect"),
+          ),
         ),
       ),
     );
+
+  const backoff = Effect.fn("GitHubPullRequestEvents.backoff")(function* (failures: number) {
+    const jitter = yield* Random.next;
+    yield* Effect.sleep(
+      Duration.millis(Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** failures) * (0.5 + jitter / 2)),
+    );
+  });
 
   return (input: PullRequestEventsInput): Stream.Stream<void> => {
     const target = { ...input, host: normalizeHost(input.host) };
     if (target.host !== "github.com") return Stream.empty;
 
-    /** Follows one subscription; sets `session.renew` when it expired and needs replacing. */
+    /** Follows one subscription; sets `session.renew` when it needs replacing. */
     const follow = (
       session: { renew: boolean },
       eventsUrl: string,
       personal: boolean,
-      dropsSoFar: number,
+      failuresSoFar: number,
     ): Stream.Stream<void> =>
-      Stream.suspend(() => {
-        let drops = dropsSoFar;
-        let ending: Ending = "dropped";
-        let changes = 0;
-        return connection(target.host, eventsUrl, personal).pipe(
-          Stream.flatMap((element) => {
-            if (element === "changed") {
-              changes += 1;
-              return Stream.succeed(undefined);
-            }
-            ending = element;
-            return Stream.empty;
-          }),
-          Stream.concat(
-            Stream.suspend(() => {
-              // The first change is the connection opening; anything after proves it worked.
-              if (changes > 1) drops = 0;
-              switch (ending) {
-                case "stop":
-                  return Stream.empty;
-                case "renew":
-                  session.renew = true;
-                  return Stream.empty;
-                case "personal":
-                  return personal ? Stream.empty : follow(session, eventsUrl, true, drops);
-                case "reconnect":
-                  return Stream.fromEffectDrain(backoff(0)).pipe(
-                    Stream.concat(follow(session, eventsUrl, personal, 0)),
-                  );
-                case "dropped":
-                  return drops >= MAX_DROPS
-                    ? Stream.empty
-                    : Stream.fromEffectDrain(backoff(drops + 1)).pipe(
-                        Stream.concat(follow(session, eventsUrl, personal, drops + 1)),
-                      );
-              }
-            }),
-          ),
-        );
-      });
-
-    const subscribed = (): Stream.Stream<void> =>
       Stream.unwrap(
-        subscribe(target).pipe(
+        Clock.currentTimeMillis.pipe(
+          Effect.map((openedAt) => {
+            let ending: Ending = "reconnect";
+            let changes = 0;
+            return connection(target.host, eventsUrl, personal).pipe(
+              Stream.flatMap((element) => {
+                if (element === "changed") {
+                  changes += 1;
+                  return Stream.succeed(undefined);
+                }
+                ending = element;
+                return Stream.empty;
+              }),
+              Stream.concat(
+                Stream.unwrap(
+                  Clock.currentTimeMillis.pipe(
+                    Effect.map((closedAt) => {
+                      // The first change is the opening; an event or a long life proves it worked.
+                      const healthy =
+                        changes > 1 || closedAt - openedAt >= Duration.toMillis(HEALTHY_AFTER);
+                      const failures = healthy ? 0 : failuresSoFar + 1;
+                      switch (ending) {
+                        case "stop":
+                          return Stream.empty;
+                        case "renew":
+                          session.renew = true;
+                          return Stream.empty;
+                        case "personal":
+                          return personal
+                            ? Stream.empty
+                            : follow(session, eventsUrl, true, failuresSoFar);
+                        case "reconnect":
+                          return failures > MAX_FAILURES
+                            ? Stream.empty
+                            : Stream.fromEffectDrain(backoff(failures)).pipe(
+                                Stream.concat(follow(session, eventsUrl, personal, failures)),
+                              );
+                      }
+                    }),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ),
+      );
+
+    /** One subscription, deleted once its stream has closed. */
+    const subscription = (session: { renew: boolean }): Stream.Stream<void> =>
+      Stream.unwrap(
+        Effect.acquireRelease(subscribe(target), (held) =>
+          Option.isSome(held) ? unsubscribe(target.host, held.value.id) : Effect.void,
+        ).pipe(
           Effect.map(
             Option.match({
               onNone: () => Stream.empty,
-              onSome: (subscription) => {
-                const session = { renew: false };
-                return follow(session, subscription.events_url, false, 0).pipe(
-                  // GitHub keeps a deleted subscription's open streams, so close the stream first.
-                  Stream.ensuring(unsubscribe(target.host, subscription.id)),
-                  Stream.concat(
-                    Stream.suspend(() =>
-                      session.renew
-                        ? Stream.fromEffectDrain(backoff(0)).pipe(Stream.concat(subscribed()))
-                        : Stream.empty,
-                    ),
-                  ),
-                );
-              },
+              onSome: ({ events_url }) => follow(session, events_url, false, 0),
             }),
           ),
         ),
       );
+
+    const subscribed = (): Stream.Stream<void> =>
+      Stream.suspend(() => {
+        const session = { renew: false };
+        return subscription(session).pipe(
+          Stream.concat(
+            Stream.suspend(() =>
+              session.renew
+                ? Stream.fromEffectDrain(backoff(0)).pipe(Stream.concat(subscribed()))
+                : Stream.empty,
+            ),
+          ),
+        );
+      });
 
     // Event streams are a GitHub preview, so only the app sign-in, itself opt-in, uses them.
     return Stream.unwrap(
@@ -232,4 +279,4 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
       ),
     );
   };
-};
+});

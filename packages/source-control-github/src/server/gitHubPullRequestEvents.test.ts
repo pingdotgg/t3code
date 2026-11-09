@@ -8,6 +8,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
 import * as GitHubPullRequestEvents from "./gitHubPullRequestEvents.ts";
+import { GitHubApiResponseError } from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
 const target = { host: "github.com", repository: "pingdotgg/t3code", number: 15 };
@@ -15,7 +16,10 @@ const target = { host: "github.com", repository: "pingdotgg/t3code", number: 15 
 const sse = (...frames: ReadonlyArray<readonly [string, string]>) =>
   frames.map(([event, data]) => `event: ${event}\ndata: ${data}\n\n`).join("");
 
-function fakeRest(subscribe: (count: number) => Effect.Effect<string>, signedIn = true) {
+function fakeRest(
+  subscribe: (count: number) => Effect.Effect<string, GitHubApiResponseError>,
+  signedIn = true,
+) {
   const posts: Array<unknown> = [];
   const deletes: Array<string> = [];
   const rest = GitHubRest.GitHubRest.of({
@@ -57,6 +61,12 @@ function fakeRest(subscribe: (count: number) => Effect.Effect<string>, signedIn 
   return { rest, posts, deletes };
 }
 
+const eventsOf = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpClient.HttpClient) =>
+  GitHubPullRequestEvents.make.pipe(
+    Effect.provideService(GitHubRest.GitHubRest, rest),
+    Effect.provideService(HttpClient.HttpClient, httpClient),
+  );
+
 const subscription = (id: number) =>
   Effect.succeed(
     JSON.stringify({ id, events_url: `https://api.github.com/event-subscriptions/${id}/events` }),
@@ -89,7 +99,7 @@ it.effect("follows a pull request across a refused app token, reconnects, and re
       }),
     );
 
-    const events = GitHubPullRequestEvents.make(rest, httpClient);
+    const events = yield* eventsOf(rest, httpClient);
     const fiber = yield* events(target).pipe(Stream.take(4), Stream.runCount, Effect.forkChild);
     yield* TestClock.adjust("5 minutes");
     // An open per connection plus the head change.
@@ -114,21 +124,58 @@ it.effect("follows a pull request across a refused app token, reconnects, and re
   }),
 );
 
-it.effect("leaves users without the app sign-in, and other hosts, to polling", () =>
+it.effect("gives up on a silent stream and deletes its subscription", () =>
+  Effect.gen(function* () {
+    const { rest, posts, deletes } = fakeRest(subscription);
+    let connections = 0;
+    // Answers, then never sends a byte, not even a keep-alive.
+    const httpClient = HttpClient.make((request) =>
+      Effect.sync(() => {
+        connections += 1;
+        return HttpClientResponse.fromWeb(request, new Response(new ReadableStream()));
+      }),
+    );
+    const events = yield* eventsOf(rest, httpClient);
+    const fiber = yield* events(target).pipe(Stream.runCount, Effect.forkChild);
+    yield* TestClock.adjust("15 minutes");
+
+    assert.equal(yield* Fiber.join(fiber), 7, "one catch-up read per connection");
+    assert.equal(connections, 7);
+    assert.equal(posts.length, 1);
+    assert.deepEqual(deletes, ["event-subscriptions/1"]);
+  }),
+);
+
+it.effect("leaves users without the app sign-in, other hosts, and refusals to polling", () =>
   Effect.gen(function* () {
     const httpClient = HttpClient.make(() => Effect.die("no stream without a subscription"));
     const signedOut = fakeRest(subscription, false);
-    assert.equal(
-      yield* Stream.runCount(GitHubPullRequestEvents.make(signedOut.rest, httpClient)(target)),
-      0,
-    );
+    assert.equal(yield* Stream.runCount((yield* eventsOf(signedOut.rest, httpClient))(target)), 0);
+    assert.equal(signedOut.posts.length, 0);
 
     const signedIn = fakeRest(subscription);
     const enterprise = { ...target, host: "ghe.example.com" };
     assert.equal(
-      yield* Stream.runCount(GitHubPullRequestEvents.make(signedIn.rest, httpClient)(enterprise)),
+      yield* Stream.runCount((yield* eventsOf(signedIn.rest, httpClient))(enterprise)),
       0,
     );
-    assert.equal(signedOut.posts.length + signedIn.posts.length, 0);
+    assert.equal(signedIn.posts.length, 0);
+
+    const refused = fakeRest(() =>
+      Effect.fail(
+        new GitHubApiResponseError({
+          host: "github.com",
+          operation: "subscribePullRequestEvents",
+          status: 403,
+        }),
+      ),
+    );
+    const events = yield* eventsOf(refused.rest, httpClient);
+    assert.equal(yield* Stream.runCount(events(target)), 0);
+    assert.equal(yield* Stream.runCount(events({ ...target, number: 16 })), 0);
+    assert.equal(refused.posts.length, 1, "a refused account is not asked again for an hour");
+    yield* TestClock.adjust("61 minutes");
+    assert.equal(yield* Stream.runCount(events(target)), 0);
+    assert.equal(refused.posts.length, 2);
   }),
 );
