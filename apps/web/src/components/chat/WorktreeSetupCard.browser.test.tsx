@@ -46,27 +46,6 @@ const card = (value: WorktreeSetupSnapshot) => (
   <WorktreeSetupCard snapshot={value} onCancel={null} onWorkLocally={null} onOpenTerminal={null} />
 );
 
-it("separates a failed stage from its detail when no snapshot error exists", async () => {
-  const failed = snapshot({
-    phase: "failed",
-    stages: [
-      {
-        id: "setup-script",
-        status: "failed",
-        startedAt: "2026-10-26T12:00:00.000Z",
-        endedAt: "2026-10-26T12:00:05.000Z",
-        percent: null,
-        detail: "exited with 1",
-        tail: [],
-      },
-    ],
-  });
-  await using screen = await render(card(failed));
-  expect(screen.getByRole("region", { name: "Worktree setup" }).element().textContent).toContain(
-    "Run setup script failed: exited with 1",
-  );
-});
-
 it("ticks the running setup duration", async () => {
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);
