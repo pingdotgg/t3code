@@ -165,6 +165,12 @@ function ImportConversationsPage() {
   );
 }
 
+type ImportState =
+  | { readonly status: "idle" }
+  | { readonly status: "importing"; readonly path: string }
+  | { readonly status: "imported"; readonly summary: string }
+  | { readonly status: "failed"; readonly error: string };
+
 function EnvironmentImports({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const canRead = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const canImport = useAtomValue(agentSessionImport.permissionAtom(environmentId));
@@ -174,17 +180,14 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
   const attempts = useRef(
     new Map<string, { projectId: ReturnType<typeof newProjectId>; commandId: CommandId }>(),
   );
-  const pendingRef = useRef(false);
-  const [pendingPath, setPendingPath] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<string | null>(null);
+  const [importState, setImportState] = useState<ImportState>({ status: "idle" });
+  const importing = importState.status === "importing";
+  const error = importState.status === "failed" ? importState.error : null;
+  const summary = importState.status === "imported" ? importState.summary : null;
 
   const importCandidate = async (candidate: AgentSessionProjectCandidate) => {
-    if (pendingRef.current || !canImport) return;
-    pendingRef.current = true;
-    setPendingPath(candidate.path);
-    setError(null);
-    setSummary(null);
+    if (importing || !canImport) return;
+    setImportState({ status: "importing", path: candidate.path });
     const runImport = async () => {
       const project = findProjectByPath(
         readProjects().filter((entry) => entry.environmentId === environmentId),
@@ -216,19 +219,20 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
         input: { projectId, expectedWorkspaceRoot: candidate.path },
       });
       if (imported._tag !== "Success") throw squashAtomCommandFailure(imported);
-      setSummary(
-        `${candidate.title}: ${imported.value.importedCount} imported, ${imported.value.skippedCount} skipped.`,
-      );
+      return `${candidate.title}: ${imported.value.importedCount} imported, ${imported.value.skippedCount} skipped.`;
     };
-    await runImport().catch((cause: unknown) => {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "Could not import conversations. Refresh and try again.",
-      );
-    });
-    pendingRef.current = false;
-    setPendingPath(null);
+    setImportState(
+      await runImport().then(
+        (summary): ImportState => ({ status: "imported", summary }),
+        (cause: unknown): ImportState => ({
+          status: "failed",
+          error:
+            cause instanceof Error
+              ? cause.message
+              : "Could not import conversations. Refresh and try again.",
+        }),
+      ),
+    );
   };
 
   return (
@@ -238,7 +242,7 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
         <Button
           size="sm"
           variant="ghost-muted"
-          disabled={!canRead || pendingPath !== null || scan.isPending}
+          disabled={!canRead || importing || scan.isPending}
           onClick={scan.refresh}
         >
           Refresh
@@ -273,7 +277,7 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
               <Button
                 size="standard"
                 variant="secondary"
-                disabled={pendingPath !== null || scan.isPending}
+                disabled={importing || scan.isPending}
                 onClick={scan.refresh}
               >
                 {scan.isPending ? "Scanning…" : "Scan more"}
@@ -324,11 +328,13 @@ function EnvironmentImports({ environmentId }: { readonly environmentId: Environ
             <Button
               size="sm"
               variant="secondary"
-              disabled={!canImport || pendingPath !== null}
+              disabled={!canImport || importing}
               onClick={() => void importCandidate(candidate)}
               aria-label={`Import ${candidate.title}`}
             >
-              {pendingPath === candidate.path ? "Importing…" : "Import"}
+              {importState.status === "importing" && importState.path === candidate.path
+                ? "Importing…"
+                : "Import"}
             </Button>
           </div>
         ))}
