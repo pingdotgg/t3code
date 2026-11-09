@@ -18,24 +18,16 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Build and publish Linux AppImage
+  version:
+    name: Resolve version
     if: github.repository == 'KLI31/t3code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      skip: ${{ steps.version.outputs.skip }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      # .repos holds orphaned gitlinks that break checkout's submodule cleanup.
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: |
-            /*
-            !/.repos/
-            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
-          sparse-checkout-cone-mode: false
-
       - name: Resolve version
         id: version
         env:
@@ -56,45 +48,130 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
+  linux:
+    name: Build Linux AppImage
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      # .repos holds orphaned gitlinks that break checkout's submodule cleanup.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
       - name: Setup dependencies
-        if: steps.version.outputs.skip != 'true'
         uses: ./.github/actions/setup-ci-deps
         with:
           install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
 
       - name: Setup Rust
-        if: steps.version.outputs.skip != 'true'
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
           targets: x86_64-unknown-linux-gnu
 
       - name: Install Linux desktop build libraries
-        if: steps.version.outputs.skip != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
 
       - name: Build AppImage
-        if: steps.version.outputs.skip != 'true'
         env:
           T3CODE_DESKTOP_UPDATE_REPOSITORY: KLI31/t3code
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           node scripts/build-desktop-artifact.ts \
             --platform linux --target AppImage --arch x64 \
             --build-version "$VERSION" --output-dir "release/$VERSION"
 
-      - name: Publish release
-        if: steps.version.outputs.skip != 'true'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          if-no-files-found: error
+          path: |
+            release/${{ needs.version.outputs.version }}/*.AppImage
+            release/${{ needs.version.outputs.version }}/*.blockmap
+            release/${{ needs.version.outputs.version }}/*.deb
+            release/${{ needs.version.outputs.version }}/latest-linux.yml
+
+  # Unsigned and without the embedded WSL runtime: Windows shows a SmartScreen
+  # prompt on first run, and the WSL backend is unavailable.
+  windows:
+    name: Build Windows installer
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Install
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build installer
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: KLI31/t3code
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --platform win --target nsis --arch x64 \
+            --build-version "$VERSION" --output-dir "release/$VERSION"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          if-no-files-found: error
+          path: |
+            release/${{ needs.version.outputs.version }}/*.exe
+            release/${{ needs.version.outputs.version }}/*.exe.blockmap
+            release/${{ needs.version.outputs.version }}/latest.yml
+
+  publish:
+    name: Publish release
+    needs: [version, linux, windows]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: Publish release
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          out="release/$VERSION"
-          ls "$out"/*.AppImage "$out/latest-linux.yml" >/dev/null
-          assets=("$out"/*.AppImage "$out"/*.blockmap "$out"/*.deb "$out"/latest-linux.yml)
+          ls out/*.AppImage out/latest-linux.yml out/*.exe out/latest.yml >/dev/null
           gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
             --title "v$VERSION" --notes "Fork build of ${GITHUB_SHA::7}." \
-            "${assets[@]}"
+            out/*

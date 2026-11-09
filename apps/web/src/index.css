@@ -128,6 +128,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --workspace-titlebar-control-size: 1.75rem;
   --workspace-titlebar-control-gap: 0.75rem;
   --workspace-titlebar-scroll-fade-height: 1.5rem;
+  /* Room the tab bar leaves for the fixed panel controls at the top right. */
+  --workspace-tabs-end-inset: calc(var(--workspace-controls-right) + 11rem);
   --chat-content-max-width: 46rem;
   --thread-details-panel-width: 17.5rem;
   /* The prompt on phones: iOS zooms into any input under 16px on focus. */

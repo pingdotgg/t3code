@@ -200,8 +200,8 @@ describe("resolveUserMessagePresentation", () => {
     ).toEqual({ text: "Why?", attribution: "guest", scheduledTaskId: undefined, guestName: "Sam" });
   });
 
-  it("attributes older server-sent restart continuations to T3 Code, not another agent", () => {
-    const text = "Note: the T3 server restarted.";
+  it("attributes older server-sent restart continuations to Xen Code, not another agent", () => {
+    const text = "Note: the Xen server restarted.";
     expect(
       resolveUserMessagePresentation({
         role: "user",

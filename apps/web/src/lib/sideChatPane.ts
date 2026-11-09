@@ -16,6 +16,8 @@ export function isInSideChatPane(target: EventTarget | null): boolean {
 export interface SideChatParentPanel {
   readonly openToolDiff: (target: ToolCallDiffTarget) => void;
   readonly runShellCommand: (command: string) => void;
+  /** A split pane is a full thread view, so it keeps the chat background side chats drop. */
+  readonly showChatBackground?: boolean;
 }
 
 /** Opens `thread` in its tab when it is a side chat of `parentRef`; false for any other thread. */

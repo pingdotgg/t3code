@@ -2,7 +2,7 @@ import type { AppBarMenuItem } from "../../../components/ui/AppBar.types";
 
 /** The header of the workspace thread list, on Home and in the sidebar column. */
 export interface WorkspaceListHeaderProps {
-  /** Spoken for the brand title, such as "T3 Code, Threads". */
+  /** Spoken for the brand title, such as "Xen Code, Threads". */
   readonly accessibilityLabel: string;
   /** The connection status beside the brand opens environment settings. */
   readonly onOpenEnvironments: () => void;

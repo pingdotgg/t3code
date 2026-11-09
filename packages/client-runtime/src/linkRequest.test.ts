@@ -221,7 +221,7 @@ describe("linkableMachines", () => {
     ]);
   });
 
-  it("reaches a machine saved only over T3 Connect at its Connect address", () => {
+  it("reaches a machine saved only over Xen Connect at its Connect address", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const box = presentation("environment-box", "Box");
     const [listed] = linkableMachines({
@@ -282,7 +282,7 @@ describe("linkableMachines", () => {
     ]);
   });
 
-  it("offers machines only on T3 Connect after the saved ones, at their Connect address", () => {
+  it("offers machines only on Xen Connect after the saved ones, at their Connect address", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const vps = presentation("environment-vps", "VPS", { saved: ["https://vps.ts.net"] });
     const listed = linkableMachines({

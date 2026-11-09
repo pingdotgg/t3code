@@ -51,7 +51,7 @@ export function formatStartupCrashReport(
   records: ReadonlyArray<StartupCrashRecord>,
   app: { readonly version: string; readonly build: string },
 ): string {
-  const header = `T3 Code ${app.version} (${app.build})`;
+  const header = `Xen Code ${app.version} (${app.build})`;
   if (records.length === 0) return `${header}\nNo startup crashes recorded.`;
   return [
     header,

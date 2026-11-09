@@ -172,7 +172,7 @@ function environmentTranscriber(
       if (!native?.decodeRecording)
         throw new VoiceTranscriptionError({
           code: "unavailable",
-          message: "Update T3 Code to transcribe on an environment.",
+          message: "Update Xen Code to transcribe on an environment.",
         });
       return native.decodeRecording(uri);
     },

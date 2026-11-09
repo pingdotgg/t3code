@@ -543,12 +543,11 @@ export function resolveComposerInteractionMode(input: {
   planModeEnabled: boolean;
   provider: Pick<ServerProvider, "showInteractionModeToggle"> | null | undefined;
   interactionMode: ProviderInteractionMode;
-}): { enabled: boolean; interactionMode: ProviderInteractionMode } {
-  const enabled =
-    input.planModeEnabled &&
-    input.provider != null &&
-    input.provider.showInteractionModeToggle !== false;
+}): { available: boolean; enabled: boolean; interactionMode: ProviderInteractionMode } {
+  const available = input.provider != null && input.provider.showInteractionModeToggle !== false;
+  const enabled = input.planModeEnabled && available;
   return {
+    available,
     enabled,
     interactionMode: enabled ? input.interactionMode : "default",
   };

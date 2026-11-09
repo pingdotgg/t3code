@@ -302,7 +302,7 @@ export function SettingsVoiceRouteScreen() {
             <Text className="px-2 text-sm text-foreground-muted">
               {permission === "ask"
                 ? "Allow microphone access to record and to see your microphones."
-                : "Turn on microphone access for T3 Code in Settings to use voice input."}
+                : "Turn on microphone access for Xen Code in Settings to use voice input."}
             </Text>
           </>
         ) : null}

@@ -1,4 +1,8 @@
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { lazy, Suspense } from "react";
@@ -34,10 +38,16 @@ function useThreadWorkspace(threadRef: ScopedThreadRef) {
   };
 }
 
-/** Opens a terminal tab for the routed thread, or null where no thread can own one. */
+/** Opens a terminal tab for the routed thread or draft, or null where no thread can own one. */
 export function useNewTerminalTab(): (() => void) | null {
   const routeTarget = useThreadRouteTarget();
-  const threadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const draftSession = useComposerDraftStore((store) =>
+    routeTarget?.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
+  );
+  const draftThreadRef = draftSession
+    ? scopeThreadRef(draftSession.environmentId, draftSession.threadId)
+    : null;
+  const threadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : draftThreadRef;
   const terminalActions = useThreadTerminalActions(threadRef);
   if (!threadRef || !terminalActions.canWrite()) return null;
   const threadKey = scopedThreadKey(threadRef);
@@ -130,7 +140,7 @@ function TerminalTab({
 export function WorkspaceSurfaceView() {
   const surfaceKey = useWorkspaceTabsStore((state) => state.surfaceKey);
   const tab = surfaceKey ? parseWorkspaceTab(surfaceKey) : null;
-  if (!tab || tab.kind === "thread") return null;
+  if (!tab || tab.kind === "thread" || tab.kind === "draft") return null;
   return (
     <div className="absolute inset-0 z-30 flex min-h-0 flex-col overflow-hidden bg-background md:rounded-lg md:border md:border-sidebar-border">
       {tab.kind === "file" ? (

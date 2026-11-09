@@ -114,7 +114,7 @@ function createWindow(
     resizable: false,
     show: false,
     skipTaskbar: true,
-    title: "T3 Code Snapshot Animation",
+    title: "Xen Code Snapshot Animation",
     transparent: true,
     webPreferences: {
       backgroundThrottling: false,

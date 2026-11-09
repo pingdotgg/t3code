@@ -32,7 +32,7 @@ const appSignInHosts = sourceControlClients.definitions.flatMap((definition) =>
 );
 
 /**
- * Signing an environment in through a forge's own app, such as T3 Code for GitHub, on servers
+ * Signing an environment in through a forge's own app, such as Xen Code for GitHub, on servers
  * configured for it.
  */
 export function SourceControlSignInSection(props: {

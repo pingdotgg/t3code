@@ -215,7 +215,7 @@ export function loadWindowsForegroundApi(): Promise<WindowsForegroundApi> {
 export async function activateWindowsForeground(handleBuffer: Buffer): Promise<void> {
   const api = await loadWindowsForegroundApi();
   if (activateWindowsForegroundWithApi(handleBuffer, api)) return;
-  throw new Error("Windows refused to activate the T3 Code window.");
+  throw new Error("Windows refused to activate the Xen Code window.");
 }
 
 export async function isWindowsShellHostedForeground(): Promise<boolean> {

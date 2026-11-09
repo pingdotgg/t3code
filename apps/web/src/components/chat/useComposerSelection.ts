@@ -18,6 +18,7 @@ import { type SetStateAction } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { toastManager } from "../ui/toast";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
+import { updateClientSettings } from "../../hooks/useSettings";
 import { resolveNewDraftStartFromOrigin } from "../../lib/chatThreadActions";
 import { type DraftThreadEnvMode, useComposerDraftStore } from "../../composerDraftStore";
 import {
@@ -41,6 +42,7 @@ interface ComposerSelectionInput {
   readonly multipleModelSelections: ReadonlyArray<ModelSelection> | null;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
+  readonly interactionModeAvailable: boolean;
   readonly interactionModeEnabled: boolean;
   readonly isLocalDraftThread: boolean;
   readonly canOverrideServerThreadEnvMode: boolean;
@@ -72,6 +74,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     multipleModelSelections,
     runtimeMode,
     interactionMode,
+    interactionModeAvailable,
     interactionModeEnabled,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
@@ -100,19 +103,28 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   };
   const handleRuntimeModeChangeStable = useStableCallback(handleRuntimeModeChange);
 
-  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
-    if (mode === "plan" && !interactionModeEnabled) return;
-    if (mode === interactionMode) return;
+  const applyInteractionMode = (mode: ProviderInteractionMode) => {
     setComposerDraftInteractionMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
     }
     scheduleComposerFocus();
   };
+  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
+    if (mode === "plan" && !interactionModeEnabled) return;
+    if (mode === interactionMode) return;
+    applyInteractionMode(mode);
+  };
   const handleInteractionModeChangeStable = useStableCallback(handleInteractionModeChange);
   const toggleInteractionMode = () => {
-    if (!interactionModeEnabled) return;
-    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+    if (interactionModeEnabled) {
+      handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+      return;
+    }
+    if (!interactionModeAvailable) return;
+    // The chat's Plan button turns the Plan mode setting on, so /plan and Shift+Tab work after it.
+    void updateClientSettings({ planModeEnabled: true });
+    applyInteractionMode("plan");
   };
   const toggleInteractionModeStable = useStableCallback(toggleInteractionMode);
   const openProviderSetup = (instanceId: ProviderInstanceId) => {

@@ -143,6 +143,7 @@ function WorkspaceSplitPane({ splitKey }: { splitKey: string }) {
     },
     // ponytail: moves the thread to the main pane without running it; run it there.
     runShellCommand: () => showThreadInMain(threadRef),
+    showChatBackground: true,
   };
 
   return (

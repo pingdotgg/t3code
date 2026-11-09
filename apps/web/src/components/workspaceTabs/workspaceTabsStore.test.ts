@@ -8,6 +8,7 @@ vi.hoisted(() => {
 });
 
 import {
+  draftTabKey,
   fileTabKey,
   parseWorkspaceTab,
   snapSplitRatio,
@@ -31,6 +32,10 @@ describe("parseWorkspaceTab", () => {
       threadRef,
       terminalId: "term-2",
     });
+    expect(parseWorkspaceTab(draftTabKey("draft-1"))).toEqual({
+      kind: "draft",
+      draftId: "draft-1",
+    });
     expect(parseWorkspaceTab(fileTabKey(threadKey, ""))).toBeNull();
     expect(parseWorkspaceTab("garbage")).toBeNull();
   });
@@ -40,6 +45,18 @@ function setup() {
   useWorkspaceTabsStore.setState({ keys: ["a", "b"], surfaceKey: null, split: null });
   return useWorkspaceTabsStore.getState();
 }
+
+describe("workspace tabs", () => {
+  it("swaps a draft tab for its sent thread in place", () => {
+    const store = setup();
+    store.open("draft");
+    store.open("c");
+    store.replace("draft", "thread");
+    expect(useWorkspaceTabsStore.getState().keys).toEqual(["a", "b", "thread", "c"]);
+    store.replace("thread", "a");
+    expect(useWorkspaceTabsStore.getState().keys).toEqual(["a", "b", "c"]);
+  });
+});
 
 describe("workspace split", () => {
   it("opens a split on a tab, swaps its thread, resizes and closes it", () => {

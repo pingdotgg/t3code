@@ -262,7 +262,7 @@ describe("captureAssistantTextSelection", () => {
     const viewport = new SelectionNode("MAIN").append(
       source,
       new SelectionNode("DIV", "", { "data-select-none": "" }).append(textNode("echo ok")),
-      new SelectionNode("H3", "", { "data-select-none": "" }).append(textNode("T3 Code")),
+      new SelectionNode("H3", "", { "data-select-none": "" }).append(textNode("Xen Code")),
       assistantSource(nextParagraph),
     );
 

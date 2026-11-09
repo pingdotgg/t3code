@@ -54,7 +54,7 @@ export function useCloudLinkState(environmentId: EnvironmentId | null) {
   let error: string | null = null;
   if (result._tag === "Failure") {
     const cause = Cause.squash(result.cause);
-    error = cause instanceof Error ? cause.message : "Could not read T3 Connect link state.";
+    error = cause instanceof Error ? cause.message : "Could not read Xen Connect link state.";
   }
 
   return {

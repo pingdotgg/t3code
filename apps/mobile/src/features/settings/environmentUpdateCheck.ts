@@ -26,7 +26,7 @@ const asError = (cause: unknown) =>
   });
 
 /**
- * Looks up the newest T3 Code release for one environment. The atom is not
+ * Looks up the newest Xen Code release for one environment. The atom is not
  * kept alive, so leaving the screen interrupts the lookup and aborts its fetch.
  * The argument reads the server version, which an outdated server only
  * reports through a separate description request.

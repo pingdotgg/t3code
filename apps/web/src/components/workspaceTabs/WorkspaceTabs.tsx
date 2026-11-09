@@ -3,12 +3,10 @@ import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import type { ProviderInstanceId } from "@t3tools/contracts";
 import {
-  Columns2Icon,
   FileCodeIcon,
   MessageSquareIcon,
   NotebookTextIcon,
   PlusIcon,
-  Rows2Icon,
   SettingsIcon,
   SquarePenIcon,
   SquareTerminalIcon,
@@ -23,7 +21,7 @@ import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useThreadRouteTarget } from "../../hooks/useThreadRouteTarget";
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
-import { useComposerDraftStore } from "../../composerDraftStore";
+import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { cn } from "../../lib/utils";
@@ -36,6 +34,7 @@ import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
 import { useShowThreadInMain } from "./WorkspaceSplit";
 import { useNewTerminalTab } from "./WorkspaceSurfaceView";
 import {
+  draftTabKey,
   neighborTabKey,
   parseWorkspaceTab,
   useWorkspaceTabsStore,
@@ -86,7 +85,10 @@ function Tab({
         type="button"
         aria-label={`Close ${label}`}
         onClick={onClose}
-        className="absolute right-1 grid size-5 place-items-center rounded-sm text-muted-foreground opacity-0 outline-hidden group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        className={cn(
+          "absolute right-1 grid size-5 place-items-center rounded-sm text-muted-foreground outline-hidden group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 hover:bg-foreground/10 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          active ? "opacity-100" : "opacity-0",
+        )}
       >
         <XIcon aria-hidden className="size-3" />
       </button>
@@ -101,8 +103,11 @@ type TabProps = {
   onContextMenu?: ((event: MouseEvent) => void) | undefined;
 };
 
-const SPLIT_BUTTON_CLASS =
-  "grid size-7.5 shrink-0 place-items-center rounded-md text-muted-foreground opacity-65 outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/7 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-30";
+/** The tab key a file or terminal tab's thread is routed under: its thread, or its draft. */
+function surfaceOwnerKey(threadRef: ScopedThreadRef): string {
+  const draftId = useComposerDraftStore.getState().getDraftIdByRef(threadRef);
+  return draftId && !readThreadShell(threadRef) ? draftTabKey(draftId) : scopedThreadKey(threadRef);
+}
 
 function ThreadTab({ threadRef, ...props }: TabProps & { threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
@@ -144,10 +149,26 @@ function TerminalTabButton({
   );
 }
 
+function DraftTab({ draftId, ...props }: TabProps & { draftId: string }) {
+  const exists = useComposerDraftStore(
+    (store) => store.getDraftSession(DraftId.make(draftId)) !== null,
+  );
+  if (!exists) return null;
+  return (
+    <Tab
+      icon={<SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+      label="New thread"
+      {...props}
+    />
+  );
+}
+
 function WorkspaceTabButton({ tab, ...props }: TabProps & { tab: WorkspaceTab }) {
   switch (tab.kind) {
     case "thread":
       return <ThreadTab threadRef={tab.threadRef} {...props} />;
+    case "draft":
+      return <DraftTab draftId={tab.draftId} {...props} />;
     case "file":
       return (
         <Tab
@@ -175,33 +196,45 @@ export function WorkspaceTabs() {
   const closeSplit = useWorkspaceTabsStore((state) => state.closeSplit);
   const newThreadContext = useHandleNewThread();
   const newTerminalTab = useNewTerminalTab();
-  const routedKey = routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
+  const replaceTab = useWorkspaceTabsStore((state) => state.replace);
+  const routedDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  const routedKey =
+    routeTarget?.kind === "server"
+      ? scopedThreadKey(routeTarget.threadRef)
+      : routedDraftId
+        ? draftTabKey(routedDraftId)
+        : null;
   const activeKey = surfaceKey ?? routedKey;
 
-  const routedDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread in the persisted tab store, and leaves a file or terminal tab once another thread or draft is routed
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread or draft in the persisted tab store, and leaves a file or terminal tab once another one is routed
   useEffect(() => {
-    const { surfaceKey: shown } = useWorkspaceTabsStore.getState();
+    if (!routedKey) return;
+    const { surfaceKey: shown, keys: openKeys } = useWorkspaceTabsStore.getState();
+    const drafts = useComposerDraftStore.getState();
+    // A sent draft's tab becomes its thread's tab; tabs of discarded drafts go away.
+    let promotedFrom: string | null = null;
+    for (const key of openKeys) {
+      const tab = parseWorkspaceTab(key);
+      if (tab?.kind !== "draft" || key === routedKey) continue;
+      const draftId = DraftId.make(tab.draftId);
+      const session = drafts.getDraftSession(draftId);
+      const sentTo = session?.promotedTo ?? drafts.getPromotedDraftRedirect(draftId);
+      if (sentTo && scopedThreadKey(sentTo) === routedKey) promotedFrom = key;
+      else if (!session) closeTab(key);
+    }
+    if (promotedFrom) replaceTab(promotedFrom, routedKey);
+    else openTab(routedKey);
     const surface = shown ? parseWorkspaceTab(shown) : null;
-    if (routedKey) {
-      openTab(routedKey);
-      if (surface && scopedThreadKey(surface.threadRef) !== routedKey) hideSurface();
-    } else if (
-      routedDraftId &&
-      surface &&
-      useComposerDraftStore.getState().getDraftIdByRef(surface.threadRef) !== routedDraftId
-    ) {
+    if (surface && surface.kind !== "draft" && surfaceOwnerKey(surface.threadRef) !== routedKey) {
       hideSurface();
     }
-  }, [routedKey, routedDraftId, openTab, hideSurface]);
+  }, [routedKey, openTab, closeTab, replaceTab, hideSurface]);
 
   const showThread = useShowThreadInMain();
   const splitShown = splitKey !== null && splitKey !== routedKey;
-  // Only threads can take the split pane; offer the routed thread's nearest thread tab.
-  const threadKeys = keys.filter((key) => parseWorkspaceTab(key)?.kind === "thread");
-  const splitCandidate =
-    (routedKey ? neighborTabKey(threadKeys, routedKey) : threadKeys.at(-1)) ?? null;
+
+  const showDraft = (draftId: string) =>
+    void navigate({ to: "/draft/$draftId", params: { draftId: DraftId.make(draftId) } });
 
   const select = (key: string, tab: WorkspaceTab) => {
     if (tab.kind === "thread") {
@@ -209,10 +242,18 @@ export function WorkspaceTabs() {
       showThread(tab.threadRef);
       return;
     }
+    if (tab.kind === "draft") {
+      hideSurface();
+      showDraft(tab.draftId);
+      return;
+    }
     showSurface(key);
-    // A draft's thread has no route of its own; its tabs open over whatever is routed.
-    if (scopedThreadKey(tab.threadRef) !== routedKey && readThreadShell(tab.threadRef)) {
-      showThread(tab.threadRef);
+    const ownerKey = surfaceOwnerKey(tab.threadRef);
+    if (ownerKey === routedKey) return;
+    if (readThreadShell(tab.threadRef)) showThread(tab.threadRef);
+    else {
+      const draftId = useComposerDraftStore.getState().getDraftIdByRef(tab.threadRef);
+      if (draftId) showDraft(draftId);
     }
   };
 
@@ -284,7 +325,8 @@ export function WorkspaceTabs() {
   return (
     <nav
       className={cn(
-        "hidden h-10 shrink-0 items-center gap-0.5 overflow-x-auto pr-2.5 pl-1.5 md:flex",
+        // Same height as the fixed sidebar and panel controls, so their icons line up with the tabs.
+        "hidden h-(--workspace-topbar-height) shrink-0 items-center gap-0.5 overflow-x-auto pr-(--workspace-tabs-end-inset) pl-1.5 md:flex",
         isElectron && "drag-region",
         COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
       )}
@@ -306,17 +348,6 @@ export function WorkspaceTabs() {
           />
         );
       })}
-      {routeTarget?.kind === "draft" ? (
-        <button
-          type="button"
-          aria-current={surfaceKey ? undefined : "page"}
-          onClick={hideSurface}
-          className={cn(TAB_CLASS, surfaceKey ? IDLE_TAB_CLASS : ACTIVE_TAB_CLASS, "gap-1.5 px-2")}
-        >
-          <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="truncate">New thread</span>
-        </button>
-      ) : null}
       <Menu>
         <MenuTrigger
           render={
@@ -364,35 +395,6 @@ export function WorkspaceTabs() {
           </MenuItem>
         </MenuPopup>
       </Menu>
-      <div className="ml-auto flex shrink-0 items-center gap-0.5 pl-2">
-        {splitShown ? (
-          <button
-            type="button"
-            aria-label="Close split"
-            onClick={closeSplit}
-            className={SPLIT_BUTTON_CLASS}
-          >
-            <XIcon className="size-4" />
-          </button>
-        ) : (
-          (["right", "down"] as const).map((direction) => (
-            <button
-              key={direction}
-              type="button"
-              aria-label={direction === "right" ? "Split right" : "Split down"}
-              disabled={splitCandidate === null}
-              onClick={() => splitCandidate && openSplit(splitCandidate, direction)}
-              className={SPLIT_BUTTON_CLASS}
-            >
-              {direction === "right" ? (
-                <Columns2Icon className="size-4" />
-              ) : (
-                <Rows2Icon className="size-4" />
-              )}
-            </button>
-          ))
-        )}
-      </div>
     </nav>
   );
 }

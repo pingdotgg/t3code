@@ -827,7 +827,7 @@ export function useThreadComposerState(input: {
       return "Side chats are not ready yet. Try again in a moment.";
     }
     if (serverConfig.environment.capabilities.sideChats !== true) {
-      return "Update this environment's T3 Code server to use side chats.";
+      return "Update this environment's Xen Code server to use side chats.";
     }
     if (selectedThreadCreation !== null) return "Side chats start after the first message.";
     if (

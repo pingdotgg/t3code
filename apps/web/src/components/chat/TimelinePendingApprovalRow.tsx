@@ -71,7 +71,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         {approval.reason ? (
           <span className="text-muted-foreground select-text wrap-anywhere">{approval.reason}</span>
         ) : null}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
           {canRespond ? (
             <>
               <span className="inline-flex items-center gap-1 text-warning">
@@ -79,20 +79,14 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
                 Waiting for approval
               </span>
               {onRespondToApproval ? (
-                <>
-                  <span aria-hidden className="text-muted-foreground">
-                    ·
-                  </span>
-                  <ComposerPendingApprovalActions
-                    presentation="inline"
-                    requestId={approval.requestId}
-                    disabled={!canOperateThread}
-                    isResponding={respondingRequestIds.includes(approval.requestId)}
-                    canRespond={canRespond}
-                    options={approval.options}
-                    onRespondToApproval={onRespondToApproval}
-                  />
-                </>
+                <ComposerPendingApprovalActions
+                  requestId={approval.requestId}
+                  disabled={!canOperateThread}
+                  isResponding={respondingRequestIds.includes(approval.requestId)}
+                  canRespond={canRespond}
+                  options={approval.options}
+                  onRespondToApproval={onRespondToApproval}
+                />
               ) : null}
             </>
           ) : (

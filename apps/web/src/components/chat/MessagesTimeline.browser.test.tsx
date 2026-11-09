@@ -859,7 +859,7 @@ describe("MessagesTimeline agent messages", () => {
     expect(screen.text()).not.toContain("drops the index");
   });
 
-  it("leaves messages sent by T3 Code as full bubbles", async () => {
+  it("leaves messages sent by Xen Code as full bubbles", async () => {
     setup();
     await using screen = await renderTimeline([
       message(AGENT_MESSAGE, { createdBy: "agent", creationSource: "server" }),
@@ -1478,14 +1478,14 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
-  await click(screen.buttons("More approval options")[1]!);
-  await expect.element(page.getByRole("menuitem", { name: "Always allow Safari" })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow Safari" }).click();
+  await click(screen.button("Always allow Safari"));
   expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
-  await click(screen.buttons("More approval options")[0]!);
-  await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow this session" }).click();
+  await click(screen.button("Always allow this session"));
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "acceptForSession");
+  expect(screen.buttons("More approval options")).toHaveLength(1);
+  await click(screen.button("More approval options"));
+  await page.getByRole("menuitem", { name: "Cancel", exact: true }).click();
+  expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "cancel");
   await click(screen.button("Decline"));
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "decline");
   await click(screen.button("Allow once"));

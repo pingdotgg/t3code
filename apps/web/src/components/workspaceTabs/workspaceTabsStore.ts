@@ -6,9 +6,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 const MAX_TABS = 12;
 const SEPARATOR = "\u001f";
 
-/** A top-level tab: a thread, or a file or terminal that belongs to one, as in monocode. */
+/** A top-level tab: a thread, an unsent draft, or a file or terminal that belongs to a thread. */
 export type WorkspaceTab =
   | { readonly kind: "thread"; readonly threadRef: ScopedThreadRef }
+  | { readonly kind: "draft"; readonly draftId: string }
   | { readonly kind: "file"; readonly threadRef: ScopedThreadRef; readonly path: string }
   | { readonly kind: "terminal"; readonly threadRef: ScopedThreadRef; readonly terminalId: string };
 
@@ -20,8 +21,13 @@ export function terminalTabKey(threadKey: string, terminalId: string): string {
   return ["terminal", threadKey, terminalId].join(SEPARATOR);
 }
 
+export function draftTabKey(draftId: string): string {
+  return ["draft", draftId].join(SEPARATOR);
+}
+
 export function parseWorkspaceTab(key: string): WorkspaceTab | null {
   const [kind, threadKey, value] = key.split(SEPARATOR);
+  if (kind === "draft" && threadKey && value === undefined) return { kind, draftId: threadKey };
   if (value === undefined) {
     const threadRef = parseScopedThreadKey(key);
     return threadRef ? { kind: "thread", threadRef } : null;
@@ -54,6 +60,8 @@ interface WorkspaceTabsState {
   showSurface: (key: string) => void;
   hideSurface: () => void;
   close: (key: string) => void;
+  /** Swaps `from` for `to` in place, as when a draft tab becomes its sent thread. */
+  replace: (from: string, to: string) => void;
   openSplit: (key: string, direction: WorkspaceSplitDirection) => void;
   /** Shows `key` in the split pane, keeping its direction and size. */
   setSplitKey: (key: string) => void;
@@ -82,6 +90,13 @@ export const useWorkspaceTabsStore = create<WorkspaceTabsState>()(
           keys: state.keys.filter((open) => open !== key),
           surfaceKey: state.surfaceKey === key ? null : state.surfaceKey,
           split: state.split?.key === key ? null : state.split,
+        })),
+      replace: (from, to) =>
+        set((state) => ({
+          keys: state.keys.includes(to)
+            ? state.keys.filter((open) => open !== from)
+            : state.keys.map((open) => (open === from ? to : open)),
+          surfaceKey: state.surfaceKey === from ? null : state.surfaceKey,
         })),
       openSplit: (key, direction) =>
         set((state) => ({

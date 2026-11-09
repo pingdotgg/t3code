@@ -2,7 +2,7 @@ import { View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 
-/** The guest's name above their message, where "Sent by T3 Code" sits for server messages. */
+/** The guest's name above their message, where "Sent by Xen Code" sits for server messages. */
 export function GuestMessageName(props: { readonly name: string }) {
   return (
     <Text

@@ -269,6 +269,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { DraftDashboard } from "./chat/DraftDashboard";
 import { ChatBackgroundLayer } from "./chatBackground/ChatBackgroundLayer";
+import { WorkspaceSplitMenu } from "./workspaceTabs/WorkspaceSplitMenu";
 import { useHasChatBackground } from "./chatBackground/chatBackgroundStore";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -1321,7 +1322,11 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
-  const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
+  const {
+    available: interactionModeAvailable,
+    enabled: interactionModeEnabled,
+    interactionMode,
+  } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
     interactionMode:
@@ -2847,7 +2852,7 @@ export default function ChatView(props: ChatViewProps) {
         : serverConfig === null
           ? "Side chats are not ready yet. Try again in a moment."
           : serverConfig.environment.capabilities.sideChats !== true
-            ? "Update this environment's T3 Code server to use side chats."
+            ? "Update this environment's Xen Code server to use side chats."
             : sideChatsOffered && !isServerThread
               ? "Side chats start after the first message."
               : sideChat.available &&
@@ -2908,6 +2913,7 @@ export default function ChatView(props: ChatViewProps) {
     multipleModelSelections,
     runtimeMode,
     interactionMode,
+    interactionModeAvailable,
     interactionModeEnabled,
     isLocalDraftThread,
     canOverrideServerThreadEnvMode,
@@ -3369,6 +3375,7 @@ export default function ChatView(props: ChatViewProps) {
       maximized={rightPanelMaximized}
       onToggleMaximized={toggleRightPanelMaximizedStable}
     >
+      <WorkspaceSplitMenu />
       {panelToggleControls}
     </WorkspaceTitlebarControls>
   );
@@ -3379,7 +3386,8 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   const showChatBackground =
-    !embedded && (settings.chatBackgroundScope !== "empty" || isDraftHeroState);
+    (parentPanel?.showChatBackground ?? !embedded) &&
+    (settings.chatBackgroundScope !== "empty" || isDraftHeroState);
   const content = (
     <div
       ref={setWorkspaceLayoutElement}

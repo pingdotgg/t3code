@@ -23,10 +23,10 @@ import { connectPairingUrl as connectPairingUrlCommand } from "../connection/onb
 
 const RELAY_REMOVAL_ACCOUNT_NOTE: Record<Discovery.RelayEnvironmentRegistration, string> = {
   registered:
-    "It stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.",
-  unregistered: "It's no longer on your T3 Connect account.",
+    "It stays on your Xen Connect account and keeps its host space. Deregister it under Xen Account → Xen Connect to free it.",
+  unregistered: "It's no longer on your Xen Connect account.",
   unknown:
-    "This doesn't change your T3 Connect account. To deregister it there, use T3 Account → T3 Connect.",
+    "This doesn't change your Xen Connect account. To deregister it there, use Xen Account → Xen Connect.",
 };
 
 const connectionPairingUrlAtom = Atom.make("").pipe(
@@ -195,7 +195,7 @@ export function useRemoteConnections() {
         environmentId,
       );
       const openAccount = {
-        text: "Open T3 Account",
+        text: "Open Xen Account",
         onPress: () => navigation.navigate("SettingsAuth"),
       };
       Dialog.alert(

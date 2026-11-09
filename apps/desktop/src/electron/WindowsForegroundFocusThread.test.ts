@@ -23,7 +23,7 @@ let worker = makeWorker();
 const target = {
   windowId: 7,
   processId: 42,
-  title: "T3 Code (Dev)",
+  title: "Xen Code (Dev)",
   bounds: { x: 100, y: 50, width: 1_200, height: 800 },
   contentBounds: { x: 108, y: 50, width: 1_184, height: 792 },
 };

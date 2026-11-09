@@ -12,7 +12,7 @@ export function T3Wordmark(props: {
   const aspectRatio = 94.3941 / 56.96;
   return (
     <Svg
-      accessibilityLabel="T3"
+      accessibilityLabel="Xen"
       height={props.height}
       width={props.height * aspectRatio}
       viewBox="15.5309 37 94.3941 56.96"
