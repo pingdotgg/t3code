@@ -156,7 +156,7 @@ export function ComposerEditor({
   ...props
 }: ComposerEditorProps) {
   const nativeRef = useRef<NativeComposerEditorRef>(null);
-  const renderedValueRef = useRef(props.value);
+  const renderedDraftRef = useRef({ value: props.value, resetGeneration: 0 });
   const mostRecentEventCountRef = useRef(0);
   const [mostRecentEventCount, setMostRecentEventCount] = useState(0);
   const [, forceNativeEventRender] = useState(0);
@@ -239,8 +239,8 @@ export function ComposerEditor({
   // the native revision and rejected by the editor instead of re-applying a
   // stale caret or stale text mid-typing.
   /* oxlint-disable react/refs -- Native controlled edits must reconcile against the last acknowledged native event before sending the next payload. */
-  renderedValueRef.current = props.value;
   const resetGeneration = readResetGeneration();
+  renderedDraftRef.current = { value: props.value, resetGeneration };
   // Native restarts its revision at a reset's stamp, so stamp it at the latest acknowledged event.
   const controlledEventCount =
     resetGeneration > nativeResetGenerationRef.current
@@ -343,7 +343,10 @@ export function ComposerEditor({
         state.eventCount === mostRecentEventCountRef.current &&
         controlledEventCount < mostRecentEventCount &&
         state.value !== props.value &&
-        renderedValueRef.current === props.value
+        // The parent may have edited, reset or switched the draft while native was read.
+        renderedDraftRef.current.value === props.value &&
+        renderedDraftRef.current.resetGeneration === resetGeneration &&
+        readResetGeneration() === resetGeneration
       ) {
         onChangeText(state.value);
         onSelectionChange?.(state.selection);

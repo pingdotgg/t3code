@@ -242,15 +242,15 @@ it("keeps a pending event from the previous native editor out of the selected dr
   expect(native.text).toBe("Draft B");
 });
 
-async function renderFlushableComposer() {
+async function renderFlushableComposer(initialDraftKey = DRAFT_KEY) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const editor = createRef<ComposerEditorHandle>();
   const root = createRoot(document.createElement("div"));
-  const renderComposer = (locked: boolean) =>
+  const renderComposer = (locked: boolean, draftKey = initialDraftKey) =>
     act(async () =>
       root.render(
         <RegistryContext.Provider value={appAtomRegistry}>
-          <ThreadComposer editorRef={editor} locked={locked} />
+          <ThreadComposer editorRef={editor} locked={locked} draftKey={draftKey} />
         </RegistryContext.Provider>,
       ),
     );
@@ -324,17 +324,50 @@ it("keeps a parent edit committed while a flush waits on the native editor", asy
   await act(async () => emit("Draft plus more"));
   await screen.setLocked(false);
 
+  await flushAcross(screen, () =>
+    act(async () => setComposerDraftText(DRAFT_KEY, "Draft plus more @file")),
+  );
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft plus more @file");
+});
+
+async function flushAcross(
+  screen: Awaited<ReturnType<typeof renderFlushableComposer>>,
+  change: () => Promise<void>,
+) {
   const response = Promise.withResolvers<void>();
   native.readGate = response.promise;
   let flushed!: Promise<void>;
   await act(async () => {
     flushed = screen.editor.current!.flushPendingInput();
   });
-  await act(async () => setComposerDraftText(DRAFT_KEY, "Draft plus more @file"));
+  await change();
   native.readGate = null;
   await act(async () => {
     response.resolve();
     await flushed;
   });
-  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft plus more @file");
+}
+
+it("does not restore dropped text into a draft cleared while a flush waits", async () => {
+  const draftKey = "flush-clear:draft";
+  await using screen = await renderFlushableComposer(draftKey);
+  await screen.setLocked(true);
+  await act(async () => emit("Dropped"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, () => act(async () => clearComposerDraftContent(draftKey)));
+  expect(getComposerDraftSnapshot(draftKey).text).toBe("");
+});
+
+it("does not restore dropped text after switching to another empty draft while a flush waits", async () => {
+  const first = "flush-switch:first";
+  const other = "flush-switch:other";
+  await using screen = await renderFlushableComposer(first);
+  await screen.setLocked(true);
+  await act(async () => emit("Dropped"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, () => screen.setLocked(false, other));
+  expect(getComposerDraftSnapshot(first).text).toBe("");
+  expect(getComposerDraftSnapshot(other).text).toBe("");
 });
