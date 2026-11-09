@@ -85,3 +85,20 @@ it("opens search with Mod+F on non-Latin layouts", async () => {
     await expect.element(search).toHaveFocus();
   }
 });
+
+it("ignores Shift on the slash key unless the layout types '/'", async () => {
+  await using _screen = await render(
+    <SidebarProvider defaultOpen>
+      <SettingsSidebarNav pathname="/settings/general" />
+    </SidebarProvider>,
+    { router: "/settings/general" },
+  );
+
+  for (const init of [
+    { key: "?", code: "Slash", shiftKey: true },
+    { key: "7", code: "Digit7" },
+  ]) {
+    const event = await pressOnBody(init);
+    expect(event.defaultPrevented, JSON.stringify(init)).toBe(false);
+  }
+});
