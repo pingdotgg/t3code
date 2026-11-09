@@ -39,7 +39,7 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { normalizeSearchText } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { observeIntersection } from "../lib/observeIntersection";
-import { deadlineAfter, deadlineStore } from "@t3tools/client-runtime/clock";
+import { deadlineStore } from "@t3tools/client-runtime/clock";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { legacyProjectCwdPreferenceKey } from "../uiStateStore";
 
@@ -58,8 +58,6 @@ export function shouldNavigateAfterThreadPark(input: {
       : effectiveSnoozed(input.thread, { now: input.now }))
   );
 }
-
-const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
 export function resolveSidebarRowAccessibility(input: {
   readonly title: string;
@@ -670,21 +668,6 @@ type ThreadStatusInput = Pick<
   pendingBackgroundTasks?: SidebarThreadSummary["pendingBackgroundTasks"] | undefined;
   blockedOnThreadWait?: boolean | undefined;
 };
-
-/**
- * Thread jump hints appear once the jump modifier has been held for a moment,
- * so a quick shortcut never flashes them, and hide as soon as it is released.
- */
-export function useThreadJumpHintsVisible(shouldShow: boolean): boolean {
-  const [showAt, setShowAt] = React.useState<number | null>(null);
-  // The clock is read inside the updater: the compiler caches a bare clock read
-  // in render once per instance, so a second hold would reuse the first deadline.
-  // React discards this render and re-runs with the update.
-  if (shouldShow !== (showAt !== null)) {
-    setShowAt(shouldShow ? () => deadlineAfter(THREAD_JUMP_HINT_SHOW_DELAY_MS) : null);
-  }
-  return useDeadlinePassed(showAt);
-}
 
 export function resolveThreadLastVisitedAt(
   serverLastVisitedAt: string | null | undefined,
