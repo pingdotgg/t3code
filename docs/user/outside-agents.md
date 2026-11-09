@@ -6,6 +6,23 @@ check which providers and models are available. This covers Claude Code or
 Codex in your own terminal, ChatGPT, and bots that support MCP. Each agent signs
 in once, and you choose what it may do.
 
+## Add T3 Code to an assistant app
+
+Press Cmd-K and choose **Use T3 Code in another app (MCP)**, or use the button
+in **Settings → Sharing & access**. Pick the app, choose what it may do, and
+follow the step for that app. Assistants like Poke and Claude run in the cloud,
+so the wizard first asks you to sign in to T3 Connect and turn it on for the
+environment. Turn on **Linked environments** in Labs to reach your other
+machines through the same connection.
+
+When the app opens the sign-in page, choose **Get code** in the wizard and paste
+the code there. A code works once, for 5 minutes, and approves only the level
+you chose.
+
+For an app that is not listed, choose **Something else…**, add a remote MCP
+server with OAuth in that app, and paste the URL. Apps that ask for a client ID
+cannot connect.
+
 ## Get the MCP URL
 
 In **Settings → Environments**, open a saved environment's menu and choose
@@ -41,13 +58,14 @@ The page names the agent and where its access goes:
 - For a hosted agent, approval goes to that service, such as `chatgpt.com`.
   Anyone who runs that service gets the access.
 
-Only approve a sign-in you just started. To approve, enter a pairing code from
-**Settings → Sharing & access** or from `t3 auth pairing create` on the host. A
-browser already signed in to the environment with permission to manage access
-can approve without a code.
+Only approve a sign-in you just started. To approve, enter a code from
+**Use T3 Code in another app (MCP)**, **Settings → Sharing & access**, or
+`t3 auth pairing create` on the host. A browser already signed in to the
+environment with permission to manage access can approve without a code.
 
-Then choose what the agent may do. **Auto** is selected by default, or the
-closest lower mode allowed by your organization’s policy:
+A code from **Use T3 Code in another app (MCP)** already carries the level you
+picked there, where **Auto** is selected by default. With any other code, or
+none, choose what the agent may do here. **Read only** is selected by default:
 
 - **Read only** lets the agent read projects and threads and see
   the available providers and models. It cannot change anything.

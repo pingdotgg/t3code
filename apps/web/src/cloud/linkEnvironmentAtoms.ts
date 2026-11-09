@@ -5,6 +5,7 @@ import {
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import {
+  checkCloudReachability,
   linkEnvironmentToCloud,
   type CloudLinkMode,
   type CloudLinkTarget,
@@ -46,4 +47,9 @@ export const updateEnvironmentPreferences = createRuntimeCommand(connectionAtomR
     readonly publishAgentActivity: boolean;
     readonly holdWebhooksWhileOffline?: boolean;
   }) => updateCloudPreferences(input),
+});
+
+export const checkReachability = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:cloud:check-reachability",
+  execute: (input: { readonly target: CloudLinkTarget }) => checkCloudReachability(input),
 });
