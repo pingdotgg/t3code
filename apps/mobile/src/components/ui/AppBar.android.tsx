@@ -13,12 +13,12 @@ import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { Menu } from "./Menu";
 import { Button } from "./Button";
 import { SearchField } from "./SearchField";
-import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
+import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
-  const action = findHeaderMenuAction(items, id);
+  const action = findAppBarMenuItem(items, id);
   if (action && !action.disabled) action.onPress();
 }
 
@@ -134,7 +134,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
             ? {
                 accessibilityLabel: menu.title,
                 customized: icon?.endsWith(".fill") === true,
-                actions: androidHeaderMenuActions(menu.items),
+                actions: menuActionsFromAppBarItems(menu.items),
                 onSelect: (id) => selectMenuItem(menu.items, id),
               }
             : undefined
@@ -146,7 +146,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const menuView = props.menus?.map((menu) => (
     <Menu
       key={menu.title}
-      actions={androidHeaderMenuActions(menu.items)}
+      actions={menuActionsFromAppBarItems(menu.items)}
       isAnchoredToRight
       title={menu.status ?? menu.title}
       onPressAction={({ nativeEvent }) => selectMenuItem(menu.items, nativeEvent.event)}
