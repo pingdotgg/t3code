@@ -23,11 +23,29 @@ export function materializeReplayTranscriptRuntimeInstructions(
   // Grok's flavor sets `supportsCompaction`; Kiro compacts through its own request instead.
   const compactsThroughPrompt = runtime.driver === "grok";
   // The ACP adapter resends these instructions until a prompt that carried them succeeds.
-  // Cancelled, refused, and failed prompts do not establish delivery.
-  // Compactions the adapter observes, and closed sessions, reset that.
+  // Cancelled, refused, and failed prompts do not establish delivery. A new runtime and a
+  // compaction reset it. Copilot's compaction events and compactions routed to a child session
+  // are not mirrored here; no recording has them yet.
   const instructedSessionIds = new Set<unknown>();
+  // A prompt's success records delivery only if no compaction completed after it was sent.
+  const compactionCounts = new Map<unknown, number>();
+  const completedCompactionIds = new Set<string>();
+  const markCompacted = (sessionId: unknown, compactionId?: unknown) => {
+    if (typeof compactionId === "string") {
+      const key = `${String(sessionId)}\u0000${compactionId}`;
+      if (completedCompactionIds.has(key)) return;
+      completedCompactionIds.add(key);
+    }
+    instructedSessionIds.delete(sessionId);
+    compactionCounts.set(sessionId, (compactionCounts.get(sessionId) ?? 0) + 1);
+  };
   let pendingPrompt:
-    | { readonly sessionId: unknown; readonly instructed: boolean; readonly compact: boolean }
+    | {
+        readonly sessionId: unknown;
+        readonly instructed: boolean;
+        readonly compact: boolean;
+        readonly compactionsAtSend: number;
+      }
     | undefined;
   let pendingKiroCompact: { readonly sessionId: unknown } | undefined;
 
@@ -44,8 +62,12 @@ export function materializeReplayTranscriptRuntimeInstructions(
             stopReason !== "refusal" &&
             stopReason !== "error";
           if (delivered && pendingPrompt.compact) {
-            instructedSessionIds.delete(pendingPrompt.sessionId);
-          } else if (delivered && pendingPrompt.instructed) {
+            markCompacted(pendingPrompt.sessionId);
+          } else if (
+            delivered &&
+            pendingPrompt.instructed &&
+            (compactionCounts.get(pendingPrompt.sessionId) ?? 0) === pendingPrompt.compactionsAtSend
+          ) {
             instructedSessionIds.add(pendingPrompt.sessionId);
           }
           pendingPrompt = undefined;
@@ -55,9 +77,10 @@ export function materializeReplayTranscriptRuntimeInstructions(
           frame.method === "_kiro/session/compact" &&
           pendingKiroCompact
         ) {
-          const refused = isRecord(frame.result) && frame.result.success === false;
-          if (frame.error === undefined && !refused)
-            instructedSessionIds.delete(pendingKiroCompact.sessionId);
+          // Kiro's adapter accepts only `{ success: true }`.
+          if (isRecord(frame.result) && frame.result.success === true) {
+            markCompacted(pendingKiroCompact.sessionId);
+          }
           pendingKiroCompact = undefined;
         }
         const update =
@@ -70,7 +93,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
           update.status === "completed" &&
           isRecord(frame?.params)
         ) {
-          instructedSessionIds.delete(frame.params.sessionId);
+          markCompacted(frame.params.sessionId, update.compactionId);
         }
         return entry;
       }
@@ -88,10 +111,15 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ? entry
           : { ...entry, frame: { ...frame, message: `${frame.message}\n\n${instructions}` } };
       }
-      if ("method" in frame && frame.method === "session/close") {
-        // A closed session comes back in a new runtime, which resends the instructions.
+      if (
+        "method" in frame &&
+        (frame.method === "session/close" || frame.method === "initialize")
+      ) {
+        // A closed or restarted session comes back in a new runtime, which resends the instructions.
         instructedSessionIds.clear();
+        completedCompactionIds.clear();
         pendingPrompt = undefined;
+        pendingKiroCompact = undefined;
         return entry;
       }
       if (
@@ -126,6 +154,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
             instructed: false,
             compact:
               compactsThroughPrompt && prompt.length === 1 && /^\/compact(?:\s|$)/.test(firstText),
+            compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
           };
           return entry;
         }
@@ -133,7 +162,12 @@ export function materializeReplayTranscriptRuntimeInstructions(
           pendingPrompt = undefined;
           return entry;
         }
-        pendingPrompt = { sessionId: promptSessionId, instructed: true, compact: false };
+        pendingPrompt = {
+          sessionId: promptSessionId,
+          instructed: true,
+          compact: false,
+          compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
+        };
         const lastText = promptPartText(prompt.at(-1));
         // A recording that switched models mid-thread already carries the
         // instructions for the model each prompt ran on.

@@ -52,7 +52,7 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
         kiroCompact,
         {
           type: "emit_inbound" as const,
-          frame: { kind: "response", method: "_kiro/session/compact", result: null },
+          frame: { kind: "response", method: "_kiro/session/compact", result: { success: true } },
         },
       ],
       resend: true,
@@ -91,6 +91,42 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
       resend: true,
     },
     {
+      name: "a Kiro compaction answered without success",
+      between: [
+        kiroCompact,
+        {
+          type: "emit_inbound" as const,
+          frame: { kind: "response", method: "_kiro/session/compact", result: null },
+        },
+      ],
+      resend: false,
+    },
+    {
+      name: "a repeated patch of a compaction already resent for",
+      between: [
+        update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "completed" }),
+        prompt("middle"),
+        promptAnswer,
+        update({
+          sessionUpdate: "compaction_update",
+          compactionId: "c1",
+          status: "completed",
+          summary: [{ type: "text", text: "Summary" }],
+        }),
+      ],
+      resend: false,
+    },
+    {
+      name: "a runtime restart without session/close",
+      between: [
+        {
+          type: "expect_outbound" as const,
+          frame: { kind: "request", method: "initialize", params: { protocolVersion: 1 } },
+        },
+      ],
+      resend: true,
+    },
+    {
       name: "a compaction still in progress",
       between: [
         update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "in_progress" }),
@@ -115,5 +151,15 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
     );
     expect(notes.at(0)).toBe(true);
     expect(notes.at(-1)).toBe(resend);
+  });
+  it("resends after a compaction that completes while the instructed prompt runs", () => {
+    const notes = promptsWithNotes([
+      prompt("first"),
+      update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "completed" }),
+      promptAnswer,
+      prompt("second"),
+      promptAnswer,
+    ]);
+    expect(notes).toEqual([true, true]);
   });
 });
