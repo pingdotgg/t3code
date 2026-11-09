@@ -73,6 +73,7 @@ catalog:
   jose: 6.2.2
   lightningcss: 1.33.0
   objc-js: 1.5.0
+  pele: ^1.8.0
   plist: 3.1.1
   react: 19.3.0
   react-dom: 19.3.0
