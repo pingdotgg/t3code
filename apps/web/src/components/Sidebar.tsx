@@ -1272,6 +1272,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     (group: SidebarProjectSnapshot, files: File[]) =>
       void startThreadWithFiles(scopeProjectRef(group.environmentId, group.id), files),
   );
+  // Named in the drop label: with several projects open, the drop must say where it goes.
+  const newThreadDropProjectName =
+    newThreadDropProjectRef === null
+      ? null
+      : (projectDisplayNameByKey.get(
+          `${newThreadDropProjectRef.environmentId}:${newThreadDropProjectRef.projectId}`,
+        ) ?? null);
   const [isNewThreadFileDragActive, setIsNewThreadFileDragActive] = useState(false);
   const newThreadFileDrop = makeWorkspaceFileDropHandlers({
     setDragActive: (active) => setFileDragActive(setIsNewThreadFileDragActive, active),
@@ -3055,8 +3062,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             aria-hidden
             className="pointer-events-none absolute inset-1 z-30 flex items-start justify-center rounded-lg ring-2 ring-inset ring-primary/60"
           >
-            <span className="mt-2 rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm">
-              Drop to start a new thread
+            <span className="mx-2 mt-2 max-w-[calc(100%-1rem)] truncate rounded-full bg-primary px-3 py-1 text-xs font-medium text-primary-foreground shadow-sm">
+              {newThreadDropProjectName
+                ? `Drop to start a thread in ${newThreadDropProjectName}`
+                : "Drop to start a new thread"}
             </span>
           </div>
         ) : null}
