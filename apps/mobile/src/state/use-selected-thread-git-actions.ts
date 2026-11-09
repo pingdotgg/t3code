@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { useAtomMount } from "@effect/atom-react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -26,7 +27,6 @@ import { useBranches } from "./queries";
 import { threadEnvironment } from "./threads";
 import { vcsActionManager, vcsEnvironment } from "./vcs";
 import { uuidv4 } from "../lib/uuid";
-import * as Dialog from "../components/ui/Dialog";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope, useEnvironmentScope } from "./session";
 import {
@@ -55,12 +55,14 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
 });
 
 export function useSelectedThreadGitActions() {
+  const navigation = useNavigation();
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
   const readRefs = useAtomCommand(vcsEnvironment.readRefs, { reportFailure: false });
   const refreshStatus = useAtomCommand(vcsEnvironment.refreshStatus, { reportFailure: false });
   const switchRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
+  const setPushRemote = useAtomCommand(vcsEnvironment.setPushRemote, { reportFailure: false });
   const createRef = useAtomCommand(vcsEnvironment.createRef, { reportFailure: false });
   const createWorktree = useAtomCommand(vcsEnvironment.createWorktree, { reportFailure: false });
   const pull = useAtomCommand(vcsEnvironment.pull, { reportFailure: false });
@@ -358,36 +360,52 @@ export function useSelectedThreadGitActions() {
     );
   };
 
+  const selectedThreadGitStatus = () =>
+    selectedThread && selectedThreadCwd
+      ? AsyncResult.getOrElse(
+          appAtomRegistry.get(
+            vcsEnvironment.status({
+              environmentId: selectedThread.environmentId,
+              input: { cwd: selectedThreadCwd },
+            }),
+          ),
+          () => null,
+        )
+      : null;
+
+  const onSetSelectedThreadPushRemote = async (remoteName: string) => {
+    const refName = selectedThreadGitStatus()?.refName;
+    if (!refName) return null;
+    return runSelectedThreadGitMutation(
+      "switch_ref",
+      "Changing push remote",
+      async ({ thread, cwd }) => {
+        const result = await setPushRemote({
+          environmentId: thread.environmentId,
+          input: { cwd, refName, remoteName },
+        });
+        if (AsyncResult.isSuccess(result)) {
+          await refreshSelectedThreadGitStatus({ quiet: true, cwd });
+        }
+        return result;
+      },
+    );
+  };
+
   const onRunSelectedThreadGitAction = async (
     input: GitActionRequestInput,
   ): Promise<GitRunStackedActionResult | null> => {
     // Every entry point lands here, after any default-branch confirmation.
-    const gitStatus =
-      selectedThread && selectedThreadCwd
-        ? AsyncResult.getOrElse(
-            appAtomRegistry.get(
-              vcsEnvironment.status({
-                environmentId: selectedThread.environmentId,
-                input: { cwd: selectedThreadCwd },
-              }),
-            ),
-            () => null,
-          )
-        : null;
-    const pushRemoteChoices = pushRemoteChoicesFor(input, gitStatus);
-    if (pushRemoteChoices) {
-      // Android shows at most three buttons; extra remotes fall off the end.
-      Dialog.alert(
-        "Push to which remote?",
-        "This repository has several remotes and none is named origin. The branch will track the one you choose.",
-        [
-          ...pushRemoteChoices.map((remoteName) => ({
-            text: remoteName,
-            onPress: () => void onRunSelectedThreadGitAction({ ...input, pushRemote: remoteName }),
-          })),
-          { text: "Cancel", style: "cancel" as const },
-        ],
-      );
+    const pushRemoteChoices = pushRemoteChoicesFor(input, selectedThreadGitStatus());
+    if (pushRemoteChoices && selectedThread) {
+      navigation.navigate("GitRemote", {
+        environmentId: String(selectedThread.environmentId),
+        threadId: String(selectedThread.id),
+        action: input.action,
+        ...(input.commitMessage ? { commitMessage: input.commitMessage } : {}),
+        ...(input.featureBranch ? { featureBranch: "true" } : {}),
+        ...(input.filePaths?.length ? { filePaths: JSON.stringify(input.filePaths) } : {}),
+      });
       return null;
     }
     const actionId = uuidv4();
@@ -444,6 +462,7 @@ export function useSelectedThreadGitActions() {
     onCreateSelectedThreadBranch,
     onCreateSelectedThreadWorktree,
     onPullSelectedThreadBranch,
+    onSetSelectedThreadPushRemote,
     onRunSelectedThreadGitAction,
   };
 }

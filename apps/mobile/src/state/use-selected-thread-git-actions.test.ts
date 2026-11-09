@@ -56,7 +56,7 @@ vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => com
 vi.mock("./atom-registry", () => ({
   appAtomRegistry: { get: () => AsyncResult.initial() },
 }));
-vi.mock("../components/ui/Dialog", () => ({ alert: () => {} }));
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => ({ navigate: () => {} }) }));
 vi.mock("./use-remote-environment-registry", () => ({
   environmentConnectedAtom: () => null,
   setPendingConnectionError: () => {},

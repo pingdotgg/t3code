@@ -2,6 +2,7 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { readLocalApi } from "../localApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { BranchToolbarRemoteSelector } from "./BranchToolbarRemoteSelector";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
@@ -628,6 +629,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeWorktreePath = forceNewWorktree ? null : worktreePath;
   const effectiveEnvMode = forceNewWorktree ? "worktree" : envMode;
   const envModeLocked = envLocked || (isServerThread && activeWorktreePath !== null);
+  // The branch a new worktree will get does not exist yet, so it has no remote to select.
+  const startsInNewWorktree = effectiveEnvMode === "worktree" && activeWorktreePath === null;
 
   const canUsePreviousWorktree = !isServerThread && !envModeLocked && !forceNewWorktree;
   const projectRefsForWorktreeLookup = canUsePreviousWorktree ? [activeProjectRef] : [];
@@ -732,6 +735,13 @@ export const BranchToolbar = memo(function BranchToolbar({
             {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
           />
         ) : null}
+        {panelSection !== "workspace" && !startsInNewWorktree ? (
+          <BranchToolbarRemoteSelector
+            displayMode="panel"
+            cwd={activeWorktreePath ?? activeProject.workspaceRoot}
+            environmentId={environmentId}
+          />
+        ) : null}
       </div>
     );
   }
@@ -825,6 +835,12 @@ export const BranchToolbar = memo(function BranchToolbar({
           onStartFromOriginChange={onStartFromOriginChange}
           {...(onCheckoutPullRequestRequest ? { onCheckoutPullRequestRequest } : {})}
           {...(onComposerFocusRequest ? { onComposerFocusRequest } : {})}
+        />
+      ) : null}
+      {showGitControls && !startsInNewWorktree ? (
+        <BranchToolbarRemoteSelector
+          cwd={activeWorktreePath ?? activeProject.workspaceRoot}
+          environmentId={environmentId}
         />
       ) : null}
       {trailing}

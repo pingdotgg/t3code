@@ -378,6 +378,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    setPushRemote: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:set-push-remote",
+      tag: WS_METHODS.vcsSetPushRemote,
+      scheduler: vcsCommandScheduler,
+      concurrency: vcsCommandConcurrency,
+      onSettled: invalidateRefs,
+    }),
     init: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:vcs:init",
       tag: WS_METHODS.vcsInit,

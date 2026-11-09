@@ -179,8 +179,10 @@ Use a thread's Git actions to commit, push, and create a pull request. T3 Code c
 messages, review titles, and descriptions from your changes. Descriptions also draw on the work in
 the thread, including the checks it ran.
 
-If a repository has several remotes, none named `origin`, and no `remote.pushDefault`, T3 Code
-asks which remote to use the first time you push a branch. The branch then tracks that remote.
+If a repository has several remotes, choose where a branch pushes with the remote selector next
+to the branch selector. On mobile it is under the thread's Git options. Changing the remote also
+moves the branch's tracking to it. If no remote is chosen and none is named `origin` or set as
+`remote.pushDefault`, T3 Code asks when you first push the branch.
 
 An existing fork PR can appear beside the branch even if you pushed without setting an upstream.
 If its badge is missing because several remotes hold that branch, set the branch's upstream to

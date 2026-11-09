@@ -57,6 +57,7 @@ import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRou
 import { DevicePreviewRouteScreen } from "./features/devices/DevicePreviewRouteScreen";
 import { BrowserPreviewRouteScreen } from "./features/browser/BrowserPreviewRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
+import { GitRemoteSheet } from "./features/threads/git/GitRemoteSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
 import { GitOverviewSheet } from "./features/threads/git/GitOverviewSheet";
@@ -695,6 +696,11 @@ const RootStackConfig = createWorkspaceStackNavigator({
     GitBranches: createNativeStackScreen({
       screen: GitBranchesSheet,
       linking: `${THREAD_LINKING_PREFIX}/git/branches`,
+      options: sheetRoute({ detent: 0.55, androidFit: true }),
+    }),
+    GitRemote: createNativeStackScreen({
+      screen: GitRemoteSheet,
+      linking: `${THREAD_LINKING_PREFIX}/git/remote`,
       options: sheetRoute({ detent: 0.55, androidFit: true }),
     }),
     GitConfirm: createNativeStackScreen({

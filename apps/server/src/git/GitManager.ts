@@ -1153,6 +1153,8 @@ export const make = Effect.gen(function* () {
       isRepo: details.isRepo,
       ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,
+      ...(details.remotes ? { remotes: details.remotes } : {}),
+      ...(details.pushRemote ? { pushRemote: details.pushRemote } : {}),
       ...(details.pushRemoteChoices ? { pushRemoteChoices: details.pushRemoteChoices } : {}),
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
@@ -1507,7 +1509,9 @@ export const make = Effect.gen(function* () {
     const preferredRemoteName =
       branch === null
         ? "origin"
-        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
+        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.pushRemote`)) ??
+          (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ??
+          "origin");
     const remoteUrl =
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));

@@ -945,6 +945,27 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status detects the host from the branch's push remote before its first push", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-push-remote-host"]);
+      yield* runGit(repoDir, ["remote", "add", "hub", "https://github.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, [
+        "config",
+        "branch.feature/status-push-remote-host.pushRemote",
+        "lab",
+      ]);
+
+      const { manager } = yield* makeManager();
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.sourceControlProvider?.kind).toBe("gitlab");
+    }),
+  );
+
   it.effect("status returns an explicit non-repo result for deleted directories", () =>
     Effect.gen(function* () {
       const rootDir = yield* makeTempDir("t3code-git-manager-missing-dir-");

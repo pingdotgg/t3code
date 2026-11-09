@@ -6841,6 +6841,61 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).pushRemoteChoices);
       }),
     );
+
+    it.effect("selecting a push remote moves the branch's tracking to it", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cwd = yield* makeTmpDir();
+        const forkRemote = yield* makeTmpDir("git-remote-");
+        const upstreamRemote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(forkRemote, ["init", "--bare"]);
+        yield* git(upstreamRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+        yield* git(cwd, ["checkout", "-b", "feature/remote"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* driver.commit(cwd, "Add feature", "");
+        const refName = "feature/remote";
+
+        const unset = yield* driver.statusDetailsLocal(cwd);
+        assert.deepEqual(unset.remotes, ["fork", "upstream"]);
+        assert.isUndefined(unset.pushRemote);
+
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
+        yield* driver.pushCurrentBranch(cwd, null);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `fork/${refName}`,
+        );
+
+        // The new remote has no such branch yet: tracking clears, so the branch can publish there.
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "upstream" });
+        const moved = yield* driver.statusDetailsLocal(cwd);
+        assert.equal(moved.pushRemote, "upstream");
+        assert.isFalse(moved.hasUpstream);
+        yield* driver.pushCurrentBranch(cwd, null);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `upstream/${refName}`,
+        );
+
+        // Going back finds the branch already on that remote and tracks it again.
+        yield* driver.setPushRemote({ cwd, refName, remoteName: "fork" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          `fork/${refName}`,
+        );
+        assert.equal((yield* driver.statusDetailsLocal(cwd)).pushRemote, "fork");
+
+        const unknown = yield* driver
+          .setPushRemote({ cwd, refName, remoteName: "missing" })
+          .pipe(Effect.flip);
+        assert.include(unknown.message, "missing");
+      }),
+    );
   });
 });
 

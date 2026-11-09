@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import {
   GitManagerError,
   GitCommandError,
+  type VcsSetPushRemoteInput,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -125,6 +126,7 @@ export class GitWorkflowService extends Context.Service<
     readonly switchRef: (
       input: VcsSwitchRefInput,
     ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+    readonly setPushRemote: (input: VcsSetPushRemoteInput) => Effect.Effect<void, GitCommandError>;
     readonly renameBranch: (input: {
       readonly exactName?: boolean;
       readonly cwd: string;
@@ -485,6 +487,11 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((handle) =>
           withCheckoutLease(handle.repository.rootPath, Effect.scoped(git.switchRef(input))),
         ),
+      );
+    }),
+    setPushRemote: Effect.fn("GitWorkflowService.setPushRemote")(function (input) {
+      return ensureGitCommand("GitWorkflowService.setPushRemote", input.cwd).pipe(
+        Effect.andThen(git.setPushRemote(input)),
       );
     }),
     renameBranch: Effect.fn("GitWorkflowService.renameBranch")(function (input) {

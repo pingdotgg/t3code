@@ -78,6 +78,13 @@ import {
 } from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
@@ -933,6 +940,69 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           )}
         </WizardFooter>
       </WizardPopup>
+    </Dialog>
+  );
+}
+
+function PushRemoteDialog({
+  choices,
+  canPush,
+  onClose,
+  onPush,
+}: {
+  choices: ReadonlyArray<string> | null;
+  canPush: boolean;
+  onClose: () => void;
+  onPush: (remoteName: string) => void;
+}) {
+  const [remoteName, setRemoteName] = useState<string | null>(null);
+  return (
+    <Dialog
+      open={choices !== null}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open) setRemoteName(null);
+      }}
+    >
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Push to which remote?</DialogTitle>
+          <DialogDescription>
+            This repository has several remotes and none is named origin. The branch will track the
+            one you choose.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel>
+          <Select value={remoteName} onValueChange={setRemoteName}>
+            <SelectTrigger aria-label="Remote">
+              <SelectValue placeholder="Choose a remote" />
+            </SelectTrigger>
+            <SelectPopup>
+              {choices?.map((choice) => (
+                <SelectItem key={choice} value={choice}>
+                  {choice}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            disabled={!canPush || remoteName === null}
+            onClick={() => {
+              if (remoteName) onPush(remoteName);
+            }}
+          >
+            Push
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
     </Dialog>
   );
 }
@@ -2005,46 +2075,17 @@ export default function GitActionsControl({
         </DialogPopup>
       </Dialog>
 
-      <Dialog
-        open={pendingPushRemoteAction !== null}
-        onOpenChange={(open) => {
-          if (!open) setPendingPushRemoteAction(null);
+      <PushRemoteDialog
+        choices={pendingPushRemoteAction?.choices ?? null}
+        canPush={canWriteSourceControl}
+        onClose={() => setPendingPushRemoteAction(null)}
+        onPush={(remoteName) => {
+          if (!pendingPushRemoteAction) return;
+          const { input } = pendingPushRemoteAction;
+          setPendingPushRemoteAction(null);
+          void runGitActionWithToast({ ...input, pushRemote: remoteName });
         }}
-      >
-        <DialogPopup className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Push to which remote?</DialogTitle>
-            <DialogDescription>
-              This repository has several remotes and none is named origin. The branch will track
-              the one you choose.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter variant="bare" className="sm:flex-wrap">
-            <Button
-              className="sm:mr-auto"
-              variant="outline"
-              size="sm"
-              onClick={() => setPendingPushRemoteAction(null)}
-            >
-              Cancel
-            </Button>
-            {pendingPushRemoteAction?.choices.map((remoteName) => (
-              <Button
-                key={remoteName}
-                size="sm"
-                disabled={!canWriteSourceControl}
-                onClick={() => {
-                  const { input } = pendingPushRemoteAction;
-                  setPendingPushRemoteAction(null);
-                  void runGitActionWithToast({ ...input, pushRemote: remoteName });
-                }}
-              >
-                {remoteName}
-              </Button>
-            ))}
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
+      />
     </>
   );
 }

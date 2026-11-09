@@ -105,6 +105,13 @@ describe("pushRemoteChoicesFor", () => {
     expect(pushRemoteChoicesFor({ action: "commit" }, unclear)).toBeNull();
     expect(pushRemoteChoicesFor({ action: "push", pushRemote: "fork" }, unclear)).toBeNull();
     expect(pushRemoteChoicesFor({ action: "push" }, { hasUpstream: false })).toBeNull();
+    expect(pushRemoteChoicesFor({ action: "push" }, { ...unclear, pushRemote: "fork" })).toBeNull();
+    expect(
+      pushRemoteChoicesFor(
+        { action: "commit_push", featureBranch: true },
+        { ...unclear, pushRemote: "fork" },
+      ),
+    ).toEqual(choices);
   });
 
   it("asks for a new feature branch even when the current branch tracks a remote", () => {

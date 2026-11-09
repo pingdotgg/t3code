@@ -201,6 +201,13 @@ export const VcsSwitchRefInput = Schema.Struct({
 });
 export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 
+export const VcsSetPushRemoteInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: TrimmedNonEmptyStringSchema,
+  remoteName: TrimmedNonEmptyStringSchema,
+});
+export type VcsSetPushRemoteInput = typeof VcsSetPushRemoteInput.Type;
+
 export const VcsInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   kind: Schema.optional(VcsDriverKind),
@@ -222,6 +229,10 @@ const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
   sourceControlProvider: Schema.optional(SourceControlProviderInfo),
   hasPrimaryRemote: Schema.Boolean,
+  /** Every remote, present only when there are at least two to select between. */
+  remotes: Schema.optional(Schema.Array(TrimmedNonEmptyStringSchema)),
+  /** Where the current branch pushes. Absent with one remote, or while the choice is unclear. */
+  pushRemote: Schema.optional(TrimmedNonEmptyStringSchema),
   /**
    * Remotes to ask between before pushing a branch without an upstream: present only when
    * there are several, none is `origin`, and `remote.pushDefault` names none of them.
