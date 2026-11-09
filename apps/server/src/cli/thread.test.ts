@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
@@ -20,7 +21,9 @@ import {
   persistServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
+  makeThreadTools,
   readLatestMessages,
+  ThreadToolFailedError,
   threadCommand,
   type ThreadTools,
   titleFromMessage,
@@ -201,17 +204,50 @@ it.effect("--wait reports its run's result when a later run is the one waiting",
   }),
 );
 
-/** Serves t3_thread_read pages the way the server does: positions count every item. */
-const timelineTools = (types: ReadonlyArray<string>) => {
+/**
+ * Serves t3_thread_read pages the way the server does: positions count every
+ * item. A legacy server's strict schema rejects `beforePosition`.
+ */
+const timelineTools = (types: ReadonlyArray<string>, server: "current" | "legacy" = "current") => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
+  const isMatch = (item: (typeof items)[number]) =>
+    ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
-    const args = input as { readonly afterPosition?: number; readonly limit: number };
+    const args = input as {
+      readonly afterPosition?: number;
+      readonly beforePosition?: number;
+      readonly limit: number;
+    };
+    if (args.beforePosition !== undefined) {
+      if (server === "legacy") {
+        return Effect.fail(
+          new ThreadToolFailedError({
+            tool: "t3_thread_read",
+            detail: "Unknown key beforePosition",
+          }),
+        );
+      }
+      const newestFirst: typeof items = [];
+      const end = Math.min(args.beforePosition, items.length);
+      for (let position = end - 1; position >= 0 && newestFirst.length <= args.limit; position--) {
+        if (isMatch(items[position]!)) newestFirst.push(items[position]!);
+      }
+      const page = newestFirst.slice(0, args.limit).reverse();
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: page.at(-1)?.position ?? null,
+        hasMore: false,
+        previousPosition: newestFirst.length > page.length ? page[0]!.position : null,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
     for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
       const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
+      if (isMatch(item)) {
         matching.push(item);
         if (matching.length > args.limit) break;
       }
@@ -234,57 +270,116 @@ const timelineTools = (types: ReadonlyArray<string>) => {
 };
 
 const tail = (tools: number) => [...Array<string>(tools).fill("tool_call"), "assistant_message"];
+const SERVERS = ["current", "legacy"] as const;
 
-it.effect("show reads the end of a long thread, not its whole history", () =>
+it.effect.each(SERVERS)(
+  "show reads the end of a long thread, not its whole history (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, served, latest } = timelineTools(
+        [
+          ...Array.from({ length: 1000 }, (_, index) =>
+            index % 2 === 0 ? "user_message" : "assistant_message",
+          ),
+          ...Array.from({ length: 10 }, () => tail(30)).flat(),
+          "proposed_plan",
+        ],
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 10);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(10),
+      );
+      assert.isBelow(
+        served.reduce((sum, count) => sum + count, 0),
+        100,
+      );
+      // Each call builds the whole thread's index on the server, so calls are the cost.
+      if (server === "current") assert.lengthOf(served, 2);
+    }),
+);
+
+it.effect.each(SERVERS)(
+  "show widens back to the first item when the thread has fewer messages (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, latest } = timelineTools(
+        ["user_message", ...Array.from({ length: 4 }, () => tail(150)).flat()],
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 10);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(10),
+      );
+      assert.lengthOf(messages, 5);
+    }),
+);
+
+it.effect.each(SERVERS)(
+  "show returns a --messages count larger than one call can spread (%s)",
+  (server) =>
+    Effect.gen(function* () {
+      const { tools, latest } = timelineTools(
+        Array<string>(200_000).fill("assistant_message"),
+        server,
+      );
+
+      const { messages } = yield* readLatestMessages(tools, threadId, 200_000);
+
+      assert.deepStrictEqual(
+        messages.map((item) => item.itemId),
+        latest(200_000),
+      );
+    }),
+);
+
+it.effect("show stops when a server's previousPosition does not move back", () =>
   Effect.gen(function* () {
-    const { tools, served, latest } = timelineTools([
-      ...Array.from({ length: 1000 }, (_, index) =>
-        index % 2 === 0 ? "user_message" : "assistant_message",
-      ),
-      ...Array.from({ length: 10 }, () => tail(30)).flat(),
-      "proposed_plan",
-    ]);
+    const page = {
+      thread: { itemCount: 10 },
+      items: [{ position: 5, itemId: "item-5", type: "assistant_message" }],
+      nextPosition: 5,
+      hasMore: false,
+      previousPosition: 5,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page, page] });
 
     const { messages } = yield* readLatestMessages(tools, threadId, 10);
 
+    assert.lengthOf(calls, 2);
     assert.deepStrictEqual(
       messages.map((item) => item.itemId),
-      latest(10),
-    );
-    assert.isBelow(
-      served.reduce((sum, count) => sum + count, 0),
-      100,
+      ["item-5"],
     );
   }),
 );
 
-it.effect("show widens back to the first item when the thread has fewer messages", () =>
+it.effect("a server's rejected arguments are a tool failure, so show can fall back", () =>
   Effect.gen(function* () {
-    const { tools, latest } = timelineTools([
-      "user_message",
-      ...Array.from({ length: 4 }, () => tail(150)).flat(),
-    ]);
+    const failWith = (code: number | undefined) =>
+      makeThreadTools(
+        {
+          call: () =>
+            Effect.fail(
+              new McpBridge.AcpMcpBridgeError({
+                message: "T3 Code MCP tools/call failed",
+                ...(code === undefined ? {} : { code }),
+              }),
+            ),
+        },
+        "http://127.0.0.1:3773",
+      )
+        .call("t3_thread_read", { threadId, beforePosition: 1 }, Schema.Unknown)
+        .pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "succeeded" }));
 
-    const { messages } = yield* readLatestMessages(tools, threadId, 10);
-
-    assert.deepStrictEqual(
-      messages.map((item) => item.itemId),
-      latest(10),
-    );
-    assert.lengthOf(messages, 5);
-  }),
-);
-
-it.effect("show returns a --messages count larger than one call can spread", () =>
-  Effect.gen(function* () {
-    const { tools, latest } = timelineTools(Array<string>(200_000).fill("assistant_message"));
-
-    const { messages } = yield* readLatestMessages(tools, threadId, 200_000);
-
-    assert.deepStrictEqual(
-      messages.map((item) => item.itemId),
-      latest(200_000),
-    );
+    assert.strictEqual(yield* failWith(McpBridge.JSON_RPC_INVALID_PARAMS), "ThreadToolFailedError");
+    assert.strictEqual(yield* failWith(undefined), "ThreadServerUnreachableError");
   }),
 );
 

@@ -402,6 +402,8 @@ const boxToolkitLayer = (thread: BoxThread) => {
             options.itemId === undefined &&
             matching.length > 0 &&
             visible.some((entry) => entry.position > matching.at(-1)!.position),
+          hasEarlier:
+            matching.length > 0 && visible.some((entry) => entry.position < matching[0]!.position),
         };
       }),
     interruptThread: (input) =>
