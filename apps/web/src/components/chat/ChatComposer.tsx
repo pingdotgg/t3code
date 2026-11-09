@@ -2974,8 +2974,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return true;
       },
       citeAssistantText: (citation, sourceAnchor) =>
-        // Literal answers can't host a comment editor; let typed input fall back to the composer.
-        !(isLiteralPendingAnswer && sourceAnchor.commentInput) &&
         insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
           "cursor",

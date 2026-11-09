@@ -187,9 +187,9 @@ export function AssistantSelectionToolbar({
     actionsRef.current?.cancel();
     setSelection(null);
   };
-  const cite = (comment?: string, accept?: (anchor: AssistantCitationSourceAnchor) => void) => {
+  const cite = (comment?: string) => {
     if (!selection || !parseAssistantCitationHref(formatAssistantCitationHref(selection.citation)))
-      return false;
+      return null;
     const anchor = {
       ...selection.sourceAnchor,
       ...(comment === undefined
@@ -199,19 +199,12 @@ export function AssistantSelectionToolbar({
             commentInput: createCitationCommentInput(comment),
           }),
     };
-    if (tooLong || !onCite(selection.citation, anchor)) return false;
-    accept?.(anchor);
+    if (tooLong || !onCite(selection.citation, anchor)) return null;
     window.getSelection()?.removeAllRanges();
     dismiss();
-    return true;
-  };
-  const typeToCite = useEffectEvent((text: string) => {
-    let anchor: AssistantCitationSourceAnchor | null = null;
-    cite(text, (accepted) => {
-      anchor = accepted;
-    });
     return anchor;
-  });
+  };
+  const typeToCite = useEffectEvent((text: string) => cite(text));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the foreground toolbar with the window input router
   useEffect(() => {
     if (backgroundThread) return;

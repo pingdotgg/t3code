@@ -31,20 +31,27 @@ const citation = {
 };
 const promptBefore = `See ${serializeAssistantCitation(citation)} `;
 
-it("falls back to composer text when a code block cannot contain a citation", async () => {
-  const editorRef = createRef<ComposerPromptEditorHandle>();
-  const code = "```\ncode\n```";
-  await using screen = await render(
-    <Composer question={false} editorRef={editorRef} initialPrompt={code} />,
-  );
-  await act(async () => editorRef.current?.focusAt(0));
-  expect(editorRef.current?.canInsertCitation()).toBe(false);
-  await userEvent.keyboard("x");
-  await expect
-    .element(screen.container.querySelector<HTMLElement>("pre code"))
-    .toHaveTextContent("xcode");
-  expect(screen.container.querySelector("output")?.dataset.prompt).toBe("```\nxcode\n```");
-});
+it.each(["code block", "literal answer"])(
+  "falls back to composer text when a %s cannot contain a citation",
+  async (mode) => {
+    const editorRef = createRef<ComposerPromptEditorHandle>();
+    const code = "```\ncode\n```";
+    const question = mode === "literal answer";
+    await using screen = await render(
+      <Composer
+        question={question}
+        literalText={question}
+        editorRef={editorRef}
+        initialPrompt={code}
+      />,
+    );
+    await act(async () => editorRef.current?.focusAt(0));
+    expect(editorRef.current?.canInsertCitation()).toBe(false);
+    await userEvent.keyboard("x");
+    const drafts = screen.container.querySelector("output")?.dataset;
+    expect(question ? drafts?.answer : drafts?.prompt).toBe(question ? "x" : "```\nxcode\n```");
+  },
+);
 
 it.each(["remove", "unmount"])(
   "releases pending citation input before subscription on %s",
@@ -74,9 +81,11 @@ function Composer({
   question,
   editorRef,
   initialPrompt = promptBefore,
+  literalText = false,
 }: {
   question: boolean;
   initialPrompt?: string;
+  literalText?: boolean;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }) {
   const [prompt, setPrompt] = useState(initialPrompt);
@@ -98,6 +107,7 @@ function Composer({
         value={question ? answer : prompt}
         cursor={0}
         richTextEnabled
+        literalText={literalText}
         contextRecords={new Map()}
         skills={[]}
         disabled={false}
