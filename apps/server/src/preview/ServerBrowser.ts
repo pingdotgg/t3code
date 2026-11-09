@@ -30,6 +30,7 @@ import {
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
+  type PreviewAutomationSnapshotInput,
   type PreviewAutomationStatus,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
@@ -501,6 +502,7 @@ const make = Effect.gen(function* () {
 
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
+    idleBrowserMs: 5 * 60_000,
     executable: () => runPromise(previewBrowser.executable),
     // An agent scope keeps Chrome out of the server's memory protection and OOM score.
     launcher: async (executable) => {
@@ -2240,6 +2242,7 @@ const make = Effect.gen(function* () {
           ServerBrowserPage.snapshot({
             ...tab,
             renderScale: tab.desktop ? "display" : RENDER_SCALE,
+            fullScreenshot: (input as PreviewAutomationSnapshotInput | undefined)?.fullScreenshot,
           }),
         );
       }
