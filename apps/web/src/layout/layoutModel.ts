@@ -1603,11 +1603,9 @@ function keepLayoutFocus(before: LayoutState, after: LayoutState): LayoutState {
   const restored = mapWorkspaces(after, (workspace) => {
     const previous = before.workspaces.find((candidate) => candidate.id === workspace.id);
     if (!previous || previous.focusedPaneId === workspace.focusedPaneId) return workspace;
-    const exists =
-      previous.focusedPaneId === null ||
-      workspace.columns.some((column) =>
-        column.panes.some((pane) => pane.id === previous.focusedPaneId),
-      );
+    const exists = workspace.columns.some((column) =>
+      column.panes.some((pane) => pane.id === previous.focusedPaneId),
+    );
     return exists ? { ...workspace, focusedPaneId: previous.focusedPaneId } : workspace;
   });
   const focusedWorkspaceId = restored.workspaces.some(
