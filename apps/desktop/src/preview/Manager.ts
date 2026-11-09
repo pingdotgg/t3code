@@ -485,6 +485,10 @@ const isPreviewRefreshShortcut = (input: Electron.Input, platform: NodeJS.Platfo
   !input.shift &&
   !input.alt;
 
+// Every guest of a focused window reports focus; GuestInput handles guests without a focused frame.
+export const holdsKeyboardFocus = (contents: Electron.WebContents): boolean =>
+  contents.isFocused() && contents.focusedFrame !== null;
+
 export const isPreviewEditingShortcut = (
   input: Electron.Input,
   platform: NodeJS.Platform,
@@ -1441,9 +1445,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
-    // Every guest of a focused window reports focus; GuestInput handles guests without a focused frame.
-    const holdsKeyboardFocus = (contents: Electron.WebContents) =>
-      contents.isFocused() && contents.focusedFrame !== null;
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
       contents.setIgnoreMenuShortcuts(

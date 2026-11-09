@@ -707,7 +707,15 @@ export const make = Effect.gen(function* () {
     if (environment.platform === "darwin") {
       // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
       window.on("swipe", (_event, direction) => {
-        const history = window.webContents.navigationHistory;
+        const focusedGuest = Electron.webContents
+          .getAllWebContents()
+          .find(
+            (contents) =>
+              contents.hostWebContents === window.webContents &&
+              !contents.isDestroyed() &&
+              PreviewManager.holdsKeyboardFocus(contents),
+          );
+        const history = (focusedGuest ?? window.webContents).navigationHistory;
         if (direction === "left" && history.canGoBack()) history.goBack();
         else if (direction === "right" && history.canGoForward()) history.goForward();
       });
