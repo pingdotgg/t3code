@@ -1,4 +1,4 @@
-import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { openSideChatTab } from "../../lib/sideChatPane";
 import { runInNewLayoutTab } from "../../layout/layoutStore";
 import { useAtomValue } from "@effect/atom-react";
@@ -17,7 +17,7 @@ import {
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveProviderSubagentStatus,
-  REASONING_EFFORT_OPTION_IDS,
+  formatSubagentEffort,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
   deriveThreadRelationshipGraph,
@@ -79,6 +79,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
+  type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -92,6 +93,7 @@ import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/men
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
+import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS,
@@ -725,6 +727,13 @@ function useThreadLineage(props: {
   };
 }
 
+function lineageModelLabel(model: string, providerEntry: ProviderInstanceEntry | undefined) {
+  const selectedModel = providerEntry?.models.find((entry) => entry.slug === model);
+  return selectedModel
+    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
+    : formatModelSlugName(model);
+}
+
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -884,11 +893,13 @@ export function ThreadRelationshipsPanel(props: {
     );
     const relationshipSelection = node?.thread?.modelSelection ?? agent?.modelSelection;
     const relationshipModel = relationshipSelection?.model ?? agent?.model;
-    const relationshipEffort = relationshipSelection
-      ? REASONING_EFFORT_OPTION_IDS.map((id) =>
-          getModelSelectionStringOptionValue(relationshipSelection, id),
-        ).find(Boolean)
-      : undefined;
+    const relationshipEffort = relationshipModel
+      ? formatSubagentEffort({
+          modelSlug: relationshipModel,
+          modelSelection: relationshipSelection,
+          provider,
+        })
+      : null;
     const relationshipContent = (
       <>
         {providerDriver ? (
@@ -924,11 +935,11 @@ export function ThreadRelationshipsPanel(props: {
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
             {childAgent ? null : <span className="shrink-0">{relationship}</span>}
             {relationshipModel ? (
-              <span className="min-w-0 truncate font-mono">{relationshipModel}</span>
+              <span className="min-w-0 truncate">
+                {lineageModelLabel(relationshipModel, providerEntry)}
+              </span>
             ) : null}
-            {relationshipEffort ? (
-              <span className="shrink-0 font-mono">{relationshipEffort}</span>
-            ) : null}
+            {relationshipEffort ? <span className="shrink-0">{relationshipEffort}</span> : null}
             {childAgent && !failed ? (
               <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
                 {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
