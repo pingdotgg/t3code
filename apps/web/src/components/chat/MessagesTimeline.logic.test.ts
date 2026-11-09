@@ -20,7 +20,7 @@ import {
 } from "../../session-logic";
 import { makeStreamingTimelineFixture } from "../../test-fixtures";
 import type { TurnDiffSummary } from "../../types";
-import { answeredCardIds, cardAnswerMessage } from "@t3tools/shared/quizCard";
+import { answeredCardAnswers, cardAnswerMessage } from "@t3tools/shared/quizCard";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, MessageId, RunId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
@@ -4766,7 +4766,7 @@ it("marks only the quiz card an answer names as answered", () => {
   };
   const rows = deriveMessagesTimelineRows({
     timelineEntries: [quiz("quiz-1"), quiz("quiz-2"), quiz("quiz-3"), user],
-    answeredCardIds: answeredCardIds([{ role: "user", text: answer }]),
+    answeredCardAnswers: answeredCardAnswers([{ role: "user", text: answer }]),
     isWorking: false,
     turnDiffSummaries: [],
     supportsConversationRollback: false,

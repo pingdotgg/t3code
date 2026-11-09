@@ -41,7 +41,12 @@ import {
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
-import { answeredCardIds as readAnsweredCardIds } from "@t3tools/shared/quizCard";
+import {
+  answeredCardAnswers as readAnsweredCardAnswers,
+  parseCardAnswer,
+} from "@t3tools/shared/quizCard";
+import type { QuestionCard } from "@t3tools/shared/quizCard";
+import { numberAnswerExpected } from "@t3tools/shared/quizCard";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import type { WorkflowOpening } from "@t3tools/client-runtime/state/subagentRuntime";
@@ -1655,6 +1660,44 @@ function RunFoldButton({
   );
 }
 
+function AnsweredQuestionCard(props: {
+  readonly card: QuestionCard;
+  readonly answered: boolean;
+  readonly answer?: string;
+}) {
+  const parsed = props.answer === undefined ? undefined : parseCardAnswer(props.answer);
+  const answer =
+    parsed?.kind === "blanks" && props.card.blanks?.length !== parsed.answers.length
+      ? undefined
+      : parsed;
+  return (
+    <View className="mb-3 rounded-2xl border border-border bg-card p-4">
+      <Text className="font-t3-medium text-base">{props.card.question}</Text>
+      {answer?.kind === "skipped" ? (
+        <Text className="mt-2 text-sm text-foreground-muted">I don't know.</Text>
+      ) : answer?.kind === "number" ? (
+        <Text
+          className={cn("mt-2 text-sm", answer.grade === "right" ? "text-success" : "text-danger")}
+        >
+          Your answer: {answer.answer}. {answer.grade === "right" ? "Right." : "Wrong."} Expected{" "}
+          {props.card.number ? numberAnswerExpected(props.card.number) : ""}
+        </Text>
+      ) : answer?.kind === "blanks" ? (
+        answer.answers.map((entry, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- blanks are ordered answers
+          <Text key={index} className={entry.grade === "right" ? "text-success" : "text-danger"}>
+            Blank {index + 1}: {entry.answer}. {entry.grade === "right" ? "Right." : "Wrong."}
+          </Text>
+        ))
+      ) : (
+        <Text className="mt-2 text-sm text-foreground-muted">
+          {props.answered ? "Answered." : "Answer in the chat"}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 function renderFeedEntry(
   info: { item: ThreadFeedRow; index: number },
   props: Pick<
@@ -1667,7 +1710,7 @@ function renderFeedEntry(
     | "threadId"
     | "workspaceRoot"
   > & {
-    readonly answeredCardIds: ReadonlySet<string>;
+    readonly answeredCardAnswers: ReadonlyMap<string, string>;
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
@@ -1815,15 +1858,17 @@ function renderFeedEntry(
           <QuizCard
             quizCard={entry.quizCard}
             seed={entry.id}
-            answered={props.answeredCardIds.has(entry.id)}
+            answered={props.answeredCardAnswers.has(entry.id)}
+            answer={props.answeredCardAnswers.get(entry.id)}
             environmentId={props.environmentId}
             threadId={props.threadId}
           />
         ) : (
-          <View className="mb-3 rounded-2xl border border-border bg-card p-4">
-            <Text className="font-t3-medium text-base">{entry.quizCard.question}</Text>
-            <Text className="mt-2 text-sm text-foreground-muted">Answer in the chat</Text>
-          </View>
+          <AnsweredQuestionCard
+            card={entry.quizCard}
+            answered={props.answeredCardAnswers.has(entry.id)}
+            answer={props.answeredCardAnswers.get(entry.id)}
+          />
         )}
       </>
     );
@@ -3378,7 +3423,7 @@ export const ThreadFeed = memo(function ThreadFeed({
     guestShare,
   );
   // Queued answers are in the projection but not yet in the feed.
-  const answeredCardIds = readAnsweredCardIds(
+  const answeredCardAnswers = readAnsweredCardAnswers(
     threadProjection?.messages ??
       presentedFeed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
   );
@@ -3819,7 +3864,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
-            answeredCardIds,
+            answeredCardAnswers,
             onUseArtifactTemplate: props.onUseArtifactTemplate,
             threadId: props.threadId,
             copiedRowId,
