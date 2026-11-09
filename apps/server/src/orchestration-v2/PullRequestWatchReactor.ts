@@ -504,10 +504,13 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
     // Activity failures must not cancel or hide a permanent detail failure.
+    // A merged or closed detail is terminal, so a failed activity read cannot hide it.
     const read = Exit.isFailure(detailRead)
       ? Exit.failCause(detailRead.cause)
       : Exit.isFailure(activityRead)
-        ? Exit.failCause(activityRead.cause)
+        ? detailRead.value.state !== "open" && !Cause.hasInterruptsOnly(activityRead.cause)
+          ? Exit.succeed([detailRead.value, Option.none<PullRequestActivity>()] as const)
+          : Exit.failCause(activityRead.cause)
         : Exit.succeed([detailRead.value, activityRead.value] as const);
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);

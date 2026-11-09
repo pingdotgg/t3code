@@ -4419,6 +4419,98 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "wakes the watching thread when its pull request merges even if the activity read fails",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make("runtime-pull-request-watch-merge-activity-fails");
+        const projectId = ProjectId.make("pr-watch-merge-activity-fails-project");
+        yield* seedProject({
+          projectId,
+          title: "Watch merge activity fails",
+          workspaceRoot: "/workspace/watch",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("pr-watch-merge-activity-fails-create"),
+          threadId,
+          projectId,
+          title: "Watch merge activity fails",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 18 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make("pr-watch-merge-activity-fails-link"),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/18",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make("pr-watch-merge-activity-fails-start"),
+          threadId,
+          ...key,
+          watching: true,
+        });
+
+        const at = "2026-10-02T12:00:00.000Z";
+        const detail = {
+          ...watchedPullRequestDetail({ projectId, number: key.number, at }),
+          state: "merged" as const,
+          mergedAt: at,
+        };
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              NodeCrypto.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                detail: () => Effect.succeed(detail),
+                activity: () =>
+                  Effect.fail(
+                    new PullRequestOperationError({
+                      operation: "activity",
+                      detail: "host read failed",
+                      cause: new PullRequestProviderError({
+                        provider: SourceControlProviderKind.make("github"),
+                        operation: "activity",
+                        reason: "failed",
+                        detail: "host read failed",
+                      }),
+                    }),
+                  ),
+              }),
+            ),
+          ),
+        );
+        yield* reactor.sweep;
+        yield* reactor.sweep;
+
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages.flatMap((message) =>
+            message.notification === undefined ? [] : [message.notification.summary],
+          ),
+          ["#18: merged, stopped watching"],
+        );
+        assert.include(messages.at(-1)?.text ?? "", "was merged");
+        assert.isUndefined(
+          (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch,
+        );
+      }),
+  );
+
   it.effect("reads each watched PR as soon as its own fingerprint lands", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
