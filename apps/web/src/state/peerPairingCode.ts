@@ -1,4 +1,5 @@
 import {
+  createConnectMcpApprovalCodeCommand,
   createMcpApprovalCodeCommand,
   createPeerPairingCodeCommand,
 } from "@t3tools/client-runtime/state/peerPairingCode";
@@ -15,6 +16,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const mintPairingCode = createPeerPairingCodeCommand(connectionAtomRuntime);
 const mintMcpApprovalCode = createMcpApprovalCodeCommand(connectionAtomRuntime);
+const connectMcpApprovalCodeCommand = createConnectMcpApprovalCodeCommand(connectionAtomRuntime);
 
 /**
  * A fresh pairing code minted on `environmentId` with this client's session
@@ -37,6 +39,21 @@ export async function mintMcpApprovalCodeOn(
   access: AuthMcpClientAccess,
 ): Promise<Result.Result<AuthPairingCredentialResult, unknown>> {
   const result = await mintMcpApprovalCode.run(appAtomRegistry, { environmentId, input: access });
+  return result._tag === "Success"
+    ? Result.succeed(result.value)
+    : Result.fail(squashAtomCommandFailure(result));
+}
+
+/**
+ * A fresh app approval code on an environment this T3 Connect account owns, for the sign-in
+ * page at `pageOrigin`; fails with `ConnectApprovalCodeError` when that is not its relay address.
+ */
+export async function mintConnectMcpApprovalCode(input: {
+  readonly environmentId: EnvironmentId;
+  readonly pageOrigin: string;
+  readonly access: AuthMcpClientAccess;
+}): Promise<Result.Result<string, unknown>> {
+  const result = await connectMcpApprovalCodeCommand.run(appAtomRegistry, input);
   return result._tag === "Success"
     ? Result.succeed(result.value)
     : Result.fail(squashAtomCommandFailure(result));

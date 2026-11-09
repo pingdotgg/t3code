@@ -4,6 +4,7 @@ import {
   AuthMcpClientAccess,
   AuthStandardClientScopes,
   type AuthCreatePairingCredentialInput,
+  type EnvironmentCloudLinkStateResult,
   EnvironmentHttpApi,
   MCP_PEER_LINK_SOFTWARE_ID,
   mcpClientScopes,
@@ -21,6 +22,7 @@ import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Schema from "effect/Schema";
 
+import * as CloudLink from "../cloud/CloudLink.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -44,7 +46,17 @@ const layerEnvironmentAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerEnvironment.layerIdentity),
   Layer.provide(layerConfig),
 );
-const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void) =>
+const notLinked: EnvironmentCloudLinkStateResult = {
+  linked: false,
+  cloudUserId: null,
+  relayUrl: null,
+  relayIssuer: null,
+  publishAgentActivity: false,
+};
+const makeLayerRoutes = (
+  capture: (auth: EnvironmentAuth.EnvironmentAuth["Service"]) => void,
+  linkState: EnvironmentCloudLinkStateResult,
+) =>
   Layer.mergeAll(
     Layer.effectDiscard(
       EnvironmentAuth.EnvironmentAuth.pipe(Effect.tap((auth) => Effect.sync(() => capture(auth)))),
@@ -55,6 +67,9 @@ const makeLayerRoutes = (capture: (auth: EnvironmentAuth.EnvironmentAuth["Servic
         McpOAuthHttp.layer.pipe(
           Layer.provide(McpOAuth.layer),
           Layer.provide(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+          Layer.provide(
+            Layer.mock(CloudLink.CloudLink)({ linkState: () => Effect.succeed(linkState) }),
+          ),
         ),
       ),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
@@ -92,6 +107,7 @@ type Handler = (request: Request) => Effect.Effect<Response>;
 
 const withRoutes = <A, E>(
   use: (handler: Handler, auth: EnvironmentAuth.EnvironmentAuth["Service"]) => Effect.Effect<A, E>,
+  linkState = notLinked,
 ) =>
   Effect.gen(function* () {
     const random = yield* SecureRandom.SecureRandom;
@@ -99,7 +115,7 @@ const withRoutes = <A, E>(
     let routerAuth: EnvironmentAuth.EnvironmentAuth["Service"] | undefined;
     const layerRoutes = makeLayerRoutes((auth) => {
       routerAuth = auth;
-    });
+    }, linkState);
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (web) =>
@@ -592,6 +608,28 @@ it.live("an app approval code approves only an app sign-in, at its own level", (
       ).toBe(400);
     }),
   ),
+);
+
+it.live("offers T3 Connect approval only on the linked tunnel's own host", () =>
+  Effect.gen(function* () {
+    const connectSignIn = (tunnelHostname: string) =>
+      withRoutes(
+        (handler) =>
+          Effect.gen(function* () {
+            const params = authorizeParams(yield* registeredClientId(handler));
+            const details = yield* handler(postJson("/oauth/mcp/approval", params)).pipe(
+              Effect.flatMap(json<{ connectSignIn?: unknown }>),
+            );
+            return details.connectSignIn;
+          }),
+        { ...notLinked, linked: true, cloudUserId: "user_1", tunnelHostname },
+      );
+    expect(yield* connectSignIn("box.example.ts.net")).toEqual({
+      environmentId: expect.any(String),
+      hostedAppUrl: "https://app.t3.codes",
+    });
+    expect(yield* connectSignIn("other.t3coderelay.com")).toBeUndefined();
+  }),
 );
 
 it.live("one-click approves only access the browser session holds the scopes for", () =>
