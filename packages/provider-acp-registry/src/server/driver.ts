@@ -62,6 +62,13 @@ const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
+// Cache reuse needs comparable agent identity: a fresh probe can only vouch for
+// a cached entry with a matching known version, or a versionless entry of its
+// own kind — otherwise a swapped local binary would keep serving stale metadata.
+export const canReuseAcpEnrichmentCache = (
+  probedVersion: string | null,
+  cachedVersion: string | null,
+): boolean => (probedVersion === null ? cachedVersion === null : cachedVersion === probedVersion);
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -621,10 +628,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (
         cached !== null &&
         cached.expiresAt > now &&
-        // A local executable or command override has no inspected version, and
-        // the cached snapshot carries the probed agent version; only a known
-        // inspection version can invalidate the entry.
-        (baseSnapshot.version === null || cached.provider.version === baseSnapshot.version)
+        canReuseAcpEnrichmentCache(baseSnapshot.version, cached.provider.version)
       ) {
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
