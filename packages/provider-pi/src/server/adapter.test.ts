@@ -3566,6 +3566,21 @@ describe("PiAdapterV2", () => {
         [["scout", "completed"]],
       );
       assert.deepEqual(work, []);
+      const afterTerminal = yield* subagentRowsBefore(fake, collectEvent, "terminal-admission", [
+        asyncStatusWidget(0, [
+          {
+            id: "early",
+            kind: "workflow",
+            state: "running",
+            children: [
+              { id: "a", kind: "step", state: "running", agent: "scout" },
+              { id: "b", kind: "step", state: "running", agent: "reviewer" },
+            ],
+          },
+        ]),
+      ]);
+      assert.deepEqual(afterTerminal, []);
+      assert.deepEqual(work, []);
       const live = yield* subagentRowsBefore(fake, collectEvent, "dispatch", [
         launch("dispatch"),
         notice("dispatch", [
@@ -3719,10 +3734,11 @@ describe("PiAdapterV2", () => {
           launch(id),
           asyncStatusWidget(10 + index * 10, [node("running", "running", "running")]),
           asyncStatusWidget(11 + index * 10, [node("running", "paused", "running")]),
+          asyncStatusWidget(11 + index * 10, [node("running", "paused", "paused")]),
         ]);
         assert.deepEqual(
           members.map(({ status }) => status),
-          ["running", "running", "idle"],
+          ["running", "running", "idle", "idle"],
         );
         assert.deepEqual(work.slice(before), [true]);
         const paused = yield* subagentRowsBefore(fake, collectEvent, `${id}-root`, [
@@ -3730,7 +3746,7 @@ describe("PiAdapterV2", () => {
             ? piCustomMessage("subagent-notify", {
                 runs: [{ workflowRunId: id, status: "paused" }],
               })
-            : asyncStatusWidget(12 + index * 10, [node("paused", "paused", "running")]),
+            : asyncStatusWidget(12 + index * 10, [node("paused", "paused", "paused")]),
         ]);
         assert.deepEqual(paused, []);
         assert.deepEqual(work.slice(before), [true, false]);
@@ -3739,6 +3755,50 @@ describe("PiAdapterV2", () => {
         ]);
         assert.deepEqual(stale, []);
         assert.deepEqual(work.slice(before), [true, false]);
+        const otherId = `${id}-other`;
+        yield* subagentRowsBefore(fake, collectEvent, `${id}-other-launch`, [
+          launch(otherId),
+          asyncStatusWidget(14 + index * 10, [
+            {
+              id: otherId,
+              kind: "workflow",
+              state: "running",
+              children: [{ id: "c", kind: "step", state: "running" }],
+            },
+          ]),
+        ]);
+        const stopped = yield* subagentRowsBefore(fake, collectEvent, `${id}-stop`, [
+          source === "notice"
+            ? piCustomMessage("subagent-notify", {
+                runs: [{ workflowRunId: id, status: "stopped" }],
+              })
+            : asyncStatusWidget(15 + index * 10, [node("stopped", "stopped", "stopped")]),
+          asyncStatusWidget(16 + index * 10, [node("running", "running", "running")]),
+        ]);
+        assert.deepEqual(
+          stopped.map(({ nativeId, runId, status }) => [nativeId, runId, status]),
+          [
+            [`${id}:subagent:a`, RunId.make(`run:${THREAD_ID}:1`), "interrupted"],
+            [`${id}:subagent:b`, RunId.make(`run:${THREAD_ID}:1`), "interrupted"],
+          ],
+        );
+        assert.deepEqual(work.slice(before), [true, false, true]);
+        const otherDone = yield* subagentRowsBefore(fake, collectEvent, `${id}-other-done`, [
+          piCustomMessage("subagent-notify", {
+            runs: [
+              {
+                workflowRunId: otherId,
+                status: "completed",
+                childRuns: [{ workflowKey: "c", status: "completed" }],
+              },
+            ],
+          }),
+        ]);
+        assert.deepEqual(
+          otherDone.map(({ status }) => status),
+          ["completed"],
+        );
+        assert.deepEqual(work.slice(before), [true, false, true, false]);
       }
       yield* fake.emit({ type: "agent_settled" });
       yield* collectEvent((event) => event.type === "turn.terminal");
@@ -3760,7 +3820,21 @@ describe("PiAdapterV2", () => {
         resumed.map(({ nativeId, runId, status }) => [nativeId, runId, status]),
         [["replacement:subagent:a", RunId.make(`run:${THREAD_ID}:2`), "running"]],
       );
-      assert.deepEqual(work, [true, false, true, false, true, false, true, false, true]);
+      assert.deepEqual(work, [
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+        false,
+        true,
+      ]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

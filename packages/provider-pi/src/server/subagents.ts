@@ -46,8 +46,16 @@ interface BackgroundRun<Owner> {
   childStates: ReadonlyMap<string, PiSubagentStatus | undefined>;
 }
 
-const reconcileStatus = (previous: PiSubagentStatus, next: PiSubagentStatus | undefined) =>
-  isPiSubagentSettled(previous) ? previous : (next ?? previous);
+// Paused roots resume under a new async ID, but the old ID can still receive a terminal outcome.
+const reconcileStatus = (
+  previous: PiSubagentStatus,
+  next: PiSubagentStatus | undefined,
+  rootStatus?: PiSubagentStatus,
+) =>
+  isPiSubagentSettled(previous) ||
+  (rootStatus === "idle" && (next === undefined || !isPiSubagentSettled(next)))
+    ? previous
+    : (next ?? previous);
 
 const ASYNC_WIDGET_KEY = "subagent-async";
 const ASYNC_WIDGET_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
@@ -178,14 +186,20 @@ export function makePiSubagentLifecycle<Owner>() {
     fields: { readonly title?: string | undefined; readonly model?: string | undefined },
   ): PiSubagentMember<Owner> | undefined => {
     const previous = run.members.get(key);
+    const retainedStatus = run.childStates.get(key);
+    if (
+      previous === undefined &&
+      (run.status === "idle" || isPiSubagentSettled(run.status)) &&
+      status !== undefined &&
+      !isPiSubagentSettled(status) &&
+      (run.status === "idle" || retainedStatus === undefined || isPiSubagentSettled(retainedStatus))
+    ) {
+      return undefined;
+    }
 
     const title = fields.title ?? previous?.title;
     const nextStatus =
-      run.status === "idle"
-        ? previous?.status
-        : previous === undefined
-          ? status
-          : reconcileStatus(previous.status, status);
+      previous === undefined ? status : reconcileStatus(previous.status, status, run.status);
     if (title === undefined || nextStatus === undefined) return undefined;
     const next: PiSubagentMember<Owner> = {
       owner: run.owner,
@@ -213,8 +227,6 @@ export function makePiSubagentLifecycle<Owner>() {
     run: BackgroundRun<Owner>,
     node: AsyncStatusSnapshot["runs"][number],
   ): Array<PiSubagentMember<Owner>> => {
-    // A paused root ends this async generation; upstream resume launches a new async ID.
-    if (run.status === "idle") return [];
     const terminalRoot = isPiSubagentSettled(run.status);
     const steps = (node.children ?? []).filter((child) => child.kind === "step");
     const changed =
@@ -236,7 +248,7 @@ export function makePiSubagentLifecycle<Owner>() {
             });
             return changed === undefined ? [] : [changed];
           });
-    run.status = reconcileStatus(run.status, memberStatus(node.state));
+    run.status = reconcileStatus(run.status, memberStatus(node.state), run.status);
     // After a root outcome, widgets may settle evidenced live children but cannot add pending work.
     run.childStates = terminalRoot
       ? new Map(
@@ -299,13 +311,8 @@ export function makePiSubagentLifecycle<Owner>() {
         const member = updateMember(run, "0", runStatus, { title: notified.agent });
         if (member !== undefined) changed.push(member);
       }
-      if (run.status === "idle") return changed;
-      if (runStatus === "idle" && !isPiSubagentSettled(run.status)) {
-        run.status = runStatus;
-        return changed;
-      }
+      run.status = reconcileStatus(run.status, runStatus, run.status);
       if (runStatus !== undefined && isPiSubagentSettled(runStatus)) {
-        run.status = reconcileStatus(run.status, runStatus);
         // Unknown notice statuses supply no evidence that a child is still live.
         run.childStates =
           run.status === "completed"
