@@ -22,6 +22,9 @@ the previous one. On Windows and Linux, use `Ctrl+Alt+]` and `Ctrl+Alt+[`. Cycli
 through tabs and split panes in the focused drawer or right panel. Rebind these
 shortcuts in Settings > Keybindings.
 
+On iPhone and iPad, long-press the terminal to paste or to choose Select Text.
+Select Text shows the visible output, where you can copy text or tap a link.
+
 ## fish
 
 T3 Code starts fish with `no-query-term`, avoiding startup waits for terminal
