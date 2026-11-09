@@ -5,11 +5,19 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+type DirectoryInput = {
+  accessibilityLabel: string;
+  onChangeText?: (text: string) => void;
+  onFocus?: () => void;
+  onEndEditing: (event: { nativeEvent: { text: string } }) => void;
+};
+
 const { Children, mocks } = vi.hoisted(() => ({
   Children: ({ children }: { children?: ReactNode }) => children,
   mocks: {
     branchNaming: { onChange: (_patch: ServerSettingsPatch) => {} },
     updateSettings: vi.fn(),
+    inputs: new Map<string, DirectoryInput>(),
     alert: vi.fn(),
     targets: [] as ReturnType<typeof environment>[],
     readOnly: new Set<string>(),
@@ -69,7 +77,13 @@ vi.mock("../threads/thread-settings-options", () => ({
   withManagedRuntimeModeLimits: (choices: readonly unknown[]) => choices,
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
-vi.mock("../../components/ui/AppText", () => ({ AppText: Children, AppTextInput: () => null }));
+vi.mock("../../components/ui/AppText", () => ({
+  AppText: Children,
+  AppTextInput: (props: DirectoryInput) => {
+    mocks.inputs.set(props.accessibilityLabel, props);
+    return null;
+  },
+}));
 vi.mock("../../components/ui/Button", () => ({
   Button: ({
     label,
@@ -174,6 +188,7 @@ beforeEach(() => {
   mocks.targets = [environment("local", "Local")];
   mocks.projectSelected = false;
   mocks.readOnly = new Set();
+  mocks.inputs.clear();
   mocks.alert.mockReset();
   mocks.updateSettings.mockReset();
   mocks.updateSettings.mockResolvedValue(AsyncResult.success(undefined));
@@ -184,6 +199,29 @@ afterEach(() => {
 });
 
 describe("SettingsServerControlsRouteScreen", () => {
+  it("leaves mixed directories untouched on blur and saves an intentional empty edit", async () => {
+    const local = environment("local", "Local");
+    const remote = environment("remote", "Remote");
+    local.serverConfig.settings.projectSearchDirectories = ["/work"];
+    remote.serverConfig.settings.projectSearchDirectories = ["/other"];
+    mocks.targets = [local, remote];
+    act(() => root.render(<SettingsThreadsRouteScreen />));
+    const input = mocks.inputs.get("Project search folders")!;
+    act(() => input.onFocus?.());
+    await act(() => input.onEndEditing({ nativeEvent: { text: "" } }));
+    expect(mocks.updateSettings).not.toHaveBeenCalled();
+
+    act(() => {
+      input.onChangeText!("/temporary");
+      input.onChangeText!("");
+    });
+    await act(() => input.onEndEditing({ nativeEvent: { text: "" } }));
+    expect(mocks.updateSettings.mock.calls).toEqual([
+      [{ environmentId: "local", input: { patch: { projectSearchDirectories: [] } } }],
+      [{ environmentId: "remote", input: { patch: { projectSearchDirectories: [] } } }],
+    ]);
+  });
+
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();
     mocks.updateSettings.mockReturnValueOnce(pending.promise);

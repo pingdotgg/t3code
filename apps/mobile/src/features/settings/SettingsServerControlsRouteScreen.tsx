@@ -188,6 +188,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   );
   const [pendingWrites, setPendingWrites] = useState(0);
   const writeInFlight = useRef(false);
+  const editedDirectoryInputs = useRef(new Set<string>());
   // Closing views can save after controls disable; queue those patches behind the pending write.
   const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
   const targetsKey = targets
@@ -410,6 +411,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     : typeof saved === "string"
                       ? saved
                       : "";
+                  const inputKey = `${targetsKey}:${key}:${value}`;
                   const label =
                     key === "projectSearchDirectories"
                       ? "Project search folders"
@@ -423,7 +425,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                           : "Leave empty to start in your home folder."}
                       </Text>
                       <AppTextInput
-                        key={`${targetsKey}:${value}`}
+                        key={inputKey}
                         accessibilityLabel={label}
                         defaultValue={value}
                         placeholder={
@@ -437,7 +439,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         autoCapitalize="none"
                         autoCorrect={false}
                         className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
+                        onFocus={() => editedDirectoryInputs.current.delete(inputKey)}
+                        onChangeText={() => editedDirectoryInputs.current.add(inputKey)}
                         onEndEditing={(event) => {
+                          if (!editedDirectoryInputs.current.delete(inputKey)) return;
                           const text = event.nativeEvent.text.trim();
                           if (text === value && !isMixed(key)) return;
                           write(

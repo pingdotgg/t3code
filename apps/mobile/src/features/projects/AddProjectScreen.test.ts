@@ -726,9 +726,11 @@ describe("local folder path", () => {
     await using screen = mountLocalFolder();
     await screen.render("environment");
     await screen.type("project");
+    state.projects = [];
     state.dispatch.mockReset();
     await screen.submit();
     await screen.submitKeyboard();
+    expect(state.projects).toEqual([]);
     expect(state.dispatch).not.toHaveBeenCalled();
   });
 
