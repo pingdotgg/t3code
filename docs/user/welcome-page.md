@@ -22,28 +22,36 @@ unreadable settings with defaults.
 
 ## Agents
 
-T3 Code lists the agents it found on the computer first, ready ones on top. If
-Claude Code or Codex needs a sign-in or install, select its action to open a
-terminal with the correct command ready to run. Install uses the vendor's own
-installer, which keeps **Update now** working in Settings. Codex can also sign in
-with your ChatGPT account.
+T3 Code lists the agents it found on the computer first, ready ones on top.
+**Add more agents** lists every other agent T3 Code supports, A to Z, and opens by
+itself when no agent is found:
 
-**Add more agents** lists every other agent T3 Code supports. Agents without a
-one-command install open their page in **Settings → Providers**. **Browse**
-opens the ACP Registry for more agents. When no agent is found, this list opens
-by itself.
+- **Turn on** enables an agent that is off. T3 Code then checks whether it is
+  installed and signed in.
+- For Claude Code, **Install** or **Sign in** opens a terminal with the correct
+  command ready to run. Install uses the vendor's own installer, which keeps
+  **Update now** working in Settings.
+- For Codex, **Set up** offers sign-in with your ChatGPT account or your own
+  Codex CLI.
+- Other agents open their page in **Settings → Providers**.
+- **Browse** opens the ACP Registry for more agents.
+
+On the desktop app, when the folder of the `t3` command is not on your `PATH`,
+**Add to PATH** adds one line to your shell's startup file.
 
 The setup terminal uses the home directory and environment configured for the
 provider instance. Sensitive values remain redacted in Settings and
 terminal metadata while the terminal process can use them.
 
-**Start** waits for one ready agent. Select **Skip for now** to start without one.
+**Start** waits for one ready agent. Select **Start without an agent** to finish
+without one.
 
 ## Phone
 
-Select **Set up** to show QR codes for the App Store and Google Play. Then sign
-in to T3 Connect with the same account in the app, or pair the app from
-**Settings → Sharing & access** on builds without T3 Connect.
+Select **Set up** to show QR codes for the App Store and Google Play. Then select
+**Sign in to T3 Connect** and allow this computer when T3 Code asks, so the app can
+reach it. Sign in to the app with the same account. On builds without T3 Connect,
+pair the app from **Settings → Sharing & access**.
 
 ## Projects
 

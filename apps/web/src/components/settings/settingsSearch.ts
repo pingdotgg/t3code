@@ -860,6 +860,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "welcome-page",
     title: "Welcome page",
     to: "/settings/about",
+    localEnvironmentOnly: true,
+    providerSettingsOnly: true,
     searchTerms: ["onboarding setup first run getting started agents import projects"],
   },
   {

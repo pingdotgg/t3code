@@ -57,20 +57,12 @@ vi.mock(import("../../onboarding/firstRun"), async (original) => ({
   ...(await original()),
   completeOnboarding: state.completeOnboarding,
 }));
-vi.mock(import("../../state/environments"), async (original) => {
-  const environment = (environmentId: string) => ({
-    environmentId,
-    label: environmentId,
-    connection: { phase: "connected" },
-    entry: { enabled: true, target: { _tag: "DirectConnectionTarget" } },
-  });
-  const primary = environment("primary");
-  return {
-    ...(await original()),
-    usePrimaryEnvironment: (() => primary) as never,
-    useEnvironments: (() => ({ environments: [primary] })) as never,
-  };
-});
+vi.mock(import("../../state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironments: (() => ({
+    environments: [{ environmentId: "primary", label: "primary" }],
+  })) as never,
+}));
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
   return {
@@ -347,13 +339,13 @@ it("finishes setup without landing when the imported project never reaches the c
   expect(state.onDone).toHaveBeenCalledWith(undefined);
 });
 
-it("waits for a ready agent to start, and Skip for now still finishes setup", async () => {
+it("waits for a ready agent to start, and Start without an agent still finishes setup", async () => {
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
   await using _screen = await mountWelcome();
   expect(button("Add 2 projects and start").disabled).toBe(true);
 
-  await click("Skip for now");
+  await click("Start without an agent");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });

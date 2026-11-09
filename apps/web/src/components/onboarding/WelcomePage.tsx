@@ -13,9 +13,9 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
+  AuthProvidersManageScope,
   AuthTerminalOperateScope,
   CommandId,
-  defaultInstanceIdForDriver,
   AuthOrchestrationOperateScope,
   isManagedDriverAllowed,
   ProviderDriverKind,
@@ -35,6 +35,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
@@ -78,7 +79,6 @@ import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { MOBILE_APP_STORES } from "../settings/MobileAppSettingsRow";
-import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ACPRegistryIcon } from "../Icons";
@@ -112,9 +112,7 @@ export function WelcomePage({
   const label =
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     "this computer";
-  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
-  const agentReady =
-    providers?.some((provider) => getOnboardingProviderState(provider) === "ready") ?? false;
+  const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
   const scans = useProjectScans([environmentId]);
   const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
   const [isImporting, setIsImporting] = useState(false);
@@ -182,7 +180,8 @@ export function WelcomePage({
     setIsImporting,
     onDone: finish,
   });
-  const selectedCount = projectImport.selected.length;
+  // Without import permission, starting simply skips the projects.
+  const selectedCount = projectImport.canWrite ? projectImport.selected.length : 0;
   const start = () => {
     if (selectedCount > 0) void projectImport.runImport(projectImport.selected);
     else projectImport.finishAfterImport();
@@ -218,7 +217,7 @@ export function WelcomePage({
                 <span />
               ) : (
                 <Button variant="ghost-muted" disabled={isImporting} onClick={start}>
-                  Skip for now
+                  Start without an agent
                 </Button>
               )}
               <div className="flex items-center gap-3">
@@ -305,6 +304,22 @@ function agentName(provider: ServerProvider) {
   );
 }
 
+// Shared by the page (to enable Start) and the agents section, so both agree on what is ready.
+function useWelcomeAgents(environmentId: EnvironmentId) {
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const managedPolicy = serverConfig?.managedPolicy;
+  return {
+    providers,
+    serverConfig,
+    ...groupWelcomeAgents(providers, agentName, (provider) =>
+      isManagedDriverAllowed(managedPolicy, provider.driver),
+    ),
+  };
+}
+
+const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
+
 function AgentsSection({
   environmentId,
   label,
@@ -312,12 +327,14 @@ function AgentsSection({
   readonly environmentId: EnvironmentId;
   readonly label: string;
 }) {
-  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const { providers, serverConfig, checking, readyCount, found, available } =
+    useWelcomeAgents(environmentId);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
   const [addingProvider, setAddingProvider] = useState(false);
@@ -328,16 +345,16 @@ function AgentsSection({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  const managedPolicy = serverConfig?.managedPolicy;
-  const { checking, found, available } = groupWelcomeAgents(
-    providers?.filter((provider) => isManagedDriverAllowed(managedPolicy, provider.driver)),
-    agentName,
-  );
   // With nothing on this computer yet, the list of agents to add is the main task.
-  const showMore = moreOpen ?? (!checking && found.length === 0);
-  const readyCount = found.filter(
-    (provider) => getOnboardingProviderState(provider) === "ready",
-  ).length;
+  const showMore = moreOpen ?? found.length === 0;
+  const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  // Codex setup stays mounted by instance while its status changes, so a sign-in that
+  // starts after an install is not lost when the agent moves between groups.
+  const codexSetupProvider =
+    providers?.find(
+      (provider) =>
+        provider.instanceId === codexSetupId && getOnboardingProviderState(provider) !== "ready",
+    ) ?? null;
 
   const openTerminal = (provider: ServerProvider) => {
     if (
@@ -365,95 +382,79 @@ function AgentsSection({
     });
   };
 
-  const renderAgent = (provider: ServerProvider) => {
-    const terminalOpen = terminalSession?.providerInstanceId === provider.instanceId;
-    const ready = getOnboardingProviderState(provider) === "ready";
-    if (ready) {
-      return <AgentCard key={provider.instanceId} driver={provider.driver} provider={provider} />;
+  const turnOn = async (provider: ServerProvider) => {
+    if (serverConfig === null) return;
+    const instance = serverConfig.settings.providerInstances[provider.instanceId] ?? {
+      driver: provider.driver,
+    };
+    const result = await persistProviderInstance({
+      operation: "upsert",
+      instanceId: provider.instanceId,
+      instance: { ...instance, enabled: true },
+    });
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: `Could not turn on ${agentName(provider)}` });
+      return;
     }
-    if (provider.driver === "codex" && serverConfig !== null) {
-      return (
-        <OnboardingCodexSetup
-          key={provider.instanceId}
-          environmentId={environmentId}
-          provider={provider}
-          serverConfig={serverConfig}
-          terminalOpen={terminalOpen}
-          onOpenTerminal={() => openTerminal(provider)}
-        />
-      );
-    }
-    if (isInstallableDriver(provider.driver)) {
-      return (
-        <AgentCard
-          key={provider.instanceId}
-          driver={provider.driver}
-          provider={provider}
-          terminalOpen={terminalOpen}
-          terminalAvailable={serverConfig !== null && canOperateTerminal}
-          onOpenTerminal={() => openTerminal(provider)}
-        />
-      );
-    }
-    return (
-      <AgentCard
-        key={provider.instanceId}
-        driver={provider.driver}
-        provider={provider}
-        settingsLink={{ environmentId, instanceId: provider.instanceId }}
-      />
-    );
+    void refreshProviders({ environmentId, input: {} });
   };
 
-  // Same tile for every agent so the list stays in neutral A to Z order.
-  const renderTile = (provider: ServerProvider) => {
+  // One action per agent, the same in the list and in the grid.
+  const actionFor = (provider: ServerProvider) => {
     const state = getOnboardingProviderState(provider);
+    if (state === "disabled") {
+      return (
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={!canManageProviders || serverConfig === null}
+          onClick={() => void turnOn(provider)}
+        >
+          Turn on
+        </Button>
+      );
+    }
     if (provider.driver === "codex" && serverConfig !== null) {
       const open = codexSetupId === provider.instanceId;
       return (
-        <AgentCard
-          key={provider.instanceId}
-          driver={provider.driver}
-          provider={provider}
-          compact
-          action={
-            <Button
-              size="xs"
-              variant="outline"
-              aria-expanded={open}
-              onClick={() => setCodexSetupId(open ? null : provider.instanceId)}
-            >
-              Set up
-            </Button>
-          }
-        />
+        <Button
+          size="xs"
+          variant="outline"
+          aria-expanded={open}
+          onClick={() => setCodexSetupId(open ? null : provider.instanceId)}
+        >
+          Set up
+        </Button>
       );
     }
     if (isInstallableDriver(provider.driver) && (state === "install" || state === "signIn")) {
       return (
-        <AgentCard
-          key={provider.instanceId}
-          driver={provider.driver}
+        <TerminalAction
           provider={provider}
-          compact
-          terminalOpen={terminalSession?.providerInstanceId === provider.instanceId}
-          terminalAvailable={serverConfig !== null && canOperateTerminal}
-          onOpenTerminal={() => openTerminal(provider)}
+          disabled={
+            terminalSession?.providerInstanceId === provider.instanceId ||
+            serverConfig === null ||
+            !canOperateTerminal
+          }
+          onClick={() => openTerminal(provider)}
         />
       );
     }
     return (
-      <AgentCard
-        key={provider.instanceId}
-        driver={provider.driver}
-        provider={provider}
-        compact
-        settingsLink={{ environmentId, instanceId: provider.instanceId }}
-      />
+      <Button
+        size="xs"
+        variant="outline"
+        render={
+          <Link
+            to="/settings/providers"
+            search={{ environmentId, instanceId: provider.instanceId }}
+          />
+        }
+      >
+        {state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up"}
+      </Button>
     );
   };
-  const codexSetupProvider =
-    available.find((provider) => provider.instanceId === codexSetupId) ?? null;
 
   return (
     <WelcomeSection
@@ -467,7 +468,11 @@ function AgentsSection({
       }
     >
       {found.length > 0 ? (
-        <div className="space-y-1.5">{found.map((provider) => renderAgent(provider))}</div>
+        <div className="space-y-1.5">
+          {found.map((provider) => (
+            <AgentCard key={provider.instanceId} provider={provider} action={actionFor(provider)} />
+          ))}
+        </div>
       ) : null}
       {!canOperateTerminal ? (
         <p className="mt-2 text-sm text-muted-foreground">
@@ -484,38 +489,57 @@ function AgentsSection({
             {found.length > 0 ? "Add more agents" : "Set up an agent"}
           </span>
           <AgentLogoStack providers={available} />
-          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-            <ACPRegistryIcon className="size-3.5" />
-            ACP Registry
-          </span>
+          {acpAllowed ? (
+            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+              <ACPRegistryIcon className="size-3.5" />
+              ACP Registry
+            </span>
+          ) : null}
           <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <div className="space-y-1.5 pt-1">
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {available.map(renderTile)}
+              {available.map((provider) => (
+                <AgentCard
+                  key={provider.instanceId}
+                  provider={provider}
+                  compact
+                  action={actionFor(provider)}
+                />
+              ))}
             </div>
-            {codexSetupProvider !== null && serverConfig !== null ? (
-              <OnboardingCodexSetup
-                environmentId={environmentId}
-                provider={codexSetupProvider}
-                serverConfig={serverConfig}
-                terminalOpen={terminalSession?.providerInstanceId === codexSetupProvider.instanceId}
-                onOpenTerminal={() => openTerminal(codexSetupProvider)}
-              />
+            {acpAllowed ? (
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
+                <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                  <ACPRegistryIcon className="size-4" />
+                  More agents in the ACP Registry
+                </span>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={!canManageProviders}
+                  onClick={() => setAddingProvider(true)}
+                >
+                  Browse
+                </Button>
+              </div>
             ) : null}
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
-              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                <ACPRegistryIcon className="size-4" />
-                More agents in the ACP Registry
-              </span>
-              <Button size="xs" variant="outline" onClick={() => setAddingProvider(true)}>
-                Browse
-              </Button>
-            </div>
           </div>
         </CollapsiblePanel>
       </Collapsible>
+      {codexSetupProvider !== null && serverConfig !== null ? (
+        <div className="mt-2">
+          <OnboardingCodexSetup
+            environmentId={environmentId}
+            provider={codexSetupProvider}
+            serverConfig={serverConfig}
+            terminalOpen={terminalSession?.providerInstanceId === codexSetupProvider.instanceId}
+            onOpenTerminal={() => openTerminal(codexSetupProvider)}
+          />
+        </div>
+      ) : null}
+      <CliPathSetup />
       {terminalSession !== null ? (
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
@@ -531,6 +555,7 @@ function AgentsSection({
           open
           environmentId={environmentId}
           environmentLabel={label}
+          showMoreProviders
           onOpenChange={setAddingProvider}
           onCreated={() => void refreshProviders({ environmentId, input: {} })}
         />
@@ -572,8 +597,15 @@ function ProjectsSection({
   readonly isImporting: boolean;
 }) {
   const [reviewing, setReviewing] = useState(false);
-  const { candidates, recent, selected, selectedKeys, setSelectedKeys, visibleImportError } =
-    projectImport;
+  const {
+    canWrite,
+    candidates,
+    recent,
+    selected,
+    selectedKeys,
+    setSelectedKeys,
+    visibleImportError,
+  } = projectImport;
   if (scan === undefined) return null;
   if (scan.isPending && scan.data === null) {
     return (
@@ -599,7 +631,15 @@ function ProjectsSection({
       </WelcomeSection>
     );
   }
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    return scan.data?.truncated ? (
+      <WelcomeSection title="Projects">
+        <p className="text-xs text-muted-foreground" role="status">
+          {SCAN_LIMIT_MESSAGE}
+        </p>
+      </WelcomeSection>
+    ) : null;
+  }
 
   const allKeys = candidates.map((candidate) => candidate.key);
   const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
@@ -608,14 +648,14 @@ function ProjectsSection({
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
         <Checkbox
           aria-label="Bring in projects"
-          checked={selected.length > 0}
-          disabled={isImporting}
+          checked={canWrite && selected.length > 0}
+          disabled={isImporting || !canWrite}
           onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
         />
         <span className="min-w-0 flex-1 text-sm text-foreground">
-          {selected.length > 0
-            ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their chats`
-            : "Bring in projects and their chats"}
+          {canWrite && selected.length > 0
+            ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
+            : "Bring in projects and their threads"}
         </span>
         <Button
           variant="ghost-muted"
@@ -623,7 +663,7 @@ function ProjectsSection({
           aria-expanded={reviewing}
           onClick={() => setReviewing((open) => !open)}
         >
-          {reviewing ? "Hide" : `Review ${candidates.length}`}
+          {reviewing ? "Hide" : `Review all ${candidates.length}`}
           <ChevronDownIcon className={cn("size-3.5", reviewing && "rotate-180")} />
         </Button>
       </div>
@@ -775,18 +815,16 @@ function OnboardingCodexSetup({
   onOpenTerminal,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly provider: ServerProvider | undefined;
+  readonly provider: ServerProvider;
   readonly serverConfig: ServerConfig;
   readonly terminalOpen: boolean;
   readonly onOpenTerminal: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
-  const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
-  const instanceId =
-    provider?.instanceId ?? defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
-  const settings = serverConfig.settings;
-  const instance = settings.providerInstances[instanceId] ?? {
-    driver: ProviderDriverKind.make("codex"),
+  const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
+  const instanceId = provider.instanceId;
+  const instance = serverConfig.settings.providerInstances[instanceId] ?? {
+    driver: provider.driver,
     config: {},
   };
   const mode = readCodexSetupMode(instance.config);
@@ -797,34 +835,29 @@ function OnboardingCodexSetup({
     "setupMode" in instance.config &&
     instance.config.setupMode === "existing";
   const changeMode = (setupMode: "managed" | "existing") => {
-    void update({
-      environmentId,
-      input: {
-        patch: buildProviderInstanceUpdatePatch({
-          settings,
-          instanceId,
-          instance: {
-            ...instance,
-            enabled: true,
-            config: {
-              ...(instance.config !== null && typeof instance.config === "object"
-                ? instance.config
-                : {}),
-              enabled: true,
-              setupMode,
-            },
-          },
-        }),
-      },
+    const config =
+      instance.config !== null && typeof instance.config === "object" ? instance.config : {};
+    // One-instance upsert keeps a provider another client added in the meantime.
+    void persistProviderInstance({
+      operation: "upsert",
+      instanceId,
+      instance: { ...instance, enabled: true, config: { ...config, enabled: true, setupMode } },
+    }).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        toastManager.add({ type: "error", title: "Could not save Codex setup" });
+      }
     });
   };
   return existingChosen ? (
     <AgentCard
-      driver={ProviderDriverKind.make("codex")}
       provider={provider}
-      terminalOpen={terminalOpen}
-      terminalAvailable={canOperateTerminal}
-      onOpenTerminal={onOpenTerminal}
+      action={
+        <TerminalAction
+          provider={provider}
+          disabled={terminalOpen || !canOperateTerminal}
+          onClick={onOpenTerminal}
+        />
+      }
     />
   ) : (
     <CodexSetupSection
@@ -833,50 +866,49 @@ function OnboardingCodexSetup({
       instanceId={instanceId}
       provider={provider}
       mode={mode}
-      enabled={provider?.enabled ?? true}
+      enabled={provider.enabled}
       onModeChange={changeMode}
     />
   );
 }
 
-function AgentCard({
-  driver,
+function TerminalAction({
   provider,
-  terminalOpen = false,
-  terminalAvailable = false,
-  onOpenTerminal,
-  settingsLink,
-  compact = false,
-  action,
+  disabled,
+  onClick,
 }: {
-  readonly driver: ProviderDriverKind;
-  readonly provider: ServerProvider | undefined;
-  readonly terminalOpen?: boolean;
-  readonly terminalAvailable?: boolean;
-  readonly onOpenTerminal?: () => void;
-  // Agents without a one-command install are set up on their Settings page instead.
-  readonly settingsLink?: {
-    readonly environmentId: EnvironmentId;
-    readonly instanceId: ProviderInstanceId;
-  };
+  readonly provider: ServerProvider;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+}) {
+  return (
+    <Button size="xs" variant="outline" disabled={disabled} onClick={onClick}>
+      <TerminalIcon className="size-3.5" />
+      {getOnboardingProviderState(provider) === "signIn" ? "Sign in" : "Install"}
+    </Button>
+  );
+}
+
+function AgentCard({
+  provider,
+  action,
+  compact = false,
+}: {
+  readonly provider: ServerProvider;
+  readonly action?: ReactNode;
   // A tile for the "Add more agents" grid: the button carries the state, so no detail line.
   readonly compact?: boolean;
-  readonly action?: ReactNode;
 }) {
-  const displayName =
-    provider?.displayName ||
-    (driver === "claudeAgent" ? "Claude Code" : (providerClients.get(driver)?.label ?? driver));
-  const summary = getProviderSummary(provider);
-  const providerState = getOnboardingProviderState(provider);
-  const settingsAction =
-    providerState === "signIn"
-      ? "Sign in"
-      : providerState === "disabled"
-        ? "Turn on"
-        : providerState === "attention"
-          ? "Details"
-          : "Set up";
-
+  const state = getOnboardingProviderState(provider);
+  const name = agentName(provider);
+  const detail =
+    compact || state === "ready" || state === "checking"
+      ? null
+      : state === "install"
+        ? "Not installed"
+        : state === "disabled"
+          ? "Off"
+          : getProviderSummary(provider).headline;
   return (
     <div
       className={cn(
@@ -884,45 +916,29 @@ function AgentCard({
         compact ? "px-3 py-2.5" : "px-4 py-4",
       )}
     >
-      <ProviderInstanceIcon driverKind={driver} displayName={displayName} iconClassName="size-5" />
+      <ProviderInstanceIcon
+        driverKind={provider.driver}
+        displayName={name}
+        iconClassName="size-5"
+      />
       <div className="min-w-0 flex-1">
-        <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        {providerState === "ready" || compact ? null : (
-          <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-            {providerState === "install" ? "Not installed" : summary.headline}
+        <span className="block truncate text-sm font-medium text-foreground">{name}</span>
+        {detail ? (
+          <p className="mt-0.5 text-xs leading-relaxed break-words text-muted-foreground">
+            {detail}
           </p>
-        )}
+        ) : null}
       </div>
       <div className="shrink-0">
-        {providerState === "ready" ? (
+        {state === "ready" ? (
           <span className="inline-flex items-center gap-1.5 text-xs font-medium text-success-foreground">
             <CheckIcon className="size-3.5" />
             Ready
           </span>
-        ) : providerState === "checking" ? (
-          <span className="text-xs text-muted-foreground">Checking...</span>
-        ) : action ? (
-          action
-        ) : settingsLink ? (
-          <Button
-            size="xs"
-            variant="outline"
-            render={<Link to="/settings/providers" search={settingsLink} />}
-          >
-            {settingsAction}
-          </Button>
-        ) : providerState === "disabled" || providerState === "attention" ? (
-          <span className="text-xs text-muted-foreground">{summary.headline}</span>
+        ) : state === "checking" ? (
+          <span className="text-xs text-muted-foreground">Checking…</span>
         ) : (
-          <Button
-            size="xs"
-            variant={compact ? "outline" : "ghost"}
-            onClick={onOpenTerminal}
-            disabled={terminalOpen || !terminalAvailable}
-          >
-            <TerminalIcon className="size-3.5" />
-            {providerState === "signIn" ? "Sign in" : "Install"}
-          </Button>
+          action
         )}
       </div>
     </div>
@@ -1354,6 +1370,7 @@ function useProjectImport({
   };
 
   return {
+    canWrite: scans.every((scan) => writableEnvironments.has(scan.environmentId)),
     candidates,
     recent,
     selected,

@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomePage } from "../components/onboarding/WelcomePage";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import { usePrimaryEnvironmentId } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 
 const decodeEnvironmentId = Schema.decodeOption(EnvironmentId);
 
@@ -29,7 +29,13 @@ function WelcomeRouteView() {
     ? Option.getOrUndefined(decodeEnvironmentId(hash.slice("agents:".length)))
     : undefined;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const environmentId = resumeEnvironmentId ?? primaryEnvironmentId;
+  const { environments, isReady } = useEnvironments();
+  // Trust the id only once the catalog has it; an unknown computer falls back to this one.
+  const resumeKnown =
+    resumeEnvironmentId !== undefined &&
+    (!isReady ||
+      environments.some((environment) => environment.environmentId === resumeEnvironmentId));
+  const environmentId = (resumeKnown ? resumeEnvironmentId : undefined) ?? primaryEnvironmentId;
   // The root can remount this pending outlet after navigation; do not reopen setup.
   const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
   const [dismissed, setDismissed] = useState(false);

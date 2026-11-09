@@ -23,6 +23,7 @@ function provider(name: string, overrides: Partial<ServerProvider> = {}): Server
 
 const nameOf = (entry: ServerProvider) => entry.displayName ?? entry.driver;
 const names = (entries: ReadonlyArray<ServerProvider>) => entries.map(nameOf);
+const allowAll = () => true;
 
 describe("groupWelcomeAgents", () => {
   it("lists agents on the computer by state, then name, and everything else by name", () => {
@@ -36,17 +37,31 @@ describe("groupWelcomeAgents", () => {
         provider("Cursor", { installed: false, status: "warning", auth: { status: "unknown" } }),
       ],
       nameOf,
+      allowAll,
     );
 
     expect(names(groups.found)).toEqual(["Claude", "Codex", "Zeta"]);
-    expect(names(groups.available)).toEqual(["Grok", "Pi"]);
-    // Cursor is still being checked, so it is in neither group yet.
+    // Cursor is still being checked; it stays listed instead of disappearing.
+    expect(names(groups.available)).toEqual(["Cursor", "Grok", "Pi"]);
     expect(groups.checking).toBe(true);
+    expect(groups.readyCount).toBe(2);
+  });
+
+  it("leaves out agents the computer's policy does not allow, ready or not", () => {
+    const groups = groupWelcomeAgents(
+      [provider("Codex"), provider("Blocked")],
+      nameOf,
+      (entry) => entry.driver !== "blocked",
+    );
+
+    expect(names(groups.found)).toEqual(["Codex"]);
+    expect(groups.readyCount).toBe(1);
   });
 
   it("reports checking before the computer has sent its providers", () => {
-    expect(groupWelcomeAgents(undefined, nameOf)).toEqual({
+    expect(groupWelcomeAgents(undefined, nameOf, allowAll)).toEqual({
       checking: true,
+      readyCount: 0,
       found: [],
       available: [],
     });

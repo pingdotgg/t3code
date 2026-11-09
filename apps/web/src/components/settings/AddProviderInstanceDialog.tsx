@@ -141,6 +141,8 @@ interface AddProviderInstanceDialogProps {
   readonly environmentLabel: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly onCreated?: (instanceId: ProviderInstanceId) => void;
+  /** Opens with "Show more" expanded, so the ACP Registry search is in view. */
+  readonly showMoreProviders?: boolean;
 }
 
 export function AddProviderInstanceDialog({
@@ -149,6 +151,7 @@ export function AddProviderInstanceDialog({
   environmentLabel,
   onOpenChange,
   onCreated,
+  showMoreProviders: initialShowMoreProviders = false,
 }: AddProviderInstanceDialogProps) {
   const settings = useEnvironmentSettings(environmentId);
   const secretSources = useSecretSources(environmentId);
@@ -179,7 +182,7 @@ export function AddProviderInstanceDialog({
     ReadonlyArray<ProviderInstanceEnvironmentVariable>
   >([]);
   const [isManualAcpConfiguration, setIsManualAcpConfiguration] = useState(false);
-  const [showMoreProviders, setShowMoreProviders] = useState(false);
+  const [showMoreProviders, setShowMoreProviders] = useState(initialShowMoreProviders);
   const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
