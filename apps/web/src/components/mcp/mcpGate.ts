@@ -55,7 +55,11 @@ export function resolveMcpGate(input: {
   const { relay } = input;
   if (!input.connected) {
     if (input.thisMachine) return { kind: "disconnected", relay: null };
-    const availability = relay.status === "listed" ? relay.availability : undefined;
+    // T3 Connect checks only its own tunnels; a publish-only link's check always fails.
+    const availability =
+      relay.status === "listed" && relay.endpoint?.providerKind === "cloudflare_tunnel"
+        ? relay.availability
+        : undefined;
     // A refresh empties the list first, so wait for it instead of flashing "Connect first".
     if (relay.status === "loading" || availability === "checking") return { kind: "checking" };
     if (relay.status === "failed" || availability === "error") {

@@ -58,12 +58,25 @@ describe("resolveMcpGate", () => {
     // A disconnected saved machine follows T3 Connect's list. Offline or an unreadable list keeps
     // a retry; only a list showing nothing wrong asks to reconnect.
     const away = { ...saved, connected: false };
-    const listed = (availability: "online" | "offline" | "error") => ({
+    const listed = (
+      availability: "checking" | "online" | "offline" | "error",
+      providerKind: "cloudflare_tunnel" | "manual" = "cloudflare_tunnel",
+    ) => ({
       ...away,
-      relay: { ...saved.relay, availability },
+      relay: {
+        status: "listed",
+        endpoint: { ...savedTunnel, providerKind },
+        availability,
+      } as const,
     });
+    expect(resolveMcpGate(listed("checking")).kind).toBe("checking");
     expect(resolveMcpGate(listed("offline"))).toEqual({ kind: "disconnected", relay: "offline" });
     expect(resolveMcpGate(listed("error"))).toEqual({ kind: "disconnected", relay: "failed" });
+    // T3 Connect refuses to check a publish-only link, so that failure says nothing.
+    expect(resolveMcpGate(listed("error", "manual"))).toEqual({
+      kind: "disconnected",
+      relay: null,
+    });
     expect(resolveMcpGate({ ...away, relay: { status: "failed" } })).toEqual({
       kind: "disconnected",
       relay: "failed",
