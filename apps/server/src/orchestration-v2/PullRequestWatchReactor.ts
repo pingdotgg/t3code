@@ -488,12 +488,8 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: 2 },
     );
-    // Activity failures must not cancel or hide a permanent detail failure.
-    const read = Exit.isFailure(detailRead)
-      ? Exit.failCause(detailRead.cause)
-      : Exit.isFailure(activityRead)
-        ? Exit.failCause(activityRead.cause)
-        : Exit.succeed([detailRead.value, activityRead.value] as const);
+    // Comment availability must not suppress check results or a permanent detail failure.
+    const read = detailRead;
     if (Exit.isFailure(read)) {
       if (Cause.hasInterruptsOnly(read.cause)) return yield* Effect.failCause(read.cause);
       lastReads.delete(group.key);
@@ -512,7 +508,18 @@ export const make = Effect.gen(function* () {
       return yield* Effect.failCause(read.cause);
     }
     readFailures.delete(group.key);
-    const [detail, activity] = read.value;
+    const detail = read.value;
+    const activity = Exit.isSuccess(activityRead)
+      ? activityRead.value
+      : Option.none<PullRequestActivity>();
+    if (Exit.isFailure(activityRead)) {
+      if (Cause.hasInterruptsOnly(activityRead.cause))
+        return yield* Effect.failCause(activityRead.cause);
+      threadTails.delete(group.key);
+      yield* logFailure("pull request watch activity read failed", { pullRequest: group.key })(
+        activityRead.cause,
+      );
+    }
     for (const target of group.targets) {
       const life = lifeOf(target);
       const headSha = detail.headSha ?? life.headSha;
