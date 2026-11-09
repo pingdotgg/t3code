@@ -19,6 +19,8 @@ import { Atom } from "effect/reactivity";
 import * as Result from "effect/Result";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
+import { APP_BASE_NAME } from "~/branding";
 import { checkReachability, readLinkState } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -77,7 +79,7 @@ export function UseInAnotherAppDialogHost() {
 
 function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentId | null }) {
   const { environment, label } = useAccessEnvironment(requested);
-  const title = `Use T3 Code in another app (MCP) · ${label ?? "T3 Code"}`;
+  const title = `Use ${APP_BASE_NAME} in another app (MCP) · ${label ?? APP_BASE_NAME}`;
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
       <WizardPopup>
@@ -408,7 +410,7 @@ function GateScreen({
         </GateMessage>
       );
     case "update":
-      return <GateMessage title={`Update T3 Code on ${name}`} />;
+      return <GateMessage title={`Update ${APP_BASE_NAME} on ${name}`} />;
     case "no-relay-read":
       return (
         <GateMessage
@@ -466,8 +468,10 @@ function GateScreen({
             <p className="text-sm text-muted-foreground">{turnOnHere.reason}</p>
           ) : (
             <div className="space-y-2 text-sm">
-              <CommandBlock command="t3 connect link" />
-              <p>Restart T3 Code on {name}.</p>
+              <CommandBlock command={`${T3_LEARN_COMMAND} connect link`} />
+              <p>
+                Restart {APP_BASE_NAME} on {name}.
+              </p>
               {checkAgain}
             </div>
           )}

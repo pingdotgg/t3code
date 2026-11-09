@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { T3_LEARN_COMMAND, T3_LEARN_REPOSITORY } from "@t3tools/shared/t3LearnIdentity";
 import { pathSetupCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Duration from "effect/Duration";
@@ -41,7 +42,7 @@ const standaloneRuntime = Effect.gen(function* () {
   return Option.some({ executable, versionsDir, runtimeDir });
 });
 
-/** Links this runtime as the `t3` command the way the install scripts do, replacing only our own link. */
+/** Links this runtime as the `ominax` command the way the install scripts do, replacing only our own link. */
 export const installCli = Effect.fn("cli.install.install")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -52,24 +53,24 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const windows = platform === "win32";
   if (Option.isNone(runtime)) {
     const script = windows
-      ? "irm https://t3.codes/install.ps1 | iex"
-      : "curl -fsSL https://t3.codes/install.sh | sh";
+      ? `irm https://github.com/${T3_LEARN_REPOSITORY}/releases/latest/download/install.ps1 | iex`
+      : `curl -fsSL https://github.com/${T3_LEARN_REPOSITORY}/releases/latest/download/install.sh | sh`;
     return yield* new CliInstallError({
-      reason: `Only the standalone t3 can install itself. Use \`${script}\`, or Settings in the desktop app.`,
+      reason: `Only the standalone ${T3_LEARN_COMMAND} can install itself. Use \`${script}\`, or Settings in the desktop app.`,
     });
   }
   const { executable, versionsDir, runtimeDir } = runtime.value;
   // cmd.exe expands `%` and reads the shim in the OEM code page, so such a path would not run.
   if (windows && /[%\u0080-\uffff]/.test(executable)) {
     return yield* new CliInstallError({
-      reason: `A t3.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Keep using npx t3.`,
+      reason: `An ${T3_LEARN_COMMAND}.cmd cannot run ${executable}, because the path has % or non-ASCII characters. Run ${executable} directly.`,
     });
   }
   // Absolute, so the PATH hint never adds a folder that changes with the working directory.
   const binDir = path.resolve(
     environment.T3CODE_INSTALL_BIN_DIR?.trim() || path.join(home, ".local", "bin"),
   );
-  const name = windows ? "t3.cmd" : "t3";
+  const name = windows ? `${T3_LEARN_COMMAND}.cmd` : T3_LEARN_COMMAND;
   const link = path.join(binDir, name);
   const failed = (reason: string) => (cause: unknown) => new CliInstallError({ reason, cause });
 
@@ -103,7 +104,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     )
   ) {
     return yield* new CliInstallError({
-      reason: `Another t3 is already at ${link}. Remove it, then run this again.`,
+      reason: `Another ${T3_LEARN_COMMAND} is already at ${link}. Remove it, then run this again.`,
     });
   }
 
@@ -118,7 +119,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   } else if (!occupied) {
     yield* fs.symlink(executable, link).pipe(Effect.mapError(failed(`Could not link ${link}.`)));
   } else {
-    // Swap a temporary link into place so a running `t3` never sees the command missing.
+    // Swap a temporary link into place so a running command never sees the command missing.
     const staging = `${link}.${process.pid}.tmp`;
     // Clean up only a staging link this call made, never a file that was already there.
     yield* fs
@@ -155,13 +156,15 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
   const same = (entry: string) => entry !== "" && normalize(entry) === normalize(binDir);
   const entries = (environment.PATH ?? environment.Path ?? "").split(windows ? ";" : ":");
   const onPath = entries.some(same);
-  // A t3 earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
+  // One earlier on PATH runs instead, and an added folder goes last. Runner caches (npx's own
   // .bin) are not installs.
   const firstOther = Effect.gen(function* () {
     for (const entry of entries) {
       if (same(entry)) return undefined;
       if (!path.isAbsolute(entry) || detectCliRunner(`${entry}/`) !== null) continue;
-      for (const name of windows ? ["t3.cmd", "t3.exe"] : ["t3"]) {
+      for (const name of windows
+        ? [`${T3_LEARN_COMMAND}.cmd`, `${T3_LEARN_COMMAND}.exe`]
+        : [T3_LEARN_COMMAND]) {
         const candidate = path.join(entry, name);
         if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) return candidate;
       }
@@ -197,30 +200,34 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
 const reportInstalled = Effect.fn("cli.install.report")(function* (
   installed: Effect.Success<ReturnType<typeof installCli>>,
 ) {
-  yield* Console.log(`Installed t3 ${packageJson.version} at ${installed.link}.`);
+  yield* Console.log(`Installed ${T3_LEARN_COMMAND} ${packageJson.version} at ${installed.link}.`);
   if (installed.shadowedBy !== undefined) {
     return yield* Console.log(
-      `Another t3 at ${installed.shadowedBy} runs first, so run ${installed.link} to use this one.`,
+      `Another ${T3_LEARN_COMMAND} at ${installed.shadowedBy} runs first, so run ${installed.link} to use this one.`,
     );
   }
-  if (installed.onPath) return yield* Console.log("Run `t3` to get started.");
+  if (installed.onPath) return yield* Console.log(`Run \`${T3_LEARN_COMMAND}\` to get started.`);
   if (installed.pathCommand === undefined) {
-    return yield* Console.log(`Add ${installed.binDir} to your PATH, then run \`t3\`.`);
+    return yield* Console.log(
+      `Add ${installed.binDir} to your PATH, then run \`${T3_LEARN_COMMAND}\`.`,
+    );
   }
   if ((yield* HostProcess.Platform) === "win32") {
     yield* Console.log(
       `${installed.binDir} is not on your PATH yet. In this PowerShell window, run:`,
     );
     yield* Console.log(`  ${installed.pathCommand}`);
-    return yield* Console.log("Then run `t3`. For new windows, add the folder to your PATH.");
+    return yield* Console.log(
+      `Then run \`${T3_LEARN_COMMAND}\`. For new windows, add the folder to your PATH.`,
+    );
   }
   yield* Console.log(`${installed.binDir} is not on your PATH yet. Add it with:`);
   yield* Console.log(`  ${installed.pathCommand}`);
-  yield* Console.log("Then open a new terminal and run `t3`.");
+  yield* Console.log(`Then open a new terminal and run \`${T3_LEARN_COMMAND}\`.`);
 });
 
 export const installCommand = Command.make("install").pipe(
-  Command.withDescription("Install this version as the `t3` command."),
+  Command.withDescription(`Install this version as the \`${T3_LEARN_COMMAND}\` command.`),
   Command.withHandler(() => installCli().pipe(Effect.flatMap(reportInstalled))),
 );
 
@@ -293,7 +300,7 @@ export const inTerminalForeground = Effect.gen(function* () {
 });
 
 /**
- * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `t3`
+ * Before a command run through npx, pnpm dlx, or bunx at a terminal, asks to install the `ominax`
  * command. Yes is the default. No, no answer, or a failed install is saved in the T3 home until
  * the next minor release. Returns false when the user quits the prompt, so the command does not run.
  */
@@ -321,16 +328,18 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   if (Option.isNone(runtime)) return true;
   const { runtimeDir } = runtime.value;
 
-  // Any t3 already installed means no prompt: ours (even when off PATH) or another on PATH.
+  // Any command already installed means no prompt: ours (even when off PATH) or another on PATH.
   // Runners put their own cache's node_modules/.bin on PATH, so skip those.
   const windows = platform === "win32";
-  const names = windows ? ["t3.cmd", "t3.exe"] : ["t3"];
+  const names = windows
+    ? [`${T3_LEARN_COMMAND}.cmd`, `${T3_LEARN_COMMAND}.exe`]
+    : [T3_LEARN_COMMAND];
   const launchers = yield* fs
     .readFileString(path.join(runtimeDir, "launchers"))
     .pipe(Effect.orElseSucceed(() => ""));
   const candidates = [
     ...launchers.split(/\r?\n/).filter(Boolean),
-    path.join(path.dirname(runtimeDir), "bin", windows ? "t3.cmd" : "t3"),
+    path.join(path.dirname(runtimeDir), "bin", names[0]!),
     ...(environment.PATH ?? environment.Path ?? "")
       .split(windows ? ";" : ":")
       .filter(
@@ -353,7 +362,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   const answer = yield* input.confirm.pipe(Effect.timeoutOption(PROMPT_TIMEOUT));
   if (Option.isNone(answer)) {
     yield* saveDecline;
-    yield* Console.log(`\nNo answer, so t3 was not installed. ${installHint}\n`);
+    yield* Console.log(`\nNo answer, so ${T3_LEARN_COMMAND} was not installed. ${installHint}\n`);
     return true;
   }
   if (answer.value === undefined) return false;
@@ -365,7 +374,10 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   yield* installCli().pipe(
     Effect.flatMap(reportInstalled),
     Effect.catch((error) =>
-      Effect.andThen(saveDecline, Console.error(`Could not install t3: ${error.message}`)),
+      Effect.andThen(
+        saveDecline,
+        Console.error(`Could not install ${T3_LEARN_COMMAND}: ${error.message}`),
+      ),
     ),
   );
   yield* Console.log("");
@@ -374,7 +386,7 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
 
 export const confirmCliInstall = Prompt.run(
   Prompt.Confirm({
-    message: "Install the t3 command? Then you can run `t3` directly.",
+    message: `Install the ${T3_LEARN_COMMAND} command? Then you can run \`${T3_LEARN_COMMAND}\` directly.`,
     initial: true,
   }),
 ).pipe(Effect.catchTags({ QuitError: () => Effect.void }));
