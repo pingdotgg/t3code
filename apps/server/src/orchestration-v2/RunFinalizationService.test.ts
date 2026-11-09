@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ProjectId,
   RunId,
   ThreadId,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -18,6 +20,7 @@ import * as WorkspaceEntries from "../workspace/WorkspaceEntries.ts";
 import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalization from "./RunFinalizationService.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
 
 it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
   const threadId = ThreadId.make("thread_refresh_failure");
@@ -241,3 +244,67 @@ it.effect("replaces a still-running PR lookup when a newer turn finishes", () =>
     assert.strictEqual(lookups, 2);
   }).pipe(Effect.provide(layer));
 });
+
+it.effect.each([
+  { stored: "theo/edge", checkedOut: "theo/update-13.4.0", isDefaultRef: false },
+  { stored: "theo/update-13.4.0", checkedOut: "main", isDefaultRef: true },
+] as const)(
+  "a project-folder thread adopts the branch its agent checked out ($stored -> $checkedOut)",
+  (scenario) => {
+    const threadId = ThreadId.make("thread-project-folder");
+    const runId = RunId.make("completed-run");
+    const commands: OrchestrationV2ServerCommand[] = [];
+    const layer = RunFinalization.layerObserver.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            refreshAfterTurn: () => Effect.void,
+          }),
+          Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
+            refreshLocalStatus: () =>
+              Effect.succeed({
+                isRepo: true,
+                hasPrimaryRemote: true,
+                isDefaultRef: scenario.isDefaultRef,
+                refName: scenario.checkedOut,
+                hasWorkingTreeChanges: false,
+                workingTree: { files: [], insertions: 0, deletions: 0 },
+              }),
+            refreshPullRequestStatus: () => Effect.succeed(null),
+          }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getThreadShell: () =>
+              Effect.succeed({
+                id: threadId,
+                projectId: ProjectId.make("project-zact"),
+                branch: scenario.stored,
+                worktreePath: null,
+                activeRunId: null,
+              } as OrchestrationV2ThreadShell),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command);
+                return { sequence: commands.length, storedEvents: [] };
+              }),
+          }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const observer = yield* RunFinalization.RunFinalizationObserver;
+      yield* observer.refresh({ cwd: "/repo", threadId, runId });
+      assert.deepEqual(
+        commands.flatMap((command) =>
+          command.type === "thread.metadata.update" && command.branch !== undefined
+            ? [{ threadId: command.threadId, branch: command.branch }]
+            : [],
+        ),
+        [{ threadId, branch: scenario.checkedOut }],
+        `thread kept branch ${scenario.stored} after its turn checked out ${scenario.checkedOut}`,
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
