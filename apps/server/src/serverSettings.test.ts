@@ -1293,6 +1293,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       },
       { label: "redacted then plain", duplicate: { value: "plain-foo", sensitive: false } },
       {
+        label: "plain then redacted",
+        duplicate: { value: "plain-foo", sensitive: false },
+        redactedLast: true,
+      },
+      {
+        label: "secret reference then redacted",
+        duplicate: {
+          value: { provider: SecretProviderId.make("personal"), reference: "op://Private/FOO" },
+          sensitive: true,
+        },
+        redactedLast: true,
+      },
+      {
         label: "inline seed, redacted then empty sensitive",
         duplicate: { value: "", sensitive: true },
         inline: '[{"name":"FOO","value":"stored-foo","sensitive":true}]',
