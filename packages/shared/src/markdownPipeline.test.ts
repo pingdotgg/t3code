@@ -278,6 +278,8 @@ it("keeps backslashes that CommonMark would read as escapes in prose Windows pat
   expect(
     render(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`),
   ).toBe(String.raw`Saved to C:\Users\me\.t3\_build and (C:\.scratch) and C:/work\.config.`);
+  const longPath = String.raw`C:\Users\me\AppData\Local\Programs\some-long-tool-name\resources\.t3\_build`;
+  expect(render(`Saved to ${longPath}`)).toBe(`Saved to ${longPath}`);
   expect(render(String.raw`Escaped C:\\Users\\me`)).toBe(String.raw`Escaped C:\\Users\\me`);
   expect(render(String.raw`See C:\x and \*this\* and Note:\*that\*.`)).toBe(
     String.raw`See C:\x and *this* and Note:*that*.`,
