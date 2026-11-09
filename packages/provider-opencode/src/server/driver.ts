@@ -236,11 +236,18 @@ export const OpenCodeDriver: ProviderDriver<
       probeRuntime(providerProbeEnvironment(processEnv)),
     );
     // A mise shim cannot install OpenCode offline; a session or text generation the user started
-    // may, so it re-probes online to pick the protocol of the version mise installs.
+    // may, so without a cached result it probes once online and caches what mise installed.
     const resolveRuntime =
       effectiveConfig.serverUrl.trim().length > 0
         ? runtimeProbe.get
-        : runtimeProbe.get.pipe(Effect.catch(() => probeRuntime(processEnv)));
+        : runtimeProbe.lastSuccess.pipe(
+            Effect.flatMap(
+              Option.match({
+                onSome: Effect.succeed,
+                onNone: () => probeRuntime(processEnv).pipe(Effect.tap(runtimeProbe.record)),
+              }),
+            ),
+          );
     const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: null,
@@ -508,55 +515,70 @@ export const OpenCodeDriver: ProviderDriver<
       accentColor,
       enabled,
       snapshot,
+      // A scan never installs OpenCode: without an offline probe result it fails and keeps the
+      // last inventory rather than guessing 1.x.
       snapshotForCwd: (cwd) =>
         !effectiveConfig.enabled
           ? snapshot.getSnapshot
-          : byOpenCodeRuntime(runtimeProbe.get, {
-              v2: Effect.all([
-                snapshot.getSnapshot,
-                listOpenCode2Workspace(cwd).pipe(
-                  Effect.timeout("20 seconds"),
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderDriverError({
-                        driver: DRIVER_KIND,
-                        instanceId,
-                        detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
-                        cause,
-                      }),
+          : runtimeProbe.get.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to probe OpenCode for '${cwd}'`,
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((probed) =>
+                byOpenCodeRuntime(Effect.succeed(probed), {
+                  v2: Effect.all([
+                    snapshot.getSnapshot,
+                    listOpenCode2Workspace(cwd).pipe(
+                      Effect.timeout("20 seconds"),
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderDriverError({
+                            driver: DRIVER_KIND,
+                            instanceId,
+                            detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                            cause,
+                          }),
+                      ),
+                    ),
+                  ]).pipe(
+                    Effect.map(([machineSnapshot, { skills, commands }]) => ({
+                      ...machineSnapshot,
+                      skills: openCode2SkillsToServerProviderSkills(skills),
+                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                      // A finished scan lists at least the built-ins. None means it
+                      // timed out, so the registry decides from the provider's health.
+                      slashCommandsPending: commands.length > 0 ? false : undefined,
+                    })),
                   ),
-                ),
-              ]).pipe(
-                Effect.map(([machineSnapshot, { skills, commands }]) => ({
-                  ...machineSnapshot,
-                  skills: openCode2SkillsToServerProviderSkills(skills),
-                  slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                  // A finished scan lists at least the built-ins. None means it
-                  // timed out, so the registry decides from the provider's health.
-                  slashCommandsPending: commands.length > 0 ? false : undefined,
-                })),
+                  v1: Effect.all([
+                    snapshot.getSnapshot,
+                    loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+                  ]).pipe(
+                    Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
+                      ...machineSnapshot,
+                      skills: openCodeSkillsToServerProviderSkills(skills),
+                      slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
+                      slashCommandsPending,
+                    })),
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderDriverError({
+                          driver: DRIVER_KIND,
+                          instanceId,
+                          detail: `Failed to probe OpenCode commands and skills for '${cwd}'`,
+                          cause,
+                        }),
+                    ),
+                  ),
+                }),
               ),
-              v1: Effect.all([
-                snapshot.getSnapshot,
-                loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
-              ]).pipe(
-                Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
-                  ...machineSnapshot,
-                  skills: openCodeSkillsToServerProviderSkills(skills),
-                  slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
-                  slashCommandsPending,
-                })),
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderDriverError({
-                      driver: DRIVER_KIND,
-                      instanceId,
-                      detail: `Failed to probe OpenCode commands and skills for '${cwd}'`,
-                      cause,
-                    }),
-                ),
-              ),
-            }),
+            ),
       orchestrationAdapter,
       textGeneration,
     } satisfies ProviderInstance;
