@@ -603,6 +603,7 @@ describe("orchestrator MCP toolkit", () => {
           );
           const transferReads: Array<string> = [];
           const messageReads: Array<string> = [];
+          const projectionTableReads: Array<string> = [];
           const tracer = Tracer.make({
             span(options) {
               const span = new Tracer.NativeSpan(options);
@@ -611,6 +612,11 @@ describe("orchestrator MCP toolkit", () => {
                 end(endTime, exit);
                 const query = span.attributes.get("db.query.text");
                 if (typeof query !== "string") return;
+                for (const [, table] of query.matchAll(
+                  /FROM orchestration_v2_projection_(\w+)/gi,
+                )) {
+                  projectionTableReads.push(table!);
+                }
                 if (
                   /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
                 ) {
@@ -694,11 +700,16 @@ describe("orchestrator MCP toolkit", () => {
           ).toBe("acknowledged");
 
           const messageReadsBeforeCapabilities = messageReads.length;
+          const tableReadsBeforeCapabilities = projectionTableReads.length;
           const capabilities = yield* invoke("orchestrator_capabilities", {}).pipe(
             Effect.withTracer(tracer),
           );
           expect(capabilities.isError).not.toBe(true);
           expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
+          // The caller check reads the thread row and its active runs, never its history.
+          expect(new Set(projectionTableReads.slice(tableReadsBeforeCapabilities))).toEqual(
+            new Set(["threads", "runs"]),
+          );
         }).pipe(Effect.provide(layerTest));
       }),
     ),

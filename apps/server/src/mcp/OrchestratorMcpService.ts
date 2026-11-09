@@ -1092,20 +1092,11 @@ const make = Effect.gen(function* () {
         ),
       );
 
-  const loadProjection = (threadId: ThreadId, includeUserMessages = true) =>
-    loadThreadRecords(
-      threadId,
-      [
-        "runs",
-        "messages",
-        "providerThreads",
-        "providerTurns",
-        "runtimeRequests",
-        "contextTransfers",
-        "turnItems",
-      ],
-      { turnItemTypes: [], messageRoles: includeUserMessages ? ["user"] : [] },
-    );
+  // Runs on every MCP call, and long threads hold thousands of records; callers need only active runs.
+  const loadCallerRecords = (threadId: ThreadId) =>
+    loadThreadRecords(threadId, ["runs"], {
+      runStatuses: ["preparing", "starting", "running", "waiting"],
+    });
 
   // A dispatcher thread holds thousands of tasks, each with its full prompt; read only the ones named.
   const loadTasks = (threadId: ThreadId, taskIds: ReadonlyArray<NodeId>) =>
@@ -1161,8 +1152,7 @@ const make = Effect.gen(function* () {
         limits: clientModeCeiling(scope.client),
       } as const;
     }
-    // No loadCaller consumer reads the caller's own prompts.
-    const parent = yield* loadProjection(scope.thread.threadId, false);
+    const parent = yield* loadCallerRecords(scope.thread.threadId);
     return {
       parent,
       limits: {
@@ -1178,7 +1168,7 @@ const make = Effect.gen(function* () {
   ) {
     yield* requireCapability(scope);
     const threadScope = yield* requireThreadScope(scope, operation);
-    const parent = yield* loadProjection(threadScope.thread.threadId);
+    const parent = yield* loadCallerRecords(threadScope.thread.threadId);
     return { scope: threadScope, parent } as const;
   });
 
@@ -2968,7 +2958,7 @@ const make = Effect.gen(function* () {
                     ),
                   );
               }
-              const projection = yield* loadProjection(threadId);
+              const projection = yield* loadThreadRecords(threadId, ["runs"]);
               const run = projection.runs.at(-1);
               yield* threadManagement
                 .dispatch({
@@ -3117,8 +3107,9 @@ const make = Effect.gen(function* () {
         tasks.length > 0 &&
         (input.textOffset ?? 0) === 0
       ) {
+        const parentTransfers = yield* loadThreadRecords(parent.thread.id, ["contextTransfers"]);
         for (const task of tasks) {
-          const transfer = taskResultTransfer(parent, target, task);
+          const transfer = taskResultTransfer(parentTransfers, target, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
           const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
           const resultRecords = yield* threadManagement
@@ -3131,7 +3122,7 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure));
           if (
             pageIncludesTerminalTaskResult({
-              parent,
+              parent: parentTransfers,
               page,
               task,
               target: { ...target, ...resultRecords },
