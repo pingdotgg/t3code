@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { vibeCallback, vibeQuestionResult } from "./callbacks.ts";
 import type { VibeSettings } from "../settings.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -228,7 +229,11 @@ interface AdapterState {
   /** Maps a T3 runtime-request id to the native callback id answered via `callback/result`. */
   callbackByRequest: Map<
     RuntimeRequestId,
-    { readonly callbackId: string; readonly kind: "permission" | "user_input" }
+    {
+      readonly callbackId: string;
+      readonly kind: "permission" | "user_input";
+      readonly turnItem?: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>;
+    }
   >;
 }
 
@@ -669,11 +674,9 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           detail: `Unsupported vibe-app-server request: ${method}`,
         });
       }
-      const callback = asRecord(asRecord(params)?.["callback"]);
-      const callbackId = str(callback?.["callbackId"]) ?? str(callback?.["callback_id"]);
-      if (!callbackId) {
-        return { accepted: false };
-      }
+      const callback = vibeCallback(params);
+      if (!callback) return { accepted: false };
+      const { callbackId, kind, questions } = callback;
       const requestId = yield* idAllocator.allocate
         .runtimeRequest({
           driver: VIBE_PROVIDER,
@@ -683,12 +686,38 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           nativeRequestId: callbackId,
         })
         .pipe(Effect.mapError(toWireError));
-      const kind =
-        str(callback?.["kind"]) === "user_input"
-          ? ("user_input" as const)
-          : ("permission" as const);
-      state.callbackByRequest.set(requestId, { callbackId, kind });
       const createdAt = yield* DateTime.now;
+      const turnItem: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }> | undefined =
+        kind === "user_input"
+          ? {
+              id: idAllocator.derive.turnItemFromProviderItem({
+                driver: VIBE_PROVIDER,
+                nativeItemId: callbackId,
+              }),
+              threadId: input.threadId,
+              runId: state.currentRun?.runId ?? null,
+              nodeId: state.currentRun?.rootNodeId ?? null,
+              providerThreadId: state.thread?.id ?? null,
+              providerTurnId: state.activeTurn?.providerTurnId ?? null,
+              nativeItemRef: nativeRef(callbackId),
+              parentItemId: null,
+              ordinal: 0,
+              status: "waiting",
+              title: null,
+              startedAt: createdAt,
+              completedAt: null,
+              updatedAt: createdAt,
+              type: "user_input_request",
+              requestId,
+              questions,
+            }
+          : undefined;
+      state.callbackByRequest.set(requestId, {
+        callbackId,
+        kind,
+        ...(turnItem ? { turnItem } : {}),
+      });
+      if (turnItem) yield* emit({ type: "turn_item.updated", driver: VIBE_PROVIDER, turnItem });
       yield* emit({
         type: "runtime_request.updated",
         driver: VIBE_PROVIDER,
@@ -911,15 +940,11 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         // vibe-app-server CallbackOutput contract: approvals and user input have distinct envelopes.
         const output =
           requestKind === "user_input"
-            ? {
-                type: "user_input" as const,
-                result: {
-                  answers: Object.entries(responseInput.answers ?? {}).map(
-                    ([question, answer]) => ({ question, answer: String(answer) }),
-                  ),
-                  cancelled: decision === "cancel",
-                },
-              }
+            ? vibeQuestionResult(
+                pending?.turnItem?.questions ?? [],
+                responseInput.answers ?? {},
+                decision === "cancel",
+              )
             : {
                 type: "approval" as const,
                 decision: {
@@ -945,6 +970,18 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         );
         state.callbackByRequest.delete(responseInput.requestId);
         const resolvedAt = yield* DateTime.now;
+        if (pending?.turnItem) {
+          yield* emit({
+            type: "turn_item.updated",
+            driver: VIBE_PROVIDER,
+            turnItem: {
+              ...pending.turnItem,
+              status: decision === "cancel" ? "cancelled" : "completed",
+              completedAt: resolvedAt,
+              updatedAt: resolvedAt,
+            },
+          });
+        }
         yield* emit({
           type: "runtime_request.updated",
           driver: VIBE_PROVIDER,
