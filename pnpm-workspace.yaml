@@ -23,7 +23,7 @@ allowBuilds:
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-4287c5d3.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -73,6 +73,7 @@ catalog:
   jose: 6.2.2
   lightningcss: 1.33.0
   objc-js: 1.5.0
+  pele: ^1.8.0
   plist: 3.1.1
   react: 19.3.0
   react-dom: 19.3.0
@@ -262,8 +263,6 @@ patchedDependencies:
   # Observe the owned host exit independently of descendants retaining its stdio.
   "@muse-code/sdk@1.4.6": patches/@muse-code__sdk@1.4.6.patch
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
-  # A newline in a copied table cell becomes <br>, so Copy as Markdown keeps the row whole.
-  react-native-enriched-markdown@1.2.0-t3.16: patches/react-native-enriched-markdown@1.2.0-t3.16.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
 
