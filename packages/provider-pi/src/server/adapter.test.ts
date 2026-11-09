@@ -3921,6 +3921,14 @@ describe("PiAdapterV2", () => {
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
+      const work: Array<boolean> = [];
+      const collectEvent = (
+        predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+      ) =>
+        takeEvent((event) => {
+          if (event.type === "background_work.updated") work.push(event.pending);
+          return predicate(event);
+        });
       const runOne = RunId.make(`run:${THREAD_ID}:1`);
       const parallel = (children: ReadonlyArray<readonly [string, string, string]>) => ({
         id: "par-1",
@@ -3935,7 +3943,7 @@ describe("PiAdapterV2", () => {
           state,
         })),
       });
-      const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
+      const launched = yield* subagentRowsBefore(fake, collectEvent, "launch", [
         {
           type: "tool_execution_end",
           toolCallId: "call_par",
@@ -3981,7 +3989,10 @@ describe("PiAdapterV2", () => {
         ],
       );
 
-      const settled = yield* subagentRowsBefore(fake, takeEvent, "settle", [
+      yield* fake.emit({ type: "agent_settled" });
+      yield* collectEvent((event) => event.type === "turn.terminal");
+
+      const settled = yield* subagentRowsBefore(fake, collectEvent, "settle", [
         asyncStatusWidget(4, [
           parallel([
             ["child-b", "reviewer", "complete"],
@@ -4006,6 +4017,20 @@ describe("PiAdapterV2", () => {
           ]),
         ]),
       ]);
+      yield* subagentRowsBefore(
+        fake,
+        collectEvent,
+        "late-live-states",
+        ["running", "queued", "paused"].map((state, index) =>
+          asyncStatusWidget(7 + index, [
+            {
+              ...parallel([["child-a", "scout", state]]),
+              state,
+            },
+          ]),
+        ),
+      );
+      assert.deepEqual(work, [true, false]);
       assert.deepEqual(settled, [
         {
           title: "reviewer",

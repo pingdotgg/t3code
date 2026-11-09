@@ -341,12 +341,21 @@ function compactionTitle(status: PiCompactionStatus): string {
   }
 }
 
-interface ActivePiTurn {
+interface PiTurnEmissionOwner {
+  readonly turnInput: Pick<
+    ProviderAdapter.ProviderAdapterV2TurnInput,
+    "threadId" | "runId" | "rootNodeId"
+  > & { readonly providerThread: Pick<OrchestrationV2ProviderThread, "id"> };
+  readonly providerTurn: Pick<OrchestrationV2ProviderTurn, "id">;
+  readonly itemOrder: { readonly ordinals: Map<string, number>; next: number };
+  readonly toolStartedAt: Map<string, DateTime.Utc>;
+}
+
+interface ActivePiTurn extends PiTurnEmissionOwner {
+  readonly emissionOwner: PiTurnEmissionOwner;
   readonly turnInput: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurn: OrchestrationV2ProviderTurn;
   readonly startedAt: DateTime.Utc;
-  readonly itemOrdinals: Map<string, number>;
-  nextItemOrdinal: number;
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
@@ -530,8 +539,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
-      const subagents = makePiSubagentLifecycle<ActivePiTurn>();
-      let pendingSubagentOwners = new Set<ActivePiTurn>();
+      const subagents = makePiSubagentLifecycle<PiTurnEmissionOwner>();
+      let pendingSubagentOwners = new Set<PiTurnEmissionOwner>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -717,11 +726,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           });
         });
 
-      const itemOrdinal = (turn: ActivePiTurn, nativeItemId: string): number => {
-        const existing = turn.itemOrdinals.get(nativeItemId);
+      const itemOrdinal = (turn: PiTurnEmissionOwner, nativeItemId: string): number => {
+        const existing = turn.itemOrder.ordinals.get(nativeItemId);
         if (existing !== undefined) return existing;
-        const ordinal = turn.nextItemOrdinal++;
-        turn.itemOrdinals.set(nativeItemId, ordinal);
+        const ordinal = turn.itemOrder.next++;
+        turn.itemOrder.ordinals.set(nativeItemId, ordinal);
         return ordinal;
       };
 
@@ -892,7 +901,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
 
       const baseItemFields = (
-        turn: ActivePiTurn,
+        turn: PiTurnEmissionOwner,
         nativeItemId: string,
         startedAt: DateTime.Utc,
         updatedAt: DateTime.Utc,
@@ -924,7 +933,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
 
       const emitItemNode = (
-        turn: ActivePiTurn,
+        turn: PiTurnEmissionOwner,
         nativeItemId: string,
         kind: OrchestrationV2ExecutionNode["kind"],
         status: OrchestrationV2ExecutionNode["status"],
@@ -990,7 +999,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       });
 
       const compactionNativeItemId = (turn: ActivePiTurn): string =>
-        `compaction:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
+        `compaction:${turn.providerTurn.id}:${turn.itemOrder.next}`;
 
       const emitCompaction = Effect.fnUntraced(function* (
         turn: ActivePiTurn,
@@ -1254,7 +1263,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (toolName === "subagent") {
           yield* emitSubagentMembers(
             subagents.observeTool({
-              owner: turn,
+              owner: turn.emissionOwner,
               toolCallId,
               args,
               details: recordField(resultRecord, "details"),
@@ -1281,7 +1290,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       // Members keep the turn that launched them; late frames still update that turn's rows.
       const emitSubagentMembers = Effect.fnUntraced(function* (
-        members: ReadonlyArray<PiSubagentMember<ActivePiTurn>>,
+        members: ReadonlyArray<PiSubagentMember<PiTurnEmissionOwner>>,
       ) {
         if (members.length === 0) return;
         const emittedAt = yield* DateTime.now;
@@ -1470,7 +1479,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           if (turn === null || message.length === 0) return;
           yield* emitSystemNotice(
             turn,
-            `notify:${turn.providerTurn.id}:${turn.nextItemOrdinal}`,
+            `notify:${turn.providerTurn.id}:${turn.itemOrder.next}`,
             message,
           );
           return;
@@ -1620,7 +1629,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           return;
         }
         const emittedAt = yield* DateTime.now;
-        const nativeItemId = `extension-error:${turn.providerTurn.id}:${turn.nextItemOrdinal}`;
+        const nativeItemId = `extension-error:${turn.providerTurn.id}:${turn.itemOrder.next}`;
         const extensionName = piExtensionDisplayName(recordString(event, "extensionPath"));
         const extensionEvent = recordString(event, "event");
         const detail = recordString(event, "error")?.trim();
@@ -1703,7 +1712,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const interrupted = turn.interrupted || turn.nativeAborted;
         yield* emitSubagentMembers(
           subagents.finishForeground(
-            turn,
+            turn.emissionOwner,
             interrupted || turn.failure === null ? "interrupted" : "failed",
           ),
         );
@@ -2790,16 +2799,26 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               startedAt,
               completedAt: null,
             };
+            const emissionOwner: PiTurnEmissionOwner = {
+              turnInput: {
+                threadId: turnInput.threadId,
+                runId: turnInput.runId,
+                rootNodeId: turnInput.rootNodeId,
+                providerThread: { id: turnInput.providerThread.id },
+              },
+              providerTurn: { id: providerTurn.id },
+              itemOrder: { ordinals: new Map(), next: turnInput.providerTurnOrdinal * 100 + 1 },
+              toolStartedAt: new Map(),
+            };
             const activeTurn: ActivePiTurn = {
+              ...emissionOwner,
+              emissionOwner,
               turnInput,
               providerTurn,
               startedAt,
-              itemOrdinals: new Map(),
-              nextItemOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),
-              toolStartedAt: new Map(),
               interrupted: false,
               nativeAborted: false,
               sawAgentActivity: false,

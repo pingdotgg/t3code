@@ -42,8 +42,12 @@ interface BackgroundRun<Owner> {
   readonly shape: "single" | "workflow" | "steps";
   readonly members: Map<string, PiSubagentMember<Owner>>;
   status: PiSubagentStatus;
+  // Decoded live states track pending work; unknown states never establish child rows or outcomes.
   childStates: ReadonlyArray<PiSubagentStatus | undefined>;
 }
+
+const reconcileStatus = (previous: PiSubagentStatus, next: PiSubagentStatus | undefined) =>
+  isPiSubagentSettled(previous) ? previous : (next ?? previous);
 
 const ASYNC_WIDGET_KEY = "subagent-async";
 const ASYNC_WIDGET_PREFIX = "PI_SUBAGENT_ASYNC_JSON:";
@@ -173,10 +177,7 @@ export function makePiSubagentLifecycle<Owner>() {
     const previous = run.members.get(key);
 
     const title = fields.title ?? previous?.title;
-    const nextStatus =
-      previous !== undefined && isPiSubagentSettled(previous.status)
-        ? previous.status
-        : (status ?? previous?.status);
+    const nextStatus = previous === undefined ? status : reconcileStatus(previous.status, status);
     if (title === undefined || nextStatus === undefined) return undefined;
     const next: PiSubagentMember<Owner> = {
       owner: run.owner,
@@ -211,13 +212,14 @@ export function makePiSubagentLifecycle<Owner>() {
         title: step?.agent,
         model: step?.model,
       });
-      run.status = memberStatus(node.state) ?? run.status;
+      run.status = reconcileStatus(run.status, memberStatus(node.state));
       run.childStates = [...run.members.values()].map((member) => member.status);
       return changed === undefined ? [] : [changed];
     }
     const changed = steps.flatMap((step) => {
       // Positional planning slots become run IDs at launch; capped snapshots cannot prove that join.
       if (run.shape === "steps" && step.id.startsWith("step:")) return [];
+      // Widget IDs are sanitized/capped upstream; only exact structural IDs can join notice children.
       const key = step.id;
       const changed = updateMember(run, key, memberStatus(step.state), {
         title: step.agent ?? run.members.get(key)?.title ?? step.label ?? step.id,
@@ -225,7 +227,7 @@ export function makePiSubagentLifecycle<Owner>() {
       });
       return changed === undefined ? [] : [changed];
     });
-    run.status = memberStatus(node.state) ?? run.status;
+    run.status = reconcileStatus(run.status, memberStatus(node.state));
     run.childStates = [...run.members.values()].map((member) => member.status);
     return changed;
   };
@@ -279,10 +281,22 @@ export function makePiSubagentLifecycle<Owner>() {
         if (member !== undefined) changed.push(member);
       }
       if (runStatus !== undefined && isPiSubagentSettled(runStatus)) {
-        run.status = runStatus;
+        run.status = reconcileStatus(run.status, runStatus);
         // Unknown notice statuses supply no evidence that a child is still live.
         run.childStates =
-          runStatus === "completed" ? childRuns.map((child) => memberStatus(child.status)) : [];
+          run.status === "completed"
+            ? childRuns.map((child) => {
+                const key =
+                  run.shape === "workflow"
+                    ? child.workflowKey
+                    : run.shape === "single"
+                      ? "0"
+                      : child.runId;
+                const previous = key === undefined ? undefined : run.members.get(key)?.status;
+                const status = memberStatus(child.status);
+                return previous !== undefined && isPiSubagentSettled(previous) ? previous : status;
+              })
+            : [];
         for (const [key, member] of run.members) {
           if (isPiSubagentSettled(member.status) || runStatus === "completed") continue;
           const settled = updateMember(run, key, runStatus, {});
