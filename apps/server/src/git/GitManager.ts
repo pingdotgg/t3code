@@ -655,6 +655,9 @@ function toPullRequestHeadRemoteInfo(pr: {
   };
 }
 
+const sameBaseUrlHost = (left: string, right: string) =>
+  URL.canParse(left) && URL.canParse(right) && new URL(left).host === new URL(right).host;
+
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
@@ -670,13 +673,20 @@ export const make = Effect.gen(function* () {
   // of the remote it was pushed to, which can differ when a repository mixes hosts.
   const branchSourceControlProvider = Effect.fn("GitManager.branchSourceControlProvider")(
     function* (cwd: string, remoteName: string | null) {
-      const fallback = yield* sourceControlProvider(cwd);
+      const fallback = yield* sourceControlProviders.resolveHandle({ cwd });
       const remoteUrl = remoteName
         ? yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`)
         : null;
       const provider = remoteUrl ? sourceControlDefinitions.recognizeRemote(remoteUrl) : null;
-      if (!remoteName || !remoteUrl || !provider || provider.kind === fallback.kind) {
-        return fallback;
+      if (
+        !remoteName ||
+        !remoteUrl ||
+        !provider ||
+        (provider.kind === fallback.provider.kind &&
+          (fallback.context === null ||
+            sameBaseUrlHost(provider.baseUrl, fallback.context.provider.baseUrl)))
+      ) {
+        return fallback.provider;
       }
       const handle = yield* sourceControlProviders.resolveHandle({
         cwd,

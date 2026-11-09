@@ -55,8 +55,12 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as GitWorkflowService from "./GitWorkflowService.ts";
-import type { SourceControlProvider } from "@t3tools/source-control-core/server/SourceControlProvider";
+import type {
+  SourceControlProvider,
+  SourceControlProviderContext,
+} from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import * as ServerConfig from "../config.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -601,6 +605,8 @@ function makeManager(input?: {
   sourceControlProvider?: SourceControlProvider["Service"];
   /** Served when a caller resolves the provider for a specific remote. */
   remoteSourceControlProvider?: SourceControlProvider["Service"];
+  /** The checkout-wide context the default provider was resolved from. */
+  sourceControlContext?: SourceControlProviderContext;
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -701,7 +707,7 @@ function makeManager(input?: {
           resolveHandle: (request) =>
             Effect.succeed({
               provider: (request.context && input?.remoteSourceControlProvider) || provider,
-              context: null,
+              context: request.context ?? input?.sourceControlContext ?? null,
             }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
@@ -1004,6 +1010,48 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const status = yield* manager.status({ cwd: repoDir });
 
       expect(status.pr?.url).toBe("https://gitlab.com/acme/repo/-/merge_requests/21");
+    }),
+  );
+
+  it.effect("status finds the PR on the branch remote's host when both hosts are GitHub", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-mixed-github-hosts"]);
+      const remoteDir = yield* createBareRemote();
+      const originUrl = "https://github.com/acme/repo.git";
+      const originProvider = sourceControlDefinitions.recognizeRemote(originUrl);
+      if (!originProvider) throw new Error("github.com is not recognized");
+      yield* runGit(repoDir, ["remote", "add", "origin", originUrl]);
+      yield* runGit(repoDir, ["remote", "add", "ghe", "https://acme.ghe.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.ghe.pushurl", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "ghe", "feature/status-mixed-github-hosts"]);
+
+      const enterprise = createFakeSourceControlProvider({
+        prListSequence: [
+          [
+            {
+              number: 5,
+              title: "Enterprise host",
+              url: "https://acme.ghe.com/acme/repo/pull/5",
+              baseRefName: "main",
+              headRefName: "feature/status-mixed-github-hosts",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({
+        remoteSourceControlProvider: enterprise.service,
+        sourceControlContext: {
+          provider: originProvider,
+          remoteName: "origin",
+          remoteUrl: originUrl,
+        },
+      });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.url).toBe("https://acme.ghe.com/acme/repo/pull/5");
     }),
   );
 

@@ -2792,6 +2792,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ),
   );
 
+  // Clients send remote names; git would also accept a URL or path as a push target.
+  const requireRemote = Effect.fn("GitVcsDriver.requireRemote")(function* (
+    cwd: string,
+    remoteName: string,
+    operation: string,
+    args: ReadonlyArray<string>,
+  ) {
+    const remoteNames = yield* listRemoteNames(cwd);
+    if (!remoteNames.includes(remoteName)) {
+      return yield* new GitCommandError({
+        ...gitCommandContext({ operation, cwd, args: [...args] }),
+        detail: `Remote '${remoteName}' does not exist.`,
+      });
+    }
+    return remoteNames;
+  });
+
   // `publishes` is false only when HEAD goes to the head of its current `upstream`.
   const resolvePushDestination = Effect.fn("resolvePushDestination")(function* (
     cwd: string,
@@ -2837,13 +2854,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const setPushRemote: GitVcsDriver.GitVcsDriver["Service"]["setPushRemote"] = Effect.fn(
     "setPushRemote",
   )(function* ({ cwd, refName, remoteName }) {
-    const remoteNames = yield* listRemoteNames(cwd);
-    if (!remoteNames.includes(remoteName)) {
-      return yield* new GitCommandError({
-        ...gitCommandContext({ operation: "GitVcsDriver.setPushRemote", cwd, args: ["config"] }),
-        detail: `Remote '${remoteName}' does not exist.`,
-      });
-    }
+    const remoteNames = yield* requireRemote(cwd, remoteName, "GitVcsDriver.setPushRemote", [
+      "config",
+    ]);
     yield* writeConfigValue({ cwd, key: `branch.${refName}.pushRemote`, value: remoteName });
 
     const upstreamRef = yield* runGitStdout(
@@ -2906,6 +2919,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
+      yield* requireRemote(cwd, requestedRemoteName, "GitVcsDriver.pushCurrentBranch", ["push"]);
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
       const currentUpstream = details.hasUpstream
         ? yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null))

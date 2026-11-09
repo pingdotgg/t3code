@@ -6860,6 +6860,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isUndefined(status.pushRemote);
         const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
         assert.include(refused.message, "Choose which remote");
+        const unknown = yield* driver
+          .pushCurrentBranch(cwd, null, { remoteName: cwd })
+          .pipe(Effect.flip);
+        assert.include(unknown.message, "does not exist");
 
         yield* driver.pushCurrentBranch(cwd, null, { remoteName: "fork" });
         assert.equal(
