@@ -167,6 +167,8 @@ function RootRouteBranch() {
   if (pathname === "/welcome") {
     return (
       <>
+        {/* The Welcome page can sign in to T3 Connect; this links the computer for the phone. */}
+        <ConnectOnboardingDialog />
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <CommandPalette>

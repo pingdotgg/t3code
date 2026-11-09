@@ -21,7 +21,7 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useBlocker } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   CheckIcon,
@@ -321,6 +321,7 @@ function AgentsSection({
   const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
   const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
   const [addingProvider, setAddingProvider] = useState(false);
+  const [codexSetupId, setCodexSetupId] = useState<ProviderInstanceId | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment to refresh its provider list when the environment changes
   useEffect(() => {
@@ -364,7 +365,7 @@ function AgentsSection({
     });
   };
 
-  const renderAgent = (provider: ServerProvider, compact = false) => {
+  const renderAgent = (provider: ServerProvider) => {
     const terminalOpen = terminalSession?.providerInstanceId === provider.instanceId;
     const ready = getOnboardingProviderState(provider) === "ready";
     if (ready) {
@@ -399,11 +400,60 @@ function AgentsSection({
         key={provider.instanceId}
         driver={provider.driver}
         provider={provider}
-        compact={compact}
         settingsLink={{ environmentId, instanceId: provider.instanceId }}
       />
     );
   };
+
+  // Same tile for every agent so the list stays in neutral A to Z order.
+  const renderTile = (provider: ServerProvider) => {
+    const state = getOnboardingProviderState(provider);
+    if (provider.driver === "codex" && serverConfig !== null) {
+      const open = codexSetupId === provider.instanceId;
+      return (
+        <AgentCard
+          key={provider.instanceId}
+          driver={provider.driver}
+          provider={provider}
+          compact
+          action={
+            <Button
+              size="xs"
+              variant="outline"
+              aria-expanded={open}
+              onClick={() => setCodexSetupId(open ? null : provider.instanceId)}
+            >
+              Set up
+            </Button>
+          }
+        />
+      );
+    }
+    if (isInstallableDriver(provider.driver) && (state === "install" || state === "signIn")) {
+      return (
+        <AgentCard
+          key={provider.instanceId}
+          driver={provider.driver}
+          provider={provider}
+          compact
+          terminalOpen={terminalSession?.providerInstanceId === provider.instanceId}
+          terminalAvailable={serverConfig !== null && canOperateTerminal}
+          onOpenTerminal={() => openTerminal(provider)}
+        />
+      );
+    }
+    return (
+      <AgentCard
+        key={provider.instanceId}
+        driver={provider.driver}
+        provider={provider}
+        compact
+        settingsLink={{ environmentId, instanceId: provider.instanceId }}
+      />
+    );
+  };
+  const codexSetupProvider =
+    available.find((provider) => provider.instanceId === codexSetupId) ?? null;
 
   return (
     <WelcomeSection
@@ -442,14 +492,18 @@ function AgentsSection({
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <div className="space-y-1.5 pt-1">
-            {available
-              .filter((provider) => isInstallableDriver(provider.driver))
-              .map((provider) => renderAgent(provider))}
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {available
-                .filter((provider) => !isInstallableDriver(provider.driver))
-                .map((provider) => renderAgent(provider, true))}
+              {available.map(renderTile)}
             </div>
+            {codexSetupProvider !== null && serverConfig !== null ? (
+              <OnboardingCodexSetup
+                environmentId={environmentId}
+                provider={codexSetupProvider}
+                serverConfig={serverConfig}
+                terminalOpen={terminalSession?.providerInstanceId === codexSetupProvider.instanceId}
+                onOpenTerminal={() => openTerminal(codexSetupProvider)}
+              />
+            ) : null}
             <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
               <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
                 <ACPRegistryIcon className="size-4" />
@@ -793,6 +847,7 @@ function AgentCard({
   onOpenTerminal,
   settingsLink,
   compact = false,
+  action,
 }: {
   readonly driver: ProviderDriverKind;
   readonly provider: ServerProvider | undefined;
@@ -806,6 +861,7 @@ function AgentCard({
   };
   // A tile for the "Add more agents" grid: the button carries the state, so no detail line.
   readonly compact?: boolean;
+  readonly action?: ReactNode;
 }) {
   const displayName =
     provider?.displayName ||
@@ -845,6 +901,8 @@ function AgentCard({
           </span>
         ) : providerState === "checking" ? (
           <span className="text-xs text-muted-foreground">Checking...</span>
+        ) : action ? (
+          action
         ) : settingsLink ? (
           <Button
             size="xs"
@@ -858,7 +916,7 @@ function AgentCard({
         ) : (
           <Button
             size="xs"
-            variant="ghost"
+            variant={compact ? "outline" : "ghost"}
             onClick={onOpenTerminal}
             disabled={terminalOpen || !terminalAvailable}
           >
@@ -1073,6 +1131,12 @@ function useProjectImport({
     new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
   );
   const importGenerationRef = useRef(0);
+  const importLoopRef = useRef(false);
+  // Leaving mid-import would abandon the remaining projects and their retry state.
+  useBlocker({
+    shouldBlockFn: () => importLoopRef.current,
+    enableBeforeUnload: () => importLoopRef.current,
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the import generation on mount and unmount so in-flight imports drop stale results
   useEffect(() => {
@@ -1178,89 +1242,98 @@ function useProjectImport({
     let importedThreadCount = 0;
     let skippedThreadCount = 0;
     const refreshEnvironments = new Set<EnvironmentId>();
-    for (const candidate of selection) {
-      const { environmentId } = candidate;
-      if (
-        importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
-      ) {
-        return;
-      }
-      if (!hasAccess()) {
-        stopForDeniedAccess();
-        return;
-      }
-      if (importedProjects.has(candidate.key)) continue;
-      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
-      if (projectId === null) {
-        let attempt = projectAttempts.get(candidate.key);
-        if (attempt === undefined) {
-          const nextProjectId = newProjectId();
-          attempt = {
-            projectId: nextProjectId,
-            commandId: CommandId.make(`onboarding:project:create:${nextProjectId}`),
-          };
-          projectAttempts.set(candidate.key, attempt);
+    // Resolves false when the run stopped early: a newer run, an unmount, or lost access.
+    const importEach = async () => {
+      for (const candidate of selection) {
+        const { environmentId } = candidate;
+        if (
+          importGeneration !== importGenerationRef.current ||
+          importedProjects !== importedProjectsRef.current
+        ) {
+          return false;
         }
-        projectId = attempt.projectId;
-        const result = await createProject({
+        if (!hasAccess()) {
+          stopForDeniedAccess();
+          return false;
+        }
+        if (importedProjects.has(candidate.key)) continue;
+        let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+        if (projectId === null) {
+          let attempt = projectAttempts.get(candidate.key);
+          if (attempt === undefined) {
+            const nextProjectId = newProjectId();
+            attempt = {
+              projectId: nextProjectId,
+              commandId: CommandId.make(`onboarding:project:create:${nextProjectId}`),
+            };
+            projectAttempts.set(candidate.key, attempt);
+          }
+          projectId = attempt.projectId;
+          const result = await createProject({
+            environmentId,
+            input: {
+              projectId,
+              commandId: attempt.commandId,
+              title: candidate.title,
+              workspaceRoot: candidate.path,
+              createWorkspaceRootIfMissing: false,
+              defaultModelSelection: null,
+            },
+          });
+          if (
+            importGeneration !== importGenerationRef.current ||
+            importedProjects !== importedProjectsRef.current
+          ) {
+            return false;
+          }
+          if (result._tag !== "Success") {
+            if (!isAtomCommandInterrupted(result)) {
+              projectAttempts.delete(candidate.key);
+              refreshEnvironments.add(environmentId);
+            }
+            continue;
+          }
+        }
+
+        if (!hasAccess()) {
+          stopForDeniedAccess();
+          return false;
+        }
+        const threadImportResult = await importThreads({
           environmentId,
-          input: {
-            projectId,
-            commandId: attempt.commandId,
-            title: candidate.title,
-            workspaceRoot: candidate.path,
-            createWorkspaceRootIfMissing: false,
-            defaultModelSelection: null,
-          },
+          input: { projectId, expectedWorkspaceRoot: candidate.path },
         });
         if (
           importGeneration !== importGenerationRef.current ||
           importedProjects !== importedProjectsRef.current
         ) {
-          return;
+          return false;
         }
-        if (result._tag !== "Success") {
-          if (!isAtomCommandInterrupted(result)) {
-            projectAttempts.delete(candidate.key);
-            refreshEnvironments.add(environmentId);
+        if (threadImportResult._tag === "Success") {
+          importedThreadCount += threadImportResult.value.importedCount;
+          skippedThreadCount += threadImportResult.value.skippedCount;
+          if (threadImportResult.value.importedCount > 0) {
+            projectsWithImportedHistoryRef.current.set(
+              candidate.key,
+              scopeProjectRef(environmentId, projectId),
+            );
           }
-          continue;
+          if (threadImportResult.value.skippedCount === 0) {
+            importedProjectsCount += 1;
+            importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
+          }
+        } else if (!isAtomCommandInterrupted(threadImportResult)) {
+          projectAttempts.delete(candidate.key);
+          refreshEnvironments.add(environmentId);
         }
       }
-
-      if (!hasAccess()) {
-        stopForDeniedAccess();
-        return;
-      }
-      const threadImportResult = await importThreads({
-        environmentId,
-        input: { projectId, expectedWorkspaceRoot: candidate.path },
-      });
-      if (
-        importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
-      ) {
-        return;
-      }
-      if (threadImportResult._tag === "Success") {
-        importedThreadCount += threadImportResult.value.importedCount;
-        skippedThreadCount += threadImportResult.value.skippedCount;
-        if (threadImportResult.value.importedCount > 0) {
-          projectsWithImportedHistoryRef.current.set(
-            candidate.key,
-            scopeProjectRef(environmentId, projectId),
-          );
-        }
-        if (threadImportResult.value.skippedCount === 0) {
-          importedProjectsCount += 1;
-          importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
-        }
-      } else if (!isAtomCommandInterrupted(threadImportResult)) {
-        projectAttempts.delete(candidate.key);
-        refreshEnvironments.add(environmentId);
-      }
-    }
+      return true;
+    };
+    importLoopRef.current = true;
+    const completed = await importEach().finally(() => {
+      importLoopRef.current = false;
+    });
+    if (!completed) return;
     for (const scan of scans) {
       if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
     }

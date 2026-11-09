@@ -357,3 +357,26 @@ it("waits for a ready agent to start, and Skip for now still finishes setup", as
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
+
+it("stays on the page while projects import, then lands as usual", async () => {
+  using _now = setup();
+  const creation = deferred<void>();
+  state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
+    await creation.promise;
+    return recordProject(input);
+  });
+  await using screen = await mountWelcome();
+  await click("Add 2 projects and start");
+
+  // A blocked navigation never settles, so it is not awaited.
+  await act(async () => {
+    void screen.router?.navigate({ to: "/settings" });
+  });
+  await act(async () => {
+    creation.resolve();
+    await creation.promise;
+  });
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(screen.router?.state.location.pathname).toBe("/");
+  expect(state.createProject).toHaveBeenCalledTimes(2);
+});
