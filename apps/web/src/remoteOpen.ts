@@ -248,9 +248,8 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
 const localEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
   const probe = window.desktopBridge?.probeLocalEditors;
   probe?.().then(
-    (ids) => {
-      if (ids.length > 0) get.setSelf(ids);
-    },
+    // An empty result is real: no launchable editor, so the picker must not offer the fallback.
+    (ids) => get.setSelf(ids),
     () => undefined,
   );
   return REMOTE_FALLBACK_EDITORS;
