@@ -70,7 +70,7 @@ export function AppBar(props: AppBarProps) {
   const rootBack =
     !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
       ? props.onBackToList
-      : props.guardBack && props.onBack
+      : props.guardBack && props.onBack && splitBack === null
         ? props.onBack
         : null;
   const compose =

@@ -157,10 +157,31 @@ it("a drag before the first frame cancels the jump", () => {
 
 it("places a line of one selectable text by its share of the measured rows", () => {
   const lines = ["a".repeat(100), "b", "c", "d"];
-  const layout = { lines, index: 2, textTop: 8, textHeight: 96, viewportHeight: 100 };
+  const layout = { lines, index: 2, textTop: 8, textHeight: 96, viewportHeight: 50 };
+  const contentHeight = 8 + 96 + 24;
 
-  expect(selectableSourceLineOffset({ ...layout, columns: null })).toBe(8 + 48 - 30);
+  expect(selectableSourceLineOffset({ ...layout, contentHeight, columns: null })).toBe(8 + 48 - 15);
   // At 40 columns the first line wraps to three rows, so line 3 starts after four of six rows.
-  expect(selectableSourceLineOffset({ ...layout, columns: 40 })).toBe(8 + 64 - 30);
-  expect(selectableSourceLineOffset({ ...layout, index: 0, columns: null })).toBe(0);
+  expect(selectableSourceLineOffset({ ...layout, contentHeight, columns: 40 })).toBe(8 + 64 - 15);
+});
+
+it("leaves a selectable line that needs no scroll at the resting offset", () => {
+  const lines = ["a", "b", "c", "d"];
+  const layout = { lines, textTop: 8, textHeight: 96, columns: null, viewportHeight: 50 };
+
+  expect(selectableSourceLineOffset({ ...layout, index: 0, contentHeight: 128 })).toBeNull();
+  // The whole file fits, so even its last line stays put.
+  expect(
+    selectableSourceLineOffset({ ...layout, index: 3, contentHeight: 128, viewportHeight: 200 }),
+  ).toBeNull();
+});
+
+it("stops a selectable line near the end at the bottom of the content", () => {
+  const lines = ["a", "b", "c", "d"];
+  const layout = { lines, index: 3, textTop: 8, textHeight: 96, columns: null };
+
+  // Placing line 4 at 30% would need 8 + 72 - 30, past the 128 - 100 the content can scroll.
+  expect(selectableSourceLineOffset({ ...layout, contentHeight: 128, viewportHeight: 100 })).toBe(
+    128 - 100,
+  );
 });

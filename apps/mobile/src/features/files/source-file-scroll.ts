@@ -68,14 +68,16 @@ export function createSourceLineScroll() {
 
 // One selectable text view reports no per-line layout, so a line is placed by its share of the
 // measured text height. Unwrapped rows are exact; wrapped rows are estimated from columns.
+// Null means the line is already in view at the resting offset, which iOS sets below the header.
 export function selectableSourceLineOffset(params: {
   readonly lines: ReadonlyArray<string>;
   readonly index: number;
   readonly textTop: number;
   readonly textHeight: number;
   readonly columns: number | null;
+  readonly contentHeight: number;
   readonly viewportHeight: number;
-}): number {
+}): number | null {
   const { columns } = params;
   let rowsAbove = 0;
   let rows = 0;
@@ -86,5 +88,9 @@ export function selectableSourceLineOffset(params: {
     rows += lineRows;
   }
   const lineTop = params.textTop + (params.textHeight * rowsAbove) / Math.max(1, rows);
-  return Math.max(0, lineTop - params.viewportHeight * VIEW_POSITION);
+  const offset = Math.min(
+    lineTop - params.viewportHeight * VIEW_POSITION,
+    params.contentHeight - params.viewportHeight,
+  );
+  return offset > 0 ? offset : null;
 }

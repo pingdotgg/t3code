@@ -101,6 +101,7 @@ function FileHeader(props: {
   readonly subtitle: string;
   readonly activeMode: string;
   readonly fileInspectorSupported: boolean;
+  readonly guardBack: boolean;
   readonly onBack: () => void;
   readonly onReturnToThread: () => void;
   readonly actions: ReadonlyArray<{
@@ -118,6 +119,7 @@ function FileHeader(props: {
       title={props.title}
       subtitle={props.subtitle}
       onBack={props.onBack}
+      guardBack={props.guardBack}
       hideBottomBorder
       backInSplitView={
         props.fileInspectorSupported
@@ -1026,6 +1028,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         subtitle={headerSubtitle}
         activeMode={resolvedActiveMode}
         fileInspectorSupported={fileInspector.supported}
+        // Native Back and swipe-back remove the screen before the selection guard sees them.
+        guardBack={selectingText && navigation.canGoBack()}
         onBack={handleBack}
         onReturnToThread={handleReturnToThread}
         actions={fileMenuActions}

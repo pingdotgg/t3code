@@ -5,6 +5,7 @@ import type { ComponentRef, ComponentType } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   FlatList,
+  type LayoutRectangle,
   Platform,
   Pressable,
   RefreshControl,
@@ -276,7 +277,12 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
   const textScrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
-  const { height: windowHeight } = useWindowDimensions();
+  // Measurements for the one jump owed to the selectable text; null once it has been applied.
+  const selectableJump = useRef<{
+    readonly text: LayoutRectangle | null;
+    readonly viewportHeight: number | null;
+  } | null>(null);
+  const { fontScale } = useWindowDimensions();
   const [lineScroll] = useState(createSourceLineScroll);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
@@ -285,16 +291,45 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
   const usesLineList = !props.selectable;
 
-  // Layout effect so a pending jump is cancelled in the commit that swaps the file.
+  // Layout effect so a pending jump is cancelled in the commit that swaps the file, and entering
+  // selection mode arms its one jump before the text's first layout event.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
   useLayoutEffect(() => {
-    if (targetIndex === null || !usesLineList) {
+    if (targetIndex === null) {
+      return;
+    }
+    if (!usesLineList) {
+      selectableJump.current = { text: null, viewportHeight: null };
       return;
     }
     lineScroll.scrollToLine(listRef.current, targetIndex);
     return lineScroll.cancel;
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or switching selection mode, scrolls the remounted view to it.
   }, [lineScroll, props.path, targetIndex, usesLineList]);
+
+  // Later layouts (a refresh, a rotation) keep the reader's scroll position.
+  const jumpToSelectableLine = (
+    measured: { readonly text: LayoutRectangle } | { readonly viewportHeight: number },
+  ) => {
+    const pending = selectableJump.current;
+    if (pending === null || targetIndex === null) return;
+    const { text, viewportHeight } = { ...pending, ...measured };
+    selectableJump.current = { text, viewportHeight };
+    if (text === null || viewportHeight === null) return;
+    selectableJump.current = null;
+    const y = selectableSourceLineOffset({
+      lines,
+      index: targetIndex,
+      textTop: text.y,
+      textHeight: text.height,
+      columns: codeWordBreak
+        ? Math.floor(text.width / (codeSurface.fontSize * fontScale * MONO_ADVANCE_EM))
+        : null,
+      contentHeight: text.y + text.height + codeSurface.rowHeight,
+      viewportHeight,
+    });
+    if (y !== null) textScrollRef.current?.scrollTo({ y, animated: false });
+  };
 
   const { onLongPressLine } = props;
   const renderLine = ({ item, index }: { item: string; index: number }) => (
@@ -314,24 +349,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <SourceText
       selectable
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
-      onLayout={
-        targetIndex === null
-          ? undefined
-          : ({ nativeEvent: { layout } }) =>
-              textScrollRef.current?.scrollTo({
-                y: selectableSourceLineOffset({
-                  lines,
-                  index: targetIndex,
-                  textTop: layout.y,
-                  textHeight: layout.height,
-                  columns: codeWordBreak
-                    ? Math.floor(layout.width / (codeSurface.fontSize * MONO_ADVANCE_EM))
-                    : null,
-                  viewportHeight: windowHeight,
-                }),
-                animated: false,
-              })
-      }
+      onLayout={({ nativeEvent: { layout } }) => jumpToSelectableLine({ text: layout })}
       style={{
         color: foreground,
         fontFamily: REVIEW_MONO_FONT_FAMILY,
@@ -415,6 +433,9 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       ref={textScrollRef}
       refreshControl={refreshControl}
       className="flex-1"
+      onLayout={({ nativeEvent: { layout } }) =>
+        jumpToSelectableLine({ viewportHeight: layout.height })
+      }
       contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}
       automaticallyAdjustsScrollIndicatorInsets={usesAutomaticInsets}
       contentContainerStyle={{
