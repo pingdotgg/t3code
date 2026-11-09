@@ -332,6 +332,40 @@ describe("buildProjectGroups", () => {
     },
   );
 
+  it("labels a fork on Azure DevOps by its own remote's project and repository", () => {
+    const identity = {
+      canonicalKey: "dev.azure.com/example-org/platform/_git/fork-repo",
+      locator: {
+        source: "git-remote" as const,
+        remoteName: "upstream",
+        remoteUrl: "https://dev.azure.com/example-org/Platform/_git/fork-repo",
+      },
+      provider: SourceControlProviderKind.make("azure-devops"),
+      owner: "example-org",
+      name: "fork-repo",
+      displayName: "example-org/Platform/_git/fork-repo",
+      origin: {
+        canonicalKey: "dev.azure.com/example-org/forks/_git/fork-repo",
+        remoteUrl: "git@ssh.dev.azure.com:v3/Example-Org/Forks/fork-repo",
+        displayName: "example-org/forks/_git/fork-repo",
+      },
+    };
+    const projects = [
+      makeProject("fork", "/work/one/fork-repo", {
+        title: "fork-repo",
+        repositoryIdentity: identity,
+      }),
+      makeProject("fork-2", "/work/two/fork-repo", {
+        title: "fork-repo",
+        repositoryIdentity: identity,
+      }),
+    ];
+
+    const groups = buildProjectGroups({ projects, settings: settings("repository") });
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("Forks/fork-repo");
+  });
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");

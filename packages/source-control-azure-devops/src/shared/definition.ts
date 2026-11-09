@@ -55,6 +55,25 @@ function decodeUrlPathSegment(segment: string): string {
   }
 }
 
+/** `{project}/{repository}` in the remote's own case, from the web or the SSH (`v3/`) spelling. */
+function repositoryLabel(remoteUrl: string): string | null {
+  const scheme = remoteUrl.indexOf("://");
+  const path =
+    scheme === -1
+      ? remoteUrl.slice(remoteUrl.indexOf(":") + 1)
+      : remoteUrl.slice(remoteUrl.indexOf("/", scheme + 3) + 1);
+  const segments = path.split("/").filter((segment) => segment.length > 0);
+  const gitSegment = segments.indexOf("_git");
+  const [project, repository] =
+    gitSegment > 0
+      ? [segments[gitSegment - 1], segments[gitSegment + 1]]
+      : segments[0] === "v3"
+        ? segments.slice(2, 4)
+        : [];
+  if (!project || !repository) return null;
+  return `${decodeUrlPathSegment(project)}/${decodeUrlPathSegment(repository.replace(/\.git$/iu, ""))}`;
+}
+
 function checkoutCommandId(args: string): string | null {
   const parts = args.trim().split(/\s+/).filter(Boolean);
   for (const [index, part] of parts.entries()) {
@@ -143,6 +162,7 @@ export const definition = defineSourceControl({
     const name = identity.name || segments.at(-1);
     return name ? decodeUrlPathSegment(name) : null;
   },
+  repositoryLabel,
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
   isChangeRequestInRepository: (identity, link) => {

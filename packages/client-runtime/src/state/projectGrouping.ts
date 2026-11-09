@@ -1,8 +1,10 @@
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
+import { sourceControlClients } from "../sourceControlClients.ts";
 import {
   repositoryGroupingDisplayNameOf,
   repositoryGroupingKeyOf,
   type EnvironmentId,
+  type RepositoryIdentity,
   type ScopedProjectRef,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
@@ -198,6 +200,14 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+function repositoryGroupingLabelOf(identity: RepositoryIdentity): string | undefined {
+  const remoteUrl = identity.origin ? identity.origin.remoteUrl : identity.locator.remoteUrl;
+  return (
+    (remoteUrl === undefined ? null : sourceControlClients.repositoryLabel(remoteUrl)) ??
+    repositoryGroupingDisplayNameOf(identity)
+  );
+}
+
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
@@ -205,7 +215,7 @@ export function deriveProjectGroupLabel(input: {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
     input.members.map((member) =>
-      member.repositoryIdentity ? repositoryGroupingDisplayNameOf(member.repositoryIdentity) : null,
+      member.repositoryIdentity ? repositoryGroupingLabelOf(member.repositoryIdentity) : null,
     ),
   );
   const sharedRepositoryNames = uniqueNonEmptyValues(

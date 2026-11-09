@@ -332,6 +332,11 @@ export interface SourceControlDefinition {
    */
   readonly repositorySelector?: (identity: RepositorySelectorIdentity) => string | null;
   /**
+   * How people name the repository at `remoteUrl`, for display only. Absent or null means its
+   * repository path.
+   */
+  readonly repositoryLabel?: (remoteUrl: string) => string | null;
+  /**
    * For a host that spells one repository differently over SSH and on the web: the web spelling
    * of the `host/path` key `normalizeGitRemoteUrl` made from a remote that names a host. Null when
    * the key is not this host's. Persisted repository keys are built with it, so its output must
@@ -628,6 +633,8 @@ export interface SourceControlDefinitionRegistry {
   readonly repositorySelector: (
     identity: RepositorySelectorIdentity | null | undefined,
   ) => string | null;
+  /** The recognized host's `repositoryLabel` for a remote; null when it has none. */
+  readonly repositoryLabel: (remoteUrl: string) => string | null;
   readonly changeRequestHost: <const Kind extends string | undefined>(
     identity: ChangeRequestHostIdentity,
     kind: Kind,
@@ -682,6 +689,15 @@ export function makeSourceControlDefinitionRegistry(
       if (canonical != null) return { definition, canonical };
     }
     return undefined;
+  };
+  const recognizeRemote = (remoteUrl: string): SourceControlProviderInfo | null => {
+    const remote = parseGitRemoteHost(remoteUrl);
+    if (remote === null) return null;
+    for (const definition of recognitionOrder) {
+      const provider = definition.recognizeRemote(remote);
+      if (provider !== null) return provider;
+    }
+    return unknownRemoteProvider(remote);
   };
   const parseChangeRequestUrl = (value: string): ParsedChangeRequest | null => {
     const url = httpUrl(value);
@@ -744,15 +760,7 @@ export function makeSourceControlDefinitionRegistry(
       }
       return null;
     },
-    recognizeRemote: (remoteUrl) => {
-      const remote = parseGitRemoteHost(remoteUrl);
-      if (remote === null) return null;
-      for (const definition of recognitionOrder) {
-        const provider = definition.recognizeRemote(remote);
-        if (provider !== null) return provider;
-      }
-      return unknownRemoteProvider(remote);
-    },
+    recognizeRemote,
     repositoryKeyFromRemote: (remoteUrl) => {
       const key = normalizeGitRemoteUrl(remoteUrl);
       if (parseGitRemoteRepository(remoteUrl) === null) return key;
@@ -770,6 +778,12 @@ export function makeSourceControlDefinitionRegistry(
         : (byKind.get(identity.provider)?.repositorySelector ?? defaultRepositorySelector)(
             identity,
           ),
+    repositoryLabel: (remoteUrl) => {
+      const kind = recognizeRemote(remoteUrl)?.kind;
+      return (
+        (kind === undefined ? undefined : byKind.get(kind)?.repositoryLabel?.(remoteUrl)) ?? null
+      );
+    },
     changeRequestHost: (identity, kind) =>
       (kind === undefined ? undefined : byKind.get(kind)?.changeRequestHost?.(identity)) ??
       projectChangeRequestHost(identity, kind),
