@@ -54,6 +54,7 @@ import {
 } from "./adapter.ts";
 import { makePiRpcConnection, type PiRpcRecord } from "./rpc.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
+import { PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { turnItemOutputText } from "../../../client-runtime/src/work-log/itemDetail.ts";
 
 const layerTest = Layer.mergeAll(
@@ -177,6 +178,12 @@ interface FakePi {
   readonly allRequests: () => ReadonlyArray<PiRpcRecord>;
   readonly promptThinkingLevels: ReadonlyArray<string>;
   readonly promptModels: ReadonlyArray<string>;
+  /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
+  readonly promptServiceTiers: ReadonlyArray<string | null>;
+  /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
+  readonly reloadExtensions: () => void;
+  /** Pi before 0.99 acknowledges prompts without a disposition. */
+  readonly omitPromptDisposition: () => void;
   readonly queueStats: (data: unknown) => void;
   /** Pi before 0.84.4 answers clear_queue as an unknown command. */
   readonly setClearQueue: (
@@ -234,7 +241,11 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   let thinkingLevel = "high";
   const promptThinkingLevels: Array<string> = [];
   const promptModels: Array<string> = [];
+  const promptServiceTiers: Array<string | null> = [];
+  let serviceTier: string | null = null;
+  let promptDisposition = true;
   let currentModel = "default";
+  const serviceTierCommand = `/${PI_T3_SERVICE_TIER_COMMAND}`;
 
   const emit = (record: PiRpcRecord, chunkBytes?: number) =>
     Effect.gen(function* () {
@@ -284,6 +295,10 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         thinkingLevel = String(record["level"]);
         return base;
       case "prompt":
+        if (String(record["message"]).startsWith(serviceTierCommand)) {
+          serviceTier = String(record["message"]).slice(serviceTierCommand.length).trim() || null;
+          return promptDisposition ? { ...base, data: { disposition: "handled" } } : base;
+        }
         if (isCompacting) {
           return { ...base, success: false, error: PI_COMPACTING_PROMPT_ERROR };
         }
@@ -301,12 +316,16 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "new_session": {
         const cancelled = vetoNewSession;
         vetoNewSession = false;
-        if (!cancelled) sessionFile = `/fake/new-${++sessionGeneration}.jsonl`;
+        if (!cancelled) {
+          sessionFile = `/fake/new-${++sessionGeneration}.jsonl`;
+          serviceTier = null;
+        }
         return { ...base, data: { cancelled } };
       }
       case "switch_session": {
         const cancelled = vetoSwitch;
         vetoSwitch = false;
+        if (!cancelled) serviceTier = null;
         return { ...base, data: { cancelled } };
       }
       case "get_entries":
@@ -316,6 +335,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
       case "fork":
+        serviceTier = null;
         return { ...base, data: { text: "Hello pi", cancelled: false } };
       case "clear_queue":
         return clearQueue === "unknown_command"
@@ -336,9 +356,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
         stdinBuffer = stdinBuffer.slice(newline + 1);
         if (line.length === 0) continue;
         const record = decodeJsonLine(line) as PiRpcRecord;
-        if (record["type"] === "prompt") {
+        if (
+          record["type"] === "prompt" &&
+          !String(record["message"]).startsWith(serviceTierCommand)
+        ) {
           promptThinkingLevels.push(thinkingLevel);
           promptModels.push(currentModel);
+          promptServiceTiers.push(serviceTier);
         }
         allRequests.push(record);
         yield* Queue.offer(requests, record);
@@ -399,6 +423,13 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     },
     promptThinkingLevels,
     promptModels,
+    promptServiceTiers,
+    reloadExtensions: () => {
+      serviceTier = null;
+    },
+    omitPromptDisposition: () => {
+      promptDisposition = false;
+    },
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
@@ -2300,6 +2331,68 @@ describe("PiAdapterV2", () => {
         yield* fake.takeRequest("prompt");
         assert.deepEqual(fake.promptThinkingLevels, ["high", "high"]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("applies the selected service tier without changing thinking", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const turn = (text: string, serviceTier: string | undefined, ordinal: number) =>
+        Effect.gen(function* () {
+          yield* startTurn(
+            runtime,
+            providerThread,
+            "default",
+            [],
+            text,
+            {
+              instanceId: PI_INSTANCE_ID,
+              model: "columbia-codex/gpt-6.1-sol",
+              options: [
+                { id: "thinking", value: "high" },
+                ...(serviceTier === undefined ? [] : [{ id: "serviceTier", value: serviceTier }]),
+              ],
+            },
+            ordinal,
+          );
+          while (String((yield* fake.takeRequest("prompt"))["message"]).startsWith("/")) {}
+          yield* fake.emit({ type: "agent_start" });
+          yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
+          yield* fake.emit({ type: "agent_settled" });
+          yield* takeEvent((event) => event.type === "turn.terminal");
+        });
+
+      yield* turn("Fast", "priority", 1);
+      fake.reloadExtensions();
+      yield* turn("Still fast", "priority", 2);
+      yield* turn("Ultrafast", "ultrafast", 3);
+      fake.omitPromptDisposition();
+      yield* turn("Standard", "default", 4);
+      yield* turn("Unset", undefined, 5);
+
+      assert.deepEqual(fake.promptServiceTiers, ["priority", "priority", "ultrafast", null, null]);
+      assert.deepEqual(fake.promptThinkingLevels, ["high", "high", "high", "high", "high"]);
+      assert.deepEqual(
+        fake
+          .allRequests()
+          .flatMap((request) =>
+            String(request["message"]).startsWith(`/${PI_T3_SERVICE_TIER_COMMAND}`)
+              ? [request["message"]]
+              : [],
+          ),
+        [
+          `/${PI_T3_SERVICE_TIER_COMMAND} priority`,
+          `/${PI_T3_SERVICE_TIER_COMMAND} priority`,
+          `/${PI_T3_SERVICE_TIER_COMMAND} ultrafast`,
+          `/${PI_T3_SERVICE_TIER_COMMAND}`,
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect.each([false, true, "previous"] as const)(
