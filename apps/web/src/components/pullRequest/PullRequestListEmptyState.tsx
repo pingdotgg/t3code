@@ -1,7 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { PlusIcon, SearchIcon } from "lucide-react";
 
-import { openCommandPalette } from "../../commandPaletteBus";
+import { openAddProjectDialog } from "../AddProjectDialog";
 import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
@@ -79,7 +79,7 @@ export function PullRequestListEmptyState({
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
-          <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
+          <Button size="sm" onClick={openAddProjectDialog}>
             <PlusIcon className="size-3.5" />
             Add project
           </Button>

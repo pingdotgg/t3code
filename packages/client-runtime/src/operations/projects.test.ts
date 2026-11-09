@@ -11,6 +11,7 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  resolveAddProjectPath,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
@@ -165,6 +166,44 @@ describe("add project shared logic", () => {
 
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
+    );
+  });
+
+  it.each([
+    {
+      rawPath: "   ",
+      currentProjectCwd: null,
+      expected: { ok: false, error: "Enter a project path." },
+    },
+    {
+      rawPath: "C:\\code\\app",
+      currentProjectCwd: null,
+      expected: {
+        ok: false,
+        error: "Windows-style paths are only supported on Windows environments.",
+      },
+    },
+    {
+      rawPath: "./app",
+      currentProjectCwd: null,
+      expected: {
+        ok: false,
+        error: "Relative paths require an active project in this environment.",
+      },
+    },
+    {
+      rawPath: "../app",
+      currentProjectCwd: "/home/me/web",
+      expected: { ok: true, path: "/home/me/app" },
+    },
+    {
+      rawPath: "  /home/me/app/ ",
+      currentProjectCwd: null,
+      expected: { ok: true, path: "/home/me/app" },
+    },
+  ])("resolves the add-project path $rawPath", ({ rawPath, currentProjectCwd, expected }) => {
+    expect(resolveAddProjectPath({ rawPath, currentProjectCwd, platform: "Linux" })).toEqual(
+      expected,
     );
   });
 });
