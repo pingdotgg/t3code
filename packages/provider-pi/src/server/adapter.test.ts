@@ -4657,6 +4657,11 @@ describe("PiAdapterV2", () => {
       errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~137 min.",
       resetsInMinutes: 137,
     },
+    {
+      name: "a ChatGPT plan limit whose reset already passed",
+      errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~0 min.",
+      resetsInMinutes: null,
+    },
   ])("fails the turn as a usage limit on $name", ({ errorMessage, resetsInMinutes }) =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse("2026-11-09T12:00:00.000Z"));
@@ -4684,10 +4689,11 @@ describe("PiAdapterV2", () => {
         assert.isUndefined(terminal.failure.resetAt);
         return;
       }
-      const earliest = DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000;
+      const latestRealReset =
+        DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000 + 30_000;
       const resetAt = Date.parse(terminal.failure.resetAt ?? "");
-      assert.isAtLeast(resetAt, earliest);
-      assert.isAtMost(resetAt, earliest + 60_000);
+      assert.isAtLeast(resetAt, latestRealReset);
+      assert.isAtMost(resetAt, latestRealReset + 30_000);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

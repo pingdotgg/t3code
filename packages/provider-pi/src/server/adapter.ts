@@ -93,8 +93,9 @@ const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
 const PI_USAGE_LIMIT = /usage[ _]limit/i;
-// Pi rounds the server's resets_at to whole minutes; the margin keeps recovery after the real reset.
-const PI_USAGE_LIMIT_RESET = /Try again in ~(\d{1,6}) min\b/;
+// Pi rounds the server's resets_at to whole minutes and clamps a past one to ~0; the margin keeps
+// recovery after the real reset, and ~0 carries no usable reset.
+const PI_USAGE_LIMIT_RESET = /Try again in ~([1-9]\d{0,5}) min\b/;
 const PI_USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
 
 function piModelErrorFailure(message: string, receivedAt: DateTime.Utc) {
