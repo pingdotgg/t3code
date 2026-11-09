@@ -814,17 +814,16 @@ const layerMakeRoutes = Layer.mergeAll(
   ),
   Layer.provide(WorktreeMcpService.layer),
   Layer.provide(CloudSandboxWorkspaces.layer.pipe(Layer.provide(CloudSandboxController.layer))),
-  Layer.provide(CloudSandboxProfiles.layer),
-  // Memoized single manager/profile instances for every layer above (the
-  // request-scoped provide below shares them by layer reference).
-  Layer.provide(CloudSandboxManager.layer),
-  // provideRequest builds the preview routes' layer once in middleware, reusing the memoized Manager/Profiles above.
+  // provideRequest builds in a forked memo map that only reuses what the parent already holds,
+  // so the manager and profiles below must be provided after it to stay single instances.
   HttpRouter.provideRequest(
     CloudSandboxPreview.layer.pipe(
       Layer.provideMerge(CloudSandboxManager.layer),
       Layer.provideMerge(CloudSandboxProfiles.layer),
     ),
   ),
+  Layer.provide(CloudSandboxProfiles.layer),
+  Layer.provide(CloudSandboxManager.layer),
   // delegate_task to a linked environment, from /mcp and the follower above.
   Layer.provide(RemoteDelegation.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   // Links agents ask for: shown in a thread from /mcp, answered over WebSocket.
