@@ -907,6 +907,44 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("does not count time spent waiting on a question in Worked for", () => {
+    const requestId = RuntimeRequestId.make("color-question");
+    const question = {
+      ...base("item-question", "2026-06-20T00:01:03.000Z", 2),
+      startedAt: DateTime.makeUnsafe("2026-06-20T00:00:03.000Z"),
+      type: "user_input_request" as const,
+      requestId,
+      questions: [],
+      questionAnswer: {
+        requestId,
+        questionTextById: { color: "Which color?" },
+        answers: { color: "Blue" },
+        attachmentsByQuestionId: {},
+      },
+    };
+    const feed = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected(command(), 1),
+      projected(question, 2),
+      projected({ ...assistantMessage("2026-06-20T00:01:05.000Z"), ordinal: 3 }, 3),
+    ]);
+
+    // Two seconds of work, a minute waiting on the answer, then two more seconds.
+    const rows = deriveThreadFeedPresentation(
+      feed,
+      {
+        runId,
+        status: "completed",
+        startedAt: "2026-06-20T00:00:01.000Z",
+        completedAt: "2026-06-20T00:01:05.000Z",
+      },
+      new Set(),
+    );
+    expect(rows.find((entry) => entry.type === "run-fold")).toMatchObject({
+      label: "Worked for 4s",
+    });
+  });
+
   // regression: #21393 show plans and fold settled progress notes
   it("folds progress even when a response has no tool calls", () => {
     const feed = buildThreadFeed([
