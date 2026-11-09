@@ -9,6 +9,7 @@ import { HttpBody, HttpClient, HttpClientRequest } from "effect/http";
 import { GH_PROCESS_CONCURRENCY } from "./GitHubCredentials.ts";
 
 const SOCKET_KEY = "http_unix_socket=";
+const UNCONFIGURED_HOST = "t3code.invalid";
 
 export const layer = Layer.effect(
   HttpClient.HttpClient,
@@ -21,7 +22,9 @@ export const layer = Layer.effect(
         operation: "GitHubHttpClient.config",
         command: "gh",
         // `config get` prints nothing when unset, so a wrapper's own line could pass for the value.
-        args: ["config", "list"],
+        // `config list` resolves a host's override first, but gh dials only the global value,
+        // and no configured host ends in the reserved `.invalid` TLD.
+        args: ["config", "list", "--host", UNCONFIGURED_HOST],
         cwd,
         env: { GH_DEBUG: "", GH_PROMPT_DISABLED: "1" },
         timeoutMs: 10_000,
