@@ -23,10 +23,10 @@ export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery
     : "Stored securely, never shown to the agent";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 
-// Backticks, <angle brackets> and markdown link targets keep their exact text; a bare link drops
-// trailing sentence punctuation.
+// Backticks, <angle brackets> and markdown link targets (balanced parentheses allowed) keep their
+// exact text; a bare link drops trailing sentence punctuation.
 const REASON_LINK =
-  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
+  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
 const trimPunctuation = (link: string) => link.replace(/[.,;:!?)]+$/u, "");
 
 /** Drops a closing `**`, `__`, `*` or `_` only when the same run opened emphasis before the link and is still open. */
