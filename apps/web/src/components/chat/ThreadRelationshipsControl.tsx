@@ -385,7 +385,7 @@ function DelegatedFromRow(props: {
             hint={
               environment === null
                 ? `Delegated from ${label ?? "a linked environment"}. Connect to it to open the parent thread.`
-                : "Open parent agent"
+                : `Open parent agent on ${environment.label}`
             }
           />
         </TooltipPopup>
