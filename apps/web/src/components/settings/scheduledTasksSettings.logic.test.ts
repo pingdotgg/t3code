@@ -172,14 +172,24 @@ describe("editing scheduled task branch settings", () => {
   });
 });
 
-it("keeps a fixed run time and rejects a cleared one", () => {
-  const draft = taskToDraft({
-    ...legacyTask,
-    schedule: { type: "fixed_time", timeOfDay: "14:30" },
+describe("fixed-time scheduled tasks", () => {
+  it("pads a stored single-digit hour so the time input shows it", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "9:05" },
+    });
+    expect(draft.timeOfDay).toBe("09:05");
   });
-  expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
-  // A native time input reports "" when it is cleared or only partly filled.
-  expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
+
+  it("keeps a fixed run time and rejects a cleared one", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "14:30" },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
+    // A native time input reports "" when it is cleared or only partly filled.
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
+  });
 });
 
 describe("scheduled task destination", () => {
