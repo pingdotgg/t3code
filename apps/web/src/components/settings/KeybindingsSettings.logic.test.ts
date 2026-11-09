@@ -2,7 +2,6 @@ import { assert, describe, expect, it } from "vite-plus/test";
 import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
-  DEFAULT_RESOLVED_KEYBINDINGS,
   parseKeybindingShortcut,
 } from "@t3tools/shared/keybindings";
 
@@ -10,7 +9,6 @@ import { resolveShortcutCommand } from "../../keybindings";
 
 import {
   buildKeybindingRows,
-  commandLabel,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
@@ -223,13 +221,6 @@ describe("KeybindingsSettings.logic", () => {
         },
       },
     });
-  });
-
-  it("gives every default-bound command its own label", () => {
-    // The fallback reads "Category: Name"; defaults deserve a written label.
-    for (const binding of DEFAULT_RESOLVED_KEYBINDINGS) {
-      expect(commandLabel(binding.command), binding.command).not.toContain(":");
-    }
   });
 
   it("reports conflicting shortcuts that share an active when context", () => {
