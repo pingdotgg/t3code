@@ -5,7 +5,7 @@ import { QRCodeSvg } from "../ui/qr-code";
 import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
-export const MOBILE_APP_STORES = [
+const stores = [
   {
     label: "iPhone and iPad",
     store: "App Store",
@@ -27,7 +27,7 @@ export function MobileAppSettingsRow() {
       description="Connect to your server from your phone or tablet."
       control={
         <div className="flex items-center gap-2">
-          {MOBILE_APP_STORES.map(({ label, store, url, Icon }) => (
+          {stores.map(({ label, store, url, Icon }) => (
             <Popover key={store}>
               <PopoverTrigger render={<Button size="sm" variant="outline" />}>
                 <Icon />

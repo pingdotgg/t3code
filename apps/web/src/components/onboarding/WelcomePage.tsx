@@ -35,12 +35,14 @@ import {
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  PlusIcon,
   SmartphoneIcon,
   TerminalIcon,
 } from "lucide-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
@@ -99,7 +101,6 @@ import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog
 import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
-import { MOBILE_APP_STORES } from "../settings/MobileAppSettingsRow";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ACPRegistryIcon } from "../Icons";
@@ -274,29 +275,30 @@ export function WelcomePage({
         {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
-          <div className="mx-auto w-full max-w-2xl px-6 pt-12 pb-10 sm:pt-16">
+          <div className="mx-auto w-full max-w-3xl px-6 pt-12 pb-10 sm:pt-20">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               Welcome to T3 Code
             </h1>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Setting up <span className="font-medium text-foreground">{label}</span>. You can
-              change any of this later in Settings.
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              Setting up <span className="text-foreground">{label}</span>.
             </p>
-            <AgentsSection
-              environmentId={environmentId}
-              label={label}
-              isPrimary={isPrimary}
-              onImportSourceEnabled={() => scans[0]?.refresh()}
-            />
-            <ProjectsSection
-              scan={scans[0]}
-              projectImport={projectImport}
-              isImporting={isImporting}
-            />
-            {phonePath === null ? null : (
-              <PhoneSection environmentId={environmentId} path={phonePath} />
-            )}
-            <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
+            <div className="mt-10 border-t border-border/60">
+              <AgentsSection
+                environmentId={environmentId}
+                label={label}
+                isPrimary={isPrimary}
+                onImportSourceEnabled={() => scans[0]?.refresh()}
+              />
+              <ProjectsSection
+                scan={scans[0]}
+                projectImport={projectImport}
+                isImporting={isImporting}
+              />
+              {phonePath === null ? null : (
+                <PhoneSection environmentId={environmentId} path={phonePath} />
+              )}
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               {agentReady ? (
                 <span />
               ) : (
@@ -332,7 +334,7 @@ export function WelcomePage({
 function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId));
   return (
-    <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
+    <p className="mt-10 max-w-prose text-xs leading-relaxed text-muted-foreground">
       {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read more
       about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""}, see our{" "}
       <a
@@ -348,23 +350,28 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
   );
 }
 
+// Each part of the page is one band: its label on the left, its rows on the right.
 function WelcomeSection({
   title,
-  status,
   children,
 }: {
   readonly title: string;
-  readonly status?: ReactNode;
   readonly children: ReactNode;
 }) {
   return (
-    <section className="mt-8">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
-        {status ? <span className="text-xs text-muted-foreground">{status}</span> : null}
-      </div>
-      {children}
+    <section className="grid gap-x-10 border-b border-border/60 py-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
+      <h2 className="text-sm leading-10 text-muted-foreground">{title}</h2>
+      <div className="min-w-0">{children}</div>
     </section>
+  );
+}
+
+// Rows share one icon column, so names, checkboxes, and steps line up down the page.
+function RowIcon({ children }: { readonly children: ReactNode }) {
+  return (
+    <span className="flex size-5 shrink-0 items-center justify-center text-muted-foreground">
+      {children}
+    </span>
   );
 }
 
@@ -415,8 +422,7 @@ function AgentsSection({
   // The project scan only reads agents that are on, so turning one on can find more history.
   readonly onImportSourceEnabled: () => void;
 }) {
-  const { providers, serverConfig, checking, readyCount, found, available } =
-    useWelcomeAgents(environmentId);
+  const { providers, serverConfig, checking, found, available } = useWelcomeAgents(environmentId);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -596,94 +602,88 @@ function AgentsSection({
     );
   };
 
-  return (
-    <WelcomeSection
-      title="Agents"
-      status={
-        readyCount > 0
-          ? `${readyCount} ready on ${label}`
-          : checking
-            ? `Checking ${label}…`
-            : `None ready on ${label} yet`
-      }
-    >
-      {found.length > 0 ? (
-        <div className="space-y-1.5">
-          {found.map((provider) => (
-            <AgentCard
-              key={provider.instanceId}
-              provider={provider}
-              state={stateOf(provider)}
-              action={actionFor(provider)}
-            />
-          ))}
-        </div>
-      ) : null}
-      {!canOperateTerminal &&
+  const notes = [
+    !canOperateTerminal &&
+    [...found, ...available].some(
+      (provider) =>
+        needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
+    )
+      ? "This connection cannot control terminals."
+      : null,
+    !canManageProviders &&
+    (acpAllowed ||
       [...found, ...available].some(
         (provider) =>
-          needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
-      ) ? (
-        <p className="mt-2 text-sm text-muted-foreground">
-          This connection cannot control terminals.
+          stateOf(provider) === "disabled" || codexNeedsSetup(provider, serverConfig?.settings),
+      ))
+      ? "This connection cannot manage agents."
+      : null,
+  ].filter((note) => note !== null);
+
+  return (
+    <WelcomeSection title="Agents">
+      {found.map((provider) => (
+        <AgentRow
+          key={provider.instanceId}
+          provider={provider}
+          state={stateOf(provider)}
+          action={actionFor(provider)}
+        />
+      ))}
+      {checking && found.length === 0 ? (
+        <p className="text-sm leading-10 text-muted-foreground">Checking {label}…</p>
+      ) : null}
+      {notes.map((note) => (
+        <p key={note} className="pl-8 text-xs text-muted-foreground">
+          {note}
         </p>
-      ) : null}
-      {!canManageProviders &&
-      (acpAllowed ||
-        [...found, ...available].some(
-          (provider) =>
-            stateOf(provider) === "disabled" || codexNeedsSetup(provider, serverConfig?.settings),
-        )) ? (
-        <p className="mt-2 text-sm text-muted-foreground">This connection cannot manage agents.</p>
-      ) : null}
-      <Collapsible
-        open={showMore}
-        onOpenChange={setMoreOpen}
-        className={found.length > 0 ? "mt-2" : undefined}
-      >
-        <CollapsibleTrigger className="group flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
-          <span className="text-sm font-medium text-foreground">
+      ))}
+      <Collapsible open={showMore} onOpenChange={setMoreOpen}>
+        <CollapsibleTrigger className="group flex min-h-10 w-full items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset">
+          <RowIcon>
+            <PlusIcon className="size-4" />
+          </RowIcon>
+          <span
+            className={cn(
+              "text-sm group-hover:text-foreground",
+              found.length > 0 ? "text-muted-foreground" : "text-foreground",
+            )}
+          >
             {found.length > 0 ? "Add more agents" : "Set up an agent"}
           </span>
-          <AgentLogoStack providers={available} />
-          {acpAllowed ? (
-            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ACPRegistryIcon className="size-3.5" />
-              ACP Registry
-            </span>
-          ) : null}
+          {showMore ? null : <AgentLogoStack providers={available} acp={acpAllowed} />}
           <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <div className="space-y-1.5 pt-1">
-            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {available.map((provider) => (
-                <AgentCard
-                  key={provider.instanceId}
-                  provider={provider}
-                  state={stateOf(provider)}
-                  compact
-                  action={actionFor(provider)}
-                />
-              ))}
-            </div>
-            {acpAllowed ? (
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
-                <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-                  <ACPRegistryIcon className="size-4" />
-                  More agents in the ACP Registry
-                </span>
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={!canManageProviders}
-                  onClick={() => setAddingProvider(true)}
-                >
-                  Browse
-                </Button>
-              </div>
-            ) : null}
+          <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
+            {available.map((provider) => (
+              <AgentRow
+                key={provider.instanceId}
+                provider={provider}
+                state={stateOf(provider)}
+                compact
+                action={actionFor(provider)}
+              />
+            ))}
           </div>
+          {acpAllowed ? (
+            <div className="flex min-h-9 items-center gap-3">
+              <RowIcon>
+                <ACPRegistryIcon className="size-4" />
+              </RowIcon>
+              <span className="min-w-0 flex-1 text-sm text-muted-foreground">
+                More agents in the ACP Registry
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!canManageProviders}
+                onClick={() => setAddingProvider(true)}
+              >
+                Browse
+              </Button>
+            </div>
+          ) : null}
         </CollapsiblePanel>
       </Collapsible>
       {codexSetupProvider !== null && serverConfig !== null ? (
@@ -727,25 +727,26 @@ function AgentsSection({
   );
 }
 
-function AgentLogoStack({ providers }: { readonly providers: ReadonlyArray<ServerProvider> }) {
-  if (providers.length === 0) return null;
+// A quiet preview of what the fold holds; the names are inside it.
+function AgentLogoStack({
+  providers,
+  acp,
+}: {
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly acp: boolean;
+}) {
+  if (providers.length === 0 && !acp) return null;
   return (
-    <span className="flex items-center" aria-hidden>
-      {providers.slice(0, 5).map((provider, index) => (
-        <span
+    <span className="flex items-center gap-2 opacity-60 grayscale" aria-hidden>
+      {providers.slice(0, 6).map((provider) => (
+        <ProviderInstanceIcon
           key={provider.instanceId}
-          className={cn(
-            "grid size-7 place-items-center rounded-full border border-border bg-background",
-            index > 0 && "-ml-1.5",
-          )}
-        >
-          <ProviderInstanceIcon
-            driverKind={provider.driver}
-            displayName={agentName(provider)}
-            iconClassName="size-3.5"
-          />
-        </span>
+          driverKind={provider.driver}
+          displayName={agentName(provider)}
+          iconClassName="size-3.5"
+        />
       ))}
+      {acp ? <ACPRegistryIcon className="size-3.5" /> : null}
     </span>
   );
 }
@@ -774,7 +775,7 @@ function ProjectsSection({
   if (scan.isPending && candidates.length === 0) {
     return (
       <WelcomeSection title="Projects">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm leading-10 text-muted-foreground">
           Looking for projects in your {IMPORT_SOURCES_LABEL} history…
         </p>
       </WelcomeSection>
@@ -790,7 +791,7 @@ function ProjectsSection({
       <WelcomeSection title="Projects">
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+          className="flex min-h-10 items-center justify-between gap-3 text-sm text-muted-foreground"
         >
           <span>Could not check projects. {scan.error}</span>
           {retry}
@@ -801,7 +802,7 @@ function ProjectsSection({
   if (candidates.length === 0) {
     return scan.data?.truncated ? (
       <WelcomeSection title="Projects">
-        <p className="text-xs text-muted-foreground" role="status">
+        <p className="text-xs leading-10 text-muted-foreground" role="status">
           {SCAN_LIMIT_MESSAGE}
         </p>
       </WelcomeSection>
@@ -819,21 +820,28 @@ function ProjectsSection({
     selected.length < candidates.length &&
     !(selected.length === defaultKeys.length && defaultKeys.every((key) => selectedKeys.has(key)));
   return (
-    <WelcomeSection title="Projects" status={`From your ${IMPORT_SOURCES_LABEL} history`}>
-      <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
+    <WelcomeSection title="Projects">
+      <div className="flex min-h-10 items-center gap-3 py-1">
         <label className="flex min-w-0 flex-1 items-center gap-3">
-          <Checkbox
-            checked={canWrite && selected.length > 0}
-            indeterminate={canWrite && partial}
-            disabled={isImporting || !canWrite}
-            onCheckedChange={(checked) =>
-              setSelectedKeys(new Set(checked ? defaultKeys : []), { optedOut: !checked })
-            }
-          />
-          <span className="min-w-0 flex-1 text-sm text-foreground">
-            {canWrite && selected.length > 0
-              ? `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
-              : "Import projects and their threads"}
+          <RowIcon>
+            <Checkbox
+              checked={canWrite && selected.length > 0}
+              indeterminate={canWrite && partial}
+              disabled={isImporting || !canWrite}
+              onCheckedChange={(checked) =>
+                setSelectedKeys(new Set(checked ? defaultKeys : []), { optedOut: !checked })
+              }
+            />
+          </RowIcon>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-medium text-foreground">
+              {canWrite && selected.length > 0
+                ? `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
+                : "Import projects and their threads"}
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              From your {IMPORT_SOURCES_LABEL} history
+            </span>
           </span>
         </label>
         {canWrite ? (
@@ -849,8 +857,9 @@ function ProjectsSection({
         ) : null}
       </div>
       {reviewing && canWrite ? (
-        <fieldset className="mt-2 min-w-0" disabled={isImporting}>
-          <div className="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+        // The negative margin lines the list's checkboxes up with the one above it.
+        <fieldset className="-mx-1.5 mt-1 min-w-0" disabled={isImporting}>
+          <div className="flex items-center justify-between gap-3 px-2 text-xs text-muted-foreground">
             <span role="status">
               {selected.length} of {candidates.length} selected
             </span>
@@ -885,21 +894,21 @@ function ProjectsSection({
         </fieldset>
       ) : null}
       {scan.data?.truncated ? (
-        <p className="mt-2 text-xs text-muted-foreground" role="status">
+        <p className="pl-8 text-xs text-muted-foreground" role="status">
           {SCAN_LIMIT_MESSAGE}
         </p>
       ) : null}
       {scan.error !== null ? (
         <div
           role="alert"
-          className="mt-2 flex items-center justify-between gap-3 text-sm text-muted-foreground"
+          className="flex items-center justify-between gap-3 pl-8 text-sm text-muted-foreground"
         >
           <span>Could not check projects again. {scan.error}</span>
           {retry}
         </div>
       ) : null}
       {visibleImportError ? (
-        <p className="mt-2 text-sm text-destructive">{visibleImportError}</p>
+        <p className="pt-1 pl-8 text-sm text-destructive">{visibleImportError}</p>
       ) : null}
     </WelcomeSection>
   );
@@ -914,12 +923,14 @@ function PhoneSection({
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <WelcomeSection title="Phone" status="Optional">
+    <WelcomeSection title="Phone">
       <Collapsible open={open} onOpenChange={setOpen}>
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
-          <SmartphoneIcon className="size-4 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 text-sm text-foreground">
-            Use T3 Code from your phone
+        <div className="flex min-h-10 items-center gap-3 py-1">
+          <RowIcon>
+            <SmartphoneIcon className="size-4" />
+          </RowIcon>
+          <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
+            Use T3 Code on your phone
           </span>
           <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
             {open ? "Hide" : "Set up"}
@@ -927,50 +938,47 @@ function PhoneSection({
           </CollapsibleTrigger>
         </div>
         <CollapsiblePanel>
-          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <div className="flex items-center gap-4 rounded-lg border border-border bg-background p-3.5">
-              {MOBILE_APP_STORES.map(({ store, url, Icon }) => (
-                <div key={store} className="flex flex-col items-center gap-1.5">
-                  <div className="rounded-md bg-white p-1">
-                    <QRCodeSvg
-                      value={url}
-                      size={76}
-                      level="M"
-                      marginSize={1}
-                      title={`${store} link`}
-                    />
-                  </div>
-                  <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
-                    <Icon className="size-3" />
-                    {store}
-                  </span>
-                </div>
-              ))}
-              <span className="text-sm text-muted-foreground">Scan to get the app.</span>
-            </div>
-            <div className="flex flex-col justify-center gap-2 rounded-lg border border-border bg-background p-3.5">
-              {path === "connect" ? (
-                <PhoneConnectLink environmentId={environmentId} />
-              ) : (
-                <>
-                  <span className="text-sm text-muted-foreground">
-                    Then pair the app with this computer.
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="self-start"
-                    render={<Link to="/settings/access" />}
-                  >
-                    Show pairing code
-                  </Button>
-                </>
-              )}
+          <div className="flex items-center gap-8 pt-2 pb-3 pl-8">
+            <ol className="min-w-0 flex-1 space-y-5">
+              <PhoneStep step={1}>
+                <p className="text-sm text-foreground">Scan with your phone to get the app.</p>
+              </PhoneStep>
+              <PhoneStep step={2}>
+                {path === "connect" ? (
+                  <PhoneConnectLink environmentId={environmentId} />
+                ) : (
+                  <>
+                    <p className="text-sm text-foreground">Pair the app with this computer.</p>
+                    <Button variant="outline" size="xs" render={<Link to="/settings/access" />}>
+                      Show pairing code
+                    </Button>
+                  </>
+                )}
+              </PhoneStep>
+            </ol>
+            {/* One code for both stores: the link opens the store that matches the phone. */}
+            <div className="shrink-0 rounded-lg bg-white p-1.5">
+              <QRCodeSvg
+                value={MOBILE_APP_URL}
+                size={124}
+                level="M"
+                marginSize={2}
+                title="T3 Code app for iPhone and Android"
+              />
             </div>
           </div>
         </CollapsiblePanel>
       </Collapsible>
     </WelcomeSection>
+  );
+}
+
+function PhoneStep({ step, children }: { readonly step: number; readonly children: ReactNode }) {
+  return (
+    <li className="flex gap-3">
+      <span className="w-3 shrink-0 text-sm text-muted-foreground tabular-nums">{step}</span>
+      <div className="flex min-w-0 flex-col items-start gap-2">{children}</div>
+    </li>
   );
 }
 
@@ -995,71 +1003,56 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
     link.managedTunnelActive !== false;
   // The server checks the tunnel on its own; until it has, the result is unknown.
   const reachability = shared ? link.reachability?.status : undefined;
+  const settingsLink = (label: string) => (
+    <Button variant="outline" size="xs" render={<Link to="/settings/access" />}>
+      {label}
+    </Button>
+  );
   if (isSignedIn && link === null && linkState.isPending) {
-    return <span className="text-sm text-muted-foreground">Checking T3 Connect…</span>;
+    return <p className="text-sm text-muted-foreground">Checking T3 Connect…</p>;
   }
   if (isSignedIn && linkState.error !== null) {
     return (
       <>
-        <span className="text-sm text-muted-foreground">Could not check T3 Connect.</span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          render={<Link to="/settings/access" />}
-        >
-          Check T3 Connect
-        </Button>
+        <p className="text-sm text-foreground">Could not check T3 Connect.</p>
+        {settingsLink("Check T3 Connect")}
       </>
     );
   }
   if (isSignedIn && reachability === "reachable") {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
-        <CheckIcon className="size-4 shrink-0 text-success-foreground" />
+      <p className="flex gap-1.5 text-sm text-foreground">
+        <CheckIcon className="mt-0.5 size-4 shrink-0 text-success-foreground" />
         Your phone can reach this computer. Sign in to the app with the same account.
-      </span>
+      </p>
     );
   }
   if (isSignedIn && shared && reachability === undefined) {
     return (
-      <span className="text-sm text-muted-foreground">
+      <p className="text-sm text-foreground">
         T3 Connect is on for this computer. Sign in to the app with the same account.
-      </span>
+      </p>
     );
   }
   if (isSignedIn) {
     // Signing in alone does not share this computer, for example after "Not now".
     return (
       <>
-        <span className="text-sm text-muted-foreground">
+        <p className="text-sm text-foreground">
           {shared
             ? "T3 Connect is on, but the app cannot reach this computer."
             : "Signed in. Share this computer so the app can reach it."}
-        </span>
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          render={<Link to="/settings/access" />}
-        >
-          {shared ? "Check T3 Connect" : "Set up T3 Connect"}
-        </Button>
+        </p>
+        {settingsLink(shared ? "Check T3 Connect" : "Set up T3 Connect")}
       </>
     );
   }
   return (
     <>
-      <span className="text-sm text-muted-foreground">
-        Then sign in here and in the app with the same account.
-      </span>
-      <Button
-        variant="outline"
-        size="sm"
-        className="self-start"
-        disabled={!isLoaded}
-        onClick={openAuthPrompt}
-      >
+      <p className="text-sm text-foreground">
+        Sign in to T3 Connect here, then in the app with the same account.
+      </p>
+      <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
         Sign in to T3 Connect
       </Button>
     </>
@@ -1156,7 +1149,7 @@ function TerminalAction({
   );
 }
 
-function AgentCard({
+function AgentRow({
   provider,
   state,
   action,
@@ -1165,7 +1158,7 @@ function AgentCard({
   readonly provider: ServerProvider;
   readonly state: ReturnType<typeof welcomeAgentState>;
   readonly action?: ReactNode;
-  // A tile for the "Add more agents" grid: the button carries the state, so no detail line.
+  // A row in the "Add more agents" grid: the button carries the state, so no detail line.
   readonly compact?: boolean;
 }) {
   const name = agentName(provider);
@@ -1187,21 +1180,20 @@ function AgentCard({
             getProviderSummary(provider).headline)
           : (brokenMessage ?? getProviderSummary(provider).headline);
   return (
-    <div
-      className={cn(
-        "flex items-center gap-3 rounded-lg border border-border bg-background",
-        compact ? "px-3 py-2.5" : "px-4 py-4",
-      )}
-    >
-      <ProviderInstanceIcon
-        driverKind={provider.driver}
-        displayName={name}
-        iconClassName="size-5"
-      />
+    <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
+      <RowIcon>
+        <ProviderInstanceIcon
+          driverKind={provider.driver}
+          displayName={name}
+          iconClassName={compact ? "size-4" : "size-[18px]"}
+        />
+      </RowIcon>
       <div className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium text-foreground">{name}</span>
+        <span className={cn("block truncate text-sm text-foreground", !compact && "font-medium")}>
+          {name}
+        </span>
         {detail ? (
-          <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
+          <p className="line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
             {detail}
           </p>
         ) : null}
@@ -1887,8 +1879,11 @@ function CliPathSetup() {
   const setup = state?.pathSetup;
   if (!setup) return null;
   return (
-    <div className="mt-5 flex items-center justify-between gap-3">
-      <p className="text-sm text-muted-foreground">
+    <div className="flex min-h-10 items-center gap-3">
+      <RowIcon>
+        <TerminalIcon className="size-4" />
+      </RowIcon>
+      <p className="min-w-0 flex-1 text-sm text-muted-foreground">
         {setup.added ? (
           <>
             Added to {setup.file}. Open a new terminal to use <code className="font-mono">t3</code>.
@@ -1901,7 +1896,7 @@ function CliPathSetup() {
         )}
       </p>
       {setup.added ? null : (
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+        <Button size="xs" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
           Add to PATH
         </Button>
       )}

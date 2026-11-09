@@ -53,13 +53,14 @@ without one. Checked projects are still imported.
 
 ## Phone
 
-Select **Set up** to show QR codes for the App Store and Google Play. Then select
-**Sign in to T3 Connect** and allow this computer when T3 Code asks, so the app can
-reach it. Sign in to the app with the same account. If you are signed in but this
-computer is not shared yet, select **Set up T3 Connect**. If T3 Connect is on but
-the app cannot reach this computer, select **Check T3 Connect** to see why. On
-builds without T3 Connect, or when your organization turns it off, pair the app
-from **Settings → Sharing & access**.
+Select **Set up** and scan the code with your phone. It opens the App Store on an
+iPhone and Google Play on Android. Then select **Sign in to T3 Connect** and allow
+this computer when T3 Code asks, so the app can reach it. Sign in to the app with
+the same account. If you are signed in but this computer is not shared yet, select
+**Set up T3 Connect**. If T3 Connect is on but the app cannot reach this computer,
+select **Check T3 Connect** to see why. On builds without T3 Connect, or when your
+organization turns it off, select **Show pairing code** to pair the app from
+**Settings → Sharing & access**.
 
 ## Projects
 
