@@ -8,6 +8,7 @@ import {
   type OrchestrationProjectShell,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
+  type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
@@ -22,6 +23,7 @@ import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as PullRequestSyncReactor from "../../../orchestration-v2/PullRequestSyncReactor.ts";
+import { threadPullRequestKeysEqual } from "../../../sourceControl/threadPullRequests.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
@@ -156,6 +158,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const threadRef = yield* Ref.make(options.thread === undefined ? makeThread([]) : options.thread);
+  const pendingSyncs = yield* Ref.make<ReadonlyArray<ThreadPullRequestKey>>([]);
   const project = options.project === undefined ? makeProject() : options.project;
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Effect.gen(function* () {
@@ -202,30 +205,31 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       dispatch,
     }),
     Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({
-      drain: Effect.void,
-      requestSync: (key) =>
-        Ref.update(threadRef, (current) => {
-          const hostState = options.hostState;
-          if (current === null || hostState === undefined) return current;
-          return {
-            ...current,
-            pullRequests: current.pullRequests.map((link) =>
-              link.host === key.host &&
-              link.repository === key.repository &&
-              link.number === key.number &&
-              link.snapshot !== null
-                ? {
-                    ...link,
-                    snapshot: {
-                      ...link.snapshot,
-                      state: hostState,
-                      mergedAt: hostState === "merged" ? link.snapshot.mergedAt : null,
-                    },
-                  }
-                : link,
-            ),
-          };
-        }),
+      requestSync: (key) => Ref.update(pendingSyncs, (keys) => [...keys, key]),
+      // The host answers only once the sweep drains, so a handler that skips drain sees the old snapshot.
+      drain: Ref.getAndSet(pendingSyncs, []).pipe(
+        Effect.flatMap((keys) =>
+          Ref.update(threadRef, (current) => {
+            const hostState = options.hostState;
+            if (current === null || hostState === undefined) return current;
+            return {
+              ...current,
+              pullRequests: current.pullRequests.map((link) =>
+                keys.some((key) => threadPullRequestKeysEqual(link, key)) && link.snapshot !== null
+                  ? {
+                      ...link,
+                      snapshot: {
+                        ...link.snapshot,
+                        state: hostState,
+                        mergedAt: hostState === "merged" ? link.snapshot.mergedAt : null,
+                      },
+                    }
+                  : link,
+              ),
+            };
+          }),
+        ),
+      ),
     }),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
