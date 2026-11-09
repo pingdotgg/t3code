@@ -553,7 +553,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       }}
     />
   );
-  const showAddEnvironment = !catalogState.isLoadingConnections && !catalogState.hasConnections;
+  const showAddEnvironment =
+    !catalogState.isLoadingConnections &&
+    !catalogState.hasReadyEnvironment &&
+    !catalogState.hasConnectingEnvironment;
   const listEmpty = (
     <View>
       <Text
