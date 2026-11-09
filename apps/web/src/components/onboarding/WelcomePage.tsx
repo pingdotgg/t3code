@@ -10,10 +10,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
   AuthTerminalOperateScope,
@@ -24,22 +21,23 @@ import {
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
-  ArrowRightIcon,
   CheckIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
-  CloudIcon,
-  LinkIcon,
-  MonitorIcon,
+  SmartphoneIcon,
   TerminalIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
+import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
+import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { completeOnboarding } from "../../onboarding/firstRun";
 import {
@@ -55,21 +53,13 @@ import {
   getOnboardingProviderState,
   resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
-  selectOnboardingProvidersByDriver,
 } from "../../onboarding/providerReadiness.logic";
+import { groupWelcomeAgents } from "../../onboarding/welcomeAgents.logic";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, waitForProject } from "../../state/entities";
-import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
-import {
-  managedInstanceLocks,
-  managedTelemetryOffMessage,
-  usePrimaryManagedPolicy,
-} from "../../state/managedPolicy";
-import {
-  isOnboardingRelayEnvironment,
-  resolveOnboardingSetup,
-} from "../../onboarding/targetEnvironment.logic";
+import { useEnvironments } from "../../state/environments";
+import { managedTelemetryOffMessage, useManagedPolicy } from "../../state/managedPolicy";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
 import { serverEnvironment } from "../../state/server";
@@ -80,96 +70,56 @@ import {
 } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
+import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog";
 import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
-import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
+import { CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
+import { MOBILE_APP_STORES } from "../settings/MobileAppSettingsRow";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
 import { TerminalViewport } from "../ThreadTerminalDrawer";
-import { CloudEnvironmentConnectRows } from "../cloud/CloudEnvironmentConnectList";
-import { presentSavedCloudEnvironmentConnection } from "../cloud/cloudEnvironmentConnectionPresentation";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { T3Wordmark } from "../T3Wordmark";
-import { Alert, AlertDescription } from "../ui/alert";
+import { ACPRegistryIcon } from "../Icons";
 import { Button } from "../ui/button";
-import { InstallT3Commands } from "../InstallT3Commands";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Input } from "../ui/input";
+import { QRCodeSvg } from "../ui/qr-code";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { ScrollArea } from "../ui/scroll-area";
-import { Spinner } from "../ui/spinner";
-import { WizardPanel, WizardSteps, WizardPopup, WizardHeader } from "../ui/wizard";
-import { Dialog } from "../ui/dialog";
+import { SidebarInset } from "../ui/sidebar";
 import { toastManager } from "../ui/toast";
+import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
 
-type WizardStep = "connection" | "agents" | "import";
-const NO_ENVIRONMENTS: readonly EnvironmentId[] = [];
-
 const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
-const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
-export function WelcomeWizard({
-  localAvailable,
+/**
+ * First-run page for one computer: its agents, the projects found in Claude Code and Codex
+ * history, and the phone app. Every part is optional except one ready agent to start chatting.
+ */
+export function WelcomePage({
+  environmentId,
   onDone,
-  resumeEnvironmentId,
 }: {
-  readonly localAvailable: boolean;
-  readonly resumeEnvironmentId?: EnvironmentId | undefined;
+  readonly environmentId: EnvironmentId;
   readonly onDone: (projectRef?: ScopedProjectRef) => void | Promise<void>;
 }) {
-  const [step, setStep] = useState<WizardStep>(resumeEnvironmentId ? "agents" : "connection");
   const { environments } = useEnvironments();
-  const [selection, setSelection] = useState<ReadonlySet<EnvironmentId> | null>(null);
-  // Share the registry for the wizard's lifetime so unchecked computers are not auto-selected again.
-  const [autoSelectedComputers] = useState(() => new Set<EnvironmentId>());
-  const [setupIds, setSetupIds] = useState<readonly EnvironmentId[]>(
-    resumeEnvironmentId ? [resumeEnvironmentId] : [],
-  );
+  const label =
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    "this computer";
+  const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
+  const agentReady =
+    providers?.some((provider) => getOnboardingProviderState(provider) === "ready") ?? false;
+  const scans = useProjectScans([environmentId]);
   const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
-  const primaryEnvironment = usePrimaryEnvironment();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- marks newly listed computers in the shared auto-select registry once and selects the enabled ones
-  useEffect(() => {
-    const newComputers = environments.filter(
-      (environment) => !autoSelectedComputers.has(environment.environmentId),
-    );
-    if (newComputers.length === 0) return;
-    for (const environment of newComputers) {
-      autoSelectedComputers.add(environment.environmentId);
-    }
-    const enabledComputers = newComputers.filter((environment) => environment.entry.enabled);
-    if (enabledComputers.length === 0) return;
-    // oxlint-disable-next-line react/set-state-in-effect -- The registry marks each computer once, and only after commit; render must not mutate it.
-    setSelection(
-      (current) =>
-        new Set([
-          ...(current ?? []),
-          ...enabledComputers.map((environment) => environment.environmentId),
-        ]),
-    );
-  }, [autoSelectedComputers, environments]);
-  const selectedIds =
-    selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
-  const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
-  const isLoadingProjects =
-    step === "import" &&
-    scans.every((scan) => scan.data === null) &&
-    scans.some((scan) => scan.isPending);
-  const startSetup = (ids: readonly EnvironmentId[]) => {
-    if (ids.length === 0) return;
-    setSetupIds(ids);
-    setStep("agents");
-  };
-  const stageIndex = step === "agents" ? 1 : step === "import" ? 2 : 0;
   const finish = (
     projectRef?: ScopedProjectRef,
     importWarning?: string,
@@ -224,447 +174,118 @@ export function WelcomeWizard({
     finishingPromiseRef.current = completion;
     return completion;
   };
-
-  return (
-    <Dialog
-      open
-      disablePointerDismissal
-      onOpenChange={(_, event) => {
-        event.cancel();
-        if (event.reason === "close-press" && !isImporting) void finish();
-      }}
-    >
-      <WizardPopup
-        size="wide"
-        bottomStickOnMobile={false}
-        initialFocus={() => document.getElementById("onboarding-pairing-url") ?? true}
-      >
-        <WizardHeader
-          title="Set up T3 Code"
-          identity={
-            <div className="flex items-baseline gap-1.5" role="img" aria-label="T3 Code">
-              <T3Wordmark className="h-4 w-auto shrink-0" aria-hidden />
-              <span className="text-2xl font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
-            </div>
-          }
-        >
-          <WizardSteps
-            steps={ONBOARDING_STAGES}
-            currentStep={stageIndex}
-            isStepDisabled={(index) => isImporting || index >= stageIndex}
-            onStepChange={(index) => {
-              if (isImporting || index > stageIndex) return;
-              setStep(index === 0 ? "connection" : "agents");
-            }}
-          />
-        </WizardHeader>
-
-        <WizardPanel holdHeight={isLoadingProjects}>
-          {step === "connection" ? (
-            <ConnectionStep
-              expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
-              selectedIds={selectedIds}
-              autoSelectedComputers={autoSelectedComputers}
-              onSelectionChange={setSelection}
-              onToggleEnvironment={(environmentId, checked) =>
-                setSelection((current) => {
-                  const next = new Set(current ?? selectedIds);
-                  if (checked) next.add(environmentId);
-                  else next.delete(environmentId);
-                  return next;
-                })
-              }
-              onContinue={() =>
-                startSetup(resolveOnboardingSetup(environments, selectedIds).environmentIds)
-              }
-              onPaired={(environmentId) => {
-                setSelection(new Set([...selectedIds, environmentId]));
-              }}
-            />
-          ) : step === "agents" ? (
-            <AgentsStep environmentIds={setupIds} onContinue={() => setStep("import")} />
-          ) : (
-            <ImportStep
-              scans={scans}
-              importSelection={importSelection}
-              onImportSelectionChange={setImportSelection}
-              isImporting={isImporting}
-              setIsImporting={setIsImporting}
-              onDone={finish}
-            />
-          )}
-        </WizardPanel>
-      </WizardPopup>
-      <ChatGptWelcomeCoordinator />
-    </Dialog>
-  );
-}
-
-function ConnectionStep({
-  autoSelectedComputers,
-  expandPairingInitially,
-  selectedIds,
-  onSelectionChange,
-  onToggleEnvironment,
-  onContinue,
-  onPaired,
-}: {
-  readonly autoSelectedComputers: Set<EnvironmentId>;
-  readonly expandPairingInitially: boolean;
-  readonly selectedIds: ReadonlySet<EnvironmentId>;
-  readonly onSelectionChange: (ids: ReadonlySet<EnvironmentId>) => void;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
-  readonly onContinue: () => void;
-  readonly onPaired: (environmentId: EnvironmentId) => void;
-}) {
-  const { environments } = useEnvironments();
-  const telemetryOff = managedTelemetryOffMessage(usePrimaryManagedPolicy());
-  const cloudEnabled = hasCloudPublicConfig();
-  const directEnvironments = environments.filter(
-    (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
-  );
-  const [pairingOpen, setPairingOpen] = useState(expandPairingInitially);
-  const [isPairing, setIsPairing] = useState(false);
-  const { ready, skippedIds } = resolveOnboardingSetup(environments, selectedIds);
-  const skippedLabels = environments
-    .filter((environment) => skippedIds.includes(environment.environmentId))
-    .map((environment) => environment.label);
-  const continueRef = useRef<HTMLButtonElement>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves DOM focus to the Continue button once setup is ready and nothing else holds focus
-  useEffect(() => {
-    if (
-      ready &&
-      (document.activeElement === document.body ||
-        document.activeElement?.getAttribute("role") === "dialog")
-    ) {
-      continueRef.current?.focus();
-    }
-  }, [ready]);
-  return (
-    <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-        Connect your computers
-      </h1>
-      <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">
-        Choose one or more computers. We’ll set up agents and projects on each.
-      </p>
-      {directEnvironments.length > 0 ? (
-        <fieldset className="mt-5 space-y-2">
-          <legend className="sr-only">Computers to set up</legend>
-          {directEnvironments.map((environment) => (
-            <label
-              key={environment.environmentId}
-              className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-3"
-            >
-              <Checkbox
-                checked={selectedIds.has(environment.environmentId)}
-                onCheckedChange={(checked) => {
-                  const next = new Set(selectedIds);
-                  if (checked) next.add(environment.environmentId);
-                  else next.delete(environment.environmentId);
-                  onSelectionChange(next);
-                }}
-              />
-              <MonitorIcon className="size-4 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 text-sm font-medium break-words">
-                    {environment.label}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {!environment.entry.enabled && environment.connection.phase !== "unsupported"
-                      ? "Off"
-                      : presentSavedCloudEnvironmentConnection(environment.connection).buttonLabel}
-                  </span>
-                </span>
-                {environment.displayUrl ? (
-                  <span className="mt-0.5 block text-xs break-all text-muted-foreground">
-                    {environment.displayUrl}
-                  </span>
-                ) : null}
-                {environment.connection.phase === "unsupported" && environment.connection.error ? (
-                  <span className="mt-0.5 block text-xs text-muted-foreground">
-                    {environment.connection.error}
-                  </span>
-                ) : null}
-              </span>
-            </label>
-          ))}
-        </fieldset>
-      ) : null}
-      <div className="mt-4 space-y-2">
-        {cloudEnabled ? (
-          <ConnectAccountOption
-            autoSelectedComputers={autoSelectedComputers}
-            disabled={isPairing}
-            selectedIds={selectedIds}
-            onToggleEnvironment={onToggleEnvironment}
-          />
-        ) : null}
-        <div className="rounded-lg border border-border bg-background">
-          <Collapsible open={pairingOpen} onOpenChange={setPairingOpen}>
-            <CollapsibleTrigger
-              disabled={isPairing}
-              render={
-                <Button
-                  variant="ghost"
-                  size="sm-multiline"
-                  className="min-h-14 w-full justify-start"
-                />
-              }
-            >
-              <LinkIcon className="size-4 text-muted-foreground" />
-              <span className="flex-1 text-left">Add a computer</span>
-              <ChevronRightIcon
-                className={cn("size-4 text-muted-foreground", pairingOpen && "rotate-90")}
-              />
-            </CollapsibleTrigger>
-            <CollapsiblePanel>
-              <div className="px-3 pb-3">
-                <PairingForm
-                  isPairing={isPairing}
-                  setIsPairing={setIsPairing}
-                  onPaired={(environmentId) => {
-                    setPairingOpen(false);
-                    onPaired(environmentId);
-                    requestAnimationFrame(() => continueRef.current?.focus());
-                  }}
-                />
-              </div>
-            </CollapsiblePanel>
-          </Collapsible>
-        </div>
-      </div>
-      {skippedLabels.length > 0 ? (
-        <p className="mt-4 text-xs text-muted-foreground">
-          Not connected, so setup skips {skippedLabels.join(", ")}. You can set{" "}
-          {skippedLabels.length === 1 ? "it" : "them"} up later from Settings.
-        </p>
-      ) : null}
-      <div className="mt-6 flex flex-col-reverse gap-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-        <p className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-          {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read
-          more about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""},
-          see our{" "}
-          <a
-            className="underline underline-offset-2 hover:text-foreground"
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            privacy policy
-          </a>
-          .
-        </p>
-        <Button
-          className="shrink-0 self-end"
-          ref={continueRef}
-          autoFocus={!expandPairingInitially}
-          disabled={!ready || isPairing}
-          onClick={onContinue}
-        >
-          Continue
-          <ArrowRightIcon className="size-3.5" />
-        </Button>
-      </div>
-    </>
-  );
-}
-
-function ConnectAccountOption({
-  autoSelectedComputers,
-  disabled,
-  selectedIds,
-  onToggleEnvironment,
-}: {
-  readonly autoSelectedComputers: Set<EnvironmentId>;
-  readonly disabled: boolean;
-  readonly selectedIds: ReadonlySet<EnvironmentId>;
-  readonly onToggleEnvironment: (environmentId: EnvironmentId, checked: boolean) => void;
-}) {
-  const { environments } = useEnvironments();
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
-  const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  const [expanded, setExpanded] = useState(true);
-  const [discoveryReady, setDiscoveryReady] = useState(false);
-  const onDiscoveryReady = () => setDiscoveryReady(true);
-
-  return (
-    <div className="rounded-lg border border-border bg-background">
-      <Collapsible open={expanded && !!isSignedIn && discoveryReady} onOpenChange={setExpanded}>
-        <CollapsibleTrigger
-          disabled={disabled || !isLoaded}
-          onClick={(event) => {
-            if (!isSignedIn) {
-              event.preventDefault();
-              setExpanded(true);
-              openAuthPrompt();
-            }
-          }}
-          render={
-            <Button variant="ghost" size="sm-multiline" className="min-h-14 w-full justify-start" />
-          }
-        >
-          <CloudIcon className="size-4 text-muted-foreground" />
-          <span className="flex-1 text-left">T3 Connect</span>
-          <span className="text-xs text-muted-foreground">
-            {!isLoaded
-              ? "Loading sign-in…"
-              : !isSignedIn
-                ? "Sign in"
-                : !discoveryReady
-                  ? "Loading computers…"
-                  : null}
-          </span>
-          <ChevronRightIcon
-            className={cn("size-4 text-muted-foreground", expanded && isSignedIn && "rotate-90")}
-          />
-        </CollapsibleTrigger>
-        <CollapsiblePanel keepMounted>
-          <div className="px-3 pb-3">
-            <div className="mb-3 space-y-1.5">
-              {isSignedIn ? (
-                <CloudEnvironmentConnectRows
-                  primaryEnvironmentId={null}
-                  savedEnvironments={environments}
-                  showSavedEnvironments
-                  onDiscoveryReady={onDiscoveryReady}
-                  selection={{ selectedIds, onChange: onToggleEnvironment, autoSelectedComputers }}
-                  refreshWhileEmpty
-                  empty={
-                    <p className="py-3 text-sm text-muted-foreground">No computers linked yet.</p>
-                  }
-                />
-              ) : null}
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Run this on each computer you want to connect.
-            </p>
-            <InstallT3Commands command="t3 connect" className="mt-3" />
-            <p className="mt-3 text-xs text-muted-foreground">
-              Keep T3 Code running. Select the computers you want to set up above.
-            </p>
-          </div>
-        </CollapsiblePanel>
-      </Collapsible>
-    </div>
-  );
-}
-
-function PairingForm({
-  isPairing,
-  setIsPairing,
-  onPaired,
-}: {
-  readonly isPairing: boolean;
-  readonly setIsPairing: (value: boolean) => void;
-  readonly onPaired: (environmentId: EnvironmentId) => void;
-}) {
-  const connectPairingEnvironment = useAtomCommand(connectPairing, { reportFailure: false });
-  const [pairingUrl, setPairingUrl] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
-  const mountedRef = useRef(true);
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks mount so a pairing request that settles after unmount does not set state
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-    };
-  }, []);
-
-  const submit = async () => {
-    if (isPairing || pairingUrl.trim().length === 0) return;
-    setIsPairing(true);
-    setErrorMessage("");
-    const result = await connectPairingEnvironment({ pairingUrl: pairingUrl.trim() });
-    if (!mountedRef.current) return;
-    setIsPairing(false);
-    if (result._tag === "Success") {
-      onPaired(result.value);
-      return;
-    }
-    if (isAtomCommandInterrupted(result)) return;
-    const cause = squashAtomCommandFailure(result);
-    setErrorMessage(cause instanceof Error ? cause.message : "Pairing failed.");
+  const projectImport = useProjectImport({
+    scans,
+    importSelection,
+    onImportSelectionChange: setImportSelection,
+    isImporting,
+    setIsImporting,
+    onDone: finish,
+  });
+  const selectedCount = projectImport.selected.length;
+  const start = () => {
+    if (selectedCount > 0) void projectImport.runImport(projectImport.selected);
+    else projectImport.finishAfterImport();
   };
 
   return (
-    <>
-      <form
-        className="space-y-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit();
-        }}
-      >
-        <div>
-          <label className="block text-sm text-muted-foreground" htmlFor="onboarding-pairing-url">
-            Pairing link
-          </label>
-          <Input
-            id="onboarding-pairing-url"
-            autoFocus
-            aria-invalid={errorMessage.length > 0}
-            aria-describedby={errorMessage ? "onboarding-pairing-error" : undefined}
-            className="mt-2"
-            size="lg"
-            autoCapitalize="none"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            nativeInput
-            readOnly={isPairing}
-            placeholder="https://your-server:5230/pair#token=…"
-            value={pairingUrl}
-            onChange={(event) => setPairingUrl(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (
-                event.key === "Enter" &&
-                (event.nativeEvent.isComposing || event.keyCode === 229)
-              ) {
-                event.preventDefault();
-              }
-            }}
-          />
-        </div>
-        {errorMessage ? (
-          <Alert id="onboarding-pairing-error" variant="error">
-            <AlertDescription>{errorMessage}</AlertDescription>
-          </Alert>
-        ) : null}
-        <Collapsible>
-          <div className="flex items-center justify-between gap-3">
-            <CollapsibleTrigger
-              type="button"
-              className="group flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRightIcon className="size-3.5 group-data-panel-open:rotate-90" />
-              Need a pairing link?
-            </CollapsibleTrigger>
-            <Button type="submit" disabled={isPairing || pairingUrl.trim().length === 0}>
-              {isPairing ? "Pairing..." : "Pair"}
-            </Button>
-          </div>
-          <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">On the computer with your code:</p>
-            <InstallT3Commands command="t3 pair" className="mt-2" />
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
-              <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
-              <code className="font-mono">t3 pair --tailscale</code> instead.
+    <SidebarInset
+      {...workspaceAreaProps("home", 1, "Welcome")}
+      role="main"
+      className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
+    >
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+        {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
+        {isElectron ? <WorkspacePageHeader electron /> : null}
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
+          <div className="mx-auto w-full max-w-2xl px-6 pt-12 pb-10 sm:pt-16">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              Welcome to T3 Code
+            </h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Setting up <span className="font-medium text-foreground">{label}</span>. You can
+              change any of this later in Settings.
             </p>
-          </CollapsiblePanel>
-        </Collapsible>
-      </form>
-    </>
+            <AgentsSection environmentId={environmentId} label={label} />
+            <ProjectsSection
+              scan={scans[0]}
+              projectImport={projectImport}
+              isImporting={isImporting}
+            />
+            <PhoneSection />
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
+              {agentReady ? (
+                <span />
+              ) : (
+                <Button variant="ghost-muted" disabled={isImporting} onClick={start}>
+                  Skip for now
+                </Button>
+              )}
+              <div className="flex items-center gap-3">
+                {agentReady ? null : (
+                  <span className="text-xs text-muted-foreground">Set up one agent to start.</span>
+                )}
+                <Button disabled={!agentReady || isImporting} onClick={start}>
+                  {isImporting
+                    ? "Importing…"
+                    : selectedCount > 0
+                      ? `Add ${selectedCount} ${selectedCount === 1 ? "project" : "projects"} and start`
+                      : "Start"}
+                </Button>
+              </div>
+            </div>
+            <TelemetryNotice environmentId={environmentId} />
+          </div>
+        </div>
+      </div>
+      <ChatGptWelcomeCoordinator />
+    </SidebarInset>
   );
 }
 
-const PRIMARY_AGENT_DRIVERS = ["codex", "claudeAgent"] as const;
-type OnboardingAgentDriver = (typeof PRIMARY_AGENT_DRIVERS)[number];
+function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId));
+  return (
+    <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
+      {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read more
+      about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""}, see our{" "}
+      <a
+        className="underline underline-offset-2 hover:text-foreground"
+        href={PRIVACY_POLICY_URL}
+        target="_blank"
+        rel="noreferrer noopener"
+      >
+        privacy policy
+      </a>
+      .
+    </p>
+  );
+}
+
+function WelcomeSection({
+  title,
+  status,
+  children,
+}: {
+  readonly title: string;
+  readonly status?: ReactNode;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section className="mt-8">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        {status ? <span className="text-xs text-muted-foreground">{status}</span> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const INSTALLABLE_DRIVERS = ["codex", "claudeAgent"] as const;
+type OnboardingAgentDriver = (typeof INSTALLABLE_DRIVERS)[number];
+const isInstallableDriver = (driver: string): driver is OnboardingAgentDriver =>
+  (INSTALLABLE_DRIVERS as ReadonlyArray<string>).includes(driver);
 
 interface AgentTerminalSession {
   readonly environmentId: EnvironmentId;
@@ -675,202 +296,172 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-function AgentsStep({
-  environmentIds,
-  onContinue,
-}: {
-  readonly environmentIds: readonly EnvironmentId[];
-  readonly onContinue: () => void;
-}) {
-  const { environments } = useEnvironments();
+function agentName(provider: ServerProvider) {
   return (
-    <StepShell
-      title="Connect your agents"
-      description="Choose an agent to start coding. You can add more later."
-    >
-      <ScrollArea scrollFade className="mt-5 h-auto max-h-[min(32rem,55dvh)]">
-        <div className="space-y-5 pr-3">
-          {environmentIds.map((environmentId) => (
-            <ConnectedAgentsStep
-              key={environmentId}
-              environmentId={environmentId}
-              machineLabel={
-                environments.find((environment) => environment.environmentId === environmentId)
-                  ?.label ?? "Computer"
-              }
-            />
-          ))}
-        </div>
-      </ScrollArea>
-      <CliPathSetup />
-      <div className="mt-6 flex justify-end">
-        <Button autoFocus onClick={onContinue}>
-          Continue
-          <ArrowRightIcon className="size-3.5" />
-        </Button>
-      </div>
-    </StepShell>
+    provider.displayName ||
+    (provider.driver === "claudeAgent"
+      ? "Claude Code"
+      : (providerClients.get(provider.driver)?.label ?? provider.driver))
   );
 }
 
-function ConnectedAgentsStep({
+function AgentsSection({
   environmentId,
-  machineLabel,
+  label,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly machineLabel: string;
+  readonly label: string;
 }) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
-  const [addingAccount, setAddingAccount] = useState(false);
-  const [createdAccount, setCreatedAccount] = useState<{
-    instanceId: ProviderInstanceId;
-    displayName: string;
-    autoStart: boolean;
-  } | null>(null);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const [terminalSession, setTerminalSession] = useState<AgentTerminalSession | null>(null);
+  const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
+  const [addingProvider, setAddingProvider] = useState(false);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment to refresh its provider list when the environment changes
   useEffect(() => {
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  const byDriver = selectOnboardingProvidersByDriver(providers);
   const managedPolicy = serverConfig?.managedPolicy;
-  // A policy that owns Codex's launch settings also rules out ChatGPT's own runtime.
-  const chatGptAllowed =
-    managedInstanceLocks(managedPolicy, ProviderDriverKind.make("codex"))?.configKeys.has(
-      "setupMode",
-    ) !== true;
+  const { checking, found, available } = groupWelcomeAgents(
+    providers?.filter((provider) => isManagedDriverAllowed(managedPolicy, provider.driver)),
+    agentName,
+  );
+  // With nothing on this computer yet, the list of agents to add is the main task.
+  const showMore = moreOpen ?? (!checking && found.length === 0);
+  const readyCount = found.filter(
+    (provider) => getOnboardingProviderState(provider) === "ready",
+  ).length;
 
-  const primaryAgents = PRIMARY_AGENT_DRIVERS.filter((driver) =>
-    isManagedDriverAllowed(managedPolicy, ProviderDriverKind.make(driver)),
-  ).flatMap((driver) => {
-    const instances =
-      driver === "codex" ? providers?.filter((provider) => provider.driver === driver) : undefined;
-    return instances?.length
-      ? instances.map((provider) => ({ driver, provider, instanceId: provider.instanceId }))
-      : [{ driver, provider: byDriver.get(driver), instanceId: byDriver.get(driver)?.instanceId }];
-  });
-  if (createdAccount) {
-    const index = primaryAgents.findIndex(
-      (agent) => agent.instanceId === createdAccount.instanceId,
+  const openTerminal = (provider: ServerProvider) => {
+    if (
+      !isInstallableDriver(provider.driver) ||
+      serverConfig === null ||
+      !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
+    )
+      return;
+    setTerminalSession({
+      environmentId,
+      driver: provider.driver,
+      providerInstanceId: provider.instanceId,
+      cwd: serverConfig.cwd,
+      command: provider.installed
+        ? resolveOnboardingProviderLoginCommand(
+            provider,
+            serverConfig.settings,
+            serverConfig.environment.platform.os,
+          )
+        : resolveOnboardingProviderInstallCommand(
+            provider.driver,
+            serverConfig.environment.platform.os,
+          ),
+      keybindings: serverConfig.keybindings,
+    });
+  };
+
+  const renderAgent = (provider: ServerProvider, compact = false) => {
+    const terminalOpen = terminalSession?.providerInstanceId === provider.instanceId;
+    const ready = getOnboardingProviderState(provider) === "ready";
+    if (ready) {
+      return <AgentCard key={provider.instanceId} driver={provider.driver} provider={provider} />;
+    }
+    if (provider.driver === "codex" && serverConfig !== null) {
+      return (
+        <OnboardingCodexSetup
+          key={provider.instanceId}
+          environmentId={environmentId}
+          provider={provider}
+          serverConfig={serverConfig}
+          terminalOpen={terminalOpen}
+          onOpenTerminal={() => openTerminal(provider)}
+        />
+      );
+    }
+    if (isInstallableDriver(provider.driver)) {
+      return (
+        <AgentCard
+          key={provider.instanceId}
+          driver={provider.driver}
+          provider={provider}
+          terminalOpen={terminalOpen}
+          terminalAvailable={serverConfig !== null && canOperateTerminal}
+          onOpenTerminal={() => openTerminal(provider)}
+        />
+      );
+    }
+    return (
+      <AgentCard
+        key={provider.instanceId}
+        driver={provider.driver}
+        provider={provider}
+        compact={compact}
+        settingsLink={{ environmentId, instanceId: provider.instanceId }}
+      />
     );
-    const [existing] = index >= 0 ? primaryAgents.splice(index, 1) : [];
-    primaryAgents.unshift(
-      existing ?? {
-        driver: "codex",
-        provider: undefined,
-        instanceId: createdAccount.instanceId,
-      },
-    );
-  }
+  };
+
   return (
-    <section>
-      <h2 className="mb-2 text-sm font-medium">{machineLabel}</h2>
+    <WelcomeSection
+      title="Agents"
+      status={
+        checking && found.length === 0
+          ? `Checking ${label}…`
+          : readyCount > 0
+            ? `${readyCount} ready on ${label}`
+            : `None ready on ${label} yet`
+      }
+    >
+      {found.length > 0 ? (
+        <div className="space-y-1.5">{found.map((provider) => renderAgent(provider))}</div>
+      ) : null}
       {!canOperateTerminal ? (
-        <p className="mb-2 text-sm text-muted-foreground">
+        <p className="mt-2 text-sm text-muted-foreground">
           This connection cannot control terminals.
         </p>
       ) : null}
-      <div className="space-y-1.5">
-        {primaryAgents.map(({ driver, provider, instanceId }) =>
-          driver === "codex" && serverConfig !== null ? (
-            <OnboardingCodexSetup
-              key={instanceId ?? driver}
-              environmentId={environmentId}
-              provider={provider}
-              serverConfig={serverConfig}
-              createdAccount={instanceId === createdAccount?.instanceId ? createdAccount : null}
-              onAutoStartConsumed={() =>
-                setCreatedAccount((account) => (account ? { ...account, autoStart: false } : null))
-              }
-              terminalOpen={terminalSession?.driver === driver}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
-                  providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
-                });
-              }}
-            />
-          ) : (
-            <AgentCard
-              key={driver}
-              driver={driver}
-              provider={provider}
-              terminalOpen={terminalSession?.driver === driver}
-              terminalAvailable={serverConfig !== null && canOperateTerminal}
-              onOpenTerminal={() => {
-                if (
-                  provider === undefined ||
-                  serverConfig === null ||
-                  !readEnvironmentScope(environmentId, AuthTerminalOperateScope)
-                )
-                  return;
-                setTerminalSession({
-                  environmentId,
-                  driver,
-                  providerInstanceId: provider.instanceId,
-                  cwd: serverConfig.cwd,
-                  command: provider.installed
-                    ? resolveOnboardingProviderLoginCommand(
-                        provider,
-                        serverConfig.settings,
-                        serverConfig.environment.platform.os,
-                      )
-                    : resolveOnboardingProviderInstallCommand(
-                        driver,
-                        serverConfig.environment.platform.os,
-                      ),
-                  keybindings: serverConfig.keybindings,
-                });
-              }}
-            />
-          ),
-        )}
-      </div>
-      {chatGptAllowed &&
-      providers?.some(
-        (provider) =>
-          provider.driver === "codex" && getOnboardingProviderState(provider) === "ready",
-      ) ? (
-        <div className="mt-3">
-          <Button size="xs" variant="ghost-muted" onClick={() => setAddingAccount(true)}>
-            Connect another ChatGPT account
-          </Button>
-        </div>
-      ) : null}
-      {addingAccount ? (
-        <AddManagedCodexAccountDialog
-          environmentId={environmentId}
-          onClose={() => setAddingAccount(false)}
-          onAccountCreated={(instanceId, displayName) =>
-            setCreatedAccount({ instanceId, displayName, autoStart: true })
-          }
-        />
-      ) : null}
+      <Collapsible
+        open={showMore}
+        onOpenChange={setMoreOpen}
+        className={found.length > 0 ? "mt-2" : undefined}
+      >
+        <CollapsibleTrigger className="group flex w-full items-center gap-3 rounded-lg px-1 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+          <span className="text-sm font-medium text-foreground">
+            {found.length > 0 ? "Add more agents" : "Set up an agent"}
+          </span>
+          <AgentLogoStack providers={available} />
+          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+            <ACPRegistryIcon className="size-3.5" />
+            ACP Registry
+          </span>
+          <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div className="space-y-1.5 pt-1">
+            {available
+              .filter((provider) => isInstallableDriver(provider.driver))
+              .map((provider) => renderAgent(provider))}
+            <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+              {available
+                .filter((provider) => !isInstallableDriver(provider.driver))
+                .map((provider) => renderAgent(provider, true))}
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-4 py-3">
+              <span className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+                <ACPRegistryIcon className="size-4" />
+                More agents in the ACP Registry
+              </span>
+              <Button size="xs" variant="outline" onClick={() => setAddingProvider(true)}>
+                Browse
+              </Button>
+            </div>
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
       {terminalSession !== null ? (
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
@@ -881,13 +472,248 @@ function ConnectedAgentsStep({
           }}
         />
       ) : null}
-    </section>
+      {addingProvider ? (
+        <AddProviderInstanceDialog
+          open
+          environmentId={environmentId}
+          environmentLabel={label}
+          onOpenChange={setAddingProvider}
+          onCreated={() => void refreshProviders({ environmentId, input: {} })}
+        />
+      ) : null}
+    </WelcomeSection>
+  );
+}
+
+function AgentLogoStack({ providers }: { readonly providers: ReadonlyArray<ServerProvider> }) {
+  if (providers.length === 0) return null;
+  return (
+    <span className="flex items-center" aria-hidden>
+      {providers.slice(0, 5).map((provider, index) => (
+        <span
+          key={provider.instanceId}
+          className={cn(
+            "grid size-7 place-items-center rounded-full border border-border bg-background",
+            index > 0 && "-ml-1.5",
+          )}
+        >
+          <ProviderInstanceIcon
+            driverKind={provider.driver}
+            displayName={agentName(provider)}
+            iconClassName="size-3.5"
+          />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ProjectsSection({
+  scan,
+  projectImport,
+  isImporting,
+}: {
+  readonly scan: ReturnType<typeof useProjectScans>[number] | undefined;
+  readonly projectImport: ReturnType<typeof useProjectImport>;
+  readonly isImporting: boolean;
+}) {
+  const [reviewing, setReviewing] = useState(false);
+  const { candidates, recent, selected, selectedKeys, setSelectedKeys, visibleImportError } =
+    projectImport;
+  if (scan === undefined) return null;
+  if (scan.isPending && scan.data === null) {
+    return (
+      <WelcomeSection title="Projects">
+        <p className="text-sm text-muted-foreground">
+          Looking for projects in your Claude Code and Codex history…
+        </p>
+      </WelcomeSection>
+    );
+  }
+  if (scan.error !== null) {
+    return (
+      <WelcomeSection title="Projects">
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+        >
+          <span>Could not check projects. {scan.error}</span>
+          <Button variant="ghost" size="sm" onClick={scan.refresh}>
+            Retry
+          </Button>
+        </div>
+      </WelcomeSection>
+    );
+  }
+  if (candidates.length === 0) return null;
+
+  const allKeys = candidates.map((candidate) => candidate.key);
+  const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
+  return (
+    <WelcomeSection title="Projects" status="From your Claude Code and Codex history">
+      <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
+        <Checkbox
+          aria-label="Bring in projects"
+          checked={selected.length > 0}
+          disabled={isImporting}
+          onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
+        />
+        <span className="min-w-0 flex-1 text-sm text-foreground">
+          {selected.length > 0
+            ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their chats`
+            : "Bring in projects and their chats"}
+        </span>
+        <Button
+          variant="ghost-muted"
+          size="xs"
+          aria-expanded={reviewing}
+          onClick={() => setReviewing((open) => !open)}
+        >
+          {reviewing ? "Hide" : `Review ${candidates.length}`}
+          <ChevronDownIcon className={cn("size-3.5", reviewing && "rotate-180")} />
+        </Button>
+      </div>
+      {reviewing ? (
+        <fieldset className="mt-2 min-w-0" disabled={isImporting}>
+          <div className="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
+            <span role="status">
+              {selected.length} of {candidates.length} selected
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={selected.length === candidates.length}
+                onClick={() => setSelectedKeys(new Set(allKeys))}
+              >
+                Select all
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={selected.length === 0}
+                onClick={() => setSelectedKeys(new Set())}
+              >
+                Select none
+              </Button>
+            </div>
+          </div>
+          <ScrollArea scrollFade className="mt-1 h-auto max-h-80">
+            <div className="space-y-0.5 pr-3">
+              <ImportCandidateList
+                candidates={candidates}
+                selectedKeys={selectedKeys}
+                onSelectionChange={setSelectedKeys}
+              />
+            </div>
+          </ScrollArea>
+        </fieldset>
+      ) : null}
+      {scan.data?.truncated ? (
+        <p className="mt-2 text-xs text-muted-foreground" role="status">
+          {SCAN_LIMIT_MESSAGE}
+        </p>
+      ) : null}
+      {visibleImportError ? (
+        <p className="mt-2 text-sm text-destructive">{visibleImportError}</p>
+      ) : null}
+    </WelcomeSection>
+  );
+}
+
+function PhoneSection() {
+  const [open, setOpen] = useState(false);
+  return (
+    <WelcomeSection title="Phone" status="Optional">
+      <Collapsible open={open} onOpenChange={setOpen}>
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
+          <SmartphoneIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 text-sm text-foreground">
+            Use T3 Code from your phone
+          </span>
+          <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
+            {open ? "Hide" : "Set up"}
+            <ChevronDownIcon className={cn("size-3.5", open && "rotate-180")} />
+          </CollapsibleTrigger>
+        </div>
+        <CollapsiblePanel>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div className="flex items-center gap-4 rounded-lg border border-border bg-background p-3.5">
+              {MOBILE_APP_STORES.map(({ store, url, Icon }) => (
+                <div key={store} className="flex flex-col items-center gap-1.5">
+                  <div className="rounded-md bg-white p-1">
+                    <QRCodeSvg
+                      value={url}
+                      size={76}
+                      level="M"
+                      marginSize={1}
+                      title={`${store} link`}
+                    />
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-2xs text-muted-foreground">
+                    <Icon className="size-3" />
+                    {store}
+                  </span>
+                </div>
+              ))}
+              <span className="text-sm text-muted-foreground">Scan to get the app.</span>
+            </div>
+            <div className="flex flex-col justify-center gap-2 rounded-lg border border-border bg-background p-3.5">
+              {hasCloudPublicConfig() ? (
+                <PhoneConnectLink />
+              ) : (
+                <>
+                  <span className="text-sm text-muted-foreground">
+                    Then pair the app with this computer.
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="self-start"
+                    render={<Link to="/settings/access" />}
+                  >
+                    Show pairing code
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </CollapsiblePanel>
+      </Collapsible>
+    </WelcomeSection>
+  );
+}
+
+function PhoneConnectLink() {
+  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+  const { openAuthPrompt } = useT3ConnectAuthPrompt();
+  if (isSignedIn) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
+        <CheckIcon className="size-4 text-success-foreground" />
+        Signed in to T3 Connect. Use the same account in the app.
+      </span>
+    );
+  }
+  return (
+    <>
+      <span className="text-sm text-muted-foreground">
+        Then sign in here and in the app with the same account.
+      </span>
+      <Button
+        variant="outline"
+        size="sm"
+        className="self-start"
+        disabled={!isLoaded}
+        onClick={openAuthPrompt}
+      >
+        Sign in to T3 Connect
+      </Button>
+    </>
   );
 }
 
 function OnboardingCodexSetup({
-  createdAccount,
-  onAutoStartConsumed,
   environmentId,
   provider,
   serverConfig,
@@ -899,23 +725,15 @@ function OnboardingCodexSetup({
   readonly serverConfig: ServerConfig;
   readonly terminalOpen: boolean;
   readonly onOpenTerminal: () => void;
-  readonly createdAccount: {
-    instanceId: ProviderInstanceId;
-    displayName: string;
-    autoStart: boolean;
-  } | null;
-  readonly onAutoStartConsumed: () => void;
 }) {
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, "Codex setup settings");
   const instanceId =
-    createdAccount?.instanceId ??
-    provider?.instanceId ??
-    defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
+    provider?.instanceId ?? defaultInstanceIdForDriver(ProviderDriverKind.make("codex"));
   const settings = serverConfig.settings;
   const instance = settings.providerInstances[instanceId] ?? {
     driver: ProviderDriverKind.make("codex"),
-    config: createdAccount ? { enabled: true, setupMode: "managed" } : {},
+    config: {},
   };
   const mode = readCodexSetupMode(instance.config);
   const existingChosen =
@@ -948,7 +766,7 @@ function OnboardingCodexSetup({
   };
   return existingChosen ? (
     <AgentCard
-      driver="codex"
+      driver={ProviderDriverKind.make("codex")}
       provider={provider}
       terminalOpen={terminalOpen}
       terminalAvailable={canOperateTerminal}
@@ -957,9 +775,6 @@ function OnboardingCodexSetup({
   ) : (
     <CodexSetupSection
       presentation="onboarding"
-      autoStart={createdAccount?.autoStart === true}
-      displayName={createdAccount?.displayName}
-      onAutoStartConsumed={onAutoStartConsumed}
       environmentId={environmentId}
       instanceId={instanceId}
       provider={provider}
@@ -973,35 +788,54 @@ function OnboardingCodexSetup({
 function AgentCard({
   driver,
   provider,
-  terminalOpen,
-  terminalAvailable,
+  terminalOpen = false,
+  terminalAvailable = false,
   onOpenTerminal,
+  settingsLink,
+  compact = false,
 }: {
-  readonly driver: OnboardingAgentDriver;
+  readonly driver: ProviderDriverKind;
   readonly provider: ServerProvider | undefined;
-  readonly terminalOpen: boolean;
-  readonly terminalAvailable: boolean;
-  readonly onOpenTerminal: () => void;
+  readonly terminalOpen?: boolean;
+  readonly terminalAvailable?: boolean;
+  readonly onOpenTerminal?: () => void;
+  // Agents without a one-command install are set up on their Settings page instead.
+  readonly settingsLink?: {
+    readonly environmentId: EnvironmentId;
+    readonly instanceId: ProviderInstanceId;
+  };
+  // A tile for the "Add more agents" grid: the button carries the state, so no detail line.
+  readonly compact?: boolean;
 }) {
-  const meta = providerClients.get(ProviderDriverKind.make(driver));
   const displayName =
-    provider?.displayName || (driver === "claudeAgent" ? "Claude Code" : (meta?.label ?? driver));
+    provider?.displayName ||
+    (driver === "claudeAgent" ? "Claude Code" : (providerClients.get(driver)?.label ?? driver));
   const summary = getProviderSummary(provider);
   const providerState = getOnboardingProviderState(provider);
+  const settingsAction =
+    providerState === "signIn"
+      ? "Sign in"
+      : providerState === "disabled"
+        ? "Turn on"
+        : providerState === "attention"
+          ? "Details"
+          : "Set up";
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-4">
-      <ProviderInstanceIcon
-        driverKind={ProviderDriverKind.make(driver)}
-        displayName={displayName}
-        iconClassName="size-5"
-      />
+    <div
+      className={cn(
+        "flex items-center gap-3 rounded-lg border border-border bg-background",
+        compact ? "px-3 py-2.5" : "px-4 py-4",
+      )}
+    >
+      <ProviderInstanceIcon driverKind={driver} displayName={displayName} iconClassName="size-5" />
       <div className="min-w-0 flex-1">
         <span className="block text-sm font-medium text-foreground">{displayName}</span>
-        <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
-          {providerState === "ready" ? "Ready to code." : summary.headline}
-          {providerState !== "ready" && summary.detail ? ` · ${summary.detail}` : ""}
-        </p>
+        {providerState === "ready" || compact ? null : (
+          <p className="mt-0.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
+            {providerState === "install" ? "Not installed" : summary.headline}
+          </p>
+        )}
       </div>
       <div className="shrink-0">
         {providerState === "ready" ? (
@@ -1011,9 +845,15 @@ function AgentCard({
           </span>
         ) : providerState === "checking" ? (
           <span className="text-xs text-muted-foreground">Checking...</span>
-        ) : providerState === "disabled" ? (
-          <span className="text-xs text-muted-foreground">Disabled</span>
-        ) : providerState === "attention" ? (
+        ) : settingsLink ? (
+          <Button
+            size="xs"
+            variant="outline"
+            render={<Link to="/settings/providers" search={settingsLink} />}
+          >
+            {settingsAction}
+          </Button>
+        ) : providerState === "disabled" || providerState === "attention" ? (
           <span className="text-xs text-muted-foreground">{summary.headline}</span>
         ) : (
           <Button
@@ -1200,7 +1040,9 @@ interface ImportSelection {
   readonly keys: ReadonlySet<string>;
 }
 
-function ImportStep({
+// Creates the selected projects, then imports each one's agent history. Owns retry state so a
+// second Start resumes instead of recreating projects.
+function useProjectImport({
   scans,
   importSelection,
   onImportSelectionChange,
@@ -1219,7 +1061,6 @@ function ImportStep({
     importedThreadCount?: number,
   ) => Promise<boolean>;
 }) {
-  const { environments } = useEnvironments();
   const writableEnvironments = useEnvironmentsWithScope(scans, AuthOrchestrationOperateScope);
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
@@ -1439,127 +1280,16 @@ function ImportStep({
     finishAfterImport();
   };
 
-  if (scans.every((scan) => scan.data === null) && scans.some((scan) => scan.isPending)) {
-    return (
-      <div className="flex h-full min-h-40 flex-col">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Your projects</h1>
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
-          <Spinner size="lg" tone="muted" />
-          <p className="text-center text-sm text-muted-foreground">
-            Looking for projects from Claude Code and Codex…
-          </p>
-        </div>
-        <div className="flex justify-end">
-          <Button variant="ghost-muted" onClick={() => void onDone()}>
-            Do not import projects
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <StepShell
-      title="Import your projects"
-      description="Import projects and conversations from Claude Code and Codex on your selected computers."
-    >
-      {candidates.length > 0 ? (
-        <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-          <span role="status">
-            {selected.length} of {candidates.length} selected
-          </span>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === candidates.length}
-              onClick={() => setSelectedKeys(new Set(candidates.map((item) => item.key)))}
-            >
-              Select all
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={isImporting || selected.length === 0}
-              onClick={() => setSelectedKeys(new Set())}
-            >
-              Select none
-            </Button>
-          </div>
-        </div>
-      ) : null}
-      <ScrollArea scrollFade className="mt-2 h-auto max-h-80">
-        <div className="space-y-5 pr-3">
-          {scans.map((scan) => {
-            const scanCandidates = candidates.filter(
-              (candidate) => candidate.environmentId === scan.environmentId,
-            );
-            const label =
-              environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
-            return (
-              <fieldset
-                key={scan.environmentId}
-                className="min-w-0 space-y-0.5"
-                disabled={isImporting}
-              >
-                {scans.length > 1 ? (
-                  <legend className="mb-2 text-sm font-medium">{label}</legend>
-                ) : null}
-                {scan.isPending && scan.data === null ? (
-                  <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-                    <Spinner size="md" />
-                    Looking for projects…
-                  </div>
-                ) : scan.error !== null ? (
-                  <div
-                    role="alert"
-                    className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
-                  >
-                    <span>Could not check projects. {scan.error}</span>
-                    <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      Retry
-                    </Button>
-                  </div>
-                ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
-                  </p>
-                ) : null}
-                {scan.data?.truncated ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {SCAN_LIMIT_MESSAGE}
-                  </p>
-                ) : null}
-                <ImportCandidateList
-                  candidates={scanCandidates}
-                  selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedKeys}
-                />
-              </fieldset>
-            );
-          })}
-        </div>
-      </ScrollArea>
-      {visibleImportError ? (
-        <p className="mt-3 text-sm text-destructive">{visibleImportError}</p>
-      ) : null}
-      <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-        <Button variant="ghost-muted" disabled={isImporting} onClick={finishAfterImport}>
-          Do not import projects
-        </Button>
-        <Button
-          autoFocus
-          disabled={!canImport || isImporting || selected.length === 0}
-          onClick={() => void runImport(selected)}
-        >
-          {isImporting
-            ? "Importing…"
-            : `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"}`}
-        </Button>
-      </div>
-    </StepShell>
-  );
+  return {
+    candidates,
+    recent,
+    selected,
+    selectedKeys,
+    setSelectedKeys,
+    visibleImportError,
+    runImport,
+    finishAfterImport,
+  };
 }
 
 type ImportCandidate = AgentSessionProjectCandidate & {
@@ -1821,25 +1551,5 @@ function CliPathSetup() {
         </Button>
       )}
     </div>
-  );
-}
-
-function StepShell({
-  title,
-  description,
-  children,
-}: {
-  readonly title: string;
-  readonly description?: string;
-  readonly children?: React.ReactNode;
-}) {
-  return (
-    <>
-      <h1 className="text-2xl font-semibold tracking-tight text-foreground">{title}</h1>
-      {description ? (
-        <p className="mt-2.5 text-sm leading-relaxed text-muted-foreground">{description}</p>
-      ) : null}
-      {children}
-    </>
   );
 }

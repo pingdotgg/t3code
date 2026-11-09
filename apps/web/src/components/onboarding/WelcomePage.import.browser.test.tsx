@@ -4,9 +4,12 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentId,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type AgentSessionProjectCandidate,
   type AuthEnvironmentScope,
   type AuthSessionState,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -21,8 +24,6 @@ type CreateProjectInput = {
   input: { projectId: ProjectId; workspaceRoot: string };
 };
 const state = vi.hoisted(() => ({
-  selectedEnvironment: "primary",
-  addedEnvironments: [] as string[],
   sessions: new Map<string, unknown>(),
   projects: null as unknown,
   providers: null as unknown,
@@ -31,7 +32,6 @@ const state = vi.hoisted(() => ({
   createProject: vi.fn(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
-  connectPairing: vi.fn(),
   completeOnboarding: vi.fn(),
   onDone: vi.fn(),
   scan: vi.fn(),
@@ -68,9 +68,7 @@ vi.mock(import("../../state/environments"), async (original) => {
   return {
     ...(await original()),
     usePrimaryEnvironment: (() => primary) as never,
-    useEnvironments: (() => ({
-      environments: [state.selectedEnvironment, ...state.addedEnvironments].map(environment),
-    })) as never,
+    useEnvironments: (() => ({ environments: [primary] })) as never,
   };
 });
 vi.mock(import("../../state/server"), async (original) => {
@@ -116,15 +114,10 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => ({
       };
     }),
 }));
-vi.mock(import("../../connection/onboarding"), async (original) => ({
-  ...(await original()),
-  connectPairing: "connectPairing" as never,
-}));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: ((
-    command: "createProject" | "importThreads" | "refreshProviders" | "connectPairing",
-  ) => state[command]) as never,
+  useAtomCommand: ((command: "createProject" | "importThreads" | "refreshProviders") =>
+    state[command]) as never,
 }));
 vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
   ...(await original()),
@@ -132,10 +125,22 @@ vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
 }));
 
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { WelcomeWizard } from "./WelcomeWizard";
+import { WelcomePage } from "./WelcomePage";
 
 const primaryId = EnvironmentId.make("primary");
-const remoteId = EnvironmentId.make("remote");
+const readyClaude: ServerProvider = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-01-01T00:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
 const permissionMessage = "This connection cannot import projects or thread history.";
 
 function session(scopes: ReadonlyArray<AuthEnvironmentScope>): AuthSessionState {
@@ -235,36 +240,20 @@ async function click(label: string) {
   await act(async () => target.click());
 }
 
-async function clickStage(label: string) {
-  const stage = document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  expect(stage?.disabled).toBe(false);
-  await act(async () => stage?.click());
-}
-
-async function mountImport(remote = false) {
-  state.selectedEnvironment = remote ? "remote" : "primary";
-  await using stack = new AsyncDisposableStack();
-  const screen = stack.use(
-    await render(
-      <RegistryContext.Provider value={appAtomRegistry}>
-        <WelcomeWizard localAvailable={!remote} onDone={state.onDone} />
-      </RegistryContext.Provider>,
-    ),
+async function mountWelcome() {
+  return render(
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <WelcomePage environmentId={primaryId} onDone={state.onDone} />
+    </RegistryContext.Provider>,
   );
-  await click("Continue");
-  await click("Continue");
-  expect(pageText()).toContain("Import your projects");
-  stack.move();
-  return screen;
 }
 
 // The mocked modules read `state`, so every test starts by replacing all of it.
 // Returns the clock spy so each test can `using` it; the spy would otherwise outlive the test.
 function setup() {
   const now = vi.spyOn(Date, "now").mockReturnValue(NOW);
-  state.addedEnvironments = [];
   state.sessions.clear();
-  for (const id of [primaryId, remoteId]) {
+  for (const id of [primaryId]) {
     state.sessions.set(
       id,
       Atom.make<SessionResult>(AsyncResult.success(session([AuthOrchestrationOperateScope]))).pipe(
@@ -273,7 +262,7 @@ function setup() {
     );
   }
   state.projects = Atom.make<ReadonlyArray<Project>>([]).pipe(Atom.keepAlive);
-  state.providers = Atom.make<ReadonlyArray<never>>([]).pipe(Atom.keepAlive);
+  state.providers = Atom.make<ReadonlyArray<ServerProvider>>([readyClaude]).pipe(Atom.keepAlive);
   state.config = Atom.make(null).pipe(Atom.keepAlive);
   state.candidates = [candidate("/projects/first"), candidate("/projects/second")];
   state.createProject
@@ -283,7 +272,6 @@ function setup() {
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ importedCount: 1, skippedCount: 0 }));
   state.refreshProviders.mockReset().mockResolvedValue(AsyncResult.success(undefined));
-  state.connectPairing.mockReset().mockResolvedValue(AsyncResult.success(remoteId));
   state.completeOnboarding.mockReset().mockResolvedValue(undefined);
   state.onDone.mockReset();
   state.scan.mockReset();
@@ -292,34 +280,6 @@ function setup() {
   return now;
 }
 
-it("keeps the project selection after going back a stage", async () => {
-  using _now = setup();
-  await using _screen = await mountImport();
-  await click("Select none");
-  expect(pageText()).toContain("0 of 2 selected");
-
-  await clickStage("Agents, step 2");
-  await click("Continue");
-  expect(pageText()).toContain("Import your projects");
-  expect(pageText()).toContain("0 of 2 selected");
-});
-
-it("ticks the recent projects of a computer added after the selection changed", async () => {
-  using _now = setup();
-  await using _screen = await mountImport();
-  await click("Select none");
-
-  state.addedEnvironments = ["remote"];
-  await clickStage("Connect, step 1");
-  await click("Continue");
-  await click("Continue");
-  expect(pageText()).toContain("2 of 4 selected");
-
-  await click("Import 2 projects");
-  const created = state.createProject.mock.calls as Array<[CreateProjectInput]>;
-  expect(created.map(([call]) => call.environmentId)).toEqual([remoteId, remoteId]);
-});
-
 it("rechecks after project creation and can retry its history without recreating the project", async () => {
   using _now = setup();
   const creation = deferred<void>();
@@ -327,8 +287,8 @@ it("rechecks after project creation and can retry its history without recreating
     await creation.promise;
     return recordProject(input);
   });
-  await using _screen = await mountImport();
-  await click("Import 2 projects");
+  await using _screen = await mountWelcome();
+  await click("Add 2 projects and start");
   expect(state.createProject).toHaveBeenCalledOnce();
   await act(async () => {
     setGrant(primaryId, false);
@@ -341,7 +301,7 @@ it("rechecks after project creation and can retry its history without recreating
   expect(pageText()).toContain(permissionMessage);
 
   await act(async () => setGrant(primaryId, true));
-  await click("Import 2 projects");
+  await click("Add 2 projects and start");
   expect(state.createProject).toHaveBeenCalledTimes(2);
   expect(state.importThreads).toHaveBeenCalledTimes(2);
   expect(state.onDone).toHaveBeenCalledOnce();
@@ -354,8 +314,8 @@ it("completes accepted imports when permission is revoked after the final server
   state.importThreads.mockImplementationOnce(async () =>
     AsyncResult.success(await imported.promise),
   );
-  await using _screen = await mountImport();
-  await click("Import 1 project");
+  await using _screen = await mountWelcome();
+  await click("Add 1 project and start");
   await act(async () => {
     setGrant(primaryId, false);
     imported.resolve({ importedCount: 1, skippedCount: 0 });
@@ -374,15 +334,26 @@ it("finishes setup without landing when the imported project never reaches the c
   state.createProject.mockResolvedValue(AsyncResult.success(undefined));
   state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
   state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
-  await using _screen = await mountImport();
+  await using _screen = await mountWelcome();
 
-  await click("Import 1 project");
+  await click("Add 1 project and start");
   await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
   // A failed completion hands the step back instead of leaving it importing.
-  await vi.waitFor(() => expect(button("Import 1 project").disabled).toBe(false));
+  await vi.waitFor(() => expect(button("Add 1 project and start").disabled).toBe(false));
   expect(state.onDone).not.toHaveBeenCalled();
 
-  await click("Import 1 project");
+  await click("Add 1 project and start");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.onDone).toHaveBeenCalledWith(undefined);
+});
+
+it("waits for a ready agent to start, and Skip for now still finishes setup", async () => {
+  using _now = setup();
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
+  await using _screen = await mountWelcome();
+  expect(button("Add 2 projects and start").disabled).toBe(true);
+
+  await click("Skip for now");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.createProject).toHaveBeenCalledTimes(2);
 });
