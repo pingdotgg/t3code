@@ -621,7 +621,10 @@ export function extractAntigravityBackgroundTaskCompletion(
       /(?:^|\n)Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(outputText) ??
       /(?:^|\n)Task id "([^"]+)"\s+was canceled\b/i.exec(outputText);
     const hasSuccessfulKillNotice = killMatch !== null;
-    const isExplicitKillError = /(?:failed|error|not found|no task)/i.test(outputText);
+    const firstLine = outputText.split("\n", 1)[0] ?? "";
+    const isExplicitKillError =
+      /(?:failed|error|not found|no task)/i.test(firstLine) ||
+      /(?:^|\n)(?:error:|failed to kill)/i.test(outputText);
     if ((toolCall.status === "completed" && !isExplicitKillError) || hasSuccessfulKillNotice) {
       const taskId = taskIdFromInput ?? killMatch?.[1];
       if (taskId) {

@@ -702,6 +702,27 @@ describe("Antigravity background tasks", () => {
       }),
     ).toEqual([]);
 
+    // manage_task kill succeeded when output has inner error mentions in task logs
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-kill-inner-err",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "kill", TaskId: "task-123" },
+          rawOutput:
+            "Killed task 123.\nCaptured logs before kill:\n[ERROR] Connection reset by peer",
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "task-123",
+        status: "completed",
+        appendOutput:
+          "Killed task 123.\nCaptured logs before kill:\n[ERROR] Connection reset by peer",
+      },
+    ]);
+
     // manage_task status shows completed
     expect(
       extractAntigravityBackgroundTaskCompletion({
