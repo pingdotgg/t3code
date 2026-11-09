@@ -39,7 +39,8 @@ vi.mock("../hooks/useHandleNewThread", () => ({
 vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestUrl: () => null }));
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
-  useAtomCommand: () => async () => ({ _tag: "Success", value: undefined }),
+  // The add-project destination step starts a clone and follows its project id.
+  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async () => ({ _tag: "Success", value: undefined }),
