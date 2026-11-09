@@ -1239,13 +1239,16 @@ jobs:
       T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
     steps:
+      # Only what setup-ci-deps reads to install vp and Node. The alias call
+      # names its deployment and scope, so it reads nothing else from the repo.
       - name: Checkout
         uses: actions/checkout@v6
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
-            /*
-            !/.repos/
+            /.github/actions/setup-ci-deps/
+            /package.json
+            /pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
 
       - name: Setup Vite+
