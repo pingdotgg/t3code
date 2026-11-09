@@ -1456,16 +1456,18 @@ export function toReviewThreadPage(result: ReviewThreads.Result): GitHubReviewTh
 export function toReviewThreadCommentsPage(result: ReviewThreadComments.Result): {
   readonly belongsToPullRequest: boolean;
   readonly comments: ReadonlyArray<PullRequestThreadComment>;
+  readonly hiddenCount: number;
   readonly nextCursor: string | null;
 } {
   const viewer = trimmed(result.viewer.login);
   const thread = result.node?.__typename === "PullRequestReviewThread" ? result.node : null;
   const pullRequestId = result.repository?.pullRequest?.id;
+  const loaded = nodesOf(thread?.comments);
+  const comments = loaded.filter((comment) => !comment.isMinimized);
   return {
     belongsToPullRequest: pullRequestId !== undefined && pullRequestId === thread?.pullRequest.id,
-    comments: nodesOf(thread?.comments)
-      .filter((comment) => !comment.isMinimized)
-      .map((comment) => toThreadComment(comment, viewer)),
+    comments: comments.map((comment) => toThreadComment(comment, viewer)),
+    hiddenCount: loaded.length - comments.length,
     nextCursor: nextCursorOf(thread?.comments.pageInfo),
   };
 }

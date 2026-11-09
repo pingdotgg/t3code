@@ -958,7 +958,7 @@ describe("review thread decoding", () => {
     });
   });
 
-  it("ends a thread's walk on the last page, which still names a cursor", () => {
+  it("ends a thread's walk on the last page, which still names a cursor, counting what it hid", () => {
     const decoded = expectSuccess(
       decodeReviewThreadCommentsJson(
         JSON.stringify({
@@ -968,7 +968,10 @@ describe("review thread decoding", () => {
               pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjk" },
-                nodes: [{ id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" }],
+                nodes: [
+                  { id: "t8", body: "spam", createdAt: "2026-07-01T00:00:00Z", isMinimized: true },
+                  { id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" },
+                ],
               },
             },
           },
@@ -976,6 +979,7 @@ describe("review thread decoding", () => {
       ),
     );
     expect(decoded.comments.map((comment) => comment.id)).toEqual(["t9"]);
+    expect(decoded.hiddenCount).toBe(1);
     expect(decoded.nextCursor).toBeNull();
   });
 });
