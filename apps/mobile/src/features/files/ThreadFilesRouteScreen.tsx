@@ -2,8 +2,13 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { type ReactNode, useId, useState } from "react";
+import {
+  StackActions,
+  useNavigation,
+  usePreventRemove,
+  type StaticScreenProps,
+} from "@react-navigation/native";
+import { type ComponentProps, type ReactNode, useId, useState } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { EnvironmentId, type ProjectReadFileResult, ThreadId } from "@t3tools/contracts";
@@ -197,6 +202,33 @@ function defaultViewMode(path: string | null): FileViewMode {
     : "source";
 }
 
+// Android numbered rows are separate text views, so a long-press opens the whole file as one
+// selectable text at that line. Back returns to the numbered rows at the same line.
+function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
+  const navigation = useNavigation();
+  const [selection, setSelection] = useState<{
+    readonly line: number;
+    readonly active: boolean;
+  } | null>(null);
+  usePreventRemove(selection?.active === true, ({ data }) => {
+    setSelection((value) => value && { ...value, active: false });
+    // The re-dispatched action skips this guard, so "Return to chat" still leaves in one tap.
+    if (data.action.type !== "GO_BACK" && data.action.type !== "POP") {
+      navigation.dispatch(data.action);
+    }
+  });
+  return (
+    <SourceFileSurface
+      {...props}
+      initialLine={selection?.line ?? props.initialLine}
+      selectable={selection?.active === true}
+      onLongPressLine={
+        Platform.OS === "android" ? (line) => setSelection({ line, active: true }) : undefined
+      }
+    />
+  );
+}
+
 function FileContent(props: {
   readonly activeMode: FileViewMode;
   readonly cwd: string;
@@ -308,7 +340,8 @@ function FileContent(props: {
           onRefresh={props.onRefresh}
         />
       ) : (
-        <SourceFileSurface
+        <FileSourceSurface
+          key={props.initialLine}
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}
