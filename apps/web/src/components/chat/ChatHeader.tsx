@@ -197,14 +197,19 @@ export const ChatHeader = memo(function ChatHeader({
     setRenaming(null);
   }
   const renameRequested = useLayoutTabRenameRequested(layoutTabId);
+  if (renaming === null && renameRequested && canOperateThread && isServerThread) {
+    setRenaming({
+      environmentId: activeThreadEnvironmentId,
+      threadId: activeThreadId,
+      title: activeThreadTitle,
+    });
+  }
   const renamingTitle =
     canOperateThread &&
     renaming?.threadId === activeThreadId &&
     renaming.environmentId === activeThreadEnvironmentId
       ? renaming.title
-      : canOperateThread && isServerThread && renameRequested
-        ? activeThreadTitle
-        : null;
+      : null;
   const stopRenaming = () => {
     setRenaming(null);
     finishLayoutTabRename(layoutTabId);
