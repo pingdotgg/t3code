@@ -5,16 +5,16 @@
 # test, build the Windows installer and publish it as a GitHub release. The
 # desktop app's update arrow reads those releases.
 #
-# The fork's default branch `custom` is always "latest MT Code release + our
-# commits". A rebased candidate is pushed to `custom-next` first and only
-# replaces `custom` after its installer built and published.
+# The fork's default branch `main` is always "latest MT Code release + our
+# commits". A rebased candidate is pushed to `main-next` first and only
+# replaces `main` after its installer built and published.
 name: Fork sync and build
 
 on:
   schedule:
     - cron: "23 */4 * * *"
   push:
-    branches: [custom]
+    branches: [main]
     paths-ignore: ["FORK.md"]
   workflow_dispatch:
     inputs:
@@ -56,10 +56,10 @@ jobs:
           FORK_PUSH_TOKEN: ${{ secrets.FORK_PUSH_TOKEN }}
         run: '[ -n "$FORK_PUSH_TOKEN" ] || { echo "FORK_PUSH_TOKEN secret is missing or empty"; exit 1; }'
 
-      - name: Checkout custom
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: custom
+          ref: main
           fetch-depth: 0
           # A personal token is needed to push branches whose new commits touch
           # .github/workflows (every MT Code release does); GITHUB_TOKEN can't.
@@ -100,7 +100,7 @@ jobs:
           cp fork/now-in-mtcode.mjs fork/now-in-mtcode.txt "$RUNNER_TEMP/"
           # Leaves out fork commits the new release already contains (fork/now-in-mtcode.txt).
           export GIT_SEQUENCE_EDITOR="node '$RUNNER_TEMP/now-in-mtcode.mjs' '$RUNNER_TEMP/now-in-mtcode.txt' '$LATEST_TAG'"
-          if ! git rebase -i --onto "$LATEST_TAG" "$BASE_TAG" custom; then
+          if ! git rebase -i --onto "$LATEST_TAG" "$BASE_TAG" main; then
             npm install -g @anthropic-ai/claude-code >/dev/null
             for round in $(seq 1 40); do
               [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || break
@@ -120,7 +120,7 @@ jobs:
             done
             if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then echo "Rebase did not finish"; exit 1; fi
           fi
-          git push --force origin HEAD:refs/heads/custom-next
+          git push --force origin HEAD:refs/heads/main-next
           echo "rebased=true" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to build
@@ -216,11 +216,11 @@ jobs:
             --title "T3 Code $VERSION (MT Code ${BASE_TAG#munim-v} + fork)" --notes "$notes" --latest
           echo "published=true" >> "$GITHUB_OUTPUT"
 
-      - name: Promote candidate to custom
+      - name: Promote candidate to main
         if: needs.sync.outputs.rebased == 'true'
         run: |
-          git push --force origin "${{ needs.sync.outputs.sha }}:refs/heads/custom"
-          git push origin --delete custom-next || true
+          git push --force origin "${{ needs.sync.outputs.sha }}:refs/heads/main"
+          git push origin --delete main-next || true
 
   # The phone app, built from the same commit and attached to the desktop
   # release, so a desktop update always has a matching APK. A failure here
