@@ -18,11 +18,12 @@ allowBuilds:
   electron: false
   electron-winstaller: false
   esbuild: true
-  koffi: true
+  # Ships prebuilds; its host-architecture probe triggers source builds during cross-packaging.
+  koffi: false
   node-pty: true
   # Ships N-API prebuilds; its install script only rebuilds from source.
   objc-js: false
-  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz": true
+  "react-native-enriched-markdown@file:apps/mobile/deps/react-native-enriched-markdown-1.2.0-t3.18-4287c5d3.tgz": true
   sharp: true
   utf-8-validate: false
   workerd: false
@@ -72,6 +73,7 @@ catalog:
   jose: 6.2.2
   lightningcss: 1.33.0
   objc-js: 1.5.0
+  pele: ^1.8.0
   plist: 3.1.1
   react: 19.3.0
   react-dom: 19.3.0
@@ -123,6 +125,7 @@ overrides:
   react-native-keyboard-controller: 1.22.8
   react-native-pdf-jsi: 5.0.0
   react-native-webview: 14.0.1
+  react-native-svg: 15.16.0
   "@expo/ui": 58.0.20
   "@expo/fingerprint": 0.21.5
   app-builder-lib: 26.16.1
@@ -263,6 +266,8 @@ patchedDependencies:
   app-builder-lib@26.16.1: patches/app-builder-lib@26.16.1.patch
   # A failed Artifacts.cached effect hangs every later caller: https://github.com/alchemy-run/alchemy/issues/2981
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
+  # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
+  react-native-svg@15.16.0: patches/react-native-svg@15.16.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
