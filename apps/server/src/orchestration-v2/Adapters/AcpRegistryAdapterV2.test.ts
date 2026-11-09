@@ -275,7 +275,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -2090,6 +2090,91 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(tools.at(-1)?.output, [
         { type: "content", content: { type: "text", text: "late" } },
       ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("continues Factory Droid when its background Task finishes after end_turn", () =>
+    Effect.gen(function* () {
+      const { update } = claudeFrames;
+      const gate = makeProviderReplayGate(["task-completed"]);
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "tool_call",
+            toolCallId: "task-1",
+            title: "Task",
+            kind: "other",
+            status: "completed",
+            rawInput: { subagent_type: "explorer", prompt: "sleep 20; ls /tmp | head -3" },
+            rawOutput: { type: "Text", text: "Task launched in background" },
+          }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "waiting" },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-1",
+              status: "completed",
+              rawOutput: { type: "Text", text: "The command ran and exited with code 0." },
+            }),
+            label: "task-completed",
+          },
+          update(CLAUDE_ROOT_SESSION, { sessionUpdate: "usage_update", used: 2_000, size: 10_000 }),
+          update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "The background task exited with code 0." },
+          }),
+          claudeMarker("late answer"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        true,
+        "factory-droid",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("task-completed");
+      yield* session.throughMarker("late answer");
+      assert.lengthOf(
+        session.offers,
+        1,
+        "Droid's late root-session answer must offer a continuation run",
+      );
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      const answer = (yield* session.until(
+        (event) =>
+          event.type === "message.updated" &&
+          event.message.text === "The background task exited with code 0.",
+      )).at(-1);
+      if (answer?.type !== "message.updated") throw new Error("Missing late answer");
+      assert.equal(answer.message.runId, session.turnInput(2).runId);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
