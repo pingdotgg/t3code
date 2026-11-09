@@ -36,6 +36,7 @@ import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
+  isAuthorizationFailure,
   isRpcClientError,
   request,
   subscribeDynamicWithSession,
@@ -975,6 +976,16 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // status. A replacement session or foreground resubscribe on the same scope
   // may have missed events, so those show sync progress until confirmed.
   const resumingLive = yield* Ref.make(initialState.status === "live");
+  // A cold open tries the socket snapshot once. Any later cold attempt, after a
+  // failure or a dropped session, asks HTTP, which also tells a missing thread
+  // apart from a failed load.
+  const socketOpenTried = yield* Ref.make(false);
+  const socketOnlyOpen = yield* Ref.make(false);
+  const failedSocketOnlyOpen = Effect.gen(function* () {
+    return (
+      (yield* Ref.get(socketOnlyOpen)) && Option.isNone((yield* SubscriptionRef.get(state)).data)
+    );
+  });
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* setConnecting;
@@ -1006,12 +1017,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* Effect.never;
         }
 
-        yield* Effect.ignore(session.initialConfig);
+        const config = yield* Effect.option(session.initialConfig);
         yield* Ref.set(awaitingCompletion, true);
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
+        // A server that pages snapshots sends the same bounded window over the
+        // socket, so a cold open can skip the HTTP round trip.
+        const socketOnly =
+          Option.isNone(current.data) &&
+          canLoadHistory &&
+          Option.exists(config, (value) => value.threadSnapshotPagination === true) &&
+          !(yield* Ref.getAndSet(socketOpenTried, true));
+        yield* Ref.set(socketOnlyOpen, socketOnly);
+
+        if (Option.isNone(current.data) && !socketOnly) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -1172,42 +1192,54 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             }),
           );
         },
-        onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
+        onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
+          const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
+          if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
+        }),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(
-      Stream.catchCause((cause) => {
-        if (Cause.hasInterrupts(cause)) return Stream.failCause(cause);
-        if (resumeFailed) return subscribeThread(true);
-        // Running threads stay mounted. Keep the error until a new session or
-        // foreground wakeup can start another catch-up attempt.
-        return Stream.fromEffect(
-          setStreamError(
-            cause.reasons.some(
-              (reason) => reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
-            )
-              ? "Message synchronization timed out. Reconnect or return to the app to try again."
-              : "Could not synchronize the thread.",
-          ),
-        ).pipe(
-          Stream.drain,
-          Stream.concat(
-            Stream.merge(
-              SubscriptionRef.changes(supervisor.session).pipe(
-                Stream.filter(
-                  (session) => Option.isSome(session) && session.value !== failedSession,
+      Stream.catchCause((cause) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            if (Cause.hasInterrupts(cause)) return Stream.failCause(cause);
+            if (!isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen)) {
+              yield* Ref.set(socketOnlyOpen, false);
+              return subscribeThread();
+            }
+            if (resumeFailed) return subscribeThread(true);
+            // Running threads stay mounted. Keep the error until a new session or
+            // foreground wakeup can start another catch-up attempt.
+            return Stream.fromEffect(
+              setStreamError(
+                cause.reasons.some(
+                  (reason) =>
+                    reason._tag === "Die" && isThreadSynchronizationTimeout(reason.defect),
+                )
+                  ? "Message synchronization timed out. Reconnect or return to the app to try again."
+                  : "Could not synchronize the thread.",
+              ),
+            ).pipe(
+              Stream.drain,
+              Stream.concat(
+                Stream.merge(
+                  SubscriptionRef.changes(supervisor.session).pipe(
+                    Stream.filter(
+                      (session) => Option.isSome(session) && session.value !== failedSession,
+                    ),
+                  ),
+                  foregroundResubscriptions,
+                ).pipe(
+                  Stream.take(1),
+                  Stream.drain,
+                  Stream.concat(Stream.suspend(() => subscribeThread())),
                 ),
               ),
-              foregroundResubscriptions,
-            ).pipe(
-              Stream.take(1),
-              Stream.drain,
-              Stream.concat(Stream.suspend(() => subscribeThread())),
-            ),
-          ),
-        );
-      }),
+            );
+          }),
+        ),
+      ),
     );
   };
   yield* Effect.forkScoped(subscribeThread().pipe(Stream.runForEachArray(applyItems)));

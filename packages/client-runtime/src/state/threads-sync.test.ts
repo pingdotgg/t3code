@@ -85,12 +85,21 @@ class TestStreamInterrupted {
   readonly _tag = "TestStreamInterrupted";
 }
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | TestStreamInterrupted;
+const TEST_DEFECT = { defect: "Malformed snapshot" } as const;
 
-function testSession(client: WsRpcProtocolClient): RpcSession.RpcSession {
+type TestThreadInput =
+  | OrchestrationV2ThreadStreamItem
+  | Error
+  | TestStreamInterrupted
+  | typeof TEST_DEFECT;
+
+function testSession(
+  client: WsRpcProtocolClient,
+  initialConfig: Effect.Effect<object> = Effect.succeed({}),
+): RpcSession.RpcSession {
   return {
     client,
-    initialConfig: Effect.succeed({} as never),
+    initialConfig: initialConfig as never,
     subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -124,6 +133,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly loadCached?: ReturnType<Persistence.EnvironmentCacheStore["Service"]["loadThread"]>;
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
+  readonly socketSnapshots?: true;
+  readonly initialConfig?: Effect.Effect<object>;
   readonly historyHttpClient?: HttpClient.HttpClient;
   readonly getTurnItem?: (input: {
     readonly itemId: TurnItemId;
@@ -149,11 +160,13 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error
-          ? Effect.fail(input)
-          : input instanceof TestStreamInterrupted
-            ? Effect.failCause(Cause.interrupt(9999))
-            : Effect.succeed(input),
+        input === TEST_DEFECT
+          ? Effect.die(input)
+          : input instanceof Error
+            ? Effect.fail(input)
+            : input instanceof TestStreamInterrupted
+              ? Effect.failCause(Cause.interrupt(9999))
+              : Effect.succeed(input),
       ),
     );
   const client = {
@@ -182,8 +195,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: { readonly itemId: TurnItemId }) =>
       options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
+  const sessionConfig =
+    options?.initialConfig ??
+    Effect.succeed(options?.socketSnapshots ? { threadSnapshotPagination: true } : {});
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(testSession(client)),
+    Option.some(testSession(client, sessionConfig)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -303,7 +319,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     savedThreads,
     removedThreads,
     wakeups,
-    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(testSession(client, sessionConfig)),
+    ),
   };
 });
 
@@ -790,6 +809,121 @@ describe("EnvironmentThreads", () => {
       const state = yield* awaitThreadState(resumed.observed, (value) => value.status === "live");
       expect(Option.getOrThrow(state.data)).toEqual(BASE_PROJECTION);
       expect(yield* Ref.get(resumed.loaderCalls)).toBe(1);
+    }),
+  );
+
+  it.effect.each([
+    // The HTTP retry decides, so a missing thread never flashes an error.
+    {
+      label: "a socket-only open asks HTTP",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: new Error("Thread not found"),
+      status: "deleted",
+      loads: [0, 1],
+    },
+    // A defect never retries on its own, so the socket-only open resubscribes once.
+    {
+      label: "a socket-only open that hits a defect asks HTTP",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: TEST_DEFECT,
+      status: "deleted",
+      loads: [0, 1],
+    },
+    // Authorization failures are never retried, so the error must show at once.
+    {
+      label: "a socket-only open shows an authorization error",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: new EnvironmentAuthorizationError({
+        message: "Not allowed",
+        requiredScope: "orchestration:read",
+      }),
+      status: "empty",
+      loads: [0, 0],
+    },
+    // HTTP already answered this attempt, so the error shows before the usual retry.
+    {
+      label: "an HTTP open shows the error",
+      socketSnapshots: undefined,
+      httpSnapshot: { _tag: "unavailable" },
+      failure: new Error("Socket closed"),
+      status: "empty",
+      loads: [1, 2],
+    },
+  ] as const)(
+    "after a cold open fails, $label",
+    ({ socketSnapshots, httpSnapshot, failure, status, loads: [before, after] }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          httpSnapshot,
+          ...(socketSnapshots ? { socketSnapshots } : {}),
+        });
+        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+          Stream.filter((count) => count === 1),
+          Stream.runHead,
+        );
+        expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(before);
+
+        yield* Queue.offer(harness.inputs, failure);
+        yield* TestClock.adjust("250 millis");
+        const settled = yield* awaitThreadState(
+          harness.observed,
+          (value) => value.status === "deleted" || Option.isSome(value.error),
+        );
+        expect(settled.status).toBe(status);
+        expect(yield* Ref.get(harness.loaderCalls)).toBe(after);
+      }),
+  );
+
+  it.effect("retries a defective socket-only open over HTTP only once", () =>
+    Effect.gen(function* () {
+      let configReads = 0;
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        // The retry's config read dies too, so a stale flag would resubscribe forever.
+        initialConfig: Effect.suspend(() =>
+          ++configReads === 1
+            ? Effect.succeed({ threadSnapshotPagination: true })
+            : Effect.die("Config lost"),
+        ),
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+
+      yield* Queue.offer(harness.inputs, TEST_DEFECT);
+      const settled = yield* awaitThreadState(harness.observed, (value) =>
+        Option.isSome(value.error),
+      );
+      expect(settled.status).toBe("empty");
+      expect(configReads).toBe(2);
+    }),
+  );
+
+  it.effect("asks HTTP when a socket-only open loses its session before any data", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        socketSnapshots: true,
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      // A timed-out session never reaches onExpectedFailure.
+      yield* harness.replaceSession;
+      const settled = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(settled.status).toBe("deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
     }),
   );
 

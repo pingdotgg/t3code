@@ -106,6 +106,12 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 
+/** A subscription never retries an authorization failure on its own. */
+export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
+  cause.reasons.some(
+    (reason) => reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),
+  );
+
 const MAX_EXPECTED_FAILURE_RETRY_DELAY_MS = 30_000;
 
 export type EnvironmentRpcInput<TTag extends EnvironmentRpcTag> = Parameters<RpcMethod<TTag>>[0];
@@ -364,13 +370,9 @@ function subscribeDynamicMapped<TTag extends EnvironmentSubscriptionRpcTag, A>(
                         const handled = Stream.fromEffect(options.onExpectedFailure(cause)).pipe(
                           Stream.drain,
                         );
-                        const isAuthorizationFailure = cause.reasons.some(
-                          (reason) =>
-                            reason._tag === "Fail" && isEnvironmentAuthorizationError(reason.error),
-                        );
                         if (
                           options.retryExpectedFailureAfter === undefined ||
-                          isAuthorizationFailure
+                          isAuthorizationFailure(cause)
                         ) {
                           return handled;
                         }
