@@ -642,6 +642,50 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect("keeps mouse back and forward buttons inside the preview tab", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        const goBack = vi.fn();
+        const goForward = vi.fn();
+        Object.assign(preview.webContents, {
+          navigationHistory: {
+            canGoBack: () => true,
+            canGoForward: () => true,
+            goBack,
+            goForward,
+          },
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.createTab("tab_mouse_navigation");
+        yield* manager.registerWebview("tab_mouse_navigation", 42);
+
+        // Electron reports thumb buttons as "back"/"forward" for every frame of the guest, iframes included.
+        const beforeMouse = preview.listeners.get("before-mouse-event");
+        expect(beforeMouse, "guest has no before-mouse-event listener").toBeDefined();
+        const press = (type: "mouseDown" | "mouseUp", button: string) => {
+          const preventDefault = vi.fn();
+          beforeMouse!({ preventDefault } as never, { type, button, x: 10, y: 10 } as never);
+          return preventDefault;
+        };
+
+        expect(press("mouseDown", "back")).toHaveBeenCalledOnce();
+        expect(goBack).not.toHaveBeenCalled();
+        expect(press("mouseUp", "back")).toHaveBeenCalledOnce();
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(press("mouseDown", "forward")).toHaveBeenCalledOnce();
+        expect(press("mouseUp", "forward")).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+        for (const button of ["left", "right"]) {
+          expect(press("mouseDown", button)).not.toHaveBeenCalled();
+          expect(press("mouseUp", button)).not.toHaveBeenCalled();
+        }
+        expect(goBack).toHaveBeenCalledOnce();
+        expect(goForward).toHaveBeenCalledOnce();
+      }),
+    ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {
