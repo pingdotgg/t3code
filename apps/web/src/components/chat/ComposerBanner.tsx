@@ -74,7 +74,7 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
     <div
       data-slot="composer-status-region"
       className={cn(
-        "flex w-full min-w-0 flex-col not-has-data-[composer-banner-surface=attached]:hidden",
+        "surface-composer-banner flex w-full min-w-0 flex-col not-has-data-[composer-banner-surface=attached]:hidden",
         className,
       )}
       {...props}
