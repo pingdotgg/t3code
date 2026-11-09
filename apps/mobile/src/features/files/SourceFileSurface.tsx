@@ -1,11 +1,12 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
-import type { ComponentType } from "react";
+import type { ComponentRef, ComponentType } from "react";
 import { useLayoutEffect, useRef, useState } from "react";
 import {
   FlatList,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   Text as NativeText,
@@ -37,7 +38,7 @@ import { SourceText } from "@t3tools/mobile-source-text";
 
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
-import { createSourceLineScroll } from "./source-file-scroll";
+import { createSourceLineScroll, selectableSourceLineOffset } from "./source-file-scroll";
 
 interface SourceFileSurfaceProps {
   readonly contents: string;
@@ -46,10 +47,14 @@ interface SourceFileSurfaceProps {
   readonly initialLine?: number | null;
   readonly headerInsetTop?: number;
   readonly selectable?: boolean;
+  readonly onLongPressLine?: (line: number) => void;
   readonly onRefresh?: () => Promise<void> | void;
 }
 
 type SourceHighlightStatus = "highlighting" | "ready" | "error";
+
+// ui-monospace (SF Mono) advances 0.6 em per character.
+const MONO_ADVANCE_EM = 0.6;
 
 const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly codeSurface: ResolvedMobileCodeSurface;
@@ -58,8 +63,10 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
   readonly tokens: ReadonlyArray<HighlightedToken> | null;
   readonly highlighted: boolean;
   readonly wordBreak: boolean;
+  readonly onLongPress?: () => void;
 }) {
-  return (
+  const selectable = props.onLongPress === undefined;
+  const row = (
     <View
       className={cn("flex-row", props.highlighted && "bg-primary/10")}
       style={{ minHeight: props.codeSurface.rowHeight }}
@@ -76,7 +83,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
         {props.index + 1}
       </NativeText>
       <NativeText
-        selectable
+        selectable={selectable}
         selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
         numberOfLines={props.wordBreak ? undefined : 1}
         className="flex-1 font-normal text-foreground"
@@ -106,7 +113,7 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
                 return (
                   <NativeText
                     key={`${start}:${token.content.length}:${token.color ?? ""}`}
-                    selectable
+                    selectable={selectable}
                     selectionColorClassName={
                       Platform.OS === "android" ? "accent-focus/32" : undefined
                     }
@@ -125,6 +132,20 @@ const HighlightedSourceLine = function HighlightedSourceLine(props: {
           : renderVisibleWhitespace(props.line || " ")}
       </NativeText>
     </View>
+  );
+  const onLongPress = props.onLongPress;
+  return onLongPress ? (
+    <Pressable
+      onLongPress={onLongPress}
+      accessibilityActions={[{ name: "longpress", label: "Select text" }]}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === "longpress") onLongPress();
+      }}
+    >
+      {row}
+    </Pressable>
+  ) : (
+    row
   );
 };
 
@@ -185,7 +206,7 @@ function NativeSourceFileSurface(
     readonly NativeView: ComponentType<NativeReviewDiffViewProps>;
   },
 ) {
-  const { NativeView, onRefresh } = props;
+  const { NativeView, onLongPressLine, onRefresh } = props;
   const insets = useSafeAreaInsets();
   const columnMetrics = useNativeColumnLayoutMetrics();
   const safeArea = columnMetrics?.safeArea ?? insets;
@@ -224,6 +245,18 @@ function NativeSourceFileSurface(
         styleJson={styleJson}
         themeJson={themeJson}
         tokensJson={tokensJson}
+        {...(onLongPressLine
+          ? {
+              onPressLine: ({ nativeEvent }) => {
+                if (
+                  nativeEvent.gesture === "longPress" &&
+                  nativeEvent.newLineNumber !== undefined
+                ) {
+                  onLongPressLine(nativeEvent.newLineNumber);
+                }
+              },
+            }
+          : {})}
         {...(onRefresh
           ? {
               refreshing: isPullRefreshing,
@@ -242,23 +275,28 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const { normalizedContents, lines, status, targetIndex, tokens } = useSourceFileModel(props);
   const selectableTokens = props.selectable ? boundedSelectableSourceTokens(tokens) : null;
   const listRef = useRef<FlatList<string>>(null);
+  const textScrollRef = useRef<ComponentRef<typeof ScrollView>>(null);
+  const { height: windowHeight } = useWindowDimensions();
   const [lineScroll] = useState(createSourceLineScroll);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
+  const usesLineList = !props.selectable;
+
   // Layout effect so a pending jump is cancelled in the commit that swaps the file.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
   useLayoutEffect(() => {
-    if (targetIndex === null) {
+    if (targetIndex === null || !usesLineList) {
       return;
     }
     lineScroll.scrollToLine(listRef.current, targetIndex);
     return lineScroll.cancel;
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
-  }, [lineScroll, props.path, targetIndex]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection mode, scrolls the remounted list to it.
+  }, [lineScroll, props.path, targetIndex, usesLineList]);
 
+  const { onLongPressLine } = props;
   const renderLine = ({ item, index }: { item: string; index: number }) => (
     <HighlightedSourceLine
       codeSurface={codeSurface}
@@ -267,6 +305,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
       tokens={tokens?.[index] ?? null}
       highlighted={index === targetIndex}
       wordBreak={codeWordBreak}
+      onLongPress={onLongPressLine ? () => onLongPressLine(index + 1) : undefined}
     />
   );
 
@@ -275,6 +314,24 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     <SourceText
       selectable
       selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
+      onLayout={
+        targetIndex === null
+          ? undefined
+          : ({ nativeEvent: { layout } }) =>
+              textScrollRef.current?.scrollTo({
+                y: selectableSourceLineOffset({
+                  lines,
+                  index: targetIndex,
+                  textTop: layout.y,
+                  textHeight: layout.height,
+                  columns: codeWordBreak
+                    ? Math.floor(layout.width / (codeSurface.fontSize * MONO_ADVANCE_EM))
+                    : null,
+                  viewportHeight: windowHeight,
+                }),
+                animated: false,
+              })
+      }
       style={{
         color: foreground,
         fontFamily: REVIEW_MONO_FONT_FAMILY,
@@ -353,9 +410,9 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     />
   );
 
-  const usesLineList = !props.selectable;
   const padded = (
     <ScrollView
+      ref={textScrollRef}
       refreshControl={refreshControl}
       className="flex-1"
       contentInsetAdjustmentBehavior={usesAutomaticInsets ? "automatic" : "never"}

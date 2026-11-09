@@ -6,6 +6,7 @@ interface SourceLineList {
 
 const RETRY_DELAY_MS = 100;
 const MAX_RETRIES = 5;
+const VIEW_POSITION = 0.3;
 
 // Wrapped rows have no getItemLayout. VirtualizedList fails a jump past its highest measured
 // row and silently estimates an unmeasured row below it, so re-aim until the budget runs out.
@@ -37,7 +38,7 @@ export function createSourceLineScroll() {
       target = null;
       return;
     }
-    list.scrollToIndex({ index: target, animated: false, viewPosition: 0.3 });
+    list.scrollToIndex({ index: target, animated: false, viewPosition: VIEW_POSITION });
     // A failed jump has already scheduled its retry.
     if (cancelPending === null) retry();
   };
@@ -63,4 +64,27 @@ export function createSourceLineScroll() {
     },
     cancel,
   };
+}
+
+// One selectable text view reports no per-line layout, so a line is placed by its share of the
+// measured text height. Unwrapped rows are exact; wrapped rows are estimated from columns.
+export function selectableSourceLineOffset(params: {
+  readonly lines: ReadonlyArray<string>;
+  readonly index: number;
+  readonly textTop: number;
+  readonly textHeight: number;
+  readonly columns: number | null;
+  readonly viewportHeight: number;
+}): number {
+  const { columns } = params;
+  let rowsAbove = 0;
+  let rows = 0;
+  for (const [index, line] of params.lines.entries()) {
+    const lineRows =
+      columns === null || columns < 1 ? 1 : Math.max(1, Math.ceil(line.length / columns));
+    if (index < params.index) rowsAbove += lineRows;
+    rows += lineRows;
+  }
+  const lineTop = params.textTop + (params.textHeight * rowsAbove) / Math.max(1, rows);
+  return Math.max(0, lineTop - params.viewportHeight * VIEW_POSITION);
 }

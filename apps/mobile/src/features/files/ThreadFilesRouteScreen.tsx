@@ -2,7 +2,12 @@ import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-action
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
-import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  StackActions,
+  useNavigation,
+  usePreventRemove,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import { type ReactNode, useId, useState } from "react";
 import { Platform, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -213,6 +218,8 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly selectable: boolean;
+  readonly onLongPressLine?: (line: number) => void;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
@@ -313,6 +320,8 @@ function FileContent(props: {
           path={props.relativePath}
           initialLine={props.initialLine}
           headerInsetTop={props.truncated ? 0 : undefined}
+          selectable={props.selectable}
+          onLongPressLine={props.onLongPressLine}
           onRefresh={props.onRefresh}
         />
       )}
@@ -711,6 +720,31 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  // iOS numbered rows are separate text views, so a long-press opens the whole file as one
+  // selectable text at that line. Back returns to the numbered rows at the same line.
+  const selectionScope = JSON.stringify([
+    environmentId,
+    cwd,
+    relativePath,
+    targetLine,
+    resolvedActiveMode,
+  ]);
+  const [textSelection, setTextSelection] = useState<{
+    readonly scope: string;
+    readonly line: number;
+    readonly active: boolean;
+  } | null>(null);
+  const scopedTextSelection = textSelection?.scope === selectionScope ? textSelection : null;
+  const canSelectText =
+    Platform.OS === "ios" && resolvedActiveMode === "source" && fileData?.contents != null;
+  const selectingText = canSelectText && scopedTextSelection?.active === true;
+  usePreventRemove(selectingText, ({ data }) => {
+    setTextSelection((current) => current && { ...current, active: false });
+    // The re-dispatched action skips this guard, so "Return to chat" still leaves in one tap.
+    if (data.action.type !== "GO_BACK" && data.action.type !== "POP") {
+      navigation.dispatch(data.action);
+    }
+  });
 
   const handleSelectFile = (path: string) => {
     const targetPath =
@@ -778,7 +812,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             title: filePreviewDelimiter({ name: relativePath }) ? "Table" : "Preview",
             icon: filePreviewDelimiter({ name: relativePath }) ? "tablecells" : "eye",
             inline: true,
-            onPress: () => setModeOverride({ path: relativePath, mode: "preview" }),
+            onPress: () => {
+              setTextSelection(null);
+              setModeOverride({ path: relativePath, mode: "preview" });
+            },
           } as const)
         : null,
       canToggleMode
@@ -787,7 +824,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             title: "Source",
             icon: "doc.text",
             inline: true,
-            onPress: () => setModeOverride({ path: relativePath, mode: "source" }),
+            onPress: () => {
+              setTextSelection(null);
+              setModeOverride({ path: relativePath, mode: "source" });
+            },
           } as const)
         : null,
       resolvedActiveMode === "source"
@@ -1004,10 +1044,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           resolveVideoUri={assetPreview.refresh}
           fileContents={fileData?.contents ?? null}
           fileError={fileQuery.error}
-          initialLine={targetLine}
+          initialLine={scopedTextSelection?.line ?? targetLine}
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          selectable={selectingText}
+          onLongPressLine={
+            canSelectText
+              ? (line) => setTextSelection({ scope: selectionScope, line, active: true })
+              : undefined
+          }
           onRefresh={() => fileQuery.refresh()}
         />
       </ScreenContent>

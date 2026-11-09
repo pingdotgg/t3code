@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vite-plus/test";
 
-import { createSourceLineScroll } from "./source-file-scroll";
+import { createSourceLineScroll, selectableSourceLineOffset } from "./source-file-scroll";
 
 const ROW_HEIGHT = 24;
 
@@ -153,4 +153,14 @@ it("a drag before the first frame cancels the jump", () => {
   vi.runAllTimers();
 
   expect(t.scrollToIndex).not.toHaveBeenCalled();
+});
+
+it("places a line of one selectable text by its share of the measured rows", () => {
+  const lines = ["a".repeat(100), "b", "c", "d"];
+  const layout = { lines, index: 2, textTop: 8, textHeight: 96, viewportHeight: 100 };
+
+  expect(selectableSourceLineOffset({ ...layout, columns: null })).toBe(8 + 48 - 30);
+  // At 40 columns the first line wraps to three rows, so line 3 starts after four of six rows.
+  expect(selectableSourceLineOffset({ ...layout, columns: 40 })).toBe(8 + 64 - 30);
+  expect(selectableSourceLineOffset({ ...layout, index: 0, columns: null })).toBe(0);
 });
