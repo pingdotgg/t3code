@@ -269,13 +269,19 @@ describe("all-environment PR list", () => {
       },
       {
         environmentId: mbp,
-        pages: pullRequestListHead(null, { ...page([]), providers: [bitbucket] }),
+        pages: pullRequestListHead(null, {
+          ...page([]),
+          providers: [{ ...bitbucket, actions: ["close", "reopen"] }],
+        }),
       },
     ]);
     expect(pullRequestListRowActions(row(cups, {}), hostActions)).toEqual(["close"]);
     expect(pullRequestListRowActions(row(cups, { isDraft: true }), hostActions)).toEqual(["close"]);
     expect(pullRequestListRowActions(row(cups, { state: "closed" }), hostActions)).toEqual([]);
-    expect(pullRequestListRowActions(row(mbp, {}), hostActions)).toEqual([]);
+    expect(pullRequestListRowActions(row(mbp, {}), hostActions)).toEqual(["close"]);
+    expect(pullRequestListRowActions(row(mbp, { state: "closed" }), hostActions)).toEqual([
+      "reopen",
+    ]);
     expect(
       pullRequestListRowActions(
         { ...entry(1, { state: "closed" }), environmentId: mbp },

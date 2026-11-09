@@ -268,12 +268,16 @@ export function PullRequestsScreen(
       sidebar={sidebar}
     />
   );
+  const listExtraData = useMemo(
+    () => ({ selectedKey, busyKey, hostActions: result.data.hostActions }),
+    [selectedKey, busyKey, result.data.hostActions],
+  );
   const list = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
         data={entries}
-        extraData={`${selectedKey}:${busyKey}`}
+        extraData={listExtraData}
         keyExtractor={pullRequestKey}
         itemsAreEqual={pullRequestListRowsAreEqual}
         estimatedItemSize={88}
