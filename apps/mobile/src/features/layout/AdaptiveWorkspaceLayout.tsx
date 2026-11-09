@@ -5,7 +5,13 @@ import {
 import { useAndroidFloatingTabs } from "../settings/appearance/AppearancePreferencesProvider";
 import { useSoftKeyboardShowing } from "../keyboard/useSoftKeyboardShowing";
 import { SafeAreaInsetsContext, useSafeAreaInsets } from "react-native-safe-area-context";
-import { AdaptiveWorkspaceContext, useAdaptiveWorkspaceLayout } from "./adaptive-workspace-context";
+import {
+  AdaptiveWorkspaceContext,
+  WorkspacePaneStateContext,
+  useAdaptiveWorkspaceLayout,
+  useWorkspacePaneState,
+  type AdaptiveWorkspaceActions,
+} from "./adaptive-workspace-context";
 import { threadSelectionDeferral } from "./deferred-navigation";
 import { uuidv4 } from "../../lib/uuid";
 import { useToolbarLayout } from "../../components/ui/useToolbarLayout";
@@ -14,9 +20,9 @@ import { useAtomValue } from "@effect/atom-react";
 import { NavigationContext, NavigationRouteContext, useNavigation } from "@react-navigation/native";
 import {
   use,
-  useDeferredValue,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,11 +36,7 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import {
-  KeyboardController,
-  useKeyboardContext,
-  useKeyboardState,
-} from "react-native-keyboard-controller";
+import { KeyboardController, useKeyboardContext } from "react-native-keyboard-controller";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -118,7 +120,7 @@ import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
 
-export { useAdaptiveWorkspaceLayout };
+export { useAdaptiveWorkspaceLayout, useWorkspacePaneState };
 
 /**
  * Shows these panes in the workspace's inspector while this screen is focused. Register on focus
@@ -189,6 +191,35 @@ export function Inspector(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changed column content replaces its existing native workspace registration.
   }, [props.content, props.revealKey]);
   return null;
+}
+
+/**
+ * Actions whose identities never change, so a pane toggle doesn't re-render every screen that
+ * holds one. Each call runs the latest render's handler.
+ */
+function useStableActions(actions: Required<AdaptiveWorkspaceActions>): AdaptiveWorkspaceActions {
+  const latest = useRef(actions);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- points the stable actions at the handlers this commit rendered
+  useLayoutEffect(() => {
+    latest.current = actions;
+  });
+  const [stable] = useState((): AdaptiveWorkspaceActions => ({
+    startNewTask: () => latest.current.startNewTask(),
+    selectDetail: (detail, sheet) => latest.current.selectDetail(detail, sheet),
+    registerWorkspaceInspector: (content, routeKey, revealKey) =>
+      latest.current.registerWorkspaceInspector(content, routeKey, revealKey),
+    setPrimarySidebarSearchQuery: (query) => latest.current.setPrimarySidebarSearchQuery(query),
+    showInspector: () => latest.current.showInspector(),
+    toggleAuxiliaryPane: () => latest.current.toggleAuxiliaryPane(),
+    togglePrimarySidebar: () => latest.current.togglePrimarySidebar(),
+    revealPrimarySidebar: () => latest.current.revealPrimarySidebar(),
+    setPrimarySidebarVisible: (visible) => latest.current.setPrimarySidebarVisible(visible),
+    openWorkspaceTab: (tab, options) => latest.current.openWorkspaceTab(tab, options),
+    setAuxiliaryPaneWidth: (width) => latest.current.setAuxiliaryPaneWidth(width),
+    setNativeInspectorWidth: (width) => latest.current.setNativeInspectorWidth(width),
+    setComposerEditing: (editing) => latest.current.setComposerEditing(editing),
+  }));
+  return stable;
 }
 
 export function AdaptiveWorkspaceLayout(props: {
@@ -296,11 +327,10 @@ function AdaptiveWorkspaceLayoutContent(
   const softKeyboardVisible = useSoftKeyboardShowing();
   // Keyed on the soft keyboard, not focus: a hardware keyboard leaves room for the sidebar, and
   // Back closes the keyboard while the editor keeps focus. The sidebar returns as the keyboard
-  // starts hiding, not after. Deferred so the composer commits its keyboard render first;
-  // relaying out in the same commit held it behind the keyboard.
-  const composerKeyboardActive = useDeferredValue(
-    Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible,
-  );
+  // starts hiding, not after. The header, the pane width, and the sidebar's exit all change in
+  // the keyboard's first commit; the sidebar itself follows the keyboard on the UI thread.
+  const composerKeyboardActive =
+    Platform.OS === "android" && baseLayout.usesSplitView && composerEditing && softKeyboardVisible;
   const sidebarWithoutKeyboard =
     !workspacePage && (primarySidebarPinned || preferredSidebarVisible);
   const showPrimarySidebar =
@@ -319,10 +349,6 @@ function AdaptiveWorkspaceLayoutContent(
     !sidebarFloats &&
     (composerEditing || composerKeyboardActive);
   const keyboardProgress = useKeyboardContext().reanimated.progress;
-  // From the moment the keyboard starts showing until it has fully hidden. The detail pane keeps
-  // the sidebar's room for that whole span, so on the way back the sidebar pushes the wide pane
-  // aside instead of arriving beside one that already shrank.
-  const keyboardOnScreen = useKeyboardState((state) => state.isVisible);
   const shouldRenderNavigationRail =
     Platform.OS === "android" && baseLayout.usesSplitView && !floatingTabsEnabled;
   const enabledTabs = useEnabledNavigationTabs();
@@ -671,8 +697,6 @@ function AdaptiveWorkspaceLayoutContent(
   const contentEndGap = Platform.OS === "android" && layout.usesSplitView ? 4 : 0;
   // Android's split is one strip: a sidebar slot of fixed width, then the detail pane. The
   // sidebar never resizes; both slide by one offset, so together they always fill the width.
-  // The pane spans the sidebar's room too unless the sidebar has finished arriving: a sidebar on
-  // its way in pushes the wide pane past the edge, and one leaving uncovers it.
   const stripSidebar =
     Platform.OS === "android" &&
     layout.usesSplitView &&
@@ -680,27 +704,12 @@ function AdaptiveWorkspaceLayoutContent(
     !workspacePage &&
     !sidebarFloats;
   const sidebarSlotWidth = (layout.listPaneWidth ?? 0) + (layout.listPaneGap ?? 0);
+  // The pane takes its new width in the commit that starts the sidebar moving, so it rewraps as
+  // the strip starts to slide rather than after it lands: a sidebar on its way in (or back from
+  // the keyboard) finds the narrow pane, and one leaving uncovers the wide pane.
   const sidebarTargetOpen = keyboardHoldsSidebar ? sidebarRestsOpen : panes.primarySidebarVisible;
-  const [sidebarMotion, setSidebarMotion] = useState({
-    strip: stripSidebar,
-    settledOpen: sidebarTargetOpen,
-  });
-  if (sidebarMotion.strip !== stripSidebar) {
-    // Entering or leaving the strip (a workspace page, a fold) snaps the sidebar into place.
-    setSidebarMotion({ strip: stripSidebar, settledOpen: sidebarTargetOpen });
-  } else if (sidebarMotion.settledOpen && !sidebarTargetOpen) {
-    setSidebarMotion({ strip: stripSidebar, settledOpen: false });
-  }
-  const sidebarSettledOpen =
-    sidebarMotion.strip === stripSidebar ? sidebarMotion.settledOpen : sidebarTargetOpen;
-  const markSidebarSettled = (open: boolean) =>
-    setSidebarMotion((current) =>
-      current.settledOpen === open ? current : { ...current, settledOpen: open },
-    );
-  // The keyboard covers the sidebar's share from the moment it starts showing until it is gone.
   const contentSpansSidebar =
-    stripSidebar &&
-    (!sidebarSettledOpen || !sidebarTargetOpen || (keyboardHoldsSidebar && keyboardOnScreen));
+    stripSidebar && (!sidebarTargetOpen || (keyboardHoldsSidebar && composerKeyboardActive));
   const contentTargetWidth = !layout.usesSplitView
     ? null
     : Math.max(
@@ -813,6 +822,8 @@ function AdaptiveWorkspaceLayoutContent(
   const renderedRailWidth = useSharedValue(navigationRailWidth);
   const keyboardHold = useSharedValue(keyboardHoldsSidebar);
   const leavingWorkspacePage = useRef(false);
+  // The slide starts after the commit that lays the pane out, not in the press handler: Reanimated
+  // commits the shadow tree every frame, and that starves a large React commit until it stops.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- animates the Reanimated rail and sidebar width shared values toward the layout's targets
   useEffect(() => {
     if (nativeWorkspace) return;
@@ -836,9 +847,9 @@ function AdaptiveWorkspaceLayoutContent(
     // The content beside it already took its final width when the page closed.
     renderedSidebarWidth.set(
       withTiming(targetWidth, snap ? { duration: 0 } : WORKSPACE_PANE_TIMING, (finished) => {
-        if (finished && Platform.OS === "android") {
+        // Only a hinge resize widens the list's span; a toggle has nothing to settle.
+        if (finished && Platform.OS === "android" && listPaneFloor !== listPaneCeiling) {
           runOnJS(settleListPane)(listPaneRevision);
-          runOnJS(markSidebarSettled)(targetWidth > 0);
         }
       }),
     );
@@ -855,7 +866,8 @@ function AdaptiveWorkspaceLayoutContent(
     renderedSidebarWidth,
     renderedRailWidth,
     settleListPane,
-    markSidebarSettled,
+    listPaneFloor,
+    listPaneCeiling,
     listPaneRevision,
     workspacePage,
   ]);
@@ -988,32 +1000,47 @@ function AdaptiveWorkspaceLayoutContent(
     [sidebarInLandscape, sidebarInPortrait, sidebarOverRotates],
   );
 
-  const contextValue = {
-    layout,
-    panes,
-    fileInspector,
-    primarySidebarSearchQuery,
+  const actions = useStableActions({
     startNewTask: handleStartNewTask,
     selectDetail: handleSelectDetail,
     registerWorkspaceInspector,
     setPrimarySidebarSearchQuery,
     showInspector,
     toggleAuxiliaryPane,
-    sidebarToggleable: layout.usesSplitView && !primarySidebarPinned && !workspacePage,
     togglePrimarySidebar,
     revealPrimarySidebar,
     setPrimarySidebarVisible,
     openWorkspaceTab,
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
-    nativeInspectorWidth,
     setNativeInspectorWidth: (width: number) =>
       setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
-    composerKeyboardActive,
-    keyboardHoldsSidebar,
     setComposerEditing,
-    sidebarByOrientation,
-    workspacePageWidth,
-  };
+  });
+  const contextValue = useMemo(
+    () => ({ ...actions, layout, nativeInspectorWidth, workspacePageWidth }),
+    [actions, layout, nativeInspectorWidth, workspacePageWidth],
+  );
+  const sidebarToggleable = layout.usesSplitView && !primarySidebarPinned && !workspacePage;
+  const paneState = useMemo(
+    () => ({
+      panes,
+      fileInspector,
+      primarySidebarSearchQuery,
+      sidebarToggleable,
+      composerKeyboardActive,
+      keyboardHoldsSidebar,
+      sidebarByOrientation,
+    }),
+    [
+      panes,
+      fileInspector,
+      primarySidebarSearchQuery,
+      sidebarToggleable,
+      composerKeyboardActive,
+      keyboardHoldsSidebar,
+      sidebarByOrientation,
+    ],
+  );
 
   const inspectorSheet = (
     <WorkspaceInspectorSheet
@@ -1029,16 +1056,18 @@ function AdaptiveWorkspaceLayoutContent(
         savedFilters={props.savedThreadListFilters}
       >
         <AdaptiveWorkspaceContext value={contextValue}>
-          <NativeWorkspaceInspectorContext
-            value={{
-              // Without a column the sheet shows it; the hidden native column must not mount it too.
-              content: fileInspector.supported ? workspaceInspector?.content : undefined,
-              visible: inspectorColumnTargetWidth > 0,
-            }}
-          >
-            {props.children}
-            {inspectorSheet}
-          </NativeWorkspaceInspectorContext>
+          <WorkspacePaneStateContext value={paneState}>
+            <NativeWorkspaceInspectorContext
+              value={{
+                // Without a column the sheet shows it; the hidden native column must not mount it too.
+                content: fileInspector.supported ? workspaceInspector?.content : undefined,
+                visible: inspectorColumnTargetWidth > 0,
+              }}
+            >
+              {props.children}
+              {inspectorSheet}
+            </NativeWorkspaceInspectorContext>
+          </WorkspacePaneStateContext>
         </AdaptiveWorkspaceContext>
       </HomeListOptionsProvider>
     );
@@ -1256,17 +1285,19 @@ function AdaptiveWorkspaceLayoutContent(
       projectGroupingMode={projectGroupingMode}
       savedFilters={props.savedThreadListFilters}
     >
-      <AdaptiveWorkspaceContext.Provider value={contextValue}>
-        <WindowHingeContext value={windowHinge}>
-          {usesPresentationHost ? (
-            <WorkspaceColumnsRendererContext value={renderColumns}>
-              {props.children}
-            </WorkspaceColumnsRendererContext>
-          ) : (
-            renderColumns(props.children)
-          )}
-        </WindowHingeContext>
-      </AdaptiveWorkspaceContext.Provider>
+      <AdaptiveWorkspaceContext value={contextValue}>
+        <WorkspacePaneStateContext value={paneState}>
+          <WindowHingeContext value={windowHinge}>
+            {usesPresentationHost ? (
+              <WorkspaceColumnsRendererContext value={renderColumns}>
+                {props.children}
+              </WorkspaceColumnsRendererContext>
+            ) : (
+              renderColumns(props.children)
+            )}
+          </WindowHingeContext>
+        </WorkspacePaneStateContext>
+      </AdaptiveWorkspaceContext>
     </HomeListOptionsProvider>
   );
 }

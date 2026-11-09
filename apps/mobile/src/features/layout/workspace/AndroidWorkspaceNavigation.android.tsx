@@ -22,7 +22,7 @@ import {
 } from "./android-workspace-tabs";
 import { useAppearancePreferences } from "../../settings/appearance/AppearancePreferencesProvider";
 import { useSoftKeyboardShowing } from "../../keyboard/useSoftKeyboardShowing";
-import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
+import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../adaptive-workspace-context";
 import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
@@ -81,7 +81,8 @@ export function AndroidWorkspaceNavigation(props: {
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
   const keyboardVisible = useSoftKeyboardShowing();
-  const { layout, keyboardHoldsSidebar } = useAdaptiveWorkspaceLayout();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const { keyboardHoldsSidebar } = useWorkspacePaneState();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const { scale, fabSize } = useAndroidControlSizing();
   const window = useWindowDimensions();
