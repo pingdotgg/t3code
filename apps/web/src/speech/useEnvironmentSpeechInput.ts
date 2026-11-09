@@ -36,7 +36,8 @@ import {
   useEnvironmentSettings,
 } from "../hooks/useSettings";
 import { useEnvironment } from "../state/environments";
-import { useEnvironmentScope, usePreparedConnection } from "../state/session";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentSession, useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
@@ -136,6 +137,7 @@ type ConfirmedSubmission = {
   readonly grantId: string;
   readonly state: VoiceInputState;
   readonly cancel: () => void;
+  readonly releaseSession: () => void;
   unsubscribeConsent: () => void;
 };
 
@@ -158,6 +160,7 @@ function clearConfirmedSubmission(pending: PendingSubmission) {
   const entry = confirmedSubmissions.get(key);
   if (entry?.pending !== pending) return;
   entry.unsubscribeConsent();
+  entry.releaseSession();
   confirmedSubmissions.delete(key);
   notifySubmissions();
 }
@@ -616,6 +619,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           prepared,
           grantId,
           state: controller.currentState,
+          // Remounts must not mistake an expired permission cache for revoked access.
+          releaseSession: appAtomRegistry.mount(
+            environmentSession.sessionStateAtom(prepared.environmentId),
+          ),
           cancel: () => {
             cancelSubmission();
             controller.dispose();

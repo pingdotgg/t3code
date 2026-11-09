@@ -4,6 +4,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import { getEnvironmentSpeechModels } from "@t3tools/client-runtime/voice-input";
 import {
@@ -17,7 +18,7 @@ import {
   type SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 
-import { act, render, stubGlobal } from "../../test/render";
+import { act, fakeTimers, render, stubGlobal } from "../../test/render";
 import { VoiceInputSetup } from "../components/chat/VoiceInputSetup";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
@@ -28,6 +29,7 @@ import {
   pendingCloudAudioChoice,
 } from "./voiceConsent";
 import { writeBrowserClientSettings } from "../clientPersistenceStorage";
+import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 
 const mocks = vi.hoisted(() => ({
   voice: undefined as unknown as ReturnType<typeof useEnvironmentSpeechInput>,
@@ -36,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   voiceCapable: new Set<string>(),
   cloudVoiceCapable: new Set<string>(),
   canDictate: new Set<string>(),
+  sessionAtoms: new Map<string, Atom.Atom<AsyncResult.AsyncResult<boolean>>>(),
   prepared: new Map<string, unknown>(),
   primaryEnvironmentId: "primary-env",
   statusRequests: [] as string[],
@@ -62,18 +65,33 @@ const mocks = vi.hoisted(() => ({
   drafts: {} as Record<string, string>,
 }));
 
-vi.mock("../state/session", () => ({
-  useEnvironmentScope: (id: string) => mocks.canDictate.has(id),
-  usePreparedConnection: (environmentId: string | null) => {
-    if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
-    let prepared = mocks.prepared.get(environmentId);
-    if (!prepared) {
-      prepared = { environmentId, label: environmentId };
-      mocks.prepared.set(environmentId, prepared);
+vi.mock("../state/session", async () => {
+  const { useAtomValue } = await import("@effect/atom-react");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
+  const sessionStateAtom = (id: string) => {
+    let atom = mocks.sessionAtoms.get(id);
+    if (!atom) {
+      atom = Atom.make(AsyncResult.success(true));
+      mocks.sessionAtoms.set(id, atom);
     }
-    return Option.some(prepared);
-  },
-}));
+    return atom;
+  };
+  return {
+    environmentSession: { sessionStateAtom },
+    useEnvironmentScope: (id: string) =>
+      AsyncResult.getOrElse(useAtomValue(sessionStateAtom(id)), () => false) &&
+      mocks.canDictate.has(id),
+    usePreparedConnection: (environmentId: string | null) => {
+      if (!environmentId || !mocks.connected.has(environmentId)) return Option.none();
+      let prepared = mocks.prepared.get(environmentId);
+      if (!prepared) {
+        prepared = { environmentId, label: environmentId };
+        mocks.prepared.set(environmentId, prepared);
+      }
+      return Option.some(prepared);
+    },
+  };
+});
 vi.mock("../state/environments", () => ({
   usePrimaryEnvironmentId: () => mocks.primaryEnvironmentId,
   useEnvironment: (environmentId: string | null) =>
@@ -215,6 +233,7 @@ function setup(options: { readonly destination?: string | null } = {}) {
   mocks.voiceCapable = new Set(["primary-env", THREAD_ENV, "env-a", "env-b"]);
   mocks.cloudVoiceCapable.clear();
   mocks.canDictate = new Set(mocks.voiceCapable);
+  mocks.sessionAtoms.clear();
   mocks.prepared.clear();
   mocks.statusRequests = [];
   mocks.statusUnavailable = false;
@@ -365,7 +384,15 @@ it.each([
   expect(mocks.committed).not.toHaveBeenCalled();
 });
 
-function SubmissionProbe({
+function SubmissionProbe(props: Parameters<typeof SubmissionProbeContent>[0]) {
+  return (
+    <AppAtomRegistryProvider>
+      <SubmissionProbeContent {...props} />
+    </AppAtomRegistryProvider>
+  );
+}
+
+function SubmissionProbeContent({
   owner,
   environmentId = THREAD_ENV,
 }: {
@@ -439,10 +466,21 @@ it.each([
   ["transcribing", "cancel"],
   ["post-processing", "cancel"],
   ["post-processing", "skip"],
+  ["transcribing", "finish after session expiry"],
 ] as const)(
   "reattaches a confirmed %s submission after remount to %s it",
   async (phase, action) => {
     setup({ destination: "env-a" });
+    const expires = action === "finish after session expiry";
+    if (expires) {
+      let reads = 0;
+      mocks.sessionAtoms.set(
+        "env-a",
+        Atom.make(Effect.suspend(() => (++reads === 1 ? Effect.succeed(true) : Effect.never))).pipe(
+          Atom.setIdleTTL(5 * 60_000),
+        ),
+      );
+    }
     let finish!: (text: string) => void;
     const result = new Promise<string>((resolve) => {
       finish = resolve;
@@ -461,10 +499,12 @@ it.each([
     const submit = vi.fn();
     const cancel = vi.fn();
     await using screen = await render(<SubmissionProbe owner="thread-a" />);
+    using _timers = expires ? fakeTimers() : { [Symbol.dispose]() {} };
     await act(() => mocks.voice.start());
     await act(() => mocks.voice.submitAfterDictation(submit, cancel));
     await vi.waitFor(() => expect(mocks.voice.state.phase).toBe(phase));
     await screen.rerender(<div />);
+    if (expires) await act(() => vi.advanceTimersByTimeAsync(6 * 60_000));
     await screen.rerender(<SubmissionProbe owner="thread-b" />);
     expect(mocks.voice.state.phase).toBe("idle");
     await act(() => mocks.voice.cancel());
