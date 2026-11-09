@@ -6,6 +6,7 @@ import {
   secretReferencesInSettings,
   type ServerSettings,
   SimlockDeviceHostConfig,
+  TextGeneratorConfig,
   UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
@@ -18,6 +19,7 @@ type SecretUseSettings = Pick<
   | "providerInstances"
   | "sourceControlHosts"
   | "usageLimitSources"
+  | "textGenerators"
   | "easDeviceHosts"
   | "simlockDeviceHosts"
   | "cloudSpeechCredentials"
@@ -91,6 +93,14 @@ export function secretProviderUses(
         `usage-limit:${id}`,
         source.label ?? source.url,
         source,
+      ),
+    ),
+    ...Object.entries(settings.textGenerators).flatMap(([id, generator]) =>
+      uses(
+        { settingsSchema: TextGeneratorConfig },
+        `text-generator:${id}`,
+        generator.label ?? generator.baseUrl,
+        generator,
       ),
     ),
     ...settings.easDeviceHosts.flatMap((host) =>
