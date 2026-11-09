@@ -112,6 +112,8 @@ interface BoxThread {
   readonly laterError: Ref.Ref<string | null>;
   /** A later run's reply, after the task's own, as a follow-up message would leave. */
   readonly laterReply: Ref.Ref<string | null>;
+  /** The model the provider there reported running the task's run. */
+  readonly executedModel: Ref.Ref<string | null>;
   /** The run each wait asked for, in order. */
   readonly waitedFor: Ref.Ref<ReadonlyArray<RunId | undefined>>;
   /** The thread's run ends with a task of its own still running, whose result wakes it again. */
@@ -157,6 +159,7 @@ const makeBoxThread = Effect.gen(function* () {
     error: yield* Ref.make<string | null>(null),
     laterError: yield* Ref.make<string | null>(null),
     laterReply: yield* Ref.make<string | null>(null),
+    executedModel: yield* Ref.make<string | null>(null),
     waitedFor: yield* Ref.make<ReadonlyArray<RunId | undefined>>([]),
     nested: yield* Ref.make(false),
     nestedWaiting: yield* Deferred.make<void>(),
@@ -238,6 +241,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
       ordinal: 1,
       status,
       modelSelection,
+      activeAttemptId: "attempt:box",
       requestedAt: DateTime.makeUnsafe(0),
       startedAt: DateTime.makeUnsafe(0),
       completedAt: null,
@@ -247,9 +251,16 @@ const boxToolkitLayer = (thread: BoxThread) => {
       const shell = yield* shellOf(threadId);
       const status = yield* Ref.get(thread.status);
       const runless = yield* Ref.get(thread.runless);
+      const model = yield* Ref.get(thread.executedModel);
       return shell === null
         ? (null as never)
-        : { ...idleThreadProjection(shell), runs: runless ? [] : [runOf(status)] };
+        : {
+            ...idleThreadProjection(shell),
+            runs: runless ? [] : [runOf(status)],
+            providerTurns: (model === null
+              ? []
+              : [{ runAttemptId: "attempt:box", ordinal: 1, model }]) as never,
+          };
     });
   // One record per command id, as its receipt replays a repeat.
   const recordStop = (commandId: string, kind: "interrupt" | "thread.stop" | "delegated-tasks") =>
@@ -834,7 +845,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       expect(yield* Ref.get(thread.launched)).toBe(delegated.remoteChild.threadId);
       // Its link opens the thread there, so the parent can mention it like any other.
       expect(delegated.link).toBe(
-        `<t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId}>`,
+        `[Laptop parent](t3-thread://v2/${box.environmentId}/${delegated.remoteChild.threadId})`,
       );
       // ...naming the parent here, so the thread there links back to it.
       expect(yield* Ref.get(thread.delegatedFrom)).toEqual({
@@ -1285,11 +1296,14 @@ it.effect("a task's result is its own run's whole last reply, not a later run's"
       const long = "x".repeat(45_000);
       yield* Ref.set(thread.reply, long);
       yield* Ref.set(thread.laterReply, "Someone else asked a follow-up.");
+      yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
       yield* Ref.set(thread.status, "completed");
       yield* Deferred.succeed(thread.finished, undefined);
       const task = yield* taskResult(a, taskId);
       expect(task?.status).toBe("completed");
-      expect(task?.result).toBe(long);
+      expect(task?.result).toBe(
+        `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${long}`,
+      );
       // Every wait was for the run the launch started.
       const waits = yield* Ref.get(thread.waitedFor);
       expect(waits.length).toBeGreaterThan(0);
