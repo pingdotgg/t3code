@@ -68,11 +68,13 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
-// Providers can announce a retry and never resume; Codex fails its own stalls sooner.
+// Providers can announce a retry and never resume. Longer than any adapter's own stall handling.
 const PROVIDER_RETRY_STALL_TIMEOUT = Duration.minutes(15);
-type ProviderRetryItem = Extract<OrchestrationV2TurnItem, { readonly type: "error" }> & {
+type ProviderErrorItem = Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+type ProviderRetryItem = ProviderErrorItem & {
   readonly providerTurnId: ProviderTurnId;
   readonly providerThreadId: ProviderThreadId;
+  readonly retry: NonNullable<ProviderErrorItem["retry"]>;
 };
 /** Suggestions outlive their sessions, so keep only the most recently updated threads. */
 const MAX_PROMPT_SUGGESTIONS = 256;
@@ -2214,10 +2216,13 @@ export const layerWithOptions = (
       const makeRetryStallWatch = (entry: LiveSessionEntry) => {
         const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
         const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
+        const stallTimers = new Map<ProviderTurnId, Fiber.Fiber<void>>();
         // Stops the stalled turn; its interrupted terminal is then reported as the retry's failure.
         const stopStalledRetry = Effect.fn("ProviderSessionManager.stopStalledRetry")(
           function* (item: ProviderRetryItem) {
             if (runningRetries.get(item.providerTurnId) !== item) return;
+            // The terminal this stop causes must not interrupt the stop itself.
+            stallTimers.delete(item.providerTurnId);
             const current = (yield* Ref.get(sessions)).get(
               sessionKey(entry.runtime.providerSessionId),
             );
@@ -2226,25 +2231,39 @@ export const layerWithOptions = (
               item.threadId,
               { providerThreadId: item.providerThreadId, providerTurnId: item.providerTurnId },
             );
-            if (providerThread === undefined) return;
+            if (providerThread === undefined || runningRetries.get(item.providerTurnId) !== item)
+              return;
             stalledRetries.set(item.providerTurnId, item);
             yield* entry.runtime.interruptTurn({
               providerThread,
               providerTurnId: item.providerTurnId,
             });
           },
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestration-v2.provider-retry-stall-stop-failed", {
-              providerSessionId: entry.runtime.providerSessionId,
-              cause,
-            }),
-          ),
+          (effect, item) =>
+            effect.pipe(
+              Effect.catchCause((cause) =>
+                Effect.sync(() => stalledRetries.delete(item.providerTurnId)).pipe(
+                  Effect.andThen(
+                    Effect.logWarning("orchestration-v2.provider-retry-stall-stop-failed", {
+                      providerSessionId: entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                ),
+              ),
+            ),
         );
+        const stopStallTimer = (providerTurnId: ProviderTurnId) => {
+          const fiber = stallTimers.get(providerTurnId);
+          stallTimers.delete(providerTurnId);
+          return fiber === undefined ? Effect.void : Fiber.interrupt(fiber);
+        };
         const trackProviderRetry = (
           event: ProviderAdapter.ProviderAdapterV2Event,
         ): {
           readonly event: ProviderAdapter.ProviderAdapterV2Event;
           readonly armed?: ProviderRetryItem;
+          readonly settled?: ProviderTurnId;
         } => {
           if (event.type === "turn_item.updated") {
             const item = event.turnItem;
@@ -2259,6 +2278,7 @@ export const layerWithOptions = (
               ...item,
               providerTurnId: item.providerTurnId,
               providerThreadId: item.providerThreadId,
+              retry: item.retry,
             };
             if (item.status === "running") {
               runningRetries.set(retryItem.providerTurnId, retryItem);
@@ -2267,28 +2287,33 @@ export const layerWithOptions = (
             runningRetries.delete(retryItem.providerTurnId);
             // Adapters mark the retry stopped before the interrupted terminal; only recovery clears it.
             if (item.status === "completed") stalledRetries.delete(retryItem.providerTurnId);
-            return { event };
+            return { event, settled: retryItem.providerTurnId };
           }
           if (event.type === "provider_turn.updated") {
             if (event.providerTurn.status === "running") return { event };
             runningRetries.delete(event.providerTurn.id);
-            const stalled = stalledRetries.has(event.providerTurn.id);
-            return stalled &&
+            const settled = event.providerTurn.id;
+            return stalledRetries.has(settled) &&
               (event.providerTurn.status === "interrupted" ||
                 event.providerTurn.status === "cancelled")
-              ? { event: { ...event, providerTurn: { ...event.providerTurn, status: "failed" } } }
-              : { event };
+              ? {
+                  event: { ...event, providerTurn: { ...event.providerTurn, status: "failed" } },
+                  settled,
+                }
+              : { event, settled };
           }
           if (event.type !== "turn.terminal") return { event };
           runningRetries.delete(event.providerTurnId);
           const stalled = stalledRetries.get(event.providerTurnId);
           stalledRetries.delete(event.providerTurnId);
+          const settled = event.providerTurnId;
           if (
             stalled === undefined ||
             (event.status !== "interrupted" && event.status !== "cancelled")
           )
-            return { event };
+            return { event, settled };
           return {
+            settled,
             event: {
               type: "turn.terminal",
               driver: event.driver,
@@ -2298,7 +2323,7 @@ export const layerWithOptions = (
               failureItemOrdinal: stalled.ordinal,
               status: "failed",
               failure: { ...stalled.failure, retryable: false },
-              ...(stalled.retry === undefined ? {} : { retry: stalled.retry }),
+              retry: stalled.retry,
               ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
               threadDisposition: event.threadDisposition,
             },
@@ -2306,17 +2331,26 @@ export const layerWithOptions = (
         };
         return {
           track: trackProviderRetry,
-          arm: (item: ProviderRetryItem) =>
-            stopStalledRetry(item).pipe(
+          // Runs for every provider event; spans would be per-event noise. Timers are children
+          // of the pump fiber, so a released session takes them down.
+          update: Effect.fnUntraced(function* (tracked: ReturnType<typeof trackProviderRetry>) {
+            const item = tracked.armed;
+            if (item === undefined) {
+              if (tracked.settled !== undefined) yield* stopStallTimer(tracked.settled);
+              return;
+            }
+            yield* stopStallTimer(item.providerTurnId);
+            const timer = yield* stopStalledRetry(item).pipe(
               Effect.delay(
                 Duration.sum(
                   PROVIDER_RETRY_STALL_TIMEOUT,
-                  Duration.millis(item.retry?.retryDelayMs ?? 0),
+                  Duration.millis(item.retry.retryDelayMs ?? 0),
                 ),
               ),
-              Effect.forkIn(layerScope, { startImmediately: true }),
-              Effect.asVoid,
-            ),
+              Effect.forkChild({ startImmediately: true }),
+            );
+            stallTimers.set(item.providerTurnId, timer);
+          }),
         };
       };
 
@@ -2346,8 +2380,9 @@ export const layerWithOptions = (
                 return next;
               });
             }
-            const { event, armed } = retryStalls.track(nativeEvent);
-            const armRetryStall = armed === undefined ? Effect.void : retryStalls.arm(armed);
+            const tracked = retryStalls.track(nativeEvent);
+            const event = tracked.event;
+            const armRetryStall = retryStalls.update(tracked);
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&

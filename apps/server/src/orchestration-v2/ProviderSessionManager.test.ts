@@ -2061,7 +2061,17 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         runtimePolicy,
       });
       const subscription = yield* runtime.subscribeEvents!;
-      const collected = yield* subscription.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const retryPublished = yield* Deferred.make<void>();
+      // The pump arms the stall timer before it publishes the retry row.
+      const collected = yield* subscription.events.pipe(
+        Stream.tap((event) =>
+          event.type === "turn_item.updated"
+            ? Deferred.succeed(retryPublished, undefined)
+            : Effect.void,
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
       assert.isDefined(adapterQueue);
       const providerTurnId = idAllocator.derive.providerTurn({
@@ -2095,6 +2105,7 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         driver: CODEX_DRIVER,
         turnItem: retryItem("running"),
       });
+      yield* Deferred.await(retryPublished);
       // The stall window starts after the provider's announced retry delay.
       yield* TestClock.adjust("15 minutes");
       assert.equal((yield* Ref.get(state)).interruptCount, 0);
@@ -2122,9 +2133,8 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
       });
       yield* Queue.end(adapterQueue!);
 
-      const terminal = Array.from(yield* Fiber.join(collected)).find(
-        (event) => event.type === "turn.terminal",
-      );
+      const events = Array.from(yield* Fiber.join(collected));
+      const terminal = events.find((event) => event.type === "turn.terminal");
       assert.deepEqual(terminal, {
         type: "turn.terminal",
         driver: CODEX_DRIVER,
