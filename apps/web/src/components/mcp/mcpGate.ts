@@ -2,6 +2,7 @@ import type {
   EnvironmentCloudLinkStateResult,
   EnvironmentConnectReachability,
 } from "@t3tools/contracts";
+import type { Discovery } from "@t3tools/client-runtime/relay";
 import type { RelayManagedEndpoint } from "@t3tools/contracts/relay";
 
 import { isManagedTunnelActive, t3ConnectMcpUrl } from "~/cloud/t3ConnectState";
@@ -15,8 +16,11 @@ type Unreachable = Extract<EnvironmentConnectReachability, { readonly status: "u
 export type McpGate =
   | { readonly kind: "checking" }
   | { readonly kind: "sign-in" }
-  /** `offline`: T3 Connect reports the saved machine offline, so reconnecting cannot help. */
-  | { readonly kind: "disconnected"; readonly offline: boolean }
+  /**
+   * `relay`: T3 Connect reports the saved machine offline, or its list could not be read; both
+   * keep a retry. Null when that list shows nothing wrong, so the user should reconnect.
+   */
+  | { readonly kind: "disconnected"; readonly relay: "offline" | "failed" | null }
   | { readonly kind: "update" }
   | { readonly kind: "no-relay-read" }
   | { readonly kind: "error"; readonly message: string }
@@ -28,8 +32,6 @@ export function resolveMcpGate(input: {
   /** Undefined until T3 Connect sign-in has loaded. */
   readonly signedIn: boolean | undefined;
   readonly connected: boolean;
-  /** T3 Connect's list reports this saved machine offline. */
-  readonly relayOffline: boolean;
   /** The environment's `mcpApprovalCodes` capability; undefined until its config loads. */
   readonly approvalCodes: boolean | undefined;
   readonly canReadRelay: boolean;
@@ -37,21 +39,35 @@ export function resolveMcpGate(input: {
   readonly linkStateError: string | null;
   /** A backend this device runs; its link state names its own tunnel. */
   readonly thisMachine: boolean;
-  /** The account's machines on T3 Connect, where a saved machine's address comes from. */
+  /** The account's machines on T3 Connect, where a saved machine's address and health come from. */
   readonly relay:
     | { readonly status: "loading" | "failed" }
-    | { readonly status: "listed"; readonly endpoint: RelayManagedEndpoint | undefined };
+    | {
+        readonly status: "listed";
+        readonly endpoint: RelayManagedEndpoint | undefined;
+        readonly availability?: Discovery.RelayEnvironmentAvailability | undefined;
+      };
   /** A check run for this gate: its answer, "checking" until it has one, or null if it failed. */
   readonly reachability: EnvironmentConnectReachability | "checking" | null;
 }): McpGate {
   if (input.signedIn === undefined) return { kind: "checking" };
   if (!input.signedIn) return { kind: "sign-in" };
-  if (!input.connected) return { kind: "disconnected", offline: input.relayOffline };
+  const { relay } = input;
+  if (!input.connected) {
+    if (input.thisMachine) return { kind: "disconnected", relay: null };
+    const availability = relay.status === "listed" ? relay.availability : undefined;
+    // A refresh empties the list first, so wait for it instead of flashing "Connect first".
+    if (relay.status === "loading" || availability === "checking") return { kind: "checking" };
+    if (relay.status === "failed" || availability === "error") {
+      return { kind: "disconnected", relay: "failed" };
+    }
+    return { kind: "disconnected", relay: availability === "offline" ? "offline" : null };
+  }
   if (input.approvalCodes === undefined) return { kind: "checking" };
   if (!input.approvalCodes) return { kind: "update" };
   if (!input.canReadRelay) return { kind: "no-relay-read" };
   if (input.linkStateError !== null) return { kind: "error", message: input.linkStateError };
-  const { linkState, relay } = input;
+  const { linkState } = input;
   if (linkState === null) return { kind: "checking" };
   // This machine reports its own tunnel and the probe proves it; the list speaks for saved ones.
   const endpoint = !input.thisMachine && relay.status === "listed" ? relay.endpoint : undefined;

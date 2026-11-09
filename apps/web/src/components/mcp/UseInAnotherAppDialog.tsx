@@ -251,11 +251,11 @@ function useGate(environment: EnvironmentPresentation) {
   const linkState = controller.linkState.data;
   const reported = linkState?.reachability;
   const serverConfig = environment.serverConfig;
+  const connected = environment.connection.phase === "connected";
+  const relayEntry = discovery.environments.get(environmentId);
   const gate = resolveMcpGate({
     signedIn: isSignedIn,
-    connected: environment.connection.phase === "connected",
-    relayOffline:
-      !thisMachine && discovery.environments.get(environmentId)?.availability === "offline",
+    connected,
     approvalCodes:
       serverConfig === null
         ? undefined
@@ -270,7 +270,8 @@ function useGate(environment: EnvironmentPresentation) {
         : discovery.listed
           ? {
               status: "listed",
-              endpoint: discovery.environments.get(environmentId)?.environment.endpoint,
+              endpoint: relayEntry?.environment.endpoint,
+              availability: relayEntry?.availability,
             }
           : { status: "loading" },
     reachability:
@@ -302,14 +303,24 @@ function useGate(environment: EnvironmentPresentation) {
     });
     if (!ok) setConnecting(false);
   };
-  const tunnelActive = linkState !== null && isManagedTunnelActive(linkState, undefined);
+  // A cached link state can name a tunnel on a disconnected machine; checking it would fail and
+  // spend the one automatic check.
+  const canCheck = connected && linkState !== null && isManagedTunnelActive(linkState, undefined);
   const checkOnce = useEffectEvent(() => {
     if (check === "idle") void runReachabilityCheck();
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server to check its tunnel once one exists
   useEffect(() => {
-    if (tunnelActive) queueMicrotask(checkOnce);
-  }, [tunnelActive]);
+    if (canCheck) queueMicrotask(checkOnce);
+  }, [canCheck]);
+  // T3 Connect lists machines only once something asks, and a saved machine's gate reads that list.
+  const discoverIfUnasked = useEffectEvent(() => {
+    if (!thisMachine && !discovery.listed && !discovery.refreshing) void refreshDiscovery();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks T3 Connect for its machine list once the wizard opens signed in
+  useEffect(() => {
+    if (isSignedIn) discoverIfUnasked();
+  }, [isSignedIn]);
   const waiting = gate.kind === "offline" || (connecting && gate.kind === "turn-on");
   const refreshLinkState = useEffectEvent(() => controller.linkState.refresh());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the server's link state while the tunnel starts; the server has no push for it
@@ -348,11 +359,12 @@ function GateScreen({
   const name = environment.label;
   const turnOnHere = useT3ConnectTurnOn(environment.environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  const checkAgain = (
-    <Button variant="outline" onClick={() => void check()}>
+  const retry = (onClick: () => void) => (
+    <Button variant="outline" onClick={onClick}>
       Check again
     </Button>
   );
+  const checkAgain = retry(() => void check());
   switch (gate.kind) {
     case "checking":
       return (
@@ -382,14 +394,18 @@ function GateScreen({
         </GateMessage>
       );
     case "disconnected":
-      return gate.offline ? (
-        <GateMessage title={`${name}'s T3 Connect is offline`}>
-          <Button variant="outline" onClick={refreshList}>
-            Check again
-          </Button>
-        </GateMessage>
-      ) : (
+      return gate.relay === null ? (
         <GateMessage title={`Connect to ${name} first.`} />
+      ) : (
+        <GateMessage
+          title={
+            gate.relay === "offline"
+              ? `${name}'s T3 Connect is offline`
+              : `Can't check T3 Connect on ${name}`
+          }
+        >
+          {retry(refreshList)}
+        </GateMessage>
       );
     case "update":
       return <GateMessage title={`Update T3 Code on ${name}`} />;

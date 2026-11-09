@@ -29,7 +29,6 @@ const savedTunnel = {
 const open = {
   signedIn: true,
   connected: true,
-  relayOffline: false,
   approvalCodes: true,
   canReadRelay: true,
   linkState: tunnel,
@@ -56,11 +55,20 @@ describe("resolveMcpGate", () => {
       kind: "open",
       mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
     });
-    // A saved machine T3 Connect reports offline says so instead of asking to reconnect.
-    expect(resolveMcpGate({ ...saved, connected: false, relayOffline: true })).toEqual({
-      kind: "disconnected",
-      offline: true,
+    // A disconnected saved machine follows T3 Connect's list. Offline or an unreadable list keeps
+    // a retry; only a list showing nothing wrong asks to reconnect.
+    const away = { ...saved, connected: false };
+    const listed = (availability: "online" | "offline" | "error") => ({
+      ...away,
+      relay: { ...saved.relay, availability },
     });
+    expect(resolveMcpGate(listed("offline"))).toEqual({ kind: "disconnected", relay: "offline" });
+    expect(resolveMcpGate(listed("error"))).toEqual({ kind: "disconnected", relay: "failed" });
+    expect(resolveMcpGate({ ...away, relay: { status: "failed" } })).toEqual({
+      kind: "disconnected",
+      relay: "failed",
+    });
+    expect(resolveMcpGate(listed("online"))).toEqual({ kind: "disconnected", relay: null });
     // This machine's probe outranks a stale publish-only record in that list.
     expect(
       resolveMcpGate({
@@ -97,6 +105,11 @@ describe("resolveMcpGate", () => {
       "turn-on",
     ],
     ["T3 Connect's list still loading", { ...saved, relay: { status: "loading" } }, "checking"],
+    [
+      "a disconnected saved machine while T3 Connect's list refreshes",
+      { ...saved, connected: false, relay: { status: "loading" } },
+      "checking",
+    ],
     [
       "no tunnel, before T3 Connect's list loads",
       {
