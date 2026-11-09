@@ -21,6 +21,7 @@ export function useInstanceLimitsRefresh(
   const presentation = useAtomValue(environmentPresentations.presentationAtom(environmentId));
   const selectionKeyJson = JSON.stringify(
     instanceLimitsRefreshSelection(
+      environmentId,
       instanceId,
       driver,
       config?.providers ?? [],

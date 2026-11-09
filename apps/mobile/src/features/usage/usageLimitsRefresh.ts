@@ -26,6 +26,7 @@ const limitsRefreshFailedAtom = Atom.family((environmentId: EnvironmentId) =>
 );
 
 export function instanceLimitsRefreshSelection(
+  environmentId: EnvironmentId,
   instanceId: ProviderInstanceId,
   driver?: ProviderDriverKind,
   providers: readonly Pick<ServerProvider, "instanceId" | "driver" | "auth">[] = [],
@@ -35,7 +36,7 @@ export function instanceLimitsRefreshSelection(
     key: JSON.stringify([
       instanceId,
       driver,
-      usageRefreshAccountKey(providers, driver, null, generation),
+      usageRefreshAccountKey(environmentId, providers, driver, null, generation),
     ]),
     resources: [
       ...(driver
@@ -43,7 +44,7 @@ export function instanceLimitsRefreshSelection(
             JSON.stringify([
               "provider",
               driver,
-              usageRefreshAccountKey(providers, driver, null, generation),
+              usageRefreshAccountKey(environmentId, providers, driver, null, generation),
             ]),
           ]
         : []),
@@ -51,7 +52,7 @@ export function instanceLimitsRefreshSelection(
         "instance",
         instanceId,
         driver,
-        usageRefreshAccountKey(providers, driver, instanceId, generation),
+        usageRefreshAccountKey(environmentId, providers, driver, instanceId, generation),
       ]),
     ],
   };
@@ -68,6 +69,7 @@ function environmentLimitsRefreshKeys(
   const keys = (config?.providers ?? []).flatMap(
     (provider) =>
       instanceLimitsRefreshSelection(
+        environmentId,
         provider.instanceId,
         provider.driver,
         config?.providers ?? [],
@@ -81,7 +83,13 @@ function environmentLimitsRefreshKeys(
         JSON.stringify([
           "provider",
           account.driver,
-          usageRefreshAccountKey(config?.providers ?? [], account.driver, null, generation),
+          usageRefreshAccountKey(
+            environmentId,
+            config?.providers ?? [],
+            account.driver,
+            null,
+            generation,
+          ),
         ]),
       ),
     );
@@ -120,9 +128,15 @@ export async function refreshEnvironmentLimits(
     options.automatic,
     {
       ...(options.instanceId
-        ? instanceLimitsRefreshSelection(options.instanceId, options.driver, providers, generation)
+        ? instanceLimitsRefreshSelection(
+            environmentId,
+            options.instanceId,
+            options.driver,
+            providers,
+            generation,
+          )
         : {
-            key: usageRefreshAccountKey(providers, null, null, generation),
+            key: usageRefreshAccountKey(environmentId, providers, null, null, generation),
             resources: environmentLimitsRefreshKeys(registry, environmentId),
           }),
       refreshDeadline: (result) =>
@@ -162,6 +176,7 @@ export async function refreshEnvironmentLimits(
 const limitsAccountKeyAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
     usageRefreshAccountKey(
+      environmentId,
       get(serverEnvironment.configValueAtom(environmentId))?.providers ?? [],
       null,
       null,

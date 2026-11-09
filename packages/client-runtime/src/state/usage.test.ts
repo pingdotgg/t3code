@@ -291,21 +291,76 @@ describe("limits refresh cooldown", () => {
       instanceRevision: 1,
     };
     now.mockReturnValue(0);
-    const oldKey = usageRefreshAccountKey([provider]);
+    const oldKey = usageRefreshAccountKey(rebuilt, [provider]);
     await refreshUsageLimits(rebuilt, async () => "old quota", true, oldKey);
     now.mockReturnValue(60_000);
-    const currentKey = usageRefreshAccountKey([{ ...provider, instanceRevision: 2 }]);
+    const currentKey = usageRefreshAccountKey(rebuilt, [{ ...provider, instanceRevision: 2 }]);
     const readRebuilt = vi.fn(async () => "rebuilt quota");
     expect(await refreshUsageLimits(rebuilt, readRebuilt, true, currentKey)).toBe("rebuilt quota");
     expect(await refreshUsageLimits(rebuilt, readRebuilt, true, currentKey)).toBeUndefined();
     expect(readRebuilt).toHaveBeenCalledTimes(1);
   });
+  it.each(["round-trip", "cleared-reading"] as const)(
+    "revalidates an account after %s",
+    async (transition) => {
+      const environmentId = EnvironmentId.make(`limits-account-${transition}`);
+      using _now = vi.spyOn(Date, "now").mockReturnValue(0);
+      const provider = {
+        instanceId: ProviderInstanceId.make(`native-${transition}`),
+        driver: ProviderDriverKind.make("codex"),
+        auth: { status: "authenticated" as const, workspaceId: "a" },
+      };
+      const read = vi.fn(async () => "quota");
+      const emptyKey = usageRefreshAccountKey(environmentId, [provider]);
+      const populated = {
+        ...provider,
+        usageLimits: { checkedAt: "2026-01-01T00:00:00Z", windows: [] },
+      };
+      expect(usageRefreshAccountKey(environmentId, [populated])).toBe(emptyKey);
+      usageRefreshAccountKey(EnvironmentId.make(`${environmentId}-other`), [
+        { ...provider, auth: { ...provider.auth, workspaceId: "other-host" } },
+      ]);
+      expect(usageRefreshAccountKey(environmentId, [populated])).toBe(emptyKey);
+      await refreshUsageLimits(environmentId, read, true, emptyKey);
+      if (transition === "round-trip") {
+        const b = { ...provider, auth: { ...provider.auth, workspaceId: "b" } };
+        await refreshUsageLimits(
+          environmentId,
+          read,
+          true,
+          usageRefreshAccountKey(environmentId, [b]),
+        );
+      }
+      await refreshUsageLimits(
+        environmentId,
+        read,
+        true,
+        usageRefreshAccountKey(environmentId, [provider]),
+      );
+      expect(read).toHaveBeenCalledTimes(transition === "round-trip" ? 3 : 2);
+      await refreshUsageLimits(
+        environmentId,
+        read,
+        true,
+        usageRefreshAccountKey(environmentId, [provider]),
+      );
+      expect(read).toHaveBeenCalledTimes(transition === "round-trip" ? 3 : 2);
+    },
+  );
 });
 
 describe("new-thread quota preflight", () => {
-  it.each([true, false])(
-    "checks project fallback eligibility before reading (enabled: %s)",
-    async (enabled) => {
+  it.each([
+    "enabled",
+    "disabled",
+    "primary-go",
+    "primary-other",
+    "fallback-go",
+    "fallback-other",
+  ] as const)(
+    "checks fallback eligibility and model quota scope before reading: %s",
+    async (mode) => {
+      const enabled = mode !== "disabled";
       const primaryId = ProviderInstanceId.make("codex");
       const fallbackId = ProviderInstanceId.make("claudeAgent");
       const projectId = ProjectId.make("quota-preflight");
@@ -323,10 +378,20 @@ describe("new-thread quota preflight", () => {
         skills: [],
         usageLimits: {
           checkedAt: "2026-01-01T00:00:00Z",
-          windows: [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }],
+          windows: [
+            {
+              id: driver === "opencode" ? "go_session" : "session",
+              kind: "session",
+              label: "Session",
+              usedPercent: 100,
+            },
+          ],
         },
       });
-      const providers = [provider(primaryId, "codex"), provider(fallbackId, "claudeAgent")];
+      const providers = [
+        provider(primaryId, mode.startsWith("primary") ? "opencode" : "codex"),
+        provider(fallbackId, mode.startsWith("fallback") ? "opencode" : "claudeAgent"),
+      ];
       const registry = AtomRegistry.make();
       registries.push(registry);
       const requested: ProviderInstanceId[] = [];
@@ -346,8 +411,14 @@ describe("new-thread quota preflight", () => {
         server,
         environmentId: EnvironmentId.make("preflight"),
         input: {
-          defaultSelection: { instanceId: primaryId, model: "gpt" },
-          fallbackSelection: { instanceId: fallbackId, model: "claude" },
+          defaultSelection: {
+            instanceId: primaryId,
+            model: mode === "primary-go" ? "opencode-go/glm" : "openai/gpt",
+          },
+          fallbackSelection: {
+            instanceId: fallbackId,
+            model: mode === "fallback-go" ? "opencode-go/glm" : "openai/gpt",
+          },
           providers,
           now: 0,
           projectId,
@@ -359,7 +430,13 @@ describe("new-thread quota preflight", () => {
           },
         },
       });
-      expect(requested).toEqual(enabled ? [primaryId, fallbackId] : [primaryId]);
+      expect(requested).toEqual(
+        mode === "primary-other"
+          ? []
+          : !enabled || mode === "fallback-other"
+            ? [primaryId]
+            : [primaryId, fallbackId],
+      );
     },
   );
 });

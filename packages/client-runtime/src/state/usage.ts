@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ModelSelection,
   ProviderInstanceId,
   ProviderDriverKind,
   ServerProvider,
@@ -47,7 +48,11 @@ export async function refreshNewThreadUsage({
 }): Promise<readonly ServerProvider[]> {
   const { defaultSelection, fallbackSelection } = input;
   if (input.explicitSelection || !defaultSelection || !fallbackSelection) return input.providers;
-  const refresh = async (instanceId: ProviderInstanceId) => {
+  let providers = input.providers;
+  const refresh = async (selection: ModelSelection) => {
+    const provider = providers.find((provider) => provider.instanceId === selection.instanceId);
+    if (provider?.driver === "opencode" && !selection.model.startsWith("opencode-go/")) return;
+    const instanceId = selection.instanceId;
     const result = await runAtomCommand(
       registry,
       server.refreshProviders,
@@ -56,10 +61,9 @@ export async function refreshNewThreadUsage({
     );
     return AsyncResult.isSuccess(result) ? result.value.providers : undefined;
   };
-  let providers = input.providers;
   let expired = false;
   const read = async () => {
-    providers = (await refresh(defaultSelection.instanceId)) ?? providers;
+    providers = (await refresh(defaultSelection)) ?? providers;
     if (expired) return;
     if (
       exhaustedUsageWindow(
@@ -73,7 +77,7 @@ export async function refreshNewThreadUsage({
         input.projectId,
       )
     ) {
-      providers = (await refresh(fallbackSelection.instanceId)) ?? providers;
+      providers = (await refresh(fallbackSelection)) ?? providers;
     }
   };
   // The UI wait is bounded; an already shared read can still finish into the cache.
@@ -102,8 +106,14 @@ export function usageRefreshDeadline(
   return deadlines.length ? now + Math.min(...deadlines) - (serverTime ?? now) : undefined;
 }
 
+const quotaOwners = new Map<string, { identity: string; revision: number; hasReading: boolean }>();
+
 export function usageRefreshAccountKey(
-  providers: readonly Pick<ServerProvider, "instanceId" | "instanceRevision" | "driver" | "auth">[],
+  environmentId: EnvironmentId,
+  providers: readonly Pick<
+    ServerProvider,
+    "instanceId" | "instanceRevision" | "driver" | "auth" | "usageLimits"
+  >[],
   driver?: ProviderDriverKind | null,
   instanceId?: ProviderInstanceId | null,
   generation = 0,
@@ -117,15 +127,31 @@ export function usageRefreshAccountKey(
           (!instanceId || provider.instanceId === instanceId),
       )
       .sort((a, b) => a.instanceId.localeCompare(b.instanceId))
-      .map((provider) => [
-        provider.instanceId,
-        provider.instanceRevision,
-        provider.auth?.status,
-        provider.auth?.type,
-        provider.auth?.email?.toLowerCase(),
-        provider.auth?.workspaceId,
-        provider.auth?.usageRefreshKey,
-      ]),
+      .map((provider) => {
+        const identity = JSON.stringify([
+          provider.instanceId,
+          provider.instanceRevision,
+          provider.auth?.status,
+          provider.auth?.type,
+          provider.auth?.email?.toLowerCase(),
+          provider.auth?.workspaceId,
+          provider.auth?.usageRefreshKey,
+        ]);
+        const key = JSON.stringify([environmentId, provider.instanceId]);
+        const previous = quotaOwners.get(key);
+        const hasReading =
+          provider.usageLimits !== undefined &&
+          provider.usageLimits.unavailable?.reason !== "probeFailed";
+        // Returning to an account must not revive deadlines for a reading the server cleared.
+        const revision =
+          (previous?.revision ?? 0) +
+          Number(
+            previous !== undefined &&
+              (previous.identity !== identity || (previous.hasReading && !hasReading)),
+          );
+        quotaOwners.set(key, { identity, revision, hasReading });
+        return [identity, revision];
+      }),
   ]);
 }
 

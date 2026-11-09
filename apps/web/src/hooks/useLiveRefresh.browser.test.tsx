@@ -1,4 +1,9 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { usageRefreshAccountKey } from "@t3tools/client-runtime/state/usage";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -39,7 +44,13 @@ describe("useLiveRefresh", () => {
         refresh={refresh}
         viewKey="web-auth-change"
         refreshKeys={[
-          usageRefreshAccountKey([{ instanceId, driver, auth }], driver, null, generation),
+          usageRefreshAccountKey(
+            EnvironmentId.make("web-auth-change"),
+            [{ instanceId, driver, auth }],
+            driver,
+            null,
+            generation,
+          ),
         ]}
         refreshOnShow
         refreshWhileIdle

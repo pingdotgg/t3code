@@ -64,7 +64,7 @@ export function useUsageLimitsRefresh(
               JSON.stringify([
                 environmentId,
                 driver,
-                usageRefreshAccountKey(providers, driver, null, generation),
+                usageRefreshAccountKey(environmentId, providers, driver, null, generation),
               ]),
             ]
           : []),
@@ -72,7 +72,7 @@ export function useUsageLimitsRefresh(
           environmentId,
           driver,
           instanceId,
-          usageRefreshAccountKey(providers, driver, instanceId, generation),
+          usageRefreshAccountKey(environmentId, providers, driver, instanceId, generation),
         ]),
       ],
       refreshDeadline: (result) => (typeof result === "number" ? result : undefined),

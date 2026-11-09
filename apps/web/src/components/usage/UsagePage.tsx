@@ -278,6 +278,7 @@ export function UsagePage() {
               JSON.stringify([
                 [...hiddenProviders].sort(),
                 usageRefreshAccountKey(
+                  environmentId,
                   presentation.serverConfig?.providers ?? [],
                   null,
                   null,
@@ -399,6 +400,7 @@ export function UsagePage() {
                 environmentId,
                 driver,
                 usageRefreshAccountKey(
+                  environmentId,
                   presentation.serverConfig?.providers ?? [],
                   driver,
                   null,
@@ -414,6 +416,7 @@ export function UsagePage() {
                   provider.driver,
                   provider.instanceId,
                   usageRefreshAccountKey(
+                    environmentId,
                     presentation.serverConfig?.providers ?? [],
                     provider.driver,
                     provider.instanceId,
