@@ -13,7 +13,8 @@
     }
   },
   "scripts": {
-    "typecheck": "effect-tsgo tsrs --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
@@ -24,6 +25,8 @@
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "catalog:"
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

@@ -17,6 +17,7 @@ import type {
 } from "@t3tools/contracts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
+import { parseChangeRequestUrl } from "../shared/definition.ts";
 
 const Int64 = Schema.Union([Schema.Number, Schema.NumberFromString]);
 const OptionalString = Schema.optional(Schema.NullOr(Schema.String));
@@ -391,4 +392,20 @@ export function originFilesPatch(
         .concat("\n");
     })
     .join("");
+}
+
+/** `42` or `#42`; anything else, such as `123/fix`, is a branch. */
+function originPullNumber(reference: string): number | null {
+  const match = /^#?(\d+)$/u.exec(reference.trim());
+  const number = Number(match?.[1]);
+  return Number.isSafeInteger(number) && number > 0 ? number : null;
+}
+
+/** A cursor.com pull request URL names its own repository, which need not be the checkout's. */
+export function pullReference(reference: string) {
+  const trimmed = reference.trim();
+  if (!URL.canParse(trimmed)) return { repository: null, number: originPullNumber(trimmed) };
+  // Another host's pull request URL must not resolve to the same number here.
+  const link = parseChangeRequestUrl(new URL(trimmed));
+  return { repository: link?.repository ?? null, number: link?.number ?? null };
 }

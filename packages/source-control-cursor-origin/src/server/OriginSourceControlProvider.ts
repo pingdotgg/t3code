@@ -3,7 +3,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { SourceControlProviderError, SourceControlProviderKind } from "@t3tools/contracts";
-import { CURSOR_ORIGIN_WEB_BASE_URL, parseChangeRequestUrl } from "../shared/definition.ts";
+import { CURSOR_ORIGIN_WEB_BASE_URL } from "../shared/definition.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
@@ -18,6 +18,7 @@ import {
   OriginPullRequestListSchema,
   OriginPullRequestSchema,
   OriginRepositorySchema,
+  pullReference,
   toOriginChangeRequest,
   type OriginRepository,
 } from "./originPullRequests.ts";
@@ -72,22 +73,6 @@ export const makeDiscovery = Effect.gen(function* () {
     refineUnknownRemote: () => Effect.succeed(null),
   } satisfies SourceControlManagedCliDiscoverySpec;
 });
-
-/** `42` or `#42`; anything else, such as `123/fix`, is a branch. */
-function originPullNumber(reference: string): number | null {
-  const match = /^#?(\d+)$/u.exec(reference.trim());
-  const number = Number(match?.[1]);
-  return Number.isSafeInteger(number) && number > 0 ? number : null;
-}
-
-/** A cursor.com pull request URL names its own repository, which need not be the checkout's. */
-function pullReference(reference: string) {
-  const trimmed = reference.trim();
-  if (!URL.canParse(trimmed)) return { repository: null, number: originPullNumber(trimmed) };
-  // Another host's pull request URL must not resolve to the same number here.
-  const link = parseChangeRequestUrl(new URL(trimmed));
-  return { repository: link?.repository ?? null, number: link?.number ?? null };
-}
 
 const cloneUrls = (repository: OriginRepository, fallbackName: string) => {
   const nameWithOwner =
