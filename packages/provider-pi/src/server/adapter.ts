@@ -356,8 +356,8 @@ interface ActivePiTurn {
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
-  /** Arguments of ask_user_question calls that have started and not ended, by tool call id. */
-  readonly askUserQuestionArgs: Map<string, unknown>;
+  /** Questions of ask_user_question calls that have started and not ended, by tool call id. */
+  readonly askUserQuestions: Map<string, ReadonlyArray<PiAskUserQuestion>>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
   nativeAborted: boolean;
@@ -1173,10 +1173,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
           if (toolName === PI_ASK_USER_QUESTION_TOOL) {
-            turn.askUserQuestionArgs.set(toolCallId, event["args"]);
+            const ask = decodePiAskUserQuestionArgs(event["args"]);
+            if (Option.isSome(ask)) turn.askUserQuestions.set(toolCallId, ask.value.questions);
           }
         }
-        if (phase === "end") turn.askUserQuestionArgs.delete(toolCallId);
+        if (phase === "end") turn.askUserQuestions.delete(toolCallId);
         const args = event["args"] ?? turn.toolArgs.get(toolCallId);
         const emittedAt = yield* DateTime.now;
         const startedAt = turn.toolStartedAt.get(toolCallId) ?? emittedAt;
@@ -1574,7 +1575,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 requestId,
                 questions: [
                   (method === "select" && turn !== null
-                    ? piAskUserQuestion(turn.askUserQuestionArgs.values(), nativeRequestId, event)
+                    ? piAskUserQuestion(turn.askUserQuestions.values(), nativeRequestId, event)
                     : undefined) ?? piQuestion(nativeRequestId, method, title, event),
                 ],
               };
@@ -2788,7 +2789,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),
-              askUserQuestionArgs: new Map(),
+              askUserQuestions: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
               nativeAborted: false,
@@ -3656,7 +3657,7 @@ const piAskUserQuestionOptionLine = (option: PiAskUserQuestion["options"][number
 /**
  * Whether @juicesharp/rpiv-ask-user-question (2.15.0, rpc-fallback.ts) asks this single-select
  * question with exactly this select: `[header] question` plus folded previews as the title, one
- * line per option, then its own "Type something." row.
+ * line per option, then its own localized "Type something." row.
  */
 function piAskUserQuestionRendersAs(
   question: PiAskUserQuestion,
@@ -3673,6 +3674,7 @@ function piAskUserQuestionRendersAs(
   const otherRow = nativeOptions[question.options.length];
   return (
     question.multiSelect !== true &&
+    // The contract needs a non-blank question and option labels.
     question.question.trim().length > 0 &&
     title === `${header}${question.question}${previewBlock}` &&
     nativeOptions.length === question.options.length + 1 &&
@@ -3692,20 +3694,16 @@ function piAskUserQuestionRendersAs(
  * Returns undefined unless exactly one running question renders to this select.
  */
 function piAskUserQuestion(
-  runningCallArgs: Iterable<unknown>,
+  runningQuestions: Iterable<ReadonlyArray<PiAskUserQuestion>>,
   questionId: string,
   event: PiRpcRecord,
 ): OrchestrationV2UserInputQuestion | undefined {
   const title = recordString(event, "title");
   const nativeOptions = event["options"];
   if (title === undefined || !Array.isArray(nativeOptions)) return undefined;
-  const matches = Array.from(runningCallArgs).flatMap((args) =>
-    Option.match(decodePiAskUserQuestionArgs(args), {
-      onNone: () => [],
-      onSome: ({ questions }) =>
-        questions.filter((question) => piAskUserQuestionRendersAs(question, title, nativeOptions)),
-    }),
-  );
+  const matches = Array.from(runningQuestions)
+    .flat()
+    .filter((question) => piAskUserQuestionRendersAs(question, title, nativeOptions));
   const [question] = matches;
   if (question === undefined || matches.length > 1) return undefined;
   return {

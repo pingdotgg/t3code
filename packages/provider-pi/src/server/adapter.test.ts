@@ -4025,7 +4025,7 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("asks an ask_user_question select as its structured question", () =>
+  it.effect("asks each ask_user_question select as its structured question", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
@@ -4049,107 +4049,6 @@ describe("PiAdapterV2", () => {
               options: [
                 { label: "Docker/Compose", description: "Review or edit Compose projects" },
                 { label: "Home Assistant", description: "Automations, dashboards or YAML" },
-              ],
-            },
-          ],
-        },
-      });
-      // What @juicesharp/rpiv-ask-user-question 2.15.0 sends through ctx.ui.select in RPC mode.
-      const nativeOptions = [
-        "1. Docker/Compose — Review or edit Compose projects",
-        "2. Home Assistant — Automations, dashboards or YAML",
-        "3. Type something.",
-      ];
-      const ask = (id: string) =>
-        fake.emit({
-          type: "extension_ui_request",
-          id,
-          method: "select",
-          title: "[Area] Which area should we work on?",
-          options: nativeOptions,
-        });
-      const takeQuestion = takeEvent(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "user_input_request" &&
-          event.turnItem.status === "waiting",
-      ).pipe(
-        Effect.map((event) =>
-          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
-            ? event.turnItem
-            : assert.fail("expected a user input request"),
-        ),
-      );
-
-      yield* ask("ui-pick");
-      const picked = yield* takeQuestion;
-      assert.deepEqual(decodeUserInputQuestions(picked.questions), [
-        {
-          id: "ui-pick",
-          header: "Area",
-          question: "Which area should we work on?",
-          options: [
-            {
-              label: "Docker/Compose",
-              description: "Review or edit Compose projects",
-              value: "1. Docker/Compose — Review or edit Compose projects",
-            },
-            {
-              label: "Home Assistant",
-              description: "Automations, dashboards or YAML",
-              value: "2. Home Assistant — Automations, dashboards or YAML",
-            },
-          ],
-        },
-      ]);
-      yield* runtime.respondToRuntimeRequest({
-        requestId: picked.requestId,
-        answers: { "ui-pick": "2. Home Assistant — Automations, dashboards or YAML" },
-      });
-      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
-        type: "extension_ui_response",
-        id: "ui-pick",
-        value: "2. Home Assistant — Automations, dashboards or YAML",
-      });
-
-      yield* ask("ui-custom");
-      const custom = yield* takeQuestion;
-      yield* runtime.respondToRuntimeRequest({
-        requestId: custom.requestId,
-        answers: { "ui-custom": "  Both, Compose first  " },
-      });
-      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
-        type: "extension_ui_response",
-        id: "ui-custom",
-        value: "  Both, Compose first  ",
-      });
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
-  );
-
-  it.effect("asks each question of an ask_user_question call from its own select", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({
-        type: "tool_execution_start",
-        toolCallId: "call_ask",
-        toolName: "ask_user_question",
-        args: {
-          questions: [
-            {
-              header: "Scope",
-              question: "What should the fix touch?",
-              options: [
-                { label: "Adapter", description: "Pi adapter only" },
-                { label: "Everything", description: "Adapter and clients" },
               ],
             },
             {
@@ -4176,30 +4075,47 @@ describe("PiAdapterV2", () => {
         ),
       );
 
+      // What @juicesharp/rpiv-ask-user-question 2.15.0 sends through ctx.ui.select in RPC mode.
       yield* fake.emit({
         type: "extension_ui_request",
-        id: "ui-scope",
+        id: "ui-area",
         method: "select",
-        title: "[Scope] What should the fix touch?",
+        title: "[Area] Which area should we work on?",
         options: [
-          "1. Adapter — Pi adapter only",
-          "2. Everything — Adapter and clients",
+          "1. Docker/Compose — Review or edit Compose projects",
+          "2. Home Assistant — Automations, dashboards or YAML",
           "3. Type something.",
         ],
       });
-      const scope = yield* takeQuestion;
-      assert.equal(
-        decodeUserInputQuestions(scope.questions)[0]?.question,
-        "What should the fix touch?",
-      );
+      const area = yield* takeQuestion;
+      assert.deepEqual(decodeUserInputQuestions(area.questions), [
+        {
+          id: "ui-area",
+          header: "Area",
+          question: "Which area should we work on?",
+          options: [
+            {
+              label: "Docker/Compose",
+              description: "Review or edit Compose projects",
+              value: "1. Docker/Compose — Review or edit Compose projects",
+            },
+            {
+              label: "Home Assistant",
+              description: "Automations, dashboards or YAML",
+              value: "2. Home Assistant — Automations, dashboards or YAML",
+            },
+          ],
+        },
+      ]);
       yield* runtime.respondToRuntimeRequest({
-        requestId: scope.requestId,
-        answers: { "ui-scope": "1. Adapter — Pi adapter only" },
+        requestId: area.requestId,
+        answers: { "ui-area": "2. Home Assistant — Automations, dashboards or YAML" },
       });
-      assert.equal(
-        (yield* fake.takeRequest("extension_ui_response"))["value"],
-        "1. Adapter — Pi adapter only",
-      );
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "ui-area",
+        value: "2. Home Assistant — Automations, dashboards or YAML",
+      });
 
       yield* fake.emit({
         type: "extension_ui_request",
@@ -4220,6 +4136,15 @@ describe("PiAdapterV2", () => {
           ],
         },
       ]);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: layout.requestId,
+        answers: { "ui-layout": "  Both, stacked first  " },
+      });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "ui-layout",
+        value: "  Both, stacked first  ",
+      });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -4291,34 +4216,15 @@ describe("PiAdapterV2", () => {
       yield* endTool("call_header");
       yield* endTool("call_label");
 
-      yield* startTool("call_encoded", {
-        questions: JSON.stringify([
-          {
-            header: "Scope",
-            question: "Which scope?",
-            options: [{ label: "A", description: "a" }],
-          },
-        ]),
-      });
       yield* startTool("call_blank", {
         questions: [
           { header: "Blank", question: "Which?", options: [{ label: " ", description: "b" }] },
         ],
       });
-      yield* expectFlattened("ui-encoded", "[Scope] Which scope?", [
-        "1. A — a",
-        "2. Type something.",
-      ]);
       yield* expectFlattened("ui-blank", "[Blank] Which?", ["1.   — b", "2. Type something."]);
 
       yield* endTool("call_area");
-      yield* fake.emit({
-        type: "tool_execution_update",
-        toolCallId: "call_area",
-        toolName: "ask_user_question",
-        args: { questions: [areaQuestion] },
-      });
-      yield* expectFlattened("ui-stale", areaTitle, areaOptions);
+      yield* expectFlattened("ui-ended", areaTitle, areaOptions);
 
       yield* startTool("call_other", { questions: [areaQuestion] }, "ask_question");
       yield* expectFlattened("ui-other-tool", areaTitle, areaOptions);
