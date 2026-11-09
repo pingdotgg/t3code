@@ -1,0 +1,77 @@
+---
+/**
+ * `<StatGrid />` — a row of headline numbers for blog posts: a big value,
+ * what it measures, and where it started.
+ *
+ * Usage in MDX:
+ *   <StatGrid stats={[{ value: "−33%", label: "bundle size", detail: "57.1 → 38.3 KB" }]} />
+ */
+interface Props {
+  title?: string;
+  stats: ReadonlyArray<{ value: string; label: string; detail?: string }>;
+}
+
+const { title, stats } = Astro.props;
+---
+
+{title && <p class="alc-stats__title">{title}</p>}
+<ul class="alc-stats" data-nosnippet>
+  {
+    stats.map((s) => (
+      <li class="alc-stats__item">
+        <span class="alc-stats__value">{s.value}</span>
+        <span class="alc-stats__label">{s.label}</span>
+        {s.detail && <span class="alc-stats__detail">{s.detail}</span>}
+      </li>
+    ))
+  }
+</ul>
+
+<style>
+  .alc-stats__title {
+    margin: 2rem 0 -1.25rem;
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--alc-fg-1);
+  }
+
+  .alc-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.75rem;
+    margin: 2rem 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .alc-stats__item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin: 0;
+    padding: 1rem 1.1rem;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 10px;
+  }
+
+  .alc-stats__value {
+    font-family: var(--alc-font-mono);
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.1;
+    color: var(--alc-accent-text);
+  }
+
+  .alc-stats__label {
+    font-weight: 600;
+    color: var(--alc-fg-1);
+    line-height: 1.3;
+  }
+
+  .alc-stats__detail {
+    font-family: var(--alc-font-mono);
+    font-size: 0.78rem;
+    color: var(--alc-fg-3);
+  }
+</style>

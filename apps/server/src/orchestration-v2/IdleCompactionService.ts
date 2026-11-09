@@ -87,10 +87,12 @@ export const make = Effect.gen(function* () {
           )
         )
           return;
-        const latestRun = records.runs.reduce<(typeof records.runs)[number] | undefined>(
-          (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-          undefined,
-        );
+        const latestRun = records.runs
+          .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
+          .reduce<(typeof records.runs)[number] | undefined>(
+            (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+            undefined,
+          );
         // A late update for an earlier run replaced the latest run's timer, so take it over.
         if (latestRun?.status === "completed" && latestRun.id !== runId) {
           runId = latestRun.id;

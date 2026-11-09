@@ -1,6 +1,5 @@
 export const MAX_BYTES = 10 * 1024 * 1024;
-export const UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface UploadInput {
   filename: string;
@@ -48,17 +47,8 @@ export function parseUpload(value: unknown): UploadInput | undefined {
     /[\u0000-\u001f\u007f]/.test(filename)
   )
     return;
-  if (
-    typeof contentType !== "string" ||
-    !/^[\w.+-]+\/[\w.+-]+$/.test(contentType)
-  )
-    return;
-  if (
-    typeof size !== "number" ||
-    !Number.isSafeInteger(size) ||
-    size < 1 ||
-    size > MAX_BYTES
-  )
+  if (typeof contentType !== "string" || !/^[\w.+-]+\/[\w.+-]+$/.test(contentType)) return;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 1 || size > MAX_BYTES)
     return;
   return { filename, contentType, size };
 }
@@ -80,9 +70,7 @@ export function corsHeaders(
     }
   }
   return {
-    ...(origin
-      ? { "access-control-allow-origin": allowed === "*" ? "*" : origin }
-      : {}),
+    ...(origin ? { "access-control-allow-origin": allowed === "*" ? "*" : origin } : {}),
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "authorization, content-type",
     "cache-control": "no-store",

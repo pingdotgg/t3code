@@ -6,7 +6,7 @@ description: Deploy a new version, check it before serving traffic, and give the
 Use blue/green when you want to start a checked replacement before stopping your running Service. Add the deployment policy to your application:
 
 ```typescript title="api.ts"
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
@@ -70,7 +70,7 @@ Return the Service URL for your clients:
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Effect from "effect/Effect";
 import Api from "./api.ts";
 
@@ -206,7 +206,7 @@ For jobs, [register your queue worker's cleanup](#close-your-queue-worker-on-shu
 Keep queue processing in `run` and expose a private readiness endpoint through `fetch`. This BullMQ example returns HTTP 503 until its initial Redis connection is ready:
 
 ```typescript title="jobs-service.ts"
-import * as Fly from "alchemy/Fly";
+import * as Fly from "@alchemy.run/fly";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
