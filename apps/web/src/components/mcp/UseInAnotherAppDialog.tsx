@@ -283,14 +283,14 @@ function useGate(environment: EnvironmentPresentation) {
     if (!thisMachine) void refreshDiscovery();
     const result = await runCheck({ target: { environmentId } });
     controller.linkState.refresh();
-    setCheck(
-      result._tag === "Success"
-        ? { result: result.value, since: result.value.checkedAt }
-        : {
-            result: null,
-            since: readCachedCloudLinkState({ environmentId })?.reachability?.checkedAt ?? "",
-          },
-    );
+    if (result._tag === "Success") {
+      setCheck({ result: result.value, since: result.value.checkedAt });
+      return;
+    }
+    // Only a check that finished after this failure counts.
+    const now = new Date().toISOString();
+    const latest = readCachedCloudLinkState({ environmentId })?.reachability?.checkedAt ?? "";
+    setCheck({ result: null, since: latest > now ? latest : now });
   };
   const turnOn = async () => {
     setConnecting(true);

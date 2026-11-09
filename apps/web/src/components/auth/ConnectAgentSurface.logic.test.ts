@@ -5,11 +5,11 @@ import { resolveApprovalDecision, resolveMcpAccess } from "./ConnectAgentSurface
 
 it.each(RuntimeMode.literals)("keeps MCP access within the %s policy ceiling", (maxRuntimeMode) => {
   const ceiling = { organization: "Example", maxRuntimeMode };
-  expect(resolveMcpAccess("auto", ceiling)).toBe(
+  expect(resolveMcpAccess("auto", ceiling, false)).toBe(
     maxRuntimeMode === "full-access" ? "auto" : maxRuntimeMode,
   );
-  expect(resolveMcpAccess("read-only", ceiling)).toBe("read-only");
-  expect(resolveMcpAccess("approval-required", ceiling)).toBe("approval-required");
+  expect(resolveMcpAccess("read-only", ceiling, false)).toBe("read-only");
+  expect(resolveMcpAccess("approval-required", ceiling, false)).toBe("approval-required");
 });
 
 it("checks a typed code even in a signed-in browser, and approves without one at Read only", () => {
@@ -19,14 +19,16 @@ it("checks a typed code even in a signed-in browser, and approves without one at
     environmentHost: "prod-a1.t3coderelay.com",
   };
   const details = { ...signedOut, csrfToken: "csrf", oneClickAccess: AuthMcpClientAccess.literals };
-  const access = resolveMcpAccess(null, undefined);
+  const access = resolveMcpAccess(null, undefined, false);
 
-  // An expired code must fail on the server rather than fall back to this session.
-  expect(resolveApprovalDecision({ code: " 7K2P9QXR4MZT ", access, details })).toEqual({
-    _tag: "pairing-code",
-    access: "read-only",
-    code: "7K2P9QXR4MZT",
-  });
+  // A typed code starts at Auto, and an expired one must fail rather than fall back to this session.
+  expect(
+    resolveApprovalDecision({
+      code: " 7K2P9QXR4MZT ",
+      access: resolveMcpAccess(null, undefined, true),
+      details,
+    }),
+  ).toEqual({ _tag: "pairing-code", access: "auto", code: "7K2P9QXR4MZT" });
   expect(resolveApprovalDecision({ code: "auto-q8rz3nwd5ktc", access, details })).toEqual({
     _tag: "pairing-code",
     access: "auto",

@@ -6,12 +6,16 @@ import {
   parseMcpApprovalCode,
 } from "@t3tools/contracts";
 
-/** The picker's access: the user's choice, else Read only, lowered to a managed ceiling. */
+/**
+ * The picker's access, lowered to a managed ceiling: the user's choice, else Auto for a typed
+ * code, else Read only, since approving without a code says nothing about what the user wants.
+ */
 export function resolveMcpAccess(
   requested: AuthMcpClientAccess | null,
   ceiling: AuthMcpApprovalDetails["runtimeModeCeiling"],
+  hasCode: boolean,
 ): AuthMcpClientAccess {
-  const access = requested ?? "read-only";
+  const access = requested ?? (hasCode ? "auto" : "read-only");
   return access !== "read-only" &&
     ceiling !== undefined &&
     isRuntimeModeAbove(access, ceiling.maxRuntimeMode)

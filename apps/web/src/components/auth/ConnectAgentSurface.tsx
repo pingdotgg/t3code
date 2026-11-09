@@ -89,13 +89,13 @@ function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
 export function ConnectAgentSurface() {
   const [authorization] = useState(readAuthorizationRequest);
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
-  // Without a code, the page cannot know what the user wants, so it starts at Read only.
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
+  const [pairingCode, setPairingCode] = useState("");
   const access = resolveMcpAccess(
     requestedAccess,
     loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
+    pairingCode.trim().length > 0,
   );
-  const [pairingCode, setPairingCode] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
