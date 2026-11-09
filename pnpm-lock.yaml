@@ -422,8 +422,8 @@ importers:
         specifier: 0.0.3
         version: 0.0.3
       '@crowecawcaw/xa11y':
-        specifier: 0.13.0
-        version: 0.13.0
+        specifier: 0.15.4
+        version: 0.15.4
       '@effect/platform-node':
         specifier: 4.1.2
         version: 4.1.2(bufferutil@4.1.0)(effect@4.1.2)(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -3481,47 +3481,48 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^1.10.0
 
-  '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
-    resolution: {integrity: sha512-wT+f9lbE6IfSPs8unb7IHr6/V/EkB4SCMFisTtV3jsTseCKr4/vkgpI1LRdul2r+KrmgQ4JxRpUDVB25dmpqNw==}
+  '@crowecawcaw/xa11y-darwin-arm64@0.15.4':
+    resolution: {integrity: sha512-/8I+o3JR2tY8thwH/lEcmIuyTxHY8rLW422UFFcP0jI4XRD4+kx5fSjSGV2QIUaQ9tlNsyZkPS0cTYX4oF9GKw==}
     engines: {node: '>=18'}
     cpu: [arm64]
     os: [darwin]
 
-  '@crowecawcaw/xa11y-darwin-x64@0.13.0':
-    resolution: {integrity: sha512-8QtLjTzciLIFOTWX1wZRTh6lg+Cw35Rc0VcDtJspS3baHiqkTZD6UyeZKhu5awSirbYZWLeXTuyY2CHCfaQ9rw==}
+  '@crowecawcaw/xa11y-darwin-x64@0.15.4':
+    resolution: {integrity: sha512-sCEfQrpVXyDwacL2PqsUiLUKUN2lhiBZ8dwW8R1/NuLYJTygGVz0UI1Tuk/td/i6RPupIHAgBgjwNo9Ci1KU0w==}
     engines: {node: '>=18'}
     cpu: [x64]
     os: [darwin]
 
-  '@crowecawcaw/xa11y-linux-arm64-gnu@0.13.0':
-    resolution: {integrity: sha512-Yad7Bo25pqyowd92yLxGqr59ASSf7zr6lhzoufeCJU62eOq96jEQhhQw0TlvRU8aRI1ksgSuiUivoxNjYP2/gg==}
+  '@crowecawcaw/xa11y-linux-arm64-gnu@0.15.4':
+    resolution: {integrity: sha512-v0l2K3vqY4t9a8dK5j2EFZkjOknUv1j89zN++uuYLT5qR4TBbQFJs9ZcqxzLPwO1SqMXlO+LD4W+Ssx5JyQRjg==}
     engines: {node: '>=18'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@crowecawcaw/xa11y-linux-x64-gnu@0.13.0':
-    resolution: {integrity: sha512-h/7UoAr2X8iSHaBsNFt7uW1Ft14zgintTACNYMTX8WFwE+WXdHe3vtJmxa/bG+N8imWSGH1Xkzg52YJaa/C+bw==}
+  '@crowecawcaw/xa11y-linux-x64-gnu@0.15.4':
+    resolution: {integrity: sha512-ajyJr5J+4YyAtdca7Gdeus18boAaRyNL6JTkk9QG48YXCgLx16y2dOvT0PvpbIPsc31VAH5RcvoHpnRW7E3sJQ==}
     engines: {node: '>=18'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@crowecawcaw/xa11y-win32-arm64-msvc@0.13.0':
-    resolution: {integrity: sha512-3vmwZxNg7s6qXdSmYve3EE/zh7vZx75jUxi29odguy9llUvWpWFguvvXJ8EFYh13+TwxchibxnImlZb1XpKG+g==}
+  '@crowecawcaw/xa11y-win32-arm64-msvc@0.15.4':
+    resolution: {integrity: sha512-RfF0CIHXruhg3mQB3xPpItUgiB+Rh9RdHQ9fMLBd2wtCt8V9jtdcOu37EMrPDKt5ClpAxUr0/kxJrhfrX8ZzSQ==}
     engines: {node: '>=18'}
     cpu: [arm64]
     os: [win32]
 
-  '@crowecawcaw/xa11y-win32-x64-msvc@0.13.0':
-    resolution: {integrity: sha512-7kWYSj6AZKIN89EirGJQTkeaCJrElwFXOp9eQKd55vUFGZw2YARGY5HfpXha2BKGgZgT2IRR4CJrmgz2Nb1ETw==}
+  '@crowecawcaw/xa11y-win32-x64-msvc@0.15.4':
+    resolution: {integrity: sha512-fnx8+QGU76m+F6D3Va+fMg1jq/bOpvTU6tbnfF0pCg93wvsuJ0+xO/MJlFnCZVeOagPm0+wDBVBLUC1cvQOAmw==}
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
 
-  '@crowecawcaw/xa11y@0.13.0':
-    resolution: {integrity: sha512-WTYHwlBhImGmmMt81crxaRvNdZXlBNemFyrP5GGHj2WeDTJMBrHgHTaladTypXHXrviFFBBGROl5moijRQ4ODA==}
+  '@crowecawcaw/xa11y@0.15.4':
+    resolution: {integrity: sha512-aDGW67yj0OPGc8Oo/IJZpZy/252D+qi9rcrlT8T+mXLjsn5+58Ha6cq921O58Yq6aGvNikXBMbap0J6/fM2Mlg==}
     engines: {node: '>=18'}
+    hasBin: true
 
   '@csstools/color-helpers@6.1.1':
     resolution: {integrity: sha512-gLNsunvwf3mCi5u5o46/Z/JcJMnhbHSaZ69rkgPzNM3J4s8hWwpPUQB6/tt0EDFyCiWzxANlx+2LJwpYj4zS1w==}
@@ -13491,32 +13492,32 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
-  '@crowecawcaw/xa11y-darwin-arm64@0.13.0':
+  '@crowecawcaw/xa11y-darwin-arm64@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y-darwin-x64@0.13.0':
+  '@crowecawcaw/xa11y-darwin-x64@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y-linux-arm64-gnu@0.13.0':
+  '@crowecawcaw/xa11y-linux-arm64-gnu@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y-linux-x64-gnu@0.13.0':
+  '@crowecawcaw/xa11y-linux-x64-gnu@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y-win32-arm64-msvc@0.13.0':
+  '@crowecawcaw/xa11y-win32-arm64-msvc@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y-win32-x64-msvc@0.13.0':
+  '@crowecawcaw/xa11y-win32-x64-msvc@0.15.4':
     optional: true
 
-  '@crowecawcaw/xa11y@0.13.0':
+  '@crowecawcaw/xa11y@0.15.4':
     optionalDependencies:
-      '@crowecawcaw/xa11y-darwin-arm64': 0.13.0
-      '@crowecawcaw/xa11y-darwin-x64': 0.13.0
-      '@crowecawcaw/xa11y-linux-arm64-gnu': 0.13.0
-      '@crowecawcaw/xa11y-linux-x64-gnu': 0.13.0
-      '@crowecawcaw/xa11y-win32-arm64-msvc': 0.13.0
-      '@crowecawcaw/xa11y-win32-x64-msvc': 0.13.0
+      '@crowecawcaw/xa11y-darwin-arm64': 0.15.4
+      '@crowecawcaw/xa11y-darwin-x64': 0.15.4
+      '@crowecawcaw/xa11y-linux-arm64-gnu': 0.15.4
+      '@crowecawcaw/xa11y-linux-x64-gnu': 0.15.4
+      '@crowecawcaw/xa11y-win32-arm64-msvc': 0.15.4
+      '@crowecawcaw/xa11y-win32-x64-msvc': 0.15.4
 
   '@csstools/color-helpers@6.1.1': {}
 

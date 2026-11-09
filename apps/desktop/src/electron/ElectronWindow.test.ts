@@ -53,6 +53,7 @@ vi.mock("electron", () => ({
     getAllWindows: getAllWindowsMock,
     getFocusedWindow: getFocusedWindowMock,
   }),
+  screen: { dipToScreenRect: (_window: unknown, rect: unknown) => rect },
 }));
 
 import * as ElectronWindow from "./ElectronWindow.ts";
