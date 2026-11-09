@@ -128,4 +128,23 @@ describe("MCP app tool output", () => {
     });
     expect(turnItemOutputText(item)).toBe(text);
   });
+
+  it("reads a result with metadata and marks images it cannot preview", () => {
+    const item = toolItem({
+      t3McpApp: {
+        attachmentId: "app-html",
+        server: "repro",
+        tool: "chart",
+        resourceUri: "ui://repro/chart",
+      },
+      result: {
+        content: [
+          { type: "text", text: "chart" },
+          { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" },
+        ],
+        _meta: { "ui/resourceUri": "ui://repro/chart" },
+      },
+    });
+    expect(turnItemOutputText(item)).toBe("chart\n[image]");
+  });
 });

@@ -1288,7 +1288,7 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
-  it("hosts a captured MCP app in place, from any provider's tool", () => {
+  it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",
       server: "weather",
