@@ -199,6 +199,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       yield* offer(false, { env: { SUDO_USER: "theo" } });
       yield* offer(false, { env: { TERM: "dumb" } });
       yield* offer(false, { env: { npm_config_yes: "true" } });
+      yield* offer(false, { args: ["--completions", "zsh"] });
       yield* offer(false, { foreground: false });
       yield* offer(false, { args: ["connect", "--help"] });
       yield* offer(false, { args: ["--log-level", "debug", "install"] });

@@ -233,6 +233,7 @@ const SKIPPED_ARGUMENTS = new Set([
   "-h",
   "--version",
   "-v",
+  "--completions",
   // Scripts and machine-readable output; a prompt would stall them or corrupt their output.
   "--json",
   "--yes",
