@@ -277,6 +277,7 @@ export const layer = Layer.effectDiscard(
               }
             }),
           ),
+          Effect.ensuring(requests.settle(request.threadId)),
         ),
       ),
       Effect.forever,

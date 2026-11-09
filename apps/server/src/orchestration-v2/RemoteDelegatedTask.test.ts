@@ -70,6 +70,8 @@ const layerTest = Layer.mergeAll(
           offer: (request: ProviderContinuationRequests.ProviderContinuationRequest) =>
             Ref.update(offers, (seen) => [...seen, request]),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         })),
       ),
     ),

@@ -1434,6 +1434,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               offers.push(request);
             }),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const watch = yield* watchNested(runtime);
@@ -1505,6 +1507,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               offers.push(request);
             }),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const other = yield* runtime.resumeThread({
@@ -1549,6 +1553,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const watch = yield* watchNested(runtime);
@@ -1704,6 +1710,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const ended = yield* terminals(runtime, 2);
@@ -1777,6 +1785,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const attached = yield* Deferred.make<void>();
@@ -1879,6 +1889,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const launched = yield* Deferred.make<void>();
@@ -3835,6 +3847,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const now = yield* DateTime.now;
@@ -4400,6 +4414,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       yield* Deferred.await(offered);
@@ -4486,6 +4502,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               Effect.asVoid,
             ),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const turns: Array<OrchestrationV2ProviderTurn> = [];
@@ -4689,6 +4707,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
           offer: (request) => Effect.sync(() => void offers.push(request)),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -4817,6 +4837,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 : Effect.void,
             ),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const ended = yield* terminals(runtime, 2);
@@ -4893,6 +4915,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 : Effect.void,
             ),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const collected: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
@@ -4991,6 +5015,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               Effect.asVoid,
             ),
           take: Effect.never,
+          settle: () => Effect.void,
+          awaitSettled: () => Effect.succeed(false),
         }),
       );
       const terminals: Array<string> = [];

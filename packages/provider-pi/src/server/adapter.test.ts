@@ -508,6 +508,8 @@ const makeAdapter = Effect.fnUntraced(function* (
       Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
         ...continuationRequests,
         take: Effect.never,
+        settle: () => Effect.void,
+        awaitSettled: () => Effect.succeed(false),
       }),
     );
   }

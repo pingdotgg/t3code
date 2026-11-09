@@ -107,6 +107,24 @@ function layerTest(input: {
 }
 
 describe("ProviderContinuationService", () => {
+  it.effect("releases run checks waiting on a continuation whose dispatch fails", () =>
+    Effect.gen(function* () {
+      const dispatched = yield* Queue.unbounded<unknown>();
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        assert.isFalse(yield* requests.awaitSettled(threadId));
+        yield* requests.offer(request());
+        assert.isTrue(yield* requests.awaitSettled(threadId));
+        assert.equal(yield* Queue.size(dispatched), 0);
+      }).pipe(
+        Effect.provide(
+          layerTest({ dispatched, getThreadRecords: () => Effect.die("projection unavailable") }),
+        ),
+        Effect.scoped,
+      );
+    }),
+  );
+
   it.effect("recovers an unaccepted persisted steer using the same delivery identity", () =>
     Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();

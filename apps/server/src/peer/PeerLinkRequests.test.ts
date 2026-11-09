@@ -144,6 +144,8 @@ const makeLaptop = Effect.gen(function* () {
       Layer.succeed(ProviderContinuationRequests.ProviderContinuationRequests, {
         offer: () => Effect.void,
         take: Effect.never,
+        settle: () => Effect.void,
+        awaitSettled: () => Effect.succeed(false),
       }),
     ),
   );

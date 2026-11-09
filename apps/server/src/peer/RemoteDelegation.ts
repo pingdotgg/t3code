@@ -28,6 +28,7 @@ import type * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
+import { requireOwnedRun } from "../mcp/threadAccess.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
 import {
   resolveInteractionMode,
@@ -188,7 +189,7 @@ const make = Effect.gen(function* () {
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
     function* (scope, input) {
-      const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
+      const readParent = threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
         Effect.mapError(
           () =>
             new OrchestratorMcpFailure({
@@ -197,19 +198,13 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      const parentRun = parent.runs
-        .filter(ThreadManagement.isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
-      if (
-        parentRun === undefined ||
-        parentRun.rootNodeId === null ||
-        parentRun.providerInstanceId !== scope.thread.providerInstanceId
-      ) {
-        return yield* new OrchestratorMcpFailure({
-          code: "parent_not_active",
-          message: "Delegated tasks require an active run owned by this MCP provider session.",
-        });
-      }
+      const parent = yield* readParent;
+      const parentRun = yield* requireOwnedRun(
+        scope,
+        parent,
+        readParent,
+        "Delegated tasks require an active run owned by this MCP provider session.",
+      );
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
       // A worktree there would branch from a commit this checkout has and the
