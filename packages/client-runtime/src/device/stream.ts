@@ -639,7 +639,14 @@ export function createDeviceStreamClient(
     isCurrent = () => !stopped,
   ): Promise<boolean> => {
     const epoch = decoderEpoch;
-    const full: VideoDecoderConfig = { ...config, optimizeForLatency: true };
+    const full: VideoDecoderConfig = {
+      ...config,
+      optimizeForLatency: true,
+      // serve-emu encodes H.264 in software (libx264). The GPU decoder Electron
+      // picks by default rejects that stream on some hosts, and the failure is
+      // silent: the decoder errors and the panel never shows a frame.
+      ...(platform === "android" ? { hardwareAcceleration: "prefer-software" as const } : {}),
+    };
     const support = await VideoDecoder.isConfigSupported(full).catch(() => ({ supported: false }));
     if (!isCurrent() || epoch !== decoderEpoch) return false;
     if (!support.supported) {

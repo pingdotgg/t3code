@@ -317,7 +317,9 @@ function recoveryFixture(
     static isConfigSupported = vi.fn(async () => ({ supported: true }));
     state = "unconfigured";
     decodeQueueSize = 0;
-    configure() {
+    readonly configs: VideoDecoderConfig[] = [];
+    configure(config: VideoDecoderConfig) {
+      this.configs.push(config);
       this.state = "configured";
     }
     reset = vi.fn(() => {
@@ -561,6 +563,31 @@ describe("shared device stream readiness and recovery", () => {
     decodedFrame();
     expect(drawImage).toHaveBeenCalledOnce();
     expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    client.stop();
+  });
+
+  it("decodes an Android stream in software, because the GPU decoder rejects it", async () => {
+    const { client, sockets, sps, decoders } = recoveryFixture("android");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    // serve-emu encodes H.264 in software; the GPU decoder Electron picks by
+    // default errors on that stream and the panel never shows a frame.
+    expect(decoders[0]!.configs[0]?.hardwareAcceleration).toBe("prefer-software");
+    client.stop();
+  });
+
+  it("leaves the iOS decoder acceleration alone", async () => {
+    const { client, videoBodies, decoders } = recoveryFixture("ios", false);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    videoBodies[0]!.enqueue(
+      new Uint8Array([...envelope(1, [1, 0x64, 0, 0x1f]), ...envelope(2, [2])]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(decoders[0]!.configs[0]?.hardwareAcceleration).toBeUndefined();
     client.stop();
   });
 
