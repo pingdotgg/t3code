@@ -48,19 +48,18 @@ const chatGptAccount = (provider: ServerProvider) =>
 const find = (providers: readonly ServerProvider[], instanceId: ProviderInstanceId) =>
   providers.find((provider) => provider.instanceId === instanceId);
 
-/**
- * The destination instance for a source instance: the same ID unless its reported identity
- * conflicts, else the one ChatGPT account that matches uniquely in both environments.
- */
 export function resolveScopedModelInstanceId(
   instanceId: ProviderInstanceId,
   sourceEnvironment: Pick<ScopedModelEnvironment, "providers">,
   destination: ScopedModelEnvironment,
+  peers: readonly ServerProvider[] = [],
 ): ProviderInstanceId | null {
   const source = find(sourceEnvironment.providers, instanceId);
   if (!source) return null;
   const sameId = find(destination.providers, instanceId);
-  if (sameId && !knownConflict(source, sameId)) return instanceId;
+  const compatible = (provider: ServerProvider) =>
+    !peers.some((peer) => knownConflict(peer, provider));
+  if (sameId && !knownConflict(source, sameId) && compatible(sameId)) return instanceId;
   const account = chatGptAccount(source);
   if (account === null) return null;
   const matches = (providers: readonly ServerProvider[]) =>
@@ -70,6 +69,7 @@ export function resolveScopedModelInstanceId(
   return match &&
     rest.length === 0 &&
     matches(sourceEnvironment.providers).length === 1 &&
+    compatible(match) &&
     textGeneratorForSelection(destination.settings, match.instanceId) === undefined
     ? match.instanceId
     : null;

@@ -343,15 +343,19 @@ export function defaultModelSelectionsAreMixed(
         : null,
     };
   });
-  return selections.some(
-    (selection, index) =>
-      !(["stored", "effective"] as const).every((key) =>
-        scopedModelSelectionsEqual(
-          selections[0]![key],
-          targets[0]!,
-          selection[key],
-          targets[index]!,
-        ),
+  return selections.some((reference, index) =>
+    selections
+      .slice(index + 1)
+      .some(
+        (selection, offset) =>
+          !(["stored", "effective"] as const).every((key) =>
+            scopedModelSelectionsEqual(
+              reference[key],
+              targets[index]!,
+              selection[key],
+              targets[index + offset + 1]!,
+            ),
+          ),
       ),
   );
 }

@@ -142,25 +142,25 @@ export function scopedSettingsAreMixed(
   keys: readonly (keyof ServerSettings)[],
   providersByEnvironment?: ProvidersByEnvironment,
 ): boolean {
-  const first = targets[0];
   const at = ({ environmentId, settings }: (typeof targets)[number]) => ({
     providers: providersByEnvironment?.get(environmentId) ?? [],
     settings,
   });
-  return (
-    first !== undefined &&
-    targets.some((candidate) =>
-      keys.some((key) =>
-        providersByEnvironment && isScopedModelKey(key)
-          ? !scopedModelSelectionsEqual(
-              first.settings[key],
-              at(first),
-              candidate.settings[key],
-              at(candidate),
-            )
-          : !Equal.equals(first.settings[key], candidate.settings[key]),
+  return targets.some((reference, index) =>
+    targets
+      .slice(index + 1)
+      .some((candidate) =>
+        keys.some((key) =>
+          providersByEnvironment && isScopedModelKey(key)
+            ? !scopedModelSelectionsEqual(
+                reference.settings[key],
+                at(reference),
+                candidate.settings[key],
+                at(candidate),
+              )
+            : !Equal.equals(reference.settings[key], candidate.settings[key]),
+        ),
       ),
-    )
   );
 }
 
@@ -245,15 +245,11 @@ function forDestination(previous: ServerSettings, patch: ServerSettingsPatch): S
   return { ...rest, ...idleCompactionPatch(previous, idleCompaction) };
 }
 
-/**
- * A model chosen from the source environment's instances, rewritten to each destination's
- * instance for the same account. A text generator keeps its ID and must reach the same API.
- * Null refuses an unresolved write.
- */
 function forDestinationModels(
   patch: ServerSettingsPatch,
   modelSource: ScopedModelSource | null | undefined,
   destination: ScopedSettingsEnvironment,
+  matched: Map<string, ServerProvider[]>,
 ): ServerSettingsPatch | null {
   if (!modelSource || destination.environmentId === modelSource.target.environmentId) return patch;
   const { target: source, providersByEnvironment } = modelSource;
@@ -277,12 +273,15 @@ function forDestinationModels(
       continue;
     }
     if (!providers) return null;
+    const peers = matched.get(key) ?? [];
     const instanceId = resolveScopedModelInstanceId(
       selection.instanceId,
       { providers: providersByEnvironment.get(source.environmentId) ?? [] },
       { providers, settings },
+      peers,
     );
     if (instanceId === null) return null;
+    matched.set(key, [...peers, providers.find((provider) => provider.instanceId === instanceId)!]);
     Object.assign(next, { [key]: { ...selection, instanceId } });
   }
   return next;
@@ -313,8 +312,9 @@ export function planScopedSettingsPatch(
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
   const unmatched = new Set<string>();
+  const matched = new Map<string, ServerProvider[]>();
   const serverPatchFor = (environment: ScopedSettingsEnvironment) => {
-    const mapped = forDestinationModels(serverPatch, modelSource, environment);
+    const mapped = forDestinationModels(serverPatch, modelSource, environment, matched);
     if (mapped === null) unmatched.add(environment.label);
     return mapped ?? serverPatch;
   };

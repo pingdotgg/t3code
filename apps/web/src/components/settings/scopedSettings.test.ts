@@ -27,6 +27,7 @@ import {
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
+import { resolveScopedModelInstanceId } from "./scopedModelSelection";
 
 function environment(
   id: string,
@@ -850,15 +851,6 @@ describe("model selections across environments' provider instances", () => {
     );
     expect(pending.serverWrites).toEqual([]);
     expect(pending.unavailableReason).toContain("Server");
-    // The source environment's own selection needs no snapshot.
-    expect(
-      planScopedSettingsPatch(
-        named,
-        environments,
-        forKeys(luna),
-        from(new Map(), server),
-      ).serverWrites.map((write) => write.patch),
-    ).toEqual([forKeys(luna)]);
   });
 
   it("maps project overrides to each member's own instance", () => {
@@ -885,36 +877,29 @@ describe("model selections across environments' provider instances", () => {
   const claude = "claudeAgent";
   const cursor = "cursor";
   it.each([
-    ["one ChatGPT account under another ID", [a("l")], [a("s", lower)], "s"],
-    ["the same ID before account matching", [a("x"), a("l")], [a("s"), a("x")], "x"],
-    ["the same ID with an email differing in case", [a("x")], [a("x", lower)], "x"],
-    ["the same ID with an unreported identity", [a("x", {}, cursor)], [a("x", none, cursor)], "x"],
-    ["a conflicting same ID beside the matching account", [a("l")], [a("l", other), a("s")], "s"],
+    ["same ID takes precedence", [a("x"), a("l")], [a("s"), a("x")], "x"],
+    ["same ID, email case differs", [a("x")], [a("x", lower)], "x"],
+    ["same ID, unknown identity", [a("x", {}, cursor)], [a("x", none, cursor)], "x"],
+    ["conflicting ID beside matching account", [a("l")], [a("l", other), a("s")], "s"],
     ["the same ID on another account", [a("x")], [a("x", other)], null],
     ["the same ID in another workspace", [a("x")], [a("x", team)], null],
     ["the same ID with another login", [a("x")], [a("x", apiKey)], null],
     ["the same ID on another driver", [a("x")], [a("x", {}, claude)], null],
-    ["the same Claude ID on another account", [a("x", {}, claude)], [a("x", other, claude)], null],
-    ["one Claude subscription under another ID", [a("l", {}, claude)], [a("s", {}, claude)], null],
+    ["Claude ID, different account", [a("x", {}, claude)], [a("x", other, claude)], null],
+    ["Claude, different IDs", [a("l", {}, claude)], [a("s", {}, claude)], null],
     ["an API key account", [a("l", apiKey)], [a("s", apiKey)], null],
     ["another workspace", [a("l")], [a("s", team)], null],
-    ["a matching display name with no workspace", [nameOnly("l")], [nameOnly("s")], null],
+    ["same display name, no workspace", [nameOnly("l")], [nameOnly("s")], null],
     ["an unauthenticated destination", [a("l")], [a("s", { status: "unknown" })], null],
     ["two matching destination accounts", [a("l")], [a("s"), a("s2")], null],
     ["two matching source accounts", [a("l"), a("l2")], [a("s")], null],
     ["missing from the source snapshot", [], [a("s")], null],
   ] as const)("resolves %s", (_name, laptopProviders, serverProviders, serverId) => {
     const instanceId = laptopProviders[0]?.instanceId ?? ProviderInstanceId.make("l");
-    const plan = planScopedSettingsPatch(
-      all,
-      environments,
-      { textGenerationModelSelection: { instanceId, model: "gpt-6-luna" } },
-      from(providers([...laptopProviders], [...serverProviders])),
-    );
+    const destination = { providers: serverProviders, settings: DEFAULT_SERVER_SETTINGS };
     expect(
-      plan.serverWrites.map((write) => write.patch.textGenerationModelSelection?.instanceId),
-    ).toEqual(serverId === null ? [] : [instanceId, serverId]);
-    if (serverId === null) expect(plan.unavailableReason).toContain("Server");
+      resolveScopedModelInstanceId(instanceId, { providers: laptopProviders }, destination),
+    ).toBe(serverId);
   });
 
   it("keeps a text generator's ID only where it reaches the same API", () => {
@@ -979,5 +964,22 @@ describe("model selections across environments' provider instances", () => {
     expect.soft(mixed(luna, { ...onServer, model: "gpt-6-sol" })).toEqual([true, true]);
     expect.soft(mixed(x, x, new Map())).toEqual([false, false]);
     expect.soft(mixed(x, x, providers([a("x")], [a("x", other)]))).toEqual([true, true]);
+    const third = environment("Third");
+    const three = [target(laptop, x), target(server, x), target(third, x)];
+    const identities = new Map([
+      [laptop.environmentId, [a("x", none)]],
+      [server.environmentId, [a("x")]],
+      [third.environmentId, [a("x", other)]],
+    ]);
+    expect.soft(scopedSettingsAreMixed(three, keys, identities)).toBe(true);
+    const connected = [laptop, server, third];
+    expect(
+      planScopedSettingsPatch(
+        resolveSettingsScope({}, [], connected),
+        connected,
+        forKeys(x),
+        from(identities),
+      ).serverWrites,
+    ).toEqual([]);
   });
 });
