@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useState } from "react";
 
 import { APP_BASE_NAME } from "~/branding";
+import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
@@ -225,8 +226,10 @@ export function ConnectAgentSurface() {
             value={pairingCode}
           />
           <p className="text-xs text-muted-foreground">
-            Get one from Use {APP_BASE_NAME} in another app (MCP), Settings → Sharing & access, or{" "}
-            <code>{T3_LEARN_COMMAND} auth pairing create</code> on this machine.
+            Get one from{" "}
+            {hasCloudPublicConfig() ? `Use ${APP_BASE_NAME} in another app (MCP), ` : ""}Settings →
+            Sharing & access, or <code>{T3_LEARN_COMMAND} auth pairing create</code> on this
+            machine.
           </p>
         </div>
 

@@ -62,14 +62,12 @@ The page names the agent and where its access goes:
   Anyone who runs that service gets the access.
 
 Only approve a sign-in you just started. To approve, enter a code from
-**Use OminaX in another app (MCP)**, **Settings → Sharing & access**, or
-`ominax auth pairing create` on the host. A browser already signed in to the
-environment with permission to manage access can approve without a code.
+**Settings → Sharing & access** or `ominax auth pairing create` on the host. A
+browser already signed in to the environment with permission to manage access
+can approve without a code.
 
-A code from **Use OminaX in another app (MCP)** already carries the level you
-picked there. With another code, choose what the agent may do here: **Auto** is
-selected by default, or the closest lower mode allowed by your organization’s
-policy. Approving without a code starts at **Read only**:
+Choose what the agent may do here: **Auto** is selected by default, or the
+closest lower mode allowed by your organization’s policy. Approving without a code starts at **Read only**:
 
 - **Read only** lets the agent read projects and threads and see
   the available providers and models. It cannot change anything.
