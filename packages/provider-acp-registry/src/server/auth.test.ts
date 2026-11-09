@@ -307,7 +307,11 @@ it.effect("shows the login URL CodeBuddy sends while authenticate is still pendi
     yield* h.notify("_codebuddy.ai/authUrl", { authUrl, provider: "external" });
     const current = yield* h.state(() => true);
     assert.strictEqual(current.phase, "waiting");
-    assert.deepInclude(current.interaction, { type: "browser", url: authUrl });
+    assert.deepInclude(current.interaction, {
+      type: "browser",
+      url: authUrl,
+      requiresConsent: false,
+    });
     yield* h.controller.cancel("owner", flow.flowId!);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
