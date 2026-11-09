@@ -382,26 +382,25 @@ describe("GitHubRest", () => {
           );
         }),
       );
+      const configArgs: Array<ReadonlyArray<string>> = [];
       const host = TestSourceControlHost.layer({
         process: {
           run: (input) => {
-            expect(input.args).toEqual(ghConfigListArgs);
-            return config === "unavailable"
-              ? Effect.fail(
-                  new VcsProcessTimeoutError({
-                    operation: "GitHubHttpClient.config",
-                    command: "gh",
-                    cwd: "/",
-                    timeoutMs: 10_000,
-                  }),
-                )
-              : Effect.succeed(
-                  config === ""
-                    ? ghConfigList("")
-                    : TestSourceControlHost.processOutput(
-                        `hello from wrapper\n${ghConfigList("").stdout}`,
-                      ),
-                );
+            configArgs.push(input.args);
+            if (config === "unavailable") {
+              return Effect.fail(
+                new VcsProcessTimeoutError({
+                  operation: "GitHubHttpClient.config",
+                  command: "gh",
+                  cwd: "/",
+                  timeoutMs: 10_000,
+                }),
+              );
+            }
+            // As gh prints it: `config get` of an unset key prints nothing.
+            const ghOutput = input.args[1] === "list" ? ghConfigList("").stdout : "";
+            const wrapperOutput = config === "" ? "" : "hello from wrapper\n";
+            return Effect.succeed(TestSourceControlHost.processOutput(wrapperOutput + ghOutput));
           },
         },
       });
@@ -418,6 +417,7 @@ describe("GitHubRest", () => {
           url: "https://api.github.com/user",
           headers: { authorization: "Bearer first" },
         });
+        expect(configArgs).toEqual([ghConfigListArgs]);
       }).pipe(
         Effect.provide(GitHubHttpClient.layer.pipe(Layer.provide(Layer.merge(host, fallback)))),
       );
