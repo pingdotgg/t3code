@@ -1,7 +1,8 @@
-import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
+import { useSidebarWorkspaceTabs } from "../layout/workspace/useSystemWorkspaceTabBar";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
+import { useDeviceType } from "../../native/native-layout-metrics";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import {
   useAppearancePreferences,
@@ -20,7 +21,6 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
-  type ProviderInteractionMode,
   type ServerConfig as T3ServerConfig,
   type UsageLimitsReport,
 } from "@t3tools/contracts";
@@ -35,7 +35,7 @@ import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "rea
 import { I18nManager, Keyboard, Platform, View, type ViewStyle } from "react-native";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { filePreviewGallery } from "../../lib/filePreviewGallery";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentsStillUploading,
@@ -76,7 +76,7 @@ import {
   ComposerAttachmentStrip,
   ComposerAttachmentThumbnail,
 } from "../../components/ComposerAttachmentStrip";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { GlassSurface } from "../../components/ui/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { fileRoutePathSegments } from "../files/filePath";
@@ -217,6 +217,7 @@ export interface ThreadComposerProps {
   readonly hasCompactableConversation: boolean;
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
+  readonly offersSideChat?: boolean;
   readonly serverConfig: T3ServerConfig | null;
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
@@ -251,7 +252,6 @@ export interface ThreadComposerProps {
   ) => Promise<MessageId | null>;
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   readonly canSwitchProvider: boolean;
-  readonly onUpdateInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onHeightChange?: (height: number) => void;
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
@@ -538,6 +538,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   };
 
   const mentionableEnvironments = useMentionableEnvironments();
+  // Mentions name any model for the agent, so they aren't limited to models this thread can switch to.
+  const mentionModelOptions = buildModelOptions(
+    props.serverConfig,
+    currentModelSelection,
+    undefined,
+    props.selectedThread.projectId,
+  );
   const composerMenu = useComposerCommandMenu({
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
@@ -556,14 +563,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasThread: !props.isDraft,
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
-    onUpdateInteractionMode:
-      selectedProviderStatus?.showInteractionModeToggle === false
-        ? undefined
-        : props.onUpdateInteractionMode,
     offersUsageLimits: usageLimitsOffered,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
+    modelOptions: mentionModelOptions,
+    modelProviders: props.serverConfig?.providers,
     ...(props.onFreshSession === undefined ? {} : { onFreshSession: props.onFreshSession }),
+    offersSideChat: props.offersSideChat === true,
   });
   const voiceInput = useVoiceInputController({
     ownerKey: composerDraftKey,
@@ -584,8 +590,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const { layout, setComposerEditing } = useAdaptiveWorkspaceLayout();
   const floatingSidebarComposer = useAndroidFloatingTabs() && layout.usesSplitView;
-  const usesLargeControls =
-    useSidebarWorkspaceTabs() === "picker" || (Platform.OS === "ios" && Platform.isPad);
+  const sidebarWorkspaceTabs = useSidebarWorkspaceTabs();
+  const deviceType = useDeviceType();
+  const usesLargeControls = sidebarWorkspaceTabs === "picker" || deviceType === "pad";
   const surfacePaddingVertical = usesLargeControls ? 9 : floatingSidebarComposer ? 6 : 2;
   const [compactRowWidth, setCompactRowWidth] = useState(0);
   const compactAttachmentLimit = compactRowWidth >= 500 ? 3 : 1;
@@ -679,6 +686,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
+    await inputRef.current?.flushPendingInput();
     const draftAtSend = getComposerDraftSnapshot(composerDraftKey);
     const stillSendable = () => {
       const draft = getComposerDraftSnapshot(composerDraftKey);
