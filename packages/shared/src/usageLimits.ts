@@ -6,6 +6,7 @@ import {
   resolveProjectProviderInstanceEnabled,
   type UsageLimitsReport,
   type ProviderInstanceId,
+  type ProviderDriverKind,
   type ProviderConsumeResetCreditInput,
   type ServerProviderSlashCommand,
   isProviderAvailable,
@@ -23,6 +24,13 @@ export const STALE_USAGE_NOTICE = "Showing the last reading. Usage refresh faile
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+export function modelUsesProviderQuota(
+  driver: ProviderDriverKind | undefined,
+  model: string,
+): boolean {
+  return driver !== "opencode" || model.startsWith("opencode-go/");
+}
 
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
@@ -57,7 +65,7 @@ export function exhaustedUsageWindow(
     }
     case "opencode":
       return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
+        (window) => !window.id.startsWith("go_") || modelUsesProviderQuota(provider.driver, model),
       );
     default:
       return exhausted[0];

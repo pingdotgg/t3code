@@ -1526,7 +1526,14 @@ it.layer(
               usageLimits: {
                 checkedAt: "2026-06-10T00:00:00.000Z",
                 windows: exhausted
-                  ? [{ id: "session", kind: "session", label: "Session", usedPercent: 100 }]
+                  ? [
+                      {
+                        id: driver === "opencode" ? "go_session" : "session",
+                        kind: "session",
+                        label: "Session",
+                        usedPercent: 100,
+                      },
+                    ]
                   : [],
               },
             } as const satisfies ServerProvider;
@@ -1582,7 +1589,8 @@ it.layer(
         const first = yield* makeInstance("codex_first", ProviderDriverKind.make("codex"), true);
         const second = yield* makeInstance("codex_second");
         const other = yield* makeInstance("claude_other", ProviderDriverKind.make("claudeAgent"));
-        const instances = [first.instance, second.instance, other.instance];
+        const openCode = yield* makeInstance("opencode", ProviderDriverKind.make("opencode"), true);
+        const instances = [first.instance, second.instance, other.instance, openCode.instance];
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
@@ -1617,6 +1625,11 @@ it.layer(
 
         yield* Effect.gen(function* () {
           const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: openCode.instance.instanceId, model: "openai/gpt-5.4" },
+            { instanceId: other.instance.instanceId, model: "claude" },
+          );
+          assert.strictEqual(yield* Ref.get(openCode.usageReads), 0);
           yield* registry.refreshUsage(undefined, [ProviderDriverKind.make("codex")]);
           assert.strictEqual(yield* Ref.get(first.usageReads), 1);
           assert.strictEqual(yield* Ref.get(second.usageReads), 1);
@@ -1653,6 +1666,35 @@ it.layer(
           );
           assert.strictEqual(yield* Ref.get(second.usageReads), 2);
           assert.strictEqual(yield* Ref.get(other.usageReads), 1);
+
+          for (const stage of ["primary", "fallback"] as const) {
+            for (const model of ["openai/gpt-5.4", "opencode-go/glm"] as const) {
+              const beforeOpenCode = yield* Ref.get(openCode.usageReads);
+              const beforePrimary = yield* Ref.get(first.usageReads);
+              const beforeFallback = yield* Ref.get(other.usageReads);
+              const openSelection = { instanceId: openCode.instance.instanceId, model };
+              yield* registry.refreshUsageForModelSelection(
+                stage === "primary"
+                  ? openSelection
+                  : { instanceId: first.instance.instanceId, model: "gpt" },
+                stage === "fallback"
+                  ? openSelection
+                  : { instanceId: other.instance.instanceId, model: "claude" },
+              );
+              assert.strictEqual(
+                yield* Ref.get(openCode.usageReads),
+                beforeOpenCode + Number(model.startsWith("opencode-go/")),
+              );
+              assert.strictEqual(
+                yield* Ref.get(first.usageReads),
+                beforePrimary + Number(stage === "fallback"),
+              );
+              assert.strictEqual(
+                yield* Ref.get(other.usageReads),
+                beforeFallback + Number(stage === "primary" && model.startsWith("opencode-go/")),
+              );
+            }
+          }
 
           for (const stage of ["primary", "fallback"] as const) {
             const started = yield* Deferred.make<void>();

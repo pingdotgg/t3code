@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import {
   exhaustedUsageWindow,
+  modelUsesProviderQuota,
   isNewThreadFallbackEligible,
   resolveNewThreadModelSelection,
 } from "@t3tools/shared/usageLimits";
@@ -51,7 +52,7 @@ export async function refreshNewThreadUsage({
   let providers = input.providers;
   const refresh = async (selection: ModelSelection) => {
     const provider = providers.find((provider) => provider.instanceId === selection.instanceId);
-    if (provider?.driver === "opencode" && !selection.model.startsWith("opencode-go/")) return;
+    if (!modelUsesProviderQuota(provider?.driver, selection.model)) return;
     const instanceId = selection.instanceId;
     const result = await runAtomCommand(
       registry,

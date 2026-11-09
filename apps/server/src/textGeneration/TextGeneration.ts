@@ -9,7 +9,7 @@ import {
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { exhaustedUsageWindow, modelUsesProviderQuota } from "@t3tools/shared/usageLimits";
 import { fallbackTextGenerationModelSelection } from "@t3tools/shared/serverSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
@@ -97,13 +97,14 @@ export const make = Effect.gen(function* () {
     }
     const instances = yield* registry.listInstances;
     const usageDeadline = (yield* Clock.currentTimeMillis) + 5_000;
-    yield* (
-      instances.find((instance) => instance.instanceId === selection.instanceId)?.snapshot
-        .refreshUsage ?? Effect.void
-    ).pipe(
-      Effect.ignore,
-      Effect.timeoutOption(Math.max(0, usageDeadline - (yield* Clock.currentTimeMillis))),
+    const primaryInstance = instances.find(
+      (instance) => instance.instanceId === selection.instanceId,
     );
+    if (modelUsesProviderQuota(primaryInstance?.driverKind, selection.model))
+      yield* (primaryInstance?.snapshot.refreshUsage ?? Effect.void).pipe(
+        Effect.ignore,
+        Effect.timeoutOption(Math.max(0, usageDeadline - (yield* Clock.currentTimeMillis))),
+      );
     const readSnapshots = Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot);
     let snapshots = yield* readSnapshots;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -148,11 +149,14 @@ export const make = Effect.gen(function* () {
         if (candidate === null) break;
         attempted.add(candidate.instanceId);
         const remaining = usageDeadline - (yield* Clock.currentTimeMillis);
-        if (remaining > 0)
-          yield* (
-            instances.find((instance) => instance.instanceId === candidate.instanceId)?.snapshot
-              .refreshUsage ?? Effect.void
-          ).pipe(Effect.ignore, Effect.timeoutOption(remaining));
+        const candidateInstance = instances.find(
+          (instance) => instance.instanceId === candidate.instanceId,
+        );
+        if (remaining > 0 && modelUsesProviderQuota(candidateInstance?.driverKind, candidate.model))
+          yield* (candidateInstance?.snapshot.refreshUsage ?? Effect.void).pipe(
+            Effect.ignore,
+            Effect.timeoutOption(remaining),
+          );
         snapshots = yield* readSnapshots;
         const provider = snapshots.find((provider) => provider.instanceId === candidate.instanceId);
         if (

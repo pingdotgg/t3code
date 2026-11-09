@@ -562,6 +562,8 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
 
 const PREFLIGHT_PRIMARY_STATES = [
   "ready",
+  "primary non-Go",
+  "fallback non-Go",
   "pending",
   "exhausted",
   "fallback exhausted",
@@ -579,18 +581,24 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
     const primaryBlocked = primaryState === "primary slow";
     const fallbackBlocked = primaryState === "fallback slow" || primaryState === "both slow";
     const fallbackExhausted = primaryState === "fallback exhausted";
-    const exhausted = primaryState === "exhausted" || fallbackExhausted || slow;
+    const exhausted =
+      primaryState === "exhausted" ||
+      primaryState === "fallback non-Go" ||
+      fallbackExhausted ||
+      slow;
     let readStarted = yield* Deferred.make<void>();
     const fallbackFailed = primaryState === "signed out, fallback failed";
     const needsFallback =
       exhausted || primaryState === "not installed" || primaryState.startsWith("signed out");
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
-    const unrelated = ProviderInstanceId.make("antigravity");
+    const unrelated = ProviderInstanceId.make(
+      primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+    );
     const disabled = ProviderInstanceId.make("claude_disabled");
     const selection = {
       instanceId: primary,
-      model: "chat-model",
+      model: primaryState === "primary non-Go" ? "openai/gpt-5.4" : "chat-model",
       options: [{ id: "effort", value: "high" }],
     };
     const calls: ModelSelection[] = [];
@@ -600,9 +608,13 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         let quotaRead = slow;
         const driver = ProviderDriverKind.make(
           instanceId === primary
-            ? "codex"
+            ? primaryState === "primary non-Go"
+              ? "opencode"
+              : "codex"
             : instanceId === unrelated
-              ? "antigravity"
+              ? primaryState === "fallback non-Go"
+                ? "opencode"
+                : "antigravity"
               : "claudeAgent",
         );
         const snapshot: ServerProvider = {
@@ -693,7 +705,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
             providerInstances: {
               [fallback]: { driver: ProviderDriverKind.make("claudeAgent"), config: {} },
               [unrelated]: {
-                driver: ProviderDriverKind.make("antigravity"),
+                driver: ProviderDriverKind.make(
+                  primaryState === "fallback non-Go" ? "opencode" : "antigravity",
+                ),
                 config: { enabled: true },
               },
               [disabled]: {
@@ -754,7 +768,11 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               model:
                 DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[
                   ProviderDriverKind.make(
-                    operation === "title" && !fallbackExhausted ? "antigravity" : "claudeAgent",
+                    operation === "title" && !fallbackExhausted
+                      ? primaryState === "fallback non-Go"
+                        ? "opencode"
+                        : "antigravity"
+                      : "claudeAgent",
                   )
                 ],
             }
@@ -766,9 +784,15 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       (needsFallback && !fallbackFailed && !primaryBlocked
         ? [
             [primary, fallback],
-            fallbackExhausted ? [primary, unrelated, fallback] : [primary, unrelated],
+            fallbackExhausted
+              ? [primary, unrelated, fallback]
+              : primaryState === "fallback non-Go"
+                ? [primary]
+                : [primary, unrelated],
           ]
-        : [[primary], [primary]]
+        : primaryState === "primary non-Go"
+          ? [[], []]
+          : [[primary], [primary]]
       ).map((ids) => ids.sort()),
     );
   }),

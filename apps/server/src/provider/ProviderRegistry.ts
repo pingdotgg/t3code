@@ -9,7 +9,11 @@ import {
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { exhaustedUsageWindow, isNewThreadFallbackEligible } from "@t3tools/shared/usageLimits";
+import {
+  exhaustedUsageWindow,
+  isNewThreadFallbackEligible,
+  modelUsesProviderQuota,
+} from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -664,7 +668,15 @@ export const layer = Layer.effect(
       context?: { readonly settings: ServerSettings; readonly projectId?: ProjectId | null },
     ) {
       if (!primary || !fallback) return yield* Ref.get(providersRef);
-      const providers = yield* refreshUsage(primary.instanceId);
+      const instances = yield* instanceRegistry.listInstances;
+      let providers = yield* Ref.get(providersRef);
+      if (
+        modelUsesProviderQuota(
+          instances.find((instance) => instance.instanceId === primary.instanceId)?.driverKind,
+          primary.model,
+        )
+      )
+        providers = yield* refreshUsage(primary.instanceId);
       return exhaustedUsageWindow(
         providers.find((provider) => provider.instanceId === primary.instanceId),
         DateTime.toEpochMillis(yield* DateTime.now),
@@ -674,6 +686,10 @@ export const layer = Layer.effect(
           providers.find((provider) => provider.instanceId === fallback.instanceId),
           context?.settings,
           context?.projectId,
+        ) &&
+        modelUsesProviderQuota(
+          instances.find((instance) => instance.instanceId === fallback.instanceId)?.driverKind,
+          fallback.model,
         )
         ? yield* refreshUsage(fallback.instanceId)
         : providers;
