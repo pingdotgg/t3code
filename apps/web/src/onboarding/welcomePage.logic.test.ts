@@ -12,6 +12,7 @@ import {
   cliTerminalStep,
   codexNeedsSetup,
   groupWelcomeAgents,
+  terminalCommand,
   welcomePhonePath,
 } from "./welcomePage.logic";
 
@@ -152,19 +153,37 @@ describe("cliTerminalStep", () => {
     expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
     // A check that timed out still gets the sign-in command.
     expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
-    // Signed in with a broken version: the update its row offers fixes it, not another sign-in.
+    // A broken version opens the installer, signed in, signed out, or too old to check.
     const broken = {
       status: "broken",
       message: "Update Codex.",
       recommendedVersion: null,
       recommendedRange: null,
     } as const;
-    expect(step({ compatibilityAdvisory: broken })).toBe("done");
-    // Signed out, it still needs the sign-in first.
+    expect(step({ compatibilityAdvisory: broken })).toBe("open");
     expect(step({ compatibilityAdvisory: broken, auth: { status: "unauthenticated" } })).toBe(
       "open",
     );
+    expect(
+      step({ compatibilityAdvisory: broken, status: "error", auth: { status: "unknown" } }),
+    ).toBe("open");
     expect(step()).toBe("done");
+  });
+});
+
+describe("terminalCommand", () => {
+  it("installs a missing or broken CLI and signs in to any other", () => {
+    const broken = {
+      status: "broken",
+      message: "Update Claude Code.",
+      recommendedVersion: null,
+      recommendedRange: null,
+    } as const;
+    expect(terminalCommand(provider("Claude", { installed: false }))).toBe("install");
+    expect(terminalCommand(provider("Claude", { compatibilityAdvisory: broken }))).toBe("update");
+    expect(terminalCommand(provider("Claude", { auth: { status: "unauthenticated" } }))).toBe(
+      "signIn",
+    );
   });
 });
 

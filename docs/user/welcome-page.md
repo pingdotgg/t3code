@@ -28,11 +28,12 @@ is found, it reads **Set up an agent** and opens by itself:
 
 - **Turn on** enables an agent that is off on this computer, including one only
   some projects use. T3 Code then checks whether it is installed and signed in.
-- For Claude Code, **Install** or **Sign in** opens a terminal with the correct
-  command ready to run. Install uses the vendor's own installer, which keeps
+- For Claude Code, **Install**, **Update**, or **Sign in** opens a terminal with
+  the correct command ready to run. **Update** appears when the server knows the
+  installed version does not work with T3 Code. Install uses the vendor's own installer, which keeps
   **Update now** working in Settings.
 - For Codex, **Set up** offers sign-in with your ChatGPT account or your own
-  Codex CLI. **Use existing CLI** opens the terminal to install or sign in, and
+  Codex CLI. **Use existing CLI** opens the terminal to install, update, or sign in, and
   **Continue with ChatGPT** stays available until Codex is signed in.
 - Other agents, and agents that could not load, open their page in
   **Settings → Providers**.

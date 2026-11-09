@@ -17,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
+  AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthProvidersManageScope,
   AuthRelayReadScope,
@@ -66,6 +67,7 @@ import {
   cliTerminalStep,
   codexNeedsSetup,
   groupWelcomeAgents,
+  terminalCommand,
   welcomeAgentState,
   welcomePhonePath,
 } from "../../onboarding/welcomePage.logic";
@@ -134,12 +136,14 @@ export function WelcomePage({
   // The same access Settings → Sharing & access checks.
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
-  const canPair = useEnvironmentScope(environmentId, AuthAccessWriteScope);
+  // Creating a pairing code needs write access, and showing it needs read access.
+  const canReadAccess = useEnvironmentScope(environmentId, AuthAccessReadScope);
+  const canWriteAccess = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const phonePath = welcomePhonePath({
     isPrimary,
     cloud: hasCloudPublicConfig(),
     canShare: canReadRelay && canWriteRelay,
-    canPair,
+    canPair: canReadAccess && canWriteAccess,
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
@@ -433,13 +437,12 @@ function AgentsSection({
   // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
   // starts after an install is not lost when the agent moves between groups. It closes once
-  // Codex is signed in; anything left, such as a broken version, shows on its row.
+  // Codex is signed in or cannot use it; anything left, such as a broken version, shows on its row.
   const codexSetupProvider =
     providers?.find(
       (provider) =>
         provider.instanceId === codexSetupId &&
-        stateOf(provider) !== "ready" &&
-        provider.auth.status !== "authenticated",
+        (codexNeedsSetup(provider, serverConfig?.settings) || stateOf(provider) === "checking"),
     ) ?? null;
 
   const openTerminal = (provider: ServerProvider) => {
@@ -454,16 +457,17 @@ function AgentsSection({
       driver: provider.driver,
       providerInstanceId: provider.instanceId,
       cwd: serverConfig.cwd,
-      command: provider.installed
-        ? resolveOnboardingProviderLoginCommand(
-            provider,
-            serverConfig.settings,
-            serverConfig.environment.platform.os,
-          )
-        : resolveOnboardingProviderInstallCommand(
-            provider.driver,
-            serverConfig.environment.platform.os,
-          ),
+      command:
+        terminalCommand(provider) === "signIn"
+          ? resolveOnboardingProviderLoginCommand(
+              provider,
+              serverConfig.settings,
+              serverConfig.environment.platform.os,
+            )
+          : resolveOnboardingProviderInstallCommand(
+              provider.driver,
+              serverConfig.environment.platform.os,
+            ),
       keybindings: serverConfig.keybindings,
     });
   };
@@ -540,7 +544,7 @@ function AgentsSection({
       return (
         <TerminalAction
           name={name}
-          signIn={state === "signIn"}
+          command={terminalCommand(provider)}
           disabled={
             terminalSession?.providerInstanceId === provider.instanceId ||
             serverConfig === null ||
@@ -550,12 +554,13 @@ function AgentsSection({
         />
       );
     }
-    const label = state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up";
+    const actionLabel =
+      state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up";
     return (
       <Button
         size="xs"
         variant="outline"
-        aria-label={`${label}: ${name}`}
+        aria-label={`${actionLabel}: ${name}`}
         render={
           <Link
             to="/settings/providers"
@@ -563,7 +568,7 @@ function AgentsSection({
           />
         }
       >
-        {label}
+        {actionLabel}
       </Button>
     );
   };
@@ -1040,6 +1045,7 @@ function OnboardingCodexSetup({
   readonly onUseCliChange: (useCli: boolean) => void;
 }) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
+  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const instanceId = provider.instanceId;
   const instance = serverConfig.settings.providerInstances[instanceId] ?? {
@@ -1082,6 +1088,7 @@ function OnboardingCodexSetup({
       mode={mode}
       enabled={provider.enabled}
       readOnly={!canManageProviders}
+      existingCliDisabled={!canOperateTerminal}
       displayName={agentName(provider)}
       onModeChange={changeMode}
     />
@@ -1090,16 +1097,16 @@ function OnboardingCodexSetup({
 
 function TerminalAction({
   name,
-  signIn,
+  command,
   disabled,
   onClick,
 }: {
   readonly name: string;
-  readonly signIn: boolean;
+  readonly command: ReturnType<typeof terminalCommand>;
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
-  const label = signIn ? "Sign in" : "Install";
+  const label = command === "signIn" ? "Sign in" : command === "update" ? "Update" : "Install";
   return (
     <Button
       size="xs"

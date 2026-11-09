@@ -81,14 +81,22 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
-  // Signed in with a broken version: the row offers the update, and signing in again would not help.
-  if (state === "attention" && provider.compatibilityAdvisory?.status === "broken") return "done";
-  // The terminal shows the command first, so it also helps a CLI whose check failed.
+  // The terminal shows the command first, so it also helps a CLI whose check failed. A broken
+  // version gets the installer, which brings the current one (`terminalCommand`).
   const fixable =
     state === "install" ||
     state === "signIn" ||
     (state === "attention" && isProviderAvailable(provider));
   return fixable ? "open" : "done";
+}
+
+/**
+ * What an agent's setup terminal runs: the vendor installer for a missing CLI or a version the
+ * server knows is broken, else the CLI's sign-in.
+ */
+export function terminalCommand(provider: ServerProvider) {
+  if (!provider.installed) return "install";
+  return provider.compatibilityAdvisory?.status === "broken" ? "update" : "signIn";
 }
 
 /**
