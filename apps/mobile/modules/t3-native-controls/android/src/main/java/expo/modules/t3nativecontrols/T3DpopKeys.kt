@@ -20,16 +20,16 @@ internal object T3DpopKeys {
   private const val CURVE = "secp256r1"
   private const val ALGORITHM = "SHA256withECDSA"
   // AlgorithmParameters("EC") needs API 26; a generated key carries the same spec on any level.
-  private val curve: ECParameterSpec by lazy { (generateKeyPair().public as ECPublicKey).params }
+  private val curve: ECParameterSpec by lazy { (newKeyPair().public as ECPublicKey).params }
 
-  private fun generateKeyPair() = KeyPairGenerator.getInstance("EC").run {
+  private fun newKeyPair() = KeyPairGenerator.getInstance("EC").run {
     initialize(ECGenParameterSpec(CURVE))
     generateKeyPair()
   }
 
   /** The private scalar followed by the public point. */
   fun generate(): ByteArray {
-    val pair = generateKeyPair()
+    val pair = newKeyPair()
     val point = (pair.public as ECPublicKey).w
     return scalar((pair.private as ECPrivateKey).s) +
       byteArrayOf(UNCOMPRESSED) +
