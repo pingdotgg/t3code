@@ -1,6 +1,3 @@
-diff --git a/AGENTS.md b/AGENTS.md
-deleted file mode 100644
-index 83f8dd3a7bf6f678748e2221c44c63ed8685ad6a..0000000000000000000000000000000000000000
 diff --git a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift b/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
 index cdbd63359be9c04fbb0cb30b3cbd1e399bb72d9a..41a72bcc5ebde85237e6aa6bd8240712fdebc0cd 100644
 --- a/ios/observers/movement/observer/KeyboardMovementObserver+Lifecycle.swift
