@@ -1,6 +1,12 @@
 import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
+import {
+  isUserWaitItem,
+  userWaitMs,
+  workingTimerStartedAt,
+  type UserWaitItem,
+} from "@t3tools/client-runtime/user-wait";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
 import {
@@ -472,11 +478,20 @@ export function resolveTimelineMinimapInteractiveWidth(
   return expanded ? TIMELINE_MINIMAP_EXPANDED_HIT_STRIP_WIDTH : collapsedWidth;
 }
 
-function computeElapsedMs(startIso: string, endIso: string): number | null {
+function computeWorkedMs(
+  startIso: string,
+  endIso: string,
+  requests: ReadonlyArray<UserWaitItem>,
+): number | null {
   const start = Date.parse(startIso);
   const end = Date.parse(endIso);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
-  return Math.max(0, end - start);
+  return Math.max(0, end - start - userWaitMs(requests, start, end));
+}
+
+function timelineEntryUserWait(entry: TimelineEntry): UserWaitItem | null {
+  const item = entry.kind === "work" ? entry.entry.projectedItem?.item : undefined;
+  return item !== undefined && isUserWaitItem(item) ? item : null;
 }
 
 function maxIsoTimestamp(a: string | null, b: string | null): string | null {
@@ -533,6 +548,8 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
       compacting?: true;
+      /** An open question or approval holds the run, so the row stops timing. */
+      waitingOnUser?: true;
     }
   | {
       kind: "thinking";
@@ -1039,6 +1056,7 @@ function deriveTurnFolds(input: {
      * this index into `entries`, so the steer sits between the work it split.
      */
     steerSegments: Array<{ startIndex: number; steer: TimelineEntry }>;
+    userWaits: Array<UserWaitItem>;
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
@@ -1091,11 +1109,14 @@ function deriveTurnFolds(input: {
         startBoundary: pendingBoundary?.createdAt ?? null,
         anchorEntryId: pendingBoundary?.anchorEntryId ?? entry.id,
         steerSegments: [],
+        userWaits: [],
       };
       pendingBoundary = null;
       groupsByRunId.set(runId, group);
     }
     group.entries.push(entry);
+    const userWait = timelineEntryUserWait(entry);
+    if (userWait !== null) group.userWaits.push(userWait);
     if (entry.kind === "message") {
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
@@ -1169,11 +1190,12 @@ function deriveTurnFolds(input: {
     const lastEntryEnd = timelineEntryEnd(lastEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
-        ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
-        : computeElapsedMs(
+        ? computeWorkedMs(input.latestRun.startedAt, input.latestRun.completedAt, group.userWaits)
+        : computeWorkedMs(
             group.startBoundary ?? firstEntry.createdAt,
             maxIsoTimestamp(group.terminalEntry?.message.updatedAt ?? null, lastEntryEnd) ??
               lastEntryEnd,
+            group.userWaits,
           );
     const duration = elapsedMs !== null ? formatDuration(elapsedMs) : null;
     const label = isLatestInterruptedTurn
@@ -1202,10 +1224,11 @@ function deriveTurnFolds(input: {
       const entries = group.entries.slice(startIndex, group.steerSegments[index + 1]?.startIndex);
       const anchorEntry = entries[0];
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
-      const segmentMs = computeElapsedMs(
+      const segmentMs = computeWorkedMs(
         steer.createdAt,
         entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
           steer.createdAt,
+        group.userWaits,
       );
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),
@@ -1765,6 +1788,19 @@ export function deriveMessagesTimelineRows(input: {
   const activeCompactionRunId = compactsOnReturn
     ? runningCompactionRunId
     : (resumeCompactionEntry?.entry.runId ?? null);
+  // Zen hides open requests from the rows, so read them from every entry.
+  const activeRunUserWaits: UserWaitItem[] = [];
+  if (input.isWorking && unsettledRunId !== null) {
+    for (const entry of input.timelineEntries) {
+      const userWait = timelineEntryUserWait(entry);
+      if (userWait !== null && timelineEntryRunId(entry) === unsettledRunId) {
+        activeRunUserWaits.push(userWait);
+      }
+    }
+  }
+  const waitingOnUser =
+    activeCompactionRunId === null &&
+    activeRunUserWaits.some((request) => request.completedAt === null);
   const endedRunId = input.latestRun?.turnEnded === true ? input.latestRun.runId : null;
   const zenAnswerLanded =
     input.toolCallVisibility === "zen" &&
@@ -1777,11 +1813,14 @@ export function deriveMessagesTimelineRows(input: {
     nextRows.push({
       kind: "working",
       id: "working-indicator-row",
-      createdAt:
-        (compactsOnReturn ? undefined : resumeCompactionEntry?.entry.createdAt) ??
-        input.activeTurnStartedAt ??
-        null,
+      createdAt: waitingOnUser
+        ? null
+        : ((compactsOnReturn ? undefined : resumeCompactionEntry?.entry.createdAt) ??
+          (input.activeTurnStartedAt == null
+            ? null
+            : workingTimerStartedAt(input.activeTurnStartedAt, activeRunUserWaits))),
       ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
+      ...(waitingOnUser ? { waitingOnUser: true as const } : {}),
     });
   };
   let hasActivityRow = false;
@@ -2230,7 +2269,8 @@ export function deriveMessagesTimelineRows(input: {
     !setupOwnsWorkingSlot &&
     !hasActiveCompaction &&
     !compactionOnlyRunFinished &&
-    (latestToolFailed || (!hasActivityRow && !input.pendingApprovalRequestIds?.size))
+    (latestToolFailed ||
+      (!hasActivityRow && !waitingOnUser && !input.pendingApprovalRequestIds?.size))
   ) {
     const failedGroupAnchor = latestToolFailed ? activeWorkAnchor : undefined;
     if (failedGroupAnchor) {
@@ -2519,7 +2559,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   switch (a.kind) {
     case "working":
       return (
-        a.createdAt === (b as typeof a).createdAt && a.compacting === (b as typeof a).compacting
+        a.createdAt === (b as typeof a).createdAt &&
+        a.compacting === (b as typeof a).compacting &&
+        a.waitingOnUser === (b as typeof a).waitingOnUser
       );
     case "thinking": {
       const bt = b as typeof a;

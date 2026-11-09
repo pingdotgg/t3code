@@ -183,6 +183,10 @@
       "types": "./src/delayedStatus.ts",
       "default": "./src/delayedStatus.ts"
     },
+    "./user-wait": {
+      "types": "./src/userWait.ts",
+      "default": "./src/userWait.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
