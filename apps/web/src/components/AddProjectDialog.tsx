@@ -10,7 +10,6 @@ import {
 import {
   ensureBrowseDirectoryPath,
   getBrowseParentPath,
-  hasTrailingPathSeparator,
 } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
@@ -58,14 +57,19 @@ import {
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
-const useAddProjectDialog = create<{ open: boolean; session: number }>(() => ({
+const useAddProjectDialog = create<{ open: boolean; session: number; submitting: boolean }>(() => ({
   open: false,
   session: 0,
+  submitting: false,
 }));
 
 /** Opens the dialog that adds a project: pick a machine, then a folder on it. */
 export function openAddProjectDialog() {
-  useAddProjectDialog.setState((state) => ({ open: true, session: state.session + 1 }));
+  useAddProjectDialog.setState((state) => ({
+    open: true,
+    session: state.session + 1,
+    submitting: false,
+  }));
 }
 
 function closeAddProjectDialog() {
@@ -155,7 +159,8 @@ function AddProjectDialog() {
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) closeAddProjectDialog();
+        // An add in flight navigates when it lands, so the dialog stays until then.
+        if (!open && !useAddProjectDialog.getState().submitting) closeAddProjectDialog();
       }}
     >
       <DialogPopup className="sm:max-w-xl">
@@ -389,7 +394,7 @@ function FolderStep({
   const platform = getEnvironmentBrowsePlatform(environment?.serverConfig?.environment.platform.os);
   const deferredPath = useDeferredValue(path);
   // Like the palette: list the parent folder and filter it by the typed name.
-  const browsePath = getFilesystemBrowsePath(deferredPath, platform);
+  const browsePath = getFilesystemBrowsePath(deferredPath.trim(), platform);
   const access = useFilesystemReadAccess(connected ? environmentId : null);
   const browse = useEnvironmentQuery(
     connected && environmentId !== null && access.canReadFiles && browsePath.isBrowsing
@@ -404,11 +409,11 @@ function FolderStep({
     listing?.entries ?? [],
     browsePath.filterQuery,
   );
-  const isCurrentListing = listing !== null && deferredPath === path;
+  const isCurrentListing = deferredPath === path;
   const parentPath = getBrowseParentPath(listing?.parentPath ?? browsePath.directoryPath);
   const pathMissing =
     (isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true) ||
-    (browsePath.filterQuery.length > 0 && listing !== null && visibleEntries.length === 0);
+    (browsePath.filterQuery.length > 0 && listing !== null && exactEntry === null);
   const rows = [
     ...(parentPath !== null ? [{ key: "..", name: "..", target: parentPath }] : []),
     ...visibleEntries.map((entry) => ({
@@ -419,7 +424,13 @@ function FolderStep({
   ];
   const [highlight, setHighlight] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const submitting = useAddProjectDialog((state) => state.submitting);
+  // Only absolute and ~/ paths: a bare name would land in the server's working folder.
+  const canSubmit =
+    connected &&
+    environmentId !== null &&
+    !submitting &&
+    getFilesystemBrowsePath(path.trim(), platform).isBrowsing;
   const addProjectAtPath = useAddProjectAtPath();
 
   const goTo = (target: string) => {
@@ -428,26 +439,20 @@ function FolderStep({
   };
 
   const submit = async () => {
-    if (!environmentId || !connected || submitting) return;
-    setSubmitting(true);
-    const { session } = useAddProjectDialog.getState();
-    // A loaded listing names the folder exactly, with "~" expanded.
-    const listedPath =
-      isCurrentListing && listing
-        ? hasTrailingPathSeparator(path)
-          ? listing.parentPath
-          : exactEntry?.fullPath
-        : undefined;
+    if (!canSubmit || environmentId === null) return;
+    useAddProjectDialog.setState({ submitting: true });
     const added = await addProjectAtPath({
       environmentId,
-      rawCwd: listedPath ?? path.trim(),
+      // A loaded listing gives the folder's absolute path, with "~" expanded.
+      rawCwd:
+        isCurrentListing && listing
+          ? `${ensureBrowseDirectoryPath(listing.parentPath)}${browsePath.filterQuery}`
+          : path.trim(),
       platform,
       currentProjectCwd: null,
     });
-    // The user may have closed this dialog and opened a new one meanwhile.
-    if (useAddProjectDialog.getState().session !== session) return;
+    useAddProjectDialog.setState({ submitting: false });
     if (added) closeAddProjectDialog();
-    else setSubmitting(false);
   };
 
   const moveHighlight = (next: number) => {
@@ -553,7 +558,7 @@ function FolderStep({
         <Button type="button" variant="outline" disabled={submitting} onClick={onBack}>
           Back
         </Button>
-        <Button type="submit" disabled={!connected || submitting || path.trim().length === 0}>
+        <Button type="submit" disabled={!canSubmit}>
           {submitting ? "Adding…" : "Add project"}
         </Button>
       </DialogFooter>
