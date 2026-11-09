@@ -9,10 +9,16 @@ import {
   type PiRpcRecord,
 } from "./rpc.ts";
 
-export type PiSubagentStatus = "pending" | "running" | "completed" | "failed" | "interrupted";
+export type PiSubagentStatus =
+  | "pending"
+  | "running"
+  | "idle"
+  | "completed"
+  | "failed"
+  | "interrupted";
 
 export const isPiSubagentSettled = (status: PiSubagentStatus) =>
-  status !== "pending" && status !== "running";
+  status !== "pending" && status !== "running" && status !== "idle";
 
 /** One pi-subagents child, as a row on the turn whose `subagent` call launched it. */
 export interface PiSubagentMember<Owner> {
@@ -32,11 +38,11 @@ interface BackgroundRun<Owner> {
   readonly owner: Owner;
   readonly toolCallId: string;
   readonly asyncId: string;
-  /** Single runs have one child; workflow steps are keyed by workflow key; chain and parallel by position. */
+  /** Single runs have one child; workflow steps are keyed by workflow key; chain and parallel by child run ID. */
   readonly shape: "single" | "workflow" | "steps";
   readonly members: Map<string, PiSubagentMember<Owner>>;
-  /** A chain or parallel step's id changes from `step:<index>` to its child run id at launch. */
-  readonly stepIds: Map<string, string>;
+  pending: boolean;
+  notified: boolean;
 }
 
 const ASYNC_WIDGET_KEY = "subagent-async";
@@ -84,7 +90,7 @@ const decodeCompletionNotice = Schema.decodeUnknownOption(
               runId: Schema.optional(Schema.String),
               workflowKey: Schema.optional(Schema.String),
               agent: Schema.optional(Schema.String),
-              status: Schema.String,
+              status: Schema.optional(Schema.String),
             }),
           ),
         ),
@@ -93,7 +99,7 @@ const decodeCompletionNotice = Schema.decodeUnknownOption(
   }),
 );
 
-/** Paused, partial and detached children may still continue, so they do not settle a row. */
+/** Detached children have no outcome yet; paused children can resume. */
 function memberStatus(state: string | undefined): PiSubagentStatus | undefined {
   switch (state) {
     case "queued":
@@ -104,9 +110,13 @@ function memberStatus(state: string | undefined): PiSubagentStatus | undefined {
     case "complete":
     case "completed":
       return "completed";
+    case "paused":
+      return "idle";
+    case "partial":
     case "failed":
     case "rejected":
       return "failed";
+    case "interrupted":
     case "stopped":
       return "interrupted";
     default:
@@ -149,20 +159,33 @@ function recordArray(input: unknown, key: string): ReadonlyArray<unknown> {
 export function makePiSubagentLifecycle<Owner>() {
   const foreground = new Map<string, Map<string, PiSubagentMember<Owner>>>();
   const background = new Map<string, BackgroundRun<Owner>>();
+  const earlyNotices = new Map<string, unknown>();
+  const keyOwners = new Map<string, string | null>();
+  let keyHistoryFull = false;
+  const rememberKey = (key: string, id: string) => {
+    if (keyOwners.has(key)) {
+      if (keyOwners.get(key) !== id) keyOwners.set(key, null);
+    } else if (keyOwners.size < 1024) keyOwners.set(key, id);
+    else keyHistoryFull = true;
+  };
   // A snapshot can list a run before the tool call that launched it has returned its receipt.
   let latestSnapshot: AsyncStatusSnapshot | null = null;
 
-  /** Returns the member when the frame changed it; settled members ignore stale frames. */
+  /** Terminal outcomes are immutable; later structured frames can still enrich metadata. */
   const updateMember = (
     run: BackgroundRun<Owner>,
     key: string,
     status: PiSubagentStatus | undefined,
     fields: { readonly title?: string | undefined; readonly model?: string | undefined },
   ): PiSubagentMember<Owner> | undefined => {
+    if (run.shape === "workflow") rememberKey(key, run.asyncId);
     const previous = run.members.get(key);
-    if (previous !== undefined && isPiSubagentSettled(previous.status)) return undefined;
+
     const title = fields.title ?? previous?.title;
-    const nextStatus = status ?? previous?.status;
+    const nextStatus =
+      previous !== undefined && isPiSubagentSettled(previous.status)
+        ? previous.status
+        : (status ?? previous?.status);
     if (title === undefined || nextStatus === undefined) return undefined;
     const next: PiSubagentMember<Owner> = {
       owner: run.owner,
@@ -197,17 +220,29 @@ export function makePiSubagentLifecycle<Owner>() {
         title: step?.agent,
         model: step?.model,
       });
+      if (run.notified && isPiSubagentSettled(memberStatus(node.state) ?? "running"))
+        run.pending = false;
       return changed === undefined ? [] : [changed];
     }
-    return steps.flatMap((step, index) => {
-      const key = run.shape === "workflow" ? step.id : String(index);
-      if (run.shape === "steps") run.stepIds.set(key, step.id);
+    const changed = steps.flatMap((step) => {
+      // Positional planning slots become run IDs at launch; capped snapshots cannot prove that join.
+      if (run.shape === "steps" && step.id.startsWith("step:")) return [];
+      const key = step.id;
       const changed = updateMember(run, key, memberStatus(step.state), {
-        title: step.agent ?? step.label ?? step.id,
+        title: step.agent ?? run.members.get(key)?.title ?? step.label ?? step.id,
         model: step.model,
       });
       return changed === undefined ? [] : [changed];
     });
+    const state = memberStatus(node.state);
+    if (
+      run.notified &&
+      state !== undefined &&
+      isPiSubagentSettled(state) &&
+      [...run.members.values()].every((member) => isPiSubagentSettled(member.status))
+    )
+      run.pending = false;
+    return changed;
   };
 
   const observeWidget = (frame: PiRpcRecord): Array<PiSubagentMember<Owner>> => {
@@ -231,12 +266,9 @@ export function makePiSubagentLifecycle<Owner>() {
   const observeChildNotice = (details: unknown): Array<PiSubagentMember<Owner>> => {
     const notice = Option.getOrUndefined(decodeChildNotice(details));
     if (notice === undefined) return [];
-    // The notice names its workflow only in prose; settle the child only when its key is unambiguous.
-    const owners = [...background.values()].filter((run) => {
-      const member = run.shape === "workflow" ? run.members.get(notice.childKey) : undefined;
-      return member !== undefined && !isPiSubagentSettled(member.status);
-    });
-    const run = owners.length === 1 ? owners[0] : undefined;
+    // Key-only notices cannot distinguish reused keys, including already settled owners.
+    const id = keyHistoryFull ? undefined : keyOwners.get(notice.childKey);
+    const run = id == null ? undefined : background.get(id);
     const changed =
       run === undefined
         ? undefined
@@ -250,34 +282,43 @@ export function makePiSubagentLifecycle<Owner>() {
     return notice.runs.flatMap((notified) => {
       const asyncId = notified.workflowRunId ?? notified.runId;
       const run = asyncId === undefined ? undefined : background.get(asyncId);
-      if (run === undefined) return [];
+      if (run === undefined) {
+        // Structured settlement requires pi-subagents >= 0.77; never infer IDs from notice prose.
+        if (asyncId !== undefined) {
+          earlyNotices.set(asyncId, { runs: [notified] });
+          if (earlyNotices.size > 128) earlyNotices.delete(earlyNotices.keys().next().value!);
+        }
+        return [];
+      }
       const changed: Array<PiSubagentMember<Owner>> = [];
       const childRuns = notified.childRuns ?? [];
       for (const child of childRuns) {
         const key =
-          run.shape === "workflow"
-            ? child.workflowKey
-            : run.shape === "single"
-              ? "0"
-              : [...run.stepIds].find(([, stepId]) => stepId === child.runId)?.[0];
+          run.shape === "workflow" ? child.workflowKey : run.shape === "single" ? "0" : child.runId;
         if (key === undefined) continue;
         const member = updateMember(run, key, memberStatus(child.status), {
-          title: child.agent ?? child.workflowKey,
+          title: child.agent ?? run.members.get(key)?.title ?? child.workflowKey,
         });
         if (member !== undefined) changed.push(member);
       }
       const runStatus = memberStatus(notified.status);
+      if (run.shape === "single" && childRuns.length === 0 && runStatus !== undefined) {
+        const member = updateMember(run, "0", runStatus, { title: notified.agent });
+        if (member !== undefined) changed.push(member);
+      }
       if (runStatus !== undefined && isPiSubagentSettled(runStatus)) {
-        if (run.shape === "single") {
-          const member = updateMember(run, "0", runStatus, { title: notified.agent });
-          if (member !== undefined) changed.push(member);
-        }
+        run.notified = true;
         for (const [key, member] of run.members) {
-          if (isPiSubagentSettled(member.status)) continue;
+          if (isPiSubagentSettled(member.status) || runStatus === "completed") continue;
           const settled = updateMember(run, key, runStatus, {});
           if (settled !== undefined) changed.push(settled);
         }
-        background.delete(run.asyncId);
+        run.pending =
+          (runStatus === "completed" &&
+            childRuns.some(
+              (child) => !isPiSubagentSettled(memberStatus(child.status) ?? "running"),
+            )) ||
+          ![...run.members.values()].every((member) => isPiSubagentSettled(member.status));
       }
       return changed;
     });
@@ -348,7 +389,18 @@ export function makePiSubagentLifecycle<Owner>() {
         result: finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null,
       });
     }
-    for (const [key, member] of frame) members.set(key, member);
+    for (const [key, member] of frame) {
+      const previous = members.get(key);
+      const status =
+        previous !== undefined && isPiSubagentSettled(previous.status)
+          ? previous.status
+          : toolFinished && !isPiSubagentSettled(member.status)
+            ? toolStatus
+            : member.status;
+      const reconciled = { ...member, status };
+      frame.set(key, reconciled);
+      members.set(key, reconciled);
+    }
     if (!toolFinished) {
       foreground.set(toolCallId, members);
       return [...frame.values()];
@@ -377,10 +429,19 @@ export function makePiSubagentLifecycle<Owner>() {
       asyncId,
       shape: mode === "workflow" ? "workflow" : mode === "single" ? "single" : "steps",
       members: new Map(),
-      stepIds: new Map(),
+      pending: true,
+      notified: false,
     };
     background.set(asyncId, run);
     const changed: Array<PiSubagentMember<Owner>> = [];
+    // Bound unresolved owners and terminal metadata even when no final notice ever arrives.
+    if (background.size > 128) {
+      const oldest = background.values().next().value!;
+      background.delete(oldest.asyncId);
+      for (const member of oldest.members.values()) {
+        if (!isPiSubagentSettled(member.status)) changed.push({ ...member, status: "interrupted" });
+      }
+    }
     const agent = recordString(args, "agent");
     if (run.shape === "single" && agent !== undefined) {
       const member: PiSubagentMember<Owner> = {
@@ -398,10 +459,29 @@ export function makePiSubagentLifecycle<Owner>() {
     }
     const node = latestSnapshot?.runs.find((candidate) => candidate.id === asyncId);
     if (node !== undefined) changed.push(...applySnapshotRun(run, node));
+    const early = earlyNotices.get(asyncId);
+    earlyNotices.delete(asyncId);
+    if (early !== undefined) changed.push(...observeCompletionNotice(early));
     return changed;
   };
 
   return {
+    pendingOwners: () =>
+      new Set([...background.values()].filter((run) => run.pending).map((run) => run.owner)),
+    finishForeground: (
+      owner: Owner,
+      status: PiSubagentStatus,
+    ): ReadonlyArray<PiSubagentMember<Owner>> => {
+      const changed: Array<PiSubagentMember<Owner>> = [];
+      for (const [id, members] of foreground) {
+        if ([...members.values()][0]?.owner !== owner) continue;
+        foreground.delete(id);
+        for (const member of members.values()) {
+          if (!isPiSubagentSettled(member.status)) changed.push({ ...member, status });
+        }
+      }
+      return changed;
+    },
     /** A `subagent` tool update or end; `toolStatus` is the tool row's own status. */
     observeTool: (input: {
       readonly owner: Owner;
@@ -413,6 +493,10 @@ export function makePiSubagentLifecycle<Owner>() {
       // A detached launch returns its run id and no results; a foreground run fills results.
       const asyncId = recordString(input.details, "asyncId");
       if (
+        ["single", "workflow", "chain", "parallel"].includes(
+          recordString(input.details, "mode") ?? "",
+        ) &&
+        recordString(input.args, "action") === undefined &&
         asyncId !== undefined &&
         input.toolStatus === "completed" &&
         recordArray(input.details, "results").length === 0
@@ -451,6 +535,9 @@ export function makePiSubagentLifecycle<Owner>() {
       foreground.clear();
       background.clear();
       latestSnapshot = null;
+      earlyNotices.clear();
+      keyOwners.clear();
+      keyHistoryFull = false;
       return running.map((member) => ({ ...member, status: "interrupted" as const }));
     },
   };

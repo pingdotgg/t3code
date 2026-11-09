@@ -531,6 +531,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
       const subagents = makePiSubagentLifecycle<ActivePiTurn>();
+      let pendingSubagentOwners = new Set<ActivePiTurn>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1260,7 +1261,22 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               toolStatus: status,
             }),
           );
+          yield* emitSubagentBackgroundWork();
         }
+      });
+
+      const emitSubagentBackgroundWork = Effect.fnUntraced(function* () {
+        const next = subagents.pendingOwners();
+        for (const owner of new Set([...pendingSubagentOwners, ...next])) {
+          if (pendingSubagentOwners.has(owner) === next.has(owner)) continue;
+          yield* emit({
+            type: "background_work.updated",
+            driver: PI_PROVIDER,
+            providerTurnId: owner.providerTurn.id,
+            pending: next.has(owner),
+          });
+        }
+        pendingSubagentOwners = next;
       });
 
       // Members keep the turn that launched them; late frames still update that turn's rows.
@@ -1685,6 +1701,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (turn === null) return;
         state.activeTurn = null;
         const interrupted = turn.interrupted || turn.nativeAborted;
+        yield* emitSubagentMembers(
+          subagents.finishForeground(
+            turn,
+            interrupted || turn.failure === null ? "interrupted" : "failed",
+          ),
+        );
         const completedAt = yield* DateTime.now;
         yield* completeOpenStreamItems(turn);
         if (turn.activeCompaction !== null) {
@@ -1855,6 +1877,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const subagentMembers = subagents.observeSessionFrame(event);
         if (subagentMembers !== undefined) {
           yield* emitSubagentMembers(subagentMembers);
+          yield* emitSubagentBackgroundWork();
           return;
         }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
@@ -2378,6 +2401,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 );
               pendingWake = null;
               yield* emitSubagentMembers(subagents.close());
+              yield* emitSubagentBackgroundWork();
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted

@@ -73,11 +73,8 @@ export function assertPiSubagentsAsyncWorkflowOutput(
   assert.isAbove(launchRunStatus("waiting"), launchTurnEnded);
   for (const key of ["alpha", "beta"]) {
     assert.isAtLeast(memberEvent(key, "running"), 0, `${key} shows while it runs`);
-    assert.isBelow(
-      memberEvent(key, "running"),
-      launchTurnEnded,
-      `${key} runs before the turn ends`,
-    );
+    if (key === "alpha") assert.isBelow(memberEvent(key, "running"), launchTurnEnded);
+    else assert.isAbove(memberEvent(key, "running"), memberEvent("alpha", "completed"));
     assert.isAbove(memberEvent(key, "completed"), launchRunStatus("waiting"));
     assert.isBelow(memberEvent(key, "completed"), launchRunStatus("completed"));
   }
