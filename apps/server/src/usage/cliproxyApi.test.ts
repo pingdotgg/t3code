@@ -80,6 +80,14 @@ function fixture(
         );
       expect(path).toMatch(/\/v0\/management\/api-call$/);
       expect(body?.header?.Authorization).toBe("Bearer $TOKEN$");
+      if (body?.url?.endsWith("/api/oauth/profile"))
+        return HttpClientResponse.fromWeb(
+          request,
+          Response.json({
+            status_code: 200,
+            body: encodeJson({ organization: { uuid: `org-${body.auth_index}` } }),
+          }),
+        );
       const upstream = options.upstream?.(body!) ?? {
         status: 200,
         body: body?.url?.endsWith("/consume")
@@ -365,6 +373,26 @@ describe("CLIProxyAPI built-in management API", () => {
         ["five_hour", 10],
         ["seven_day", 50],
         ["seven_day_fable", 80],
+      ]);
+    }),
+  );
+
+  it.effect("tells apart Claude logins that share an email by organisation", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, provider: "claude", email: "same@example.com" },
+          { ...accounts[1]!, provider: "claude", email: "same@example.com" },
+        ],
+        upstream: () => ({
+          status: 200,
+          body: { five_hour: { utilization: 10, resets_at: null } },
+        }),
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result.map((account) => [account.email, account.workspaceId])).toEqual([
+        ["same@example.com", "org-a"],
+        ["same@example.com", "org-b"],
       ]);
     }),
   );

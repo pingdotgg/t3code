@@ -89,6 +89,7 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({ organization: Schema.Struct({ uuid: Schema.String }) });
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -105,6 +106,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
@@ -284,8 +286,15 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage");
+        const [body, profileBody] = yield* Effect.all(
+          [
+            apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage"),
+            apiCall(hub, account, "https://api.anthropic.com/api/oauth/profile"),
+          ],
+          { concurrency: "unbounded" },
+        );
         const usage = yield* decodeClaudeUsage(body);
+        const profile = yield* decodeClaudeProfile(profileBody);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
             ? [
@@ -306,6 +315,9 @@ export const makeCliproxyApi = Effect.gen(function* () {
         };
         return {
           ...base,
+          // One email can hold several Claude organisations. The local provider keys its
+          // account by organisation too, so each hub login stays a separate account.
+          workspaceId: profile.organization.uuid,
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
