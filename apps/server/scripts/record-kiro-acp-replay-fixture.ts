@@ -12,6 +12,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
+import * as Config from "effect/Config";
+import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -407,7 +409,17 @@ const KIRO_RECORDING_SETTINGS = Schema.decodeSync(KiroSettings)({
   binaryPath: process.env.T3_KIRO_BIN ?? "kiro-cli",
 });
 
+const RecorderEnv = Config.all({
+  T3_KIRO_VERSION: Config.String("T3_KIRO_VERSION").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  HOME: Config.String("HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  USER: Config.String("USER").pipe(Config.option, Config.map(Option.getOrUndefined)),
+});
+
 const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: string) {
+  const recorderEnv = yield* RecorderEnv;
   const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((candidate) => candidate.name === fixtureName);
   const variant = fixture?.providers.find((provider) => provider.driver === KIRO_PROVIDER);
   if (fixture === undefined || variant === undefined) {
@@ -544,7 +556,7 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
     scenario: fixtureName,
     metadata: {
       generatedBy: "live-kiro-recorder",
-      kiroVersion: process.env.T3_KIRO_VERSION ?? "unknown",
+      kiroVersion: recorderEnv.T3_KIRO_VERSION ?? "unknown",
       normalization:
         "Session ids are fixed sess_ UUIDs and other UUIDs (message and request ids) are numbered in first-seen order, the workspace is <workspace>, HOME is /home/kiro-replay and the recording user is kiro-replay. T3-owned prompt text, MCP servers and initialize params other than clientCapabilities and _meta are <any>. Kiro's log directory, user-scoped commands and agents, and the _kiro/* broadcasts T3 ignores (governance, steering documents, powers, tools, hooks, MCP status, session roster, memory sync) are removed. Timestamps are kept as recorded.",
       droppedFrames,
@@ -553,8 +565,8 @@ const recordScenario = Effect.fn("recordKiroScenario")(function* (fixtureName: s
       ...normalizeEntries({
         entries,
         workspace: realWorkspace,
-        home: process.env.HOME ?? "",
-        user: process.env.USER ?? "",
+        home: recorderEnv.HOME ?? "",
+        user: recorderEnv.USER ?? "",
         runtimeInstructions: buildRuntimeInstructions({
           harness: "Kiro",
           model: variant.modelSelection.model,
