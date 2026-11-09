@@ -1,16 +1,10 @@
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import { expect } from "@alchemy.run/test";
+import * as Test from "@alchemy.run/test/Alchemy";
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Alchemy";
-import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
+import { AuthHttpError, edgeRetry, getJson, postJson, toCookieHeader } from "../http.ts";
 import AuthWorker from "./fixtures/auth-worker.ts";
-import {
-  AuthHttpError,
-  edgeRetry,
-  getJson,
-  postJson,
-  toCookieHeader,
-} from "../http.ts";
 
 const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
   providers: Cloudflare.providers(),
@@ -45,9 +39,7 @@ test(
       name: "D1 User",
     }).pipe(
       Effect.filterOrFail(
-        (response) =>
-          response.status === 200 ||
-          response.body.includes("USER_ALREADY_EXISTS"),
+        (response) => response.status === 200 || response.body.includes("USER_ALREADY_EXISTS"),
         (response) => new AuthHttpError({ url, ...response }),
       ),
       edgeRetry,
@@ -76,12 +68,7 @@ test(
     expect(anonymous.email).toBeNull();
   }),
   {
-    tags: [
-      "provider:cloudflare",
-      "provider:cloudflare:d1",
-      "provider:cloudflare:worker",
-      "live",
-    ],
+    tags: ["provider:cloudflare", "provider:cloudflare:d1", "provider:cloudflare:worker", "live"],
     timeout: 120_000,
   },
 );
@@ -93,18 +80,11 @@ test(
     // the migration Action's input hash unchanged (no re-migration, no
     // failure on existing tables).
     const { url } = yield* deploy(Stack);
-    const me = yield* getJson<{ email: string | null }>(`${url}/me`).pipe(
-      edgeRetry,
-    );
+    const me = yield* getJson<{ email: string | null }>(`${url}/me`).pipe(edgeRetry);
     expect(me.email).toBeNull();
   }),
   {
-    tags: [
-      "provider:cloudflare",
-      "provider:cloudflare:d1",
-      "provider:cloudflare:worker",
-      "live",
-    ],
+    tags: ["provider:cloudflare", "provider:cloudflare:d1", "provider:cloudflare:worker", "live"],
     timeout: 120_000,
   },
 );

@@ -1,12 +1,12 @@
-import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Test from "alchemy/Test/Bun";
 import { expect } from "bun:test";
+import * as Cloudflare from "@alchemy.run/cloudflare";
+import * as Test from "@alchemy.run/test/Bun";
+import * as Alchemy from "alchemy";
 import * as Console from "effect/Console";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as Schedule from "effect/Schedule";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 
 const { getWhenReady, executeWhenReady } = Test;
@@ -27,10 +27,7 @@ const getBodyWhenReady = (url: string, expected: string) =>
   }).pipe(
     Effect.retry({
       while: (error) => error instanceof AssetNotReady,
-      schedule: Schedule.min([
-        Schedule.exponential("500 millis"),
-        Schedule.spaced("5 seconds"),
-      ]),
+      schedule: Schedule.min([Schedule.exponential("500 millis"), Schedule.spaced("5 seconds")]),
       times: 10,
     }),
   );
@@ -72,10 +69,7 @@ test(
   "serves the server-rendered home page",
   Effect.gen(function* () {
     const url = yield* base;
-    const html = yield* getBodyWhenReady(
-      url,
-      "Hello from vinext on Cloudflare!",
-    );
+    const html = yield* getBodyWhenReady(url, "Hello from vinext on Cloudflare!");
     expect(html).toContain('data-testid="increment"');
   }),
   { timeout: 180_000 },
@@ -85,10 +79,7 @@ test(
   "serves the static page",
   Effect.gen(function* () {
     const url = yield* base;
-    const html = yield* getBodyWhenReady(
-      `${url}/static`,
-      "Prerendered at deploy",
-    );
+    const html = yield* getBodyWhenReady(`${url}/static`, "Prerendered at deploy");
     expect(html).toContain("This page is statically generated.");
   }),
   { timeout: 180_000 },
@@ -103,9 +94,7 @@ test(
     expect(html).toContain("Refresh cache now");
 
     const stamp = (body: string) => {
-      const match = body.match(
-        /data-testid="isr-time"[^>]*>[\s\S]*?<time dateTime="([^"]+)"/,
-      );
+      const match = body.match(/data-testid="isr-time"[^>]*>[\s\S]*?<time dateTime="([^"]+)"/);
       return match?.[1]?.trim();
     };
     const first = stamp(html);
@@ -179,9 +168,7 @@ test(
     const url = yield* base;
     const title = "vinext-d1-note";
     const created = yield* executeWhenReady(
-      HttpClientRequest.post(`${url}/api/notes`).pipe(
-        HttpClientRequest.bodyJsonUnsafe({ title }),
-      ),
+      HttpClientRequest.post(`${url}/api/notes`).pipe(HttpClientRequest.bodyJsonUnsafe({ title })),
     );
     expect(created.status).toBe(201);
     const listed = yield* getWhenReady(`${url}/api/notes`);
@@ -212,9 +199,7 @@ test(
   Effect.gen(function* () {
     const url = yield* base;
     const put = yield* executeWhenReady(
-      HttpClientRequest.put(`${url}/api/kv/ping`).pipe(
-        HttpClientRequest.bodyText("pong"),
-      ),
+      HttpClientRequest.put(`${url}/api/kv/ping`).pipe(HttpClientRequest.bodyText("pong")),
     );
     expect(put.status).toBe(201);
     const res = yield* getWhenReady(`${url}/api/kv/ping`);
