@@ -6009,6 +6009,66 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
         original.id,
       );
+      // Near misses: a wake completed after the reset, or a run a user message started, did work.
+      const assertLatest = Effect.fnUntraced(function* (runId: RunId) {
+        const projection = yield* store.getThreadProjection(threadId);
+        assert.equal(ProjectionStore.threadShellFromProjection(projection).latestRunId, runId);
+        assert.equal(
+          (yield* store.getShellSnapshot()).threads.find((row) => row.id === threadId)!.latestRunId,
+          runId,
+        );
+      });
+      const setWakeCompletedAt = (completedAt: DateTime.Utc) =>
+        store.apply({
+          id: EventId.make(`event:limit-shell:wake-at-${DateTime.formatIso(completedAt)}`),
+          type: "run.updated",
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            ...wakeProjection.runs.find((run) => run.id === wakeRunId)!,
+            completedAt,
+          },
+        });
+      yield* setWakeCompletedAt(DateTime.makeUnsafe("2099-01-02T00:00:00.000Z"));
+      yield* assertLatest(wakeRunId);
+      yield* setWakeCompletedAt(DateTime.add(now, { minutes: 1 }));
+      yield* assertLatest(original.id);
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:wake-user-start"),
+        type: "turn-item.updated",
+        threadId,
+        runId: wakeRunId,
+        nodeId: wakeNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: TurnItemId.make("limit-shell:wake-user-start"),
+          threadId,
+          runId: wakeRunId,
+          nodeId: wakeNodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 3,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: MessageId.make("message:limit-shell:wake"),
+          inputIntent: "turn_start",
+          text: "a real request",
+          attachments: [],
+        },
+      });
+      yield* assertLatest(wakeRunId);
       const sql = yield* SqlClient.SqlClient;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${wakeRunId}`;
       yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${aheadRunId}`;

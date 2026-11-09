@@ -11202,12 +11202,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const { runs, subagents } = input.projection;
     let { thread } = input.projection;
     let recovery = thread.limitRecovery;
-    const { turnItems } = yield* projectionStore
-      .getThreadRecords(thread.id, ["turnItems"], {
-        turnItemTypes: ["user_message", "error", "notification"],
-      })
-      .pipe(mapDispatchError(input.command));
-    // Stop must also disarm a limited run that completed notification wakes hide.
+    // Stop must also disarm a limited run that completed notification wakes hide. Only the
+    // latest failure's errors and the inputs of runs completed before its reset can matter.
+    const readItems = (filter: Parameters<typeof projectionStore.getThreadRecords>[2]) =>
+      projectionStore
+        .getThreadRecords(thread.id, ["turnItems"], filter)
+        .pipe(mapDispatchError(input.command));
+    const failed = latestExecutedRun(runs.filter((run) => run.status === "failed"));
+    const errors =
+      failed === null
+        ? []
+        : (yield* readItems({ turnItemTypes: ["error"], turnItemRunIds: [failed.id] })).turnItems;
+    const resetAt = latestRootProviderFailure(failed, errors)?.resetAt;
+    const resetMs = resetAt == null ? Number.NaN : Date.parse(resetAt);
+    const wakeRunIds = runs
+      .filter(
+        (run) =>
+          run.status === "completed" &&
+          run.completedAt !== null &&
+          DateTime.toEpochMillis(run.completedAt) <= resetMs,
+      )
+      .map((run) => run.id);
+    const inputs =
+      wakeRunIds.length === 0
+        ? []
+        : (yield* readItems({
+            turnItemTypes: ["user_message", "notification"],
+            turnItemRunIds: wakeRunIds,
+          })).turnItems;
+    const turnItems = [...errors, ...inputs];
     const latest = usageLimitBlockedRun(runs, turnItems, null) ?? latestExecutedRun(runs);
     if (latest?.status === "failed") {
       const failure = latestRootProviderFailure(latest, turnItems);
