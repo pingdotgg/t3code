@@ -143,6 +143,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
         onLayout={updateScrollFade}
         onScroll={updateScrollFade}
         onReady={updateScrollFade}
+        // Legend counts style padding (not class padding) in its size, end state and row positions.
         style={{ paddingTop: 8, paddingBottom: 8 }}
         contentContainerClassName="px-2"
         className={cn(
