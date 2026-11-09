@@ -38,7 +38,7 @@ import {
   mergePullRequestThreadComments,
   visibleBody,
 } from "./pullRequestDetail.logic";
-import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { AddToChatIconButton, PullRequestActorLabel } from "./pullRequestPresentation";
 import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -356,6 +356,13 @@ export function ReviewThreadCard({
                     aria-label="Edit comment"
                     onClick={() => setEditingId(comment.id)}
                   />
+                ) : null}
+                {index === 0 &&
+                onAddToChat &&
+                comments.some((comment) => visibleBody(comment.body) !== null) ? (
+                  <span className="ml-auto">
+                    <AddToChatIconButton onClick={() => onAddToChat({ ...thread, comments })} />
+                  </span>
                 ) : null}
               </div>
               {editingId === comment.id ? (
