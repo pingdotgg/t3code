@@ -14,7 +14,7 @@ import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsL
 import { searchableSetting } from "./settingsSearch";
 import { LegacyFeaturesSection } from "./SettingsPanels";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
-import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import { firstManagedDenial, usePrimaryManagedPolicy } from "~/state/managedPolicy";
 
 /** Features still settling in, and legacy behavior kept for people who rely on it. */
@@ -29,6 +29,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <SimlockHostsRow />
+        <FastWorktreeCheckoutRow />
       </SettingsSection>
       <LegacyFeaturesSection />
     </SettingsPageContainer>
@@ -242,6 +243,39 @@ function SimlockHostsRow() {
             updateSettings({ simlockDeviceHostsEnabled: Boolean(checked) })
           }
           aria-label="Simlock device hosts"
+        />
+      }
+    />
+  );
+}
+
+/** Shows only when every machine in scope is a Mac, since only macOS servers honor it. */
+function FastWorktreeCheckoutRow() {
+  const { scope, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  if (
+    scope.kind === "project" ||
+    scope.kind === "checkout" ||
+    connectedEnvironments.length === 0 ||
+    connectedEnvironments.some(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.fastWorktreeCheckout !== true,
+    )
+  )
+    return null;
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("worktree-fast-checkout")}
+      settingKeys={["fastWorktreeCheckout"]}
+      description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+      control={
+        <ScopedSwitch
+          settingKeys={["fastWorktreeCheckout"]}
+          checked={settings.fastWorktreeCheckout}
+          onCheckedChange={(checked) => updateSettings({ fastWorktreeCheckout: Boolean(checked) })}
+          aria-label="Fast worktree checkout"
         />
       }
     />
