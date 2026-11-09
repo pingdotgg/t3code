@@ -60,11 +60,12 @@ it("does not slide rows from positions measured before a window resize", () => {
   expect(fixture.list.getAnimations({ subtree: true })).toHaveLength(0);
 });
 
-it("does not queue drag-release motion while the document is hidden", () => {
+it("does not replay a drag release that ended while the document was hidden", () => {
   using fixture = mountList(["a", "b"]);
-  using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+  using visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
   fixture.motion.release();
+  visibility.mockReturnValue("visible");
   fixture.list.prepend(fixture.rows.get("b")!);
-  fixture.motion.update(true);
+  fixture.motion.update(false);
   expect(fixture.list.getAnimations({ subtree: true })).toHaveLength(0);
 });

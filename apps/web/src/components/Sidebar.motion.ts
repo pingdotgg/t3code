@@ -228,7 +228,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         }
       }
       if (released !== null) {
-        if (document.visibilityState === "visible" && !reducedMotion?.matches) {
+        if (!reducedMotion?.matches) {
           for (const [node, position] of next) {
             const top = released.get(node);
             if (top !== undefined) move(node, top - position.top);
@@ -240,6 +240,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     },
     release() {
       suspend();
+      if (document.visibilityState !== "visible") return;
       const origin = parent.getBoundingClientRect().top;
       released = new Map(
         Array.from(parent.children)
