@@ -125,7 +125,7 @@ describe("thread links", () => {
       expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
         `[Renamed](<t3-thread://v2/there/${threadId}>)`,
       );
-      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+      expect(relabelThreadLinks(link, local, () => undefined)).toBe(link);
     }
   });
 
