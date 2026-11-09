@@ -132,9 +132,6 @@ export function TextGeneratorsSettings({
               control={
                 readOnly ? null : (
                   <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setEditing({ id, config })}>
-                      Edit
-                    </Button>
                     <Menu>
                       <MenuTrigger
                         render={
@@ -148,6 +145,7 @@ export function TextGeneratorsSettings({
                         <MoreVertical />
                       </MenuTrigger>
                       <MenuPopup align="end">
+                        <MenuItem onClick={() => setEditing({ id, config })}>Edit</MenuItem>
                         <MenuItem
                           disabled={!config.enabled}
                           onClick={() => setViewing({ id, config })}
@@ -577,8 +575,15 @@ function TextGenerationTaskPicker({
             disabled={testing}
             onClick={() => void test()}
           >
-            {testing ? <Spinner /> : null}
-            {testing ? "Testing" : "Test"}
+            {/* Keeps the label's width while testing, so the row never reflows. */}
+            <span className="relative">
+              <span className={testing ? "invisible" : undefined}>Test</span>
+              {testing ? (
+                <span className="absolute inset-0 flex items-center justify-center">
+                  <Spinner />
+                </span>
+              ) : null}
+            </span>
           </Button>
         ) : null}
       </div>

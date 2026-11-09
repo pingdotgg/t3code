@@ -582,7 +582,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "speech-post-processing",
-    title: "Clean up transcripts with a provider",
+    title: "Clean up transcripts",
     to: "/settings/voice",
     searchTerms: ["speech transcription polish clean provider prompt post-processing"],
   },

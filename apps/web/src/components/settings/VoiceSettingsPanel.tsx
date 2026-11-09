@@ -1533,11 +1533,11 @@ export function VoiceSettingsPanel() {
 
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
-          title="Clean up transcripts with a provider"
-          description="Sends the transcript and nearby draft text to the text generation provider on the draft’s environment to fix punctuation, numbers, and spoken corrections. Sends text only; off by default."
+          title="Clean up transcripts"
+          description="Fixes punctuation, numbers, and spoken corrections with the cleanup model on the draft’s environment. Sends the transcript and nearby draft text, never audio."
           control={
             <Switch
-              aria-label="Clean up transcripts with a provider"
+              aria-label="Clean up transcripts"
               checked={cleanupEnabled}
               onCheckedChange={chooseTranscriptCleanup}
             />
