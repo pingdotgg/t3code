@@ -3030,7 +3030,7 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 });
 
-export const WSL_RUNTIME_ARCHIVE_ROOT = "t3";
+const WSL_RUNTIME_ARCHIVE_ROOT = "t3";
 
 const GNU_WSL_RUNTIME_REPACK_TOOLS = [
   { name: "GNU tar", command: "tar", version: /\bGNU tar\b/ },
@@ -3060,27 +3060,31 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
     return yield* new WslRuntimeArchiveMissingError({ archivePath: input.sourceArchivePath });
   }
 
-  const toolVersions = yield* Effect.forEach(
+  const missingTools = yield* Effect.filter(
     GNU_WSL_RUNTIME_REPACK_TOOLS,
     (tool) =>
-      spawner
-        .string(ChildProcess.make(tool.command, ["--version"], { stdin: "ignore" }))
-        .pipe(Effect.orElseSucceed(() => "")),
+      spawner.string(ChildProcess.make(tool.command, ["--version"], { stdin: "ignore" })).pipe(
+        Effect.map((version) => !tool.version.test(version)),
+        Effect.orElseSucceed(() => true),
+      ),
     { concurrency: "unbounded" },
   );
-  const missingTools = GNU_WSL_RUNTIME_REPACK_TOOLS.filter(
-    (tool, index) => !tool.version.test(toolVersions[index] ?? ""),
-  ).map((tool) => tool.name);
   if (missingTools.length > 0) {
     return yield* new WslRuntimeArchiveStagingError({
       archivePath: input.sourceArchivePath,
       reason: "tools-missing",
-      missingTools,
+      missingTools: missingTools.map((tool) => tool.name),
     });
   }
 
-  const runTar = (args: ReadonlyArray<string>) =>
-    spawnAndCollectOutput(
+  const repackFailed = (detail: string) =>
+    new WslRuntimeArchiveStagingError({
+      archivePath: input.sourceArchivePath,
+      reason: "repack-failed",
+      detail,
+    });
+  const runTar = Effect.fn("stageWslRuntimeArchive.tar")(function* (args: ReadonlyArray<string>) {
+    const result = yield* spawnAndCollectOutput(
       ChildProcess.make("tar", args, {
         // GNU tar's --sort=name follows the locale's collation.
         env: { LC_ALL: "C" },
@@ -3089,27 +3093,11 @@ export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(functi
         stdout: "pipe",
         stderr: "pipe",
       }),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new WslRuntimeArchiveStagingError({
-            archivePath: input.sourceArchivePath,
-            reason: "repack-failed",
-            detail: String(cause),
-          }),
-      ),
-      Effect.flatMap((result) =>
-        result.exitCode === 0
-          ? Effect.void
-          : Effect.fail(
-              new WslRuntimeArchiveStagingError({
-                archivePath: input.sourceArchivePath,
-                reason: "repack-failed",
-                detail: `tar exited ${String(result.exitCode)}: ${result.stderr.trim()}`,
-              }),
-            ),
-      ),
-    );
+    ).pipe(Effect.mapError((cause) => repackFailed(String(cause))));
+    if (result.exitCode !== 0) {
+      return yield* repackFailed(`tar exited ${String(result.exitCode)}: ${result.stderr.trim()}`);
+    }
+  });
 
   yield* Effect.scoped(
     Effect.gen(function* () {
