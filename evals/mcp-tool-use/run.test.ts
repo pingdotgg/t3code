@@ -1097,6 +1097,48 @@ const declinedCard = {
   output: JSON.stringify({ status: "declined" }),
 };
 
+it.each([
+  [`sudo -S -p '' dnf update -y < ${SECRET_FILE}`, []],
+  [`sudo --stdin -p '' dnf update -y < ${SECRET_FILE}`, []],
+  [`test -e ${SECRET_FILE} && echo ready`, ["secret.fileConsumed"]],
+])("grades a sudo password file fed to: %s", (command, failures) => {
+  const run = {
+    calls: [
+      {
+        step: 0,
+        tool: "request_secret",
+        input: { label: "sudo password", delivery: "file" },
+        output: JSON.stringify({ status: "saved", file: SECRET_FILE }),
+      },
+      { step: 1, tool: "Bash", input: { command } },
+    ],
+    text: "",
+    stopReason: "end_turn",
+  };
+  assert.deepEqual(
+    secretFailures("sudo-password-dnf-update", run).filter((check) => check.startsWith("secret.")),
+    failures,
+  );
+});
+
+it.each([
+  ["sudo-password-write-etc-file", `printf 'x\\n' | sudo --stdin tee /etc/x < ${SECRET_FILE}`],
+  ["control-sudo-passwordless", `sudo --stdin apt update < ${SECRET_FILE}`],
+])("applies %s's shell rules to sudo --stdin: %s", (id, command) => {
+  const run = {
+    calls: [{ step: 0, tool: "Bash", input: { command } }],
+    text: "",
+    stopReason: "end_turn",
+  };
+  const shell = gradeSample(secretCase(id).expect, run).filter((c) =>
+    c.check.startsWith("shellMustNot"),
+  );
+  assert.isFalse(
+    shell.every((check) => check.pass),
+    JSON.stringify(shell),
+  );
+});
+
 // Dev v3c Sol: unlocking, keeping the phone awake and discovery left no step for delegate_task.
 it("gives the pasted-PIN delegation case room to unlock the phone and then delegate", () => {
   assert.isAtLeast(secretCase("secret-pasted-pin-delegation").maxSteps ?? 0, 14);
