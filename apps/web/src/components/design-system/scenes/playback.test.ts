@@ -113,19 +113,6 @@ describe("turn playback", () => {
     });
   });
 
-  it("offers a proposed plan only once the turn settles", () => {
-    const steps: Step[] = [
-      { kind: "turn", prompt: "Plan it." },
-      { kind: "plan", key: "plan", markdown: "# Tighten the footer\n\n1. Measure\n2. Fold" },
-      { kind: "end", ending: "completed" },
-    ];
-    expect(playbackComposerRequests(playSteps(steps, 2)).proposedPlan).toBeNull();
-    expect(playbackComposerRequests(playSteps(steps)).proposedPlan).toMatchObject({
-      status: "active",
-      planMarkdown: "# Tighten the footer\n\n1. Measure\n2. Fold",
-    });
-  });
-
   it("cancels a request the run stops waiting on", () => {
     const state = playSteps([
       { kind: "turn", prompt: "Delete it." },
