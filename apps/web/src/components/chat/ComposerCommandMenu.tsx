@@ -7,6 +7,7 @@ import {
   type EnvironmentMachineKind,
   type ProjectEntry,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type PullRequestContextMetadata,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -18,10 +19,8 @@ import {
   BoxIcon,
   CornerDownLeftIcon,
   EraserIcon,
-  HammerIcon,
   MessageCircleQuestionIcon,
   MessagesSquareIcon,
-  PencilRulerIcon,
   SearchXIcon,
   TerminalIcon,
   type LucideIcon,
@@ -36,6 +35,8 @@ import {
 } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
@@ -43,6 +44,7 @@ import { Kbd } from "../ui/kbd";
 import { Spinner } from "../ui/spinner";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
 export type ComposerCommandItem = {
@@ -92,6 +94,7 @@ export type ComposerCommandItem = {
       id: string;
       type: "thread";
       thread: ScopedThreadRef;
+      updatedAt?: string | undefined;
       label: string;
       description: string;
     }
@@ -100,6 +103,18 @@ export type ComposerCommandItem = {
       type: "environment";
       environmentId: EnvironmentId;
       machine: EnvironmentMachineKind;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "model";
+      instanceId: ProviderInstanceId;
+      model: string;
+      driverKind: ProviderDriverKind;
+      providerDisplayName: string;
+      acpRegistryAgentId: string | undefined;
+      acpRegistryIconUrl: string | undefined;
       label: string;
       description: string;
     }
@@ -143,6 +158,8 @@ function composerCommandItemGroup(
       return { key: "threads", label: "Threads" };
     case "environment":
       return { key: "environments", label: "Machines" };
+    case "model":
+      return { key: "models", label: "Models" };
   }
 }
 
@@ -171,8 +188,6 @@ export function groupComposerCommandItems(
 const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
   model: BoxIcon,
   clear: EraserIcon,
-  plan: PencilRulerIcon,
-  default: HammerIcon,
   side: MessageCircleQuestionIcon,
   btw: MessageCircleQuestionIcon,
 };
@@ -403,6 +418,17 @@ function ComposerCommandItemIcon(props: {
       return <TerminalIcon aria-hidden="true" className={iconClassName} />;
     case "skill":
       return <BoxIcon aria-hidden="true" className={iconClassName} />;
+    case "model":
+      return (
+        <ProviderInstanceIcon
+          driverKind={item.driverKind}
+          displayName={item.providerDisplayName}
+          acpRegistryAgentId={item.acpRegistryAgentId}
+          acpRegistryIconUrl={item.acpRegistryIconUrl}
+          className="size-[15px] shrink-0"
+          iconClassName="size-[15px]"
+        />
+      );
   }
 }
 
@@ -466,7 +492,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </span>
       </span>
 
-      {props.item.metadata ? (
+      {props.item.type === "thread" && props.item.updatedAt ? (
+        <ComposerThreadAge updatedAt={props.item.updatedAt} />
+      ) : props.item.metadata ? (
         <span className="shrink-0 text-meta text-dim-foreground">{props.item.metadata}</span>
       ) : null}
       {pullRequestPresentation ? (
@@ -489,6 +517,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     </CommandItem>
   );
 });
+
+function ComposerThreadAge({ updatedAt }: { updatedAt: string }) {
+  const nowMinute = useNowMinute();
+  return (
+    <span className="shrink-0 text-meta text-dim-foreground">
+      {formatRelativeTimeLabel(updatedAt, Date.parse(`${nowMinute}:00.000Z`))}
+    </span>
+  );
+}
 
 export function composerSuggestionOptionId(listId: string, itemId: string): string {
   // JSON escapes lone UTF-16 surrogates before URI encoding without losing identity.

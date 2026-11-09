@@ -9,6 +9,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderSessionId,
+  ProviderTurnId,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2TurnItem,
@@ -238,6 +239,20 @@ describe("initial user input drafts", () => {
     expect(seedUserInputDraftAnswers(questions, {}).editor).toEqual({
       customAnswer: "  Proposed commit\n\n",
     });
+  });
+
+  it("seeds a question with the id __proto__ as its own draft", () => {
+    const seeded = seedUserInputDraftAnswers(
+      [
+        { id: "__proto__", initialAnswer: "Proposed" },
+        { id: "name", initialAnswer: "Control" },
+      ],
+      {},
+    );
+
+    expect(JSON.stringify(seeded)).toBe(
+      '{"__proto__":{"customAnswer":"Proposed"},"name":{"customAnswer":"Control"}}',
+    );
   });
 });
 const projection: OrchestrationV2ThreadProjection = {
@@ -691,6 +706,14 @@ describe("pending v2 approvals", () => {
           nativeItemRef: { ...nativeItemRef, nativeId: "item-8" },
           type: "file_change",
           fileName: "src/other.ts",
+        },
+        {
+          ...base,
+          id: TurnItemId.make("previous-turn-file-change"),
+          providerTurnId: ProviderTurnId.make("previous-turn"),
+          nativeItemRef,
+          type: "file_change",
+          fileName: "src/previous.ts",
         },
         {
           ...base,

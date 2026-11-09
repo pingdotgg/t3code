@@ -401,8 +401,8 @@ export const make = Effect.gen(function* () {
     if (yield* Ref.get(desktopState.quitting)) return Option.none();
     const window = yield* electronWindow.create({
       ...initialBounds,
-      minWidth: 840,
-      minHeight: 620,
+      minWidth: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.width,
+      minHeight: DesktopAppSettings.MIN_MAIN_WINDOW_SIZE.height,
       show: false,
       autoHideMenuBar: true,
       ...(environment.platform === "darwin" ? { disableAutoHideCursor: true } : {}),
@@ -714,7 +714,11 @@ export const make = Effect.gen(function* () {
             const settings = yield* clientSettings.get.pipe(
               Effect.orElseSucceed(() => Option.none()),
             );
-            if (Option.isSome(settings) && settings.value.layoutThreeFingerSwipe) {
+            if (
+              Option.isSome(settings) &&
+              settings.value.layoutThreeFingerSwipe &&
+              settings.value.scrollingWorkspacesEnabled
+            ) {
               window.webContents.send(MENU_ACTION_CHANNEL, `layout-swipe-${direction}`);
               return;
             }

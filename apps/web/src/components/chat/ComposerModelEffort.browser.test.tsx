@@ -6,11 +6,15 @@ import {
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { useState } from "react";
-import { expect, it } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { ComposerEffortColumn, describeComposerEffort } from "./ComposerModelEffort";
+import {
+  ComposerEffortColumn,
+  ComposerReasoningPicker,
+  describeComposerEffort,
+} from "./ComposerModelEffort";
 import type { TraitsSelectionInput } from "./TraitsPicker";
 
 // Shaped like Devin over ACP: its session mode comes first, and its reasoning id is its own.
@@ -70,7 +74,6 @@ function traitsInput(
     models,
     model: "fusion",
     modelOptions,
-    planModeEnabled: false,
     onModelOptionsChange,
   };
 }
@@ -122,4 +125,53 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .element(screen.getByRole("button", { name: "Session Mode: Plan" }))
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
+});
+
+it("shows Ultracode on the reasoning trigger after enabling it", async () => {
+  const onModelOptionsChange = vi.fn();
+  const traits: TraitsSelectionInput = {
+    provider: ProviderDriverKind.make("acpRegistry"),
+    instanceId: ProviderInstanceId.make("devin"),
+    model: "workflow",
+    models: [
+      {
+        slug: "workflow",
+        name: "Workflow",
+        isCustom: false,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              currentValue: "high",
+              options: [{ id: "high", label: "High" }],
+            },
+            { id: "ultracode", label: "Ultracode", type: "boolean", currentValue: false },
+          ],
+        }),
+      },
+    ],
+    onModelOptionsChange,
+  };
+  await using screen = await render(
+    <ComposerReasoningPicker traits={traits} effortDisplay="bars" size="sm" disabled={false} />,
+  );
+  await screen.getByRole("button", { name: "Reasoning: High", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "On", exact: true }).click();
+  expect(onModelOptionsChange).toHaveBeenCalledExactlyOnceWith([
+    { id: "effort", value: "high" },
+    { id: "ultracode", value: true },
+  ]);
+  await screen.rerender(
+    <ComposerReasoningPicker
+      traits={{ ...traits, modelOptions: [{ id: "ultracode", value: true }] }}
+      effortDisplay="bars"
+      size="sm"
+      disabled={false}
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: /Reasoning: High.*Ultracode/ });
+  await expect.element(trigger).toBeVisible();
+  expect(trigger.element().querySelector("[data-composer-control-icon]")).not.toBeNull();
 });

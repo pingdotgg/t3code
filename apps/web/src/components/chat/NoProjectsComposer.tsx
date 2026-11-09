@@ -6,7 +6,6 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type ProviderInstanceId,
-  type ProviderInteractionMode,
   type RuntimeMode,
   type ServerProvider,
   ThreadId,
@@ -29,7 +28,6 @@ import { resolveAppModelSelectionForInstance } from "../../modelSelection";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
-import { DEFAULT_INTERACTION_MODE } from "../../types";
 import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
 import { ComposerSurface } from "./ComposerSurface";
 import { NoProjectChip } from "./NoProjectChip";
@@ -67,17 +65,10 @@ export function NoProjectsComposer({
   const draftRuntimeMode = useComposerDraftStore(
     (store) => store.getComposerDraft(NO_PROJECTS_DRAFT_ID)?.runtimeMode ?? null,
   );
-  const draftInteractionMode = useComposerDraftStore(
-    (store) => store.getComposerDraft(NO_PROJECTS_DRAFT_ID)?.interactionMode ?? null,
-  );
   const setModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setStickyModelSelection = useComposerDraftStore((store) => store.setStickyModelSelection);
   const setRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
-  const setInteractionMode = useComposerDraftStore((store) => store.setInteractionMode);
   const runtimeMode = draftRuntimeMode ?? defaultRuntimeMode;
-  const interactionMode = settings.planModeEnabled
-    ? (draftInteractionMode ?? DEFAULT_INTERACTION_MODE)
-    : DEFAULT_INTERACTION_MODE;
 
   // Like a fresh draft, the composer starts on the last model picked anywhere.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Initialize this mounted composer from the external persisted sticky draft store.
@@ -134,11 +125,6 @@ export function NoProjectsComposer({
     setRuntimeMode(NO_PROJECTS_DRAFT_ID, mode);
     scheduleComposerFocus();
   };
-  const handleInteractionModeChange = (mode: ProviderInteractionMode) => {
-    if (mode === "plan" && !settings.planModeEnabled) return;
-    setInteractionMode(NO_PROJECTS_DRAFT_ID, mode);
-    scheduleComposerFocus();
-  };
   const openProviderSetup = (instanceId: ProviderInstanceId) => {
     void navigate({ to: "/settings/providers", search: { environmentId, instanceId } });
   };
@@ -171,7 +157,6 @@ export function NoProjectsComposer({
           activeThreadId={null}
           activeProjectId={null}
           activeThread={undefined}
-          activeThreadShell={null}
           promptHistoryEntries={EMPTY_ENTRIES}
           forceExpandedOnMobile={false}
           projectSelectionRequired={false}
@@ -195,25 +180,17 @@ export function NoProjectsComposer({
           activePendingDraftAnswers={{}}
           activePendingQuestionIndex={0}
           respondingRequestIds={[]}
-          showPlanFollowUpPrompt={false}
-          activeProposedPlan={null}
-          threadSyncPhase={null}
           workspaceFileDragActive={false}
           runtimeMode={runtimeMode}
           defaultRuntimeMode={defaultRuntimeMode}
           permissionsShownInStrip={false}
-          interactionMode={interactionMode}
           lockedProvider={null}
           providerStatuses={providerStatuses as ServerProvider[]}
           providerCatalogKnown={serverConfig !== null}
           activeProjectDefaultModelSelection={defaultModelSelection}
           activeThreadModelSelection={undefined}
-          contextWindowEntries={EMPTY_ENTRIES}
-          contextWindowLiveUsage={null}
-          contextWindowProviderThread={null}
           compactThreadUnavailable
           compactDisabled
-          compactDisabledReason={NO_PROJECT_REASON}
           resolvedTheme={resolvedTheme}
           settings={settings}
           keybindings={keybindings}
@@ -237,7 +214,6 @@ export function NoProjectsComposer({
           onSend={onStartWithoutProject ?? noop}
           onResume={noop}
           onInterrupt={noop}
-          onImplementPlanInNewThread={noop}
           onSelectActivePendingUserInputOption={noop}
           onAdvanceActivePendingUserInput={noop}
           onDismissActivePendingUserInput={noop}
@@ -246,11 +222,7 @@ export function NoProjectsComposer({
           onProviderModelSelect={onProviderModelSelect}
           onOpenProviderSetup={openProviderSetup}
           getModelDisabledReason={() => null}
-          toggleInteractionMode={() =>
-            handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan")
-          }
           handleRuntimeModeChange={handleRuntimeModeChange}
-          handleInteractionModeChange={handleInteractionModeChange}
           focusComposer={() => composerRef.current?.focusAtEnd()}
           scheduleComposerFocus={scheduleComposerFocus}
           setThreadError={noop}

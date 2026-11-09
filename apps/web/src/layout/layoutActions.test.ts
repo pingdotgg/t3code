@@ -21,7 +21,11 @@ import {
   selectFocusedTab,
   type LayoutTabContent,
 } from "./layoutModel";
-import { subscribeLayoutThreadsClosedByUser, useLayoutStore } from "./layoutStore";
+import {
+  runInNewLayoutTab,
+  subscribeLayoutThreadsClosedByUser,
+  useLayoutStore,
+} from "./layoutStore";
 
 const parent: LayoutTabContent = { kind: "chat", target: { kind: "server", threadRef: parentRef } };
 const subagent: LayoutTabContent = {
@@ -84,5 +88,38 @@ describe("closeLayoutTabByUser", () => {
     using layout = setup([other, subagent]);
     closeOtherLayoutTabsByUser(layout.tabOf(other)!.id);
     expect(layout.chats()).toEqual([other]);
+  });
+
+  it.each([{ contents: [subagent, other] }, { contents: [parent, subagent, other] }])(
+    "closes a background subagent tab without opening or focusing its parent: $contents",
+    ({ contents }) => {
+      using layout = setup(contents);
+      const focused = selectFocusedTab(useLayoutStore.getState().layout);
+      closeLayoutTabByUser(layout.tabOf(subagent)!.id);
+      expect(selectFocusedTab(useLayoutStore.getState().layout)).toBe(focused);
+      expect(layout.chats()).toEqual(contents.filter((content) => content !== subagent));
+    },
+  );
+});
+
+describe("runInNewLayoutTab", () => {
+  it("keeps a later new tab request when an earlier one settles", async () => {
+    vi.useFakeTimers();
+    try {
+      let finishFirst = () => {};
+      const first = runInNewLayoutTab(
+        () => new Promise<void>((resolve) => (finishFirst = resolve)),
+      );
+      // The first route rendered and took its request.
+      useLayoutStore.getState().clearNewTabRequest();
+      void runInNewLayoutTab(() => new Promise<void>(() => {}));
+      finishFirst();
+      await first;
+      vi.runAllTimers();
+      expect(useLayoutStore.getState().newTabRequest).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+      useLayoutStore.getState().clearNewTabRequest();
+    }
   });
 });

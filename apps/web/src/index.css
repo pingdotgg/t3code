@@ -396,7 +396,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     & [data-pane-notch-corner] {
       background: var(--chrome-art-paint);
       background-attachment: fixed;
-      background-blend-mode: var(--chrome-art-blend, normal);
     }
   }
 }
@@ -545,7 +544,6 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 [data-chrome-art] [data-pane-cut] > span > span {
   background: var(--chrome-art-paint);
   background-attachment: fixed;
-  background-blend-mode: var(--chrome-art-blend, normal);
 }
 
 /* PaneNotch lays out the tab with this tail as its end padding. */
@@ -1349,6 +1347,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background: var(--scrim);
 }
 
+/* Fades are read on the element that sets them. Not inherited, so toggling a
+   fade restyles the scroller alone and not every row in it. */
+@property --fade-size {
+  syntax: "*";
+  inherits: false;
+}
+@property --virtualized-scroll-fade-mask {
+  syntax: "*";
+  inherits: false;
+}
+
 /* Virtualizers own their native scroll element, so they cannot use ScrollArea's
    viewport fade. Keep the scrollbar lane opaque while sharing the same fade
    contract across those lists. */
@@ -1401,32 +1410,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* Nightly and Dev channel art behind the whole window chrome (pen Duxhn),
    painted by ChromeChannelArt. The paint is set on the art root
    (AppSidebarLayout's data-chrome-art) so other chrome surfaces can repaint
-   the same art. Background images load only for the element that renders them,
-   so each channel fetches one image per theme. Light, black chrome takes the
-   dark art like the rest of the chrome. */
-[data-chrome-art="nightly"] {
-  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise-light.jpg") center / cover no-repeat;
-}
-
-:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
-  --chrome-art-image: url("./assets/chrome/art-nightly-sunrise.jpg") center / cover no-repeat;
-}
-
-[data-chrome-art="nightly"] {
-  --chrome-art-paint: var(--chrome-art-image) var(--chrome-art-tint, transparent);
-}
-
-/* The drafting sheet: a faint 16px paper grid from the pane inset, in neutral
-   grays over the chrome color. The construction lines over it are
-   DevDraftingSheetMarks, drawn along the real UI edges and centers. */
-[data-chrome-art="dev"] {
+   the same art. Light, black chrome takes the dark art like the rest of the
+   chrome.
+   The art is a drafting sheet: a faint 16px paper grid from the pane inset
+   over the chrome color. The construction lines over it are
+   DraftingSheetMarks, drawn along the real UI edges and centers. Dev draws the
+   sheet in neutral grays; Nightly draws the same sheet in night indigo, a
+   little stronger. */
+[data-chrome-art] {
   --chrome-art-grid-major: #00000013;
   --chrome-art-grid-minor: #00000005;
   --chrome-art-mark: #00000026;
   --chrome-art-tint: var(--app-chrome-background);
-}
-
-[data-chrome-art="dev"] {
   --chrome-art-paint:
     repeating-linear-gradient(to right, var(--chrome-art-grid-minor) 0 1px, transparent 1px 16px)
       12px 12px,
@@ -1434,42 +1429,56 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       12px 12px var(--chrome-art-tint);
 }
 
-:root:is(.dark, .black-chrome) [data-chrome-art="dev"] {
+:root:is(.dark, .black-chrome) [data-chrome-art] {
   --chrome-art-grid-major: #ffffff13;
   --chrome-art-grid-minor: #ffffff05;
   --chrome-art-mark: #ffffff1f;
 }
 
-/* Named and custom themes tint the window art with their sidebar color, so the
-   chrome still reads as the chosen theme. Black chrome keeps the default dark
-   art for every theme. */
+[data-chrome-art="nightly"] {
+  --chrome-art-ink: oklch(0.47 0.2 277);
+}
+
+:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
+  --chrome-art-ink: oklch(0.7 0.17 277);
+}
+
+[data-chrome-art="nightly"],
+:root:is(.dark, .black-chrome) [data-chrome-art="nightly"] {
+  --chrome-art-grid-major: color-mix(in srgb, var(--chrome-art-ink) 26%, transparent);
+  --chrome-art-grid-minor: color-mix(in srgb, var(--chrome-art-ink) 9%, transparent);
+  --chrome-art-mark: color-mix(in srgb, var(--chrome-art-ink) 46%, transparent);
+}
+
+/* Named and custom themes draw the sheet in their own sidebar ink, so the
+   chrome still reads as the chosen theme; Nightly takes the theme's accent.
+   Black chrome keeps the default dark sheet for every theme. */
 html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   & [data-chrome-art] {
     --chrome-art-tint: var(--sidebar);
-  }
-
-  & [data-chrome-art="nightly"] {
-    --chrome-art-blend: luminosity;
-  }
-
-  & [data-chrome-art="dev"] {
     --chrome-art-grid-major: color-mix(in srgb, var(--sidebar-foreground) 7%, transparent);
     --chrome-art-grid-minor: color-mix(in srgb, var(--sidebar-foreground) 2%, transparent);
     --chrome-art-mark: color-mix(in srgb, var(--sidebar-foreground) 13%, transparent);
+  }
+
+  & [data-chrome-art="nightly"] {
+    --chrome-art-ink: var(--ring);
+    --chrome-art-grid-major: color-mix(in srgb, var(--chrome-art-ink) 26%, transparent);
+    --chrome-art-grid-minor: color-mix(in srgb, var(--chrome-art-ink) 9%, transparent);
+    --chrome-art-mark: color-mix(in srgb, var(--chrome-art-ink) 46%, transparent);
   }
 }
 
 [data-chrome-art-layer] {
   color: var(--chrome-art-mark);
   background: var(--chrome-art-paint);
-  background-blend-mode: var(--chrome-art-blend, normal);
 }
 
-/* The dev drafting marks (DevDraftingSheetMarks). Each mark is placed with
+/* The drafting marks (DraftingSheetMarks). Each mark is placed with
    the layout's own tokens: the titlebar controls (AppSidebarLayout), the inset
    pane (SidebarInset), and the sidebar rows and footer (ui/sidebar). The
    sidebar's marks slide with it on collapse, on the panel animation timing. */
-[data-chrome-art-layer="dev"] {
+[data-chrome-art-layer] {
   --bp-line: var(--chrome-art-grid-major);
   --bp-mark: var(--chrome-art-mark);
   --bp-control: var(--workspace-titlebar-control-size);
@@ -1607,13 +1616,13 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   }
 }
 
-[data-chrome-art][data-sidebar-state="collapsed"] > [data-chrome-art-layer="dev"] {
+[data-chrome-art][data-sidebar-state="collapsed"] > [data-chrome-art-layer] {
   --bp-pane-left: var(--workspace-pane-inset);
   --bp-sidebar-shift: calc(var(--sidebar-width) * -1);
 }
 
 [data-panel-animations="true"]
-  > [data-chrome-art-layer="dev"]
+  > [data-chrome-art-layer]
   :is([data-bp-sidebar], [data-bp-at="pane-left"]) {
   transition: translate var(--panel-animation-duration) ease-out;
 }
@@ -3163,6 +3172,175 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
+/* Classic keeps main's status colors and border weight on the redesign's extra surfaces. */
+html:root[data-theme-id="t3-code-classic"] {
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --success-tint: color-mix(in srgb, var(--success) 12%, transparent);
+  --info-tint: color-mix(in srgb, var(--info) 12%, transparent);
+  --info-alert-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 15%, transparent),
+    color-mix(in srgb, var(--info) 7%, transparent)
+  );
+  --info-alert-rim: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 40%, transparent),
+    color-mix(in srgb, var(--info) 10%, transparent)
+  );
+  --tool-error-icon: var(--error);
+  --destructive-fill-foreground: #ffffff;
+  --raised-fill: linear-gradient(var(--popover), var(--popover));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
+  --popover-rim: var(--raised-rim);
+  --card-settings-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 60%, transparent),
+    color-mix(in srgb, var(--card) 60%, transparent)
+  );
+  --tray-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 80%, transparent),
+    color-mix(in srgb, var(--card) 80%, transparent)
+  );
+  --composer-fill: linear-gradient(transparent, transparent);
+  --tray-stroke: var(--border);
+  --hairline: var(--border);
+  --divider: var(--border);
+  --table-row-rule: var(--border);
+  --sidebar-row-selected-fill: linear-gradient(
+    var(--sidebar-row-selected),
+    var(--sidebar-row-selected)
+  );
+  --sidebar-row-selected-rim: var(--sidebar-border);
+
+  @variant dark {
+    --info-foreground: var(--color-blue-400);
+    --success-foreground: var(--color-emerald-400);
+    --tool-error-icon: #fca5a5;
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"],
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope] {
+  --strong-foreground: var(--foreground);
+  --dim-foreground: var(--muted-foreground);
+  --sidebar-settled-title: var(--sidebar-muted-foreground);
+  --sidebar-settled-label: var(--sidebar-muted-foreground);
+  --sidebar-settled-meta: var(--sidebar-muted-foreground);
+  --sidebar-settled-pr: var(--sidebar-muted-foreground);
+  --code-gutter: var(--muted-foreground);
+  --search-line-number: var(--muted-foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar] {
+  --foreground: var(--app-theme-sidebar-foreground);
+  --muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-thread-title-foreground: var(--foreground);
+  --sidebar-shelf-foreground: var(--muted-foreground);
+  border-color: var(--sidebar-border);
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] > body {
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
+  --app-panel-fill: var(--background);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-card-settings-rim {
+  background: var(--card-settings-fill) padding-box;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-dialog {
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+  border-color: var(--border);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
+  background: color-mix(in srgb, var(--popover) 83.6%, transparent);
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+/* Main's blue is the lightest stop that keeps white button labels at AA contrast. */
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"] > body,
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"].black-chrome
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="soft-gradient"] {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 90%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"]:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  > body,
+html:root[data-theme-id="t3-code-classic"].black-chrome:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"]
+  :is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]) {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 92%, black) 50%,
+    color-mix(in srgb, var(--primary) 84%, black) 50%,
+    color-mix(in srgb, var(--primary) 95%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-settings-nav] {
+  --sidebar: light-dark(var(--app-theme-sidebar), var(--card));
+}
+
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
+  --background: #000000;
+  --foreground: #f1f3f7;
+  --muted-foreground: #a3a3a3;
+  --placeholder: #a3a3a3;
+  --card: color-mix(in srgb, var(--color-neutral-950) 97%, white);
+  --popover: var(--card);
+  --primary: oklch(0.571 0.21 264);
+  --primary-foreground: #ffffff;
+  --secondary: rgb(255 255 255 / 3%);
+  --muted: var(--secondary);
+  --accent: rgb(255 255 255 / 4%);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 18%);
+  --sidebar-control-surface: #0a0a0a;
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: var(--border);
+  --raised-fill: linear-gradient(var(--card), var(--card));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
+}
+
 /* Surface styles: Settings > Appearance > Style sets html[data-surface-style]
    and each block below swaps the recipe tokens on body, so every surface-*
    recipe repaints with no per-component code. The values are the pen's
@@ -4666,6 +4844,19 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   );
 }
 
+/* A split's unfocused panes draw their tab labels a tier down (strong to muted, muted to dim),
+   so the window has one strong tab label and it marks focus. Declared on the notch, so black
+   chrome's tokens there are the ones that step down. */
+[data-pane-notch][data-pane-notch-unfocused] {
+  --pane-notch-unfocused-strong: var(--contrast-muted-foreground);
+  --pane-notch-unfocused-muted: var(--contrast-dim-foreground);
+
+  & > * {
+    --contrast-strong-foreground: var(--pane-notch-unfocused-strong);
+    --contrast-muted-foreground: var(--pane-notch-unfocused-muted);
+  }
+}
+
 body {
   /* Reference the theme token (not a literal stack) so the Settings ->
      Appearance runtime override of --font-sans reaches all interface text. */
@@ -4816,21 +5007,21 @@ body {
   --chat-composer-inset: initial;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
+/* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */
+:where(:not(iframe))::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
 }
 
-::-webkit-scrollbar-track {
+:where(:not(iframe))::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
+:where(:not(iframe))::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+:where(:not(iframe))::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
 
@@ -5110,7 +5301,7 @@ body {
 }
 
 .chat-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chat-markdown pre {
@@ -5249,6 +5440,15 @@ body {
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
   max-width: none;
+}
+
+/* Keep overflow discoverable when the edge fade falls between columns. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
 
 :root {

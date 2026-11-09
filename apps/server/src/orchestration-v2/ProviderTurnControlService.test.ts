@@ -209,6 +209,7 @@ it.effect(
         ProjectionStore.ProjectionStoreV2,
         ProjectionStore.ProjectionStoreV2.of({
           apply: () => Effect.void,
+          carryProviderTurnContextUsage: () => Effect.die("unused carryProviderTurnContextUsage"),
           getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
           getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
           getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
@@ -221,6 +222,7 @@ it.effect(
           readShellSnapshot: () => Effect.die("unused readShellSnapshot"),
           getThreadShell: () => Effect.die("unused getThreadShell"),
           getThreadTitles: () => Effect.die("unused getThreadTitles"),
+          getThreadLinkMetadata: () => Effect.die("unused getThreadLinkMetadata"),
           findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
           getThread: () => Ref.get(projection).pipe(Effect.map((state) => state.thread)),
           getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
@@ -293,6 +295,7 @@ it.effect(
           detach: () => Effect.void,
           otherWorkingThreads: () => Effect.succeed([]),
           releaseUnlessBusy: () => Effect.succeed(true),
+          subscribePromptSuggestion: () => Stream.empty,
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(

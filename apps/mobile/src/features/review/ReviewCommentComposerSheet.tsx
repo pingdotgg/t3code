@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 import { Platform, ScrollView, View, useWindowDimensions } from "react-native";
 import { KeyboardAvoidingView, KeyboardStickyView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { SheetHeader } from "../../components/ui/SheetHeader";
@@ -148,7 +148,7 @@ export function ReviewCommentComposerSheet(props: ReviewCommentComposerSheetProp
           ) : (
             <View className="min-h-0 flex-1 gap-4">
               <View className="gap-1 px-1">
-                <Text className="text-2xs font-t3-bold uppercase text-foreground-muted">
+                <Text className="text-2xs font-t3-bold text-foreground-muted">
                   {selectionLabel}
                 </Text>
                 <Text

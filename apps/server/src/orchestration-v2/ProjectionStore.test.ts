@@ -5,6 +5,7 @@ import {
   CommandId,
   CheckpointId,
   ContextTransferId,
+  type ContextBreakdown,
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
@@ -471,6 +472,62 @@ it.effect("record reads restrict provider histories to delivery identities", () 
         providerThreadIds: [],
       })).providerThreads,
       [],
+    );
+    const ownerNodeId = NodeId.make("node:delivery-identities:owner");
+    yield* store.apply({
+      id: EventId.make("event:delivery-identities:owner-node"),
+      type: "node.updated",
+      threadId,
+      runId: RunId.make("run:delivery-identities:rolled-back"),
+      nodeId: ownerNodeId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: ownerNodeId,
+        threadId,
+        runId: RunId.make("run:delivery-identities:rolled-back"),
+        rootNodeId: NodeId.make("node:delivery-identities:rolled-back"),
+        parentNodeId: NodeId.make("node:delivery-identities:rolled-back"),
+        kind: "subagent",
+        status: "completed",
+        countsForRun: false,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:delivery-identities:owned"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: ProviderThreadId.make("provider-thread:owned"),
+        appThreadId: ThreadId.make("thread:delivery-identities:child"),
+        driver,
+        providerInstanceId,
+        providerSessionId: null,
+        ownerNodeId,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        status: "idle",
+        firstRunOrdinal: 2,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    assert.deepEqual(
+      (yield* store.getThreadRecords(threadId, ["providerThreads"])).providerThreads.map(
+        (row) => row.id,
+      ),
+      ["provider-thread:history", "provider-thread:selected", "provider-thread:owned"],
     );
     // Unselected history must not be decoded, even if its payload is unreadable.
     yield* sql`UPDATE orchestration_v2_projection_provider_threads SET payload_json = '{}'
@@ -1271,6 +1328,24 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
     { threadId: ThreadId.make("thread:active"), worktreePath: "/worktrees/active" },
     { threadId: ThreadId.make("thread:archived"), worktreePath: "/worktrees/archived" },
   ]);
+  assert.deepEqual(
+    yield* store.getThreadLinkMetadata([
+      deleted.id,
+      ThreadId.make("thread:active"),
+      ThreadId.make("thread:archived"),
+      ThreadId.make("unknown"),
+    ]),
+    {
+      [ThreadId.make("thread:active")]: {
+        title: "Title for thread:active",
+        projectId: ProjectId.make("project:worktree-paths"),
+      },
+      [ThreadId.make("thread:archived")]: {
+        title: "Title for thread:archived",
+        projectId: ProjectId.make("project:worktree-paths"),
+      },
+    },
+  );
   assert.deepEqual(
     yield* store.getThreadTitles([
       deleted.id,
@@ -2621,6 +2696,78 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const replaced = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(replaced.providerTurns[0]?.tokenUsage, replacementUsage);
+
+      const categories = [
+        { kind: "system_prompt", tokens: 3_000 },
+        { kind: "system_tools", tokens: 4_000 },
+        { kind: "messages", tokens: 11_000 },
+      ] as const;
+      const fresh = [
+        { kind: "system_prompt", tokens: 2_000 },
+        { kind: "messages", tokens: 21_000 },
+      ] as const;
+      const phases = [
+        { usedTokens: 18_000, breakdown: categories, expected: categories },
+        {
+          usedTokens: 20_000,
+          expected: [...categories.slice(0, 2), { kind: "messages", tokens: 13_000 }],
+        },
+        {
+          usedTokens: 19_000,
+          expected: [...categories.slice(0, 2), { kind: "messages", tokens: 12_000 }],
+        },
+        {
+          usedTokens: 24_000,
+          breakdown: fresh,
+          expected: [fresh[0], { kind: "messages", tokens: 22_000 }],
+        },
+        { usedTokens: 25_000, expected: [fresh[0], { kind: "messages", tokens: 23_000 }] },
+        { usedTokens: 4_000, breakdown: [], expected: [] },
+        { usedTokens: 6_000, expected: undefined },
+        {
+          usedTokens: 24_000,
+          breakdown: fresh,
+          expected: [fresh[0], { kind: "messages", tokens: 22_000 }],
+        },
+        { usedTokens: 1_000, expected: [] },
+      ] satisfies ReadonlyArray<{
+        usedTokens: number;
+        breakdown?: ContextBreakdown;
+        expected: ContextBreakdown | undefined;
+      }>;
+      for (const [index, phase] of phases.entries()) {
+        const turn = yield* projectionStore.carryProviderTurnContextUsage(threadId, {
+          ...providerTurn,
+          tokenUsage: {
+            usedTokens: phase.usedTokens,
+            ...("breakdown" in phase ? { breakdown: phase.breakdown } : {}),
+            updatedAt: `2026-08-29T12:01:0${index}.000Z`,
+          },
+        });
+        assert.deepEqual(turn.tokenUsage?.breakdown, phase.expected);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:provider-usage-reload:phase-${index}`),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: turn,
+        });
+        const reloaded = yield* projectionStore.getThreadRecords(threadId, ["providerTurns"], {
+          latestProviderTurnUsageOnly: true,
+        });
+        assert.deepEqual(reloaded.providerTurns[0]?.tokenUsage?.breakdown, phase.expected);
+      }
+      const unrelated = {
+        ...providerTurn,
+        providerThreadId: ProviderThreadId.make("other-context"),
+        tokenUsage: replacementUsage,
+      };
+      assert.deepEqual(
+        yield* projectionStore.carryProviderTurnContextUsage(threadId, unrelated),
+        unrelated,
+      );
     }),
   );
 
@@ -8439,6 +8586,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           .pipe(Effect.withTracer(tracer))).runs.map((run) => run.id),
         [runId, newerRunId],
       );
+      assert.lengthOf(statements, 2);
       // Live-item filters must hit the active partial indexes, not walk the thread's history.
       const sql = yield* SqlClient.SqlClient;
       for (const statement of statements.filter((query) => query.includes("turn_items"))) {

@@ -47,7 +47,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { useUiStateStore } from "../../uiStateStore";
-import { type ChatMessage } from "../../types";
+import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { AlarmClockIcon, CheckCircle2Icon } from "lucide-react";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId } from "~/lib/utils";
@@ -77,6 +77,7 @@ import type { RunStopPresentation } from "@t3tools/client-runtime/state/thread-e
 import { Atom } from "effect/reactivity";
 import { environmentThreadDetails } from "../../state/threads";
 import { openSideChatTab } from "../../lib/sideChatPane";
+import { runInNewLayoutTab } from "../../layout/layoutStore";
 import type { useLocalDispatchState } from "./useLocalDispatchState";
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 const NO_RUN_STOP_ATOM = Atom.make<RunStopPresentation | null>(null).pipe(
@@ -495,10 +496,17 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       return;
     }
     if (activeThreadRef && openSideChatTab(activeThreadRef, shell)) return;
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(threadRef),
-    });
+    const open = () =>
+      navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(threadRef),
+      });
+    // This thread's own child opens as a ghost tab beside it, as from the Lineage card.
+    const isChild =
+      activeThreadRef !== null &&
+      threadEnvironmentId === activeThreadRef.environmentId &&
+      shell?.lineage.parentThreadId === activeThreadRef.threadId;
+    void (isChild ? runInNewLayoutTab(open, { ghostOf: activeThreadRef }) : open());
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
@@ -540,7 +548,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       createdAt,
       ...(localCheckoutBranchMismatch ? { branch: localCheckoutBranchMismatch.currentBranch } : {}),
       runtimeMode,
-      interactionMode: context.interactionMode,
+      interactionMode: DEFAULT_INTERACTION_MODE,
     });
     const result =
       settingsResult._tag === "Failure"
@@ -552,7 +560,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
               message: { messageId, role: "user", text, attachments: [] },
               modelSelection: context.selectedModelSelection,
               runtimeMode,
-              interactionMode: context.interactionMode,
+              interactionMode: DEFAULT_INTERACTION_MODE,
               createdAt,
             },
           });

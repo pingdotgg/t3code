@@ -288,15 +288,23 @@ describe("workspace area focus", () => {
     expect(timeline.scrollTop).toBe(300);
   });
 
-  it("returns focus to the area when its focused control disappears", async () => {
+  it.each([
+    ["panel", "panel", "removed"],
+    ["conversation", "composer", "removed"],
+    ["conversation", "composer", "disabled"],
+  ])("recovers focus from a %s control to the %s when %s", async (source, destination, change) => {
     using fixture = setup();
-    const panel = fixture.area("panel", 3);
-    const tab = document.createElement("button");
-    tab.textContent = "Files tab";
-    panel.element.append(tab);
-    tab.focus();
-    tab.remove();
-    await vi.waitFor(() => expect(document.activeElement).toBe(panel.button));
+    const composer = fixture.area("composer", 2);
+    const area = fixture.area(source, 3);
+    const control = document.createElement("button");
+    control.id = "pending-request";
+    control.textContent = "Submit";
+    area.element.append(control);
+    control.focus();
+    if (change === "disabled") control.disabled = true;
+    else control.remove();
+    const expected = destination === "composer" ? composer.button : area.button;
+    await vi.waitFor(() => expect(document.activeElement).toBe(expected));
   });
 
   it("falls back to the main content when the whole area disappears", async () => {

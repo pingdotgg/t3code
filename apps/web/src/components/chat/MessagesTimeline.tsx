@@ -22,6 +22,7 @@ import {
   TimelineRowActivityCtx,
   type TimelineRowActivityState,
   TimelineRowCtx,
+  TimelineWakeUpsRailCtx,
   type TimelineRowSharedState,
   type TimelineUsageLimit,
   type WorkGroupViewState,
@@ -48,7 +49,7 @@ import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { TimelineMinimap } from "./TimelineMinimap";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
-import { useChatCanvas } from "./ChatCanvasContext";
+import { useRegisterChatCanvasTimeline } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import {
@@ -134,6 +135,8 @@ import {
   withRunGroupsOpen,
   withTurnFoldOpen,
   liveRunlessTurnFoldRunId,
+  wakeUpsRailKey,
+  wakeUpsRailRows,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -516,84 +519,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
-  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [workingHistoryCollapsing, setWorkingHistoryCollapsing] = useState(false);
-  const disclosureAnchorKeyRef = useRef<string | null>(null);
-  const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
-  const scheduleDisclosureSettle = () => {
-    if (disclosureSettleFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleFrameRef.current);
-    }
-    if (disclosureSettleSecondFrameRef.current !== null) {
-      cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
-    }
-    disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        disclosureAnchorKeyRef.current = null;
-        setDisclosureToggleSettling(false);
-        disclosureSettleFrameRef.current = null;
-        disclosureSettleSecondFrameRef.current = null;
-      });
-    });
+  const preserveDisclosurePosition = (anchorKey: string) => {
+    const list = listRef.current;
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (!list || (isWorking && list.getState().isFollowingEnd)) return;
+    list.cancelScroll();
+    list.anchorVisibleContent({ key: anchorKey });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string) => {
-    disclosureAnchorKeyRef.current = anchorKey;
-    setDisclosureToggleSettling(true);
-    scheduleDisclosureSettle();
-  };
-
-  const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    const disclosureAnchorKey = disclosureAnchorKeyRef.current;
-    return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
-  };
-
-  const revealFoldRows = (opening: boolean) =>
-    setFoldRevealBaseIds(
-      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
-    );
-  const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
-    revealFoldRows(
-      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
-    );
-    setExpandedRunIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(runId)) {
-        next.delete(runId);
-      } else {
-        next.add(runId);
-      }
-      return next;
-    });
-  };
-  const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey);
-    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
-    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
-    setExpandedWorkGroupIds((existing) => {
-      const next = new Set(existing);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  };
   const onToggleWorkingHistory = (key: string) => {
     // Either way the bar holds still: the history grows and shrinks below it.
-    suspendEndScrollMaintenanceForDisclosure("working-indicator-row");
     const list = listRef.current;
-    if (list) void list.scrollToOffset({ offset: list.getState().scroll, animated: false });
+    if (list) {
+      list.cancelScroll();
+      list.anchorVisibleContent({ key: "working-indicator-row" });
+    }
     setWorkingHistoryKey((current) => (current === key ? null : key));
   };
   const onToggleAttemptFold = (attemptId: RunAttemptId) => {
-    suspendEndScrollMaintenanceForDisclosure(`attempt-fold:${attemptId}`);
+    preserveDisclosurePosition(`attempt-fold:${attemptId}`);
     setExpandedAttemptIds((existing) => {
       const next = new Set(existing);
       if (next.has(attemptId)) {
@@ -706,6 +654,39 @@ const ConversationTimeline = memo(function ConversationTimeline({
     workingHistoryKey,
     windowlessCitation,
     activeFindEntryId,
+  });
+  const revealFoldRows = (opening: boolean) =>
+    setFoldRevealBaseIds(
+      opening && !prefersReducedMotion ? new Set(rows.map((row) => row.id)) : null,
+    );
+  const onToggleTurnFold = useStableCallback((runId: RunId) => {
+    preserveDisclosurePosition(`turn-fold:${runId}`);
+    revealFoldRows(
+      rows.some((row) => row.kind === "turn-fold" && row.runId === runId && !row.expanded),
+    );
+    setExpandedRunIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(runId)) {
+        next.delete(runId);
+      } else {
+        next.add(runId);
+      }
+      return next;
+    });
+  });
+  const onToggleWorkGroup = useStableCallback((groupId: string, anchorKey: string) => {
+    preserveDisclosurePosition(anchorKey);
+    const wakeUps = rows.find((row) => row.kind === "background-activity" && row.id === groupId);
+    if (wakeUps?.kind === "background-activity") revealFoldRows(!wakeUps.expanded);
+    setExpandedWorkGroupIds((existing) => {
+      const next = new Set(existing);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
   });
   const workingHistoryOpen = rows.some(
     (row) => row.kind === "working" && row.window?.historyOpen === true,
@@ -976,7 +957,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const maintainVisibleContentPosition = {
     data: true,
     size: true,
-    shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
 
   const refreshMinimap = useStableCallback(() => {
@@ -991,7 +971,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       firstBufferedIndex == null ? undefined : state.elementAtIndex(firstBufferedIndex);
     const firstBufferedTop =
       firstBufferedIndex == null ? undefined : state.positionAtIndex(firstBufferedIndex);
-    const viewport: HTMLElement | undefined = listRef.current?.getScrollableNode();
+    const viewport = listRef.current?.getScrollableNode() ?? undefined;
     // Cached row positions exclude the header and pending scroll adjustments.
     const scroll =
       firstBufferedRow && viewport && firstBufferedTop !== undefined
@@ -1090,13 +1070,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scheduleMinimapRefresh();
   };
 
-  const handleItemSizeChanged = () => {
-    if (disclosureAnchorKeyRef.current !== null) {
-      scheduleDisclosureSettle();
-    }
-    scheduleMinimapRefresh();
-  };
-
   const measureTimelineGutter = (viewportElement: HTMLElement) => {
     const viewportWidth = viewportElement.getBoundingClientRect().width;
     const contentWidth =
@@ -1155,6 +1128,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .filter(isVisiblePendingApproval)
       .map((approval) => [approval.requestId, approval]),
   );
+  const wakeUpsRail = wakeUpsRailRows(wakeUpsRailKey(rows));
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1191,7 +1165,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
-    onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onToggleWorkEntry: preserveDisclosurePosition,
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
@@ -1281,8 +1255,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </>
   );
 
-  const canvas = useChatCanvas();
-  const registerTimeline = canvas?.registerTimeline;
+  const registerTimeline = useRegisterChatCanvasTimeline();
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
@@ -1322,8 +1295,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       detachViewport?.();
       viewport?.dispose();
       if (viewportRef.current === viewport) viewportRef.current = null;
-      // Refresh frames only read the list; disclosure frames still run so the
-      // settle flag clears.
       if (minimapRefreshFrameRef.current !== null) {
         cancelAnimationFrame(minimapRefreshFrameRef.current);
         minimapRefreshFrameRef.current = null;
@@ -1386,29 +1357,37 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
-      <div
-        className="messages-timeline-row-frame"
-        data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
-        }}
-        onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
-      >
+      <TimelineWakeUpsRailCtx value={wakeUpsRail}>
         <div
-          ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
+          className="messages-timeline-row-frame"
+          data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
+          onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
+          }}
+          onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
         >
-          <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
-          </AudioPreviewUnmountContext>
+          <div
+            ref={observeLaneWidth}
+            className="chat-content-lane overflow-x-clip"
+            data-timeline-root="true"
+          >
+            <AudioPreviewUnmountContext value={onAudioUnmount}>
+              <TimelineRowContent row={item} />
+            </AudioPreviewUnmountContext>
+          </div>
         </div>
-      </div>
+      </TimelineWakeUpsRailCtx>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    foldRevealBaseIds,
+    wakeUpsRail,
+  };
   const timelineListFooter = (
     <TimelineListFooter
       composerInset={anchoredEndSpace ? 0 : contentInsetEndAdjustment}
@@ -1506,7 +1485,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
                 fullscreenAppRowId !== null ||
-                disclosureToggleSettling ||
                 workingHistoryOpen ||
                 workingHistoryCollapsing
                   ? false
@@ -1523,7 +1501,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               }
               maintainScrollAtEndThreshold={1}
               onScroll={handleScroll}
-              onItemSizeChanged={handleItemSizeChanged}
+              onItemSizeChanged={scheduleMinimapRefresh}
               className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 scroll-pt-[var(--timeline-top-inset,0px)] overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
               ListHeaderComponent={listHeader}
               ListFooterComponent={timelineListFooter}
@@ -1591,14 +1569,18 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// LegendList averages by type; length buckets prevent inflated estimates and nested-update loops.
+// LegendList estimates unmeasured rows from their type's average. Long messages of equal length
+// can differ in height by orders of magnitude, so each gets its own type to avoid nested-update loops.
 function getItemType(item: MessagesTimelineRow) {
   if (item.kind !== "message") return item.kind;
   const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
-  return `message:${item.message.role}:${lengthBucket}`;
+  return lengthBucket < 2
+    ? `message:${item.message.role}:${lengthBucket}`
+    : `message:${item.message.id}`;
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const wakeUpsRail = use(TimelineWakeUpsRailCtx).get(row.id);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const command = row.kind === "message" && row.command?.standalone ? row.command : null;
@@ -1639,6 +1621,11 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        // The rail drops from the fold's bell, through each row's bottom gap, to the last row.
+        wakeUpsRail &&
+          "relative ps-6 before:absolute before:start-[11px] before:top-0 before:w-px before:bg-border",
+        wakeUpsRail === "body" && "before:bottom-0",
+        wakeUpsRail === "end" && "before:bottom-3",
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}

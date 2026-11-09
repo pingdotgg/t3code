@@ -78,7 +78,10 @@ function PopoverPopup({
         collisionAvoidance={collisionAvoidance}
         collisionPadding={variant === "panel" ? 0 : undefined}
         className={cn(
-          "h-(--positioner-height) max-h-(--available-height) w-(--positioner-width) max-w-(--available-width) transition-transform data-instant:transition-none motion-reduce:transition-none",
+          "h-(--positioner-height) max-h-(--available-height) w-(--positioner-width) max-w-(--available-width)",
+          // Kept-mounted positioners first paint at the window origin, so a transform transition slides them in from there.
+          !keepMounted &&
+            "transition-transform data-instant:transition-none motion-reduce:transition-none",
           variant === "panel"
             ? "z-(--z-sheet) w-[min(calc(var(--thread-details-panel-width)+--spacing(4)),calc(var(--anchor-width)---spacing(2)))] transition-[top] duration-150 ease-out data-instant:transition-[top] motion-reduce:transition-none motion-reduce:data-instant:transition-none"
             : "z-[130]",
@@ -92,6 +95,8 @@ function PopoverPopup({
           className={cn(
             "kbd-in-popover relative flex w-(--popup-width,auto) origin-(--transform-origin) rounded-card text-popover-foreground outline-none transition-[width,scale,opacity] data-ending-style:scale-98 data-starting-style:scale-98 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none",
             variant !== "panel" && !tooltipStyle && "surface-popover",
+            // Electron drag hit-testing ignores z-index; popups over a drag region would swallow hover.
+            "[-webkit-app-region:no-drag]",
             tooltipStyle &&
               "surface-tooltip kbd-in-popover w-fit text-balance rounded-item text-meta",
             width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],

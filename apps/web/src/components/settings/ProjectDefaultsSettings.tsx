@@ -179,7 +179,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     provider: activeEntry.driverKind,
                     models: activeEntry.models,
                     modelOptions: selection.options ?? [],
-                    planModeEnabled: settings.planModeEnabled,
                     onModelOptionsChange: (options) =>
                       setModel(
                         createModelSelection(selection.instanceId, selection.model, options),
@@ -280,7 +279,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                     provider: fallbackEntry.driverKind,
                     models: fallbackEntry.models,
                     modelOptions: fallbackSelection.options ?? [],
-                    planModeEnabled: settings.planModeEnabled,
                     onModelOptionsChange: (options) =>
                       updateSettings({
                         fallbackModelSelection: createModelSelection(

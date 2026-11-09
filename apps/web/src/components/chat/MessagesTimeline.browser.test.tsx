@@ -272,6 +272,39 @@ it("keeps collapsed approval shortcuts and disabled cancel actions inert", async
 });
 
 describe("MessagesTimeline work rows", () => {
+  it("does not rerender settled resource rows when the active answer streams", async () => {
+    const runId = RunId.make("streaming-run");
+    const resource: Entry = {
+      kind: "html-render",
+      id: "settled-resource",
+      createdAt: CREATED_AT,
+      runId: null,
+      htmlRender: { attachmentId: "visual", title: "Settled visual", height: 80 },
+    };
+    const renderHtmlRender = vi.fn(() => <span>Settled visual</span>);
+    const props = {
+      ...baseProps(),
+      isWorking: true,
+      latestRun: { runId, status: "running" as const, startedAt: CREATED_AT, completedAt: null },
+      renderHtmlRender,
+    };
+    const entries = (text: string) => [
+      resource,
+      message("Continue", { runId }),
+      message(text, { role: "assistant", runId, streaming: true }, "answer"),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries("First chunk")} />,
+    );
+    await expect.element(screen.getByText("First chunk", { exact: true })).toBeVisible();
+    renderHtmlRender.mockClear();
+    await screen.rerender(
+      <MessagesTimeline {...props} timelineEntries={entries("Second chunk")} />,
+    );
+    await expect.element(screen.getByText("Second chunk", { exact: true })).toBeVisible();
+    expect(renderHtmlRender).not.toHaveBeenCalled();
+  });
+
   it("keeps the worked-for heading in place when expanded at the bottom", async () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
@@ -339,6 +372,41 @@ describe("MessagesTimeline work rows", () => {
       expect(fadedRowIds).toEqual(["entry-progress"]);
       expect(viewport.querySelector("[data-fold-reveal]")).toBeNull();
     });
+  });
+
+  it("keeps following a streaming turn after a heading is expanded at the bottom", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const runId = RunId.make("live-run");
+    const container = document.createElement("div");
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+    const entries = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+      message("Done", { role: "assistant", runId }, "final"),
+    ];
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    await heading.click();
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...entries,
+          message("Streamed reply\n\n".repeat(40), { role: "assistant", runId }, "streamed"),
+        ]}
+      />,
+    );
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
   });
 
   it("loads a streamed approval patch when review opens and hides it again", async () => {
@@ -793,14 +861,6 @@ describe("MessagesTimeline messages", () => {
     await act(() => vi.advanceTimersByTime(300));
     const turns = turnsInDomOrder();
     expect(turns).toEqual(turns.toSorted((a, b) => a - b));
-  });
-
-  it("omits queue intent beneath sent user messages", async () => {
-    await using screen = await renderTimeline([
-      message("Queued prompt", { inputIntent: "queued_turn" }),
-    ]);
-    expect(screen.text()).toContain("Queued prompt");
-    expect(screen.container.querySelector("[data-user-message-intent]")).toBeNull();
   });
 
   it("opens standalone skill details and its instructions", async () => {

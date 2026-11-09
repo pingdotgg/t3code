@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useLayoutPane } from "../layout/layoutPaneContext";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 
@@ -17,6 +18,8 @@ export const PANE_TAB_CLASS =
 
 export const PANE_TAB_TITLE_CLASS = "max-w-68 truncate";
 export const PANE_INACTIVE_TAB_TITLE_CLASS = "max-w-40 truncate";
+/** A ghost tab's title (`LayoutTab.ghostOf`): italic until the tab is kept, as preview tabs are. */
+export const PANE_GHOST_TAB_TITLE_CLASS = "italic";
 
 /** The thread tab opens its action menu while keeping the notch's tab geometry. */
 export function PaneTabButton({ className, render, ...props }: useRender.ComponentProps<"button">) {
@@ -146,6 +149,7 @@ export function PaneNotch({
   // chrome gives it the dark tokens there (index.css).
   const isMobile = useMediaQuery("max-md");
   const notchRef = useRef<HTMLDivElement>(null);
+  const { split, focused } = useLayoutPane();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the mounted notch ancestors and remove those external DOM markers on cleanup.
   useLayoutEffect(() => {
     const notch = notchRef.current;
@@ -175,6 +179,7 @@ export function PaneNotch({
         ref={notchRef}
         data-pane-notch={side === "left" ? "" : side}
         data-chrome-scope={isMobile ? undefined : ""}
+        data-pane-notch-unfocused={side === "left" && split && !focused ? "" : undefined}
         className={cn(
           "relative isolate flex min-w-0 shrink items-center gap-1 self-stretch [--type-label:0.8125rem]",
           side === "left"

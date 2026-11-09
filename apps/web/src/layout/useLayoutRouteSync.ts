@@ -10,6 +10,7 @@ import {
   focusLayoutTab,
   layoutTabContentKey,
   isLayoutPageContent,
+  openLayoutGhostChat,
   openLayoutTab,
   replaceLayoutTabContent,
   selectFocusedTab,
@@ -19,14 +20,15 @@ import {
   type LayoutTabContent,
 } from "./layoutModel";
 import { useLayoutBehavior, type LayoutNewTabPosition } from "./layoutBehavior";
-import { arrangeLayoutChange, useLayoutStore } from "./layoutStore";
+import { arrangeLayoutChange, useLayoutStore, type LayoutNewTabRequest } from "./layoutStore";
+import { followLayoutCompanions } from "./openRules";
 import { layoutChatRoute } from "./useLayoutSettingsSync";
 import { layoutPageHref, layoutRoutePage } from "./pageNavigation";
 import { isAppModalPage, getMainAppHref } from "../components/sidebar/mainAppLocation";
 
 type RouteNewTab =
   | { readonly placement: LayoutOpenPlacement; readonly position: LayoutNewTabPosition }
-  | { readonly replaceTabId: string };
+  | Exclude<LayoutNewTabRequest, string>;
 
 /** Set once the page's first route has shown; a later mount is a navigation. */
 let documentRouteShown = false;
@@ -69,6 +71,13 @@ function showRouteInLayout(
     }
   }
   if (newTab && !findLayoutTabByContent(layout, content)) {
+    if ("ghostOf" in newTab) {
+      if (content.kind !== "chat") return showLayoutContent(layout, content);
+      return (
+        openLayoutGhostChat(layout, newTab.ghostOf, content.target) ??
+        showLayoutContent(layout, content)
+      );
+    }
     // A launcher tab that started the thread turns into its chat.
     if ("replaceTabId" in newTab) {
       if (findLayoutTab(layout, (tab) => tab.id === newTab.replaceTabId)) {
@@ -118,7 +127,7 @@ export function useLayoutRouteSync(
       ? (store.getDraftIdByRef(threadTarget.threadRef) ?? null)
       : null,
   );
-  const newTabRequest = useLayoutStore((state) => state.newTabRequest);
+  const newTabRequest = useLayoutStore((state) => state.newTabRequest?.request ?? null);
   const { newTabPosition } = useLayoutBehavior();
   const newTab: RouteNewTab | null =
     newTabRequest === null
@@ -187,11 +196,13 @@ export function useLayoutRouteSync(
     if (!request.pending) return;
     const { base, derived, content, promotedDraftId, newTab } = request;
     if (content && derived !== base) {
-      useLayoutStore
-        .getState()
-        .commitDerived(base, derived, (current) =>
-          showRouteInLayout(current, content, promotedDraftId, newTab),
-        );
+      followLayoutCompanions(() =>
+        useLayoutStore
+          .getState()
+          .commitDerived(base, derived, (current) =>
+            showRouteInLayout(current, content, promotedDraftId, newTab),
+          ),
+      );
     }
     if (newTab && content) useLayoutStore.getState().clearNewTabRequest();
   }, [appModalPaused, request, routeKey]);

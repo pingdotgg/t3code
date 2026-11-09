@@ -525,6 +525,8 @@ type MessagesTimelineRowContent =
       updates: readonly OrchestrationV2Notification[];
       active: boolean;
       expanded: boolean;
+      /** The rows this fold shows only while open, in order. Empty while it is closed. */
+      revealedRowIds: readonly string[];
     }
   | {
       kind: "worktree-setup";
@@ -636,8 +638,6 @@ type MessagesTimelineRowContent =
       groupedWithNext?: boolean;
       /** Another of your messages sits directly above, so the joined corners tighten. */
       groupedWithPrevious?: boolean;
-      /** Set when the message above is a steer too, so the label shows once. */
-      continuesSteer?: boolean;
       /** A prompt that opens with a provider command. A standalone one renders as a work row. */
       command?: TimelineSlashCommand | undefined;
     }
@@ -1906,6 +1906,7 @@ export function deriveMessagesTimelineRows(input: {
         entry.entry.sourceActivityKind === "runtime.error" ||
         entry.entry.itemType === "system_notice" ||
         entry.entry.itemType === "notification" ||
+        entry.entry.itemType === "todo_list" ||
         entry.entry.questionAnswer !== undefined ||
         isPendingApproval(entry.entry) ||
         !runIdIsActiveResponse(entry.entry.runId) ||
@@ -2250,6 +2251,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.entry.sourceActivityKind === "runtime.error" ||
         timelineEntry.entry.itemType === "system_notice" ||
         timelineEntry.entry.itemType === "notification" ||
+        timelineEntry.entry.itemType === "todo_list" ||
         timelineEntry.entry.questionAnswer !== undefined
       ) {
         nextRows.push({
@@ -2275,6 +2277,7 @@ export function deriveMessagesTimelineRows(input: {
           nextEntry.entry.sourceActivityKind === "runtime.error" ||
           nextEntry.entry.itemType === "system_notice" ||
           nextEntry.entry.itemType === "notification" ||
+          nextEntry.entry.itemType === "todo_list" ||
           nextEntry.entry.questionAnswer !== undefined ||
           isPendingApproval(nextEntry.entry) ||
           activeWorkEntryIds.has(nextEntry.id) ||
@@ -2594,23 +2597,32 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  return result.map((row, index) => {
-    const next = result[index + 1];
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(next)) {
-      return { ...row, continuesWorkLog: true };
+  return withPromptGrouping(
+    result.map((row, index) =>
+      timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+        ? { ...row, continuesWorkLog: true }
+        : row,
+    ),
+  );
+}
+
+/** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
+function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
+  return rows.map((row, index) => {
+    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
+    const next = rows[index + 1];
+    const own = timelineRowIsOwnUserMessage(row);
+    const continuesPromptStack = timelineRowIsUserPrompt(next);
+    const groupedWithPrevious = own && timelineRowIsOwnUserMessage(rows[index - 1]);
+    const groupedWithNext = own && timelineRowIsOwnUserMessage(next);
+    if (
+      (row.continuesPromptStack ?? false) === continuesPromptStack &&
+      (row.groupedWithPrevious ?? false) === groupedWithPrevious &&
+      (row.groupedWithNext ?? false) === groupedWithNext
+    ) {
+      return row;
     }
-    if (!timelineRowIsUserPrompt(row)) return row;
-    const promptRow = timelineRowIsUserPrompt(next) ? { ...row, continuesPromptStack: true } : row;
-    if (!timelineRowIsOwnUserMessage(promptRow)) return promptRow;
-    const previous = result[index - 1];
-    const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
-    const groupedWithNext = timelineRowIsOwnUserMessage(next);
-    const continuesSteer =
-      timelineRowIsOwnUserMessage(previous) &&
-      userMessageIsSteer(promptRow.message) &&
-      userMessageIsSteer(previous.message);
-    if (!groupedWithNext && !groupedWithPrevious && !continuesSteer) return promptRow;
-    return { ...promptRow, groupedWithNext, groupedWithPrevious, continuesSteer };
+    return { ...row, continuesPromptStack, groupedWithNext, groupedWithPrevious };
   });
 }
 
@@ -2991,12 +3003,13 @@ export function applyWorkingWindow(
     answering: answer?.kind === "text" && answer.message.streaming,
     historyOpen: historyOpenKey === key,
   };
-  return [
+  // Steers move above the bar, next to the prompt they continue.
+  return withPromptGrouping([
     ...rows.slice(0, workingIndex),
     ...before,
     { ...workingRow, window },
     ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
-  ];
+  ]);
 }
 
 /** `expanded` with every "Handled N updates" group that holds the run open. */
@@ -3137,6 +3150,22 @@ export function applyBackgroundActivityGroups(
       .find((id) => id !== undefined && updateIds.has(id.slice("background-activity:".length)));
     const id = expandedId ?? previousId ?? `background-activity:${first.id}`;
     const expanded = input.expandedWorkGroupIds?.has(id) ?? false;
+    const groupRows = rows.slice(start, index);
+    const finalAnswer = groupRows.findLast(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "assistant" &&
+        (row.message.runId === activeRunId || !row.message.streaming),
+    );
+    // The answer and its meta stay when the fold closes.
+    const keptRows =
+      finalAnswer?.kind === "message"
+        ? groupRows.filter(
+            (row) =>
+              row === finalAnswer ||
+              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
+          )
+        : [];
     result.push({
       kind: "background-activity",
       id,
@@ -3146,30 +3175,39 @@ export function applyBackgroundActivityGroups(
       updates,
       active: activeRunId !== null && runIds.has(activeRunId),
       expanded,
+      revealedRowIds: expanded
+        ? groupRows.filter((row) => !keptRows.includes(row)).map((row) => row.id)
+        : [],
     });
     // Expansion returns the original virtual rows, identities, disclosures and actions.
-    const groupRows = rows.slice(start, index);
-    if (expanded) {
-      result.push(...groupRows);
-    } else {
-      const finalAnswer = groupRows.findLast(
-        (row) =>
-          row.kind === "message" &&
-          row.message.role === "assistant" &&
-          (row.message.runId === activeRunId || !row.message.streaming),
-      );
-      if (finalAnswer?.kind === "message") {
-        result.push(
-          ...groupRows.filter(
-            (row) =>
-              row === finalAnswer ||
-              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
-          ),
-        );
-      }
-    }
+    result.push(...(expanded ? groupRows : keptRows));
   }
   return result;
+}
+
+/**
+ * Where each row an open wake-ups fold reveals sits on the fold's rail: "end" closes it.
+ * Takes the folds' row ids as one string (ids newline-joined, folds NUL-joined) so callers
+ * can keep the map's identity while the rows around it stream.
+ */
+export function wakeUpsRailRows(foldRowIds: string): ReadonlyMap<string, "body" | "end"> {
+  const rail = new Map<string, "body" | "end">();
+  for (const fold of foldRowIds.split("\0")) {
+    const ids = fold.split("\n").filter((id) => id.length > 0);
+    ids.forEach((id, index) => rail.set(id, index === ids.length - 1 ? "end" : "body"));
+  }
+  return rail;
+}
+
+/** The key `wakeUpsRailRows` reads: every open wake-ups fold's revealed row ids. */
+export function wakeUpsRailKey(rows: readonly MessagesTimelineRow[]): string {
+  return rows
+    .flatMap((row) =>
+      row.kind === "background-activity" && row.revealedRowIds.length > 0
+        ? [row.revealedRowIds.join("\n")]
+        : [],
+    )
+    .join("\0");
 }
 
 interface MessagesTimelineRowsProjection {
@@ -3530,7 +3568,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.revertTurnCount === bm.revertTurnCount &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
-        a.continuesSteer === bm.continuesSteer &&
         shallow(a.command, bm.command)
       );
     }

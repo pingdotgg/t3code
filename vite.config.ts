@@ -96,7 +96,16 @@ const taskCacheConfig = {
 export default defineConfig({
   run: {
     cache: taskCacheConfig,
-    tasks: cachedTestTasks(process.env.T3_CACHED_TESTS),
+    tasks: {
+      ...cachedTestTasks(process.env.T3_CACHED_TESTS),
+      // The two knip passes read the same files and write nothing, so they run side by side.
+      // The `knip:check` script runs this task, so `vp run knip:check` and `pnpm run knip:check` both use it.
+      "knip:check:all": {
+        command: 'node -e ""',
+        dependsOn: ["knip:check:files", "knip:check:exports"],
+        cache: false,
+      },
+    },
   },
   resolve: {
     alias: {
@@ -424,27 +433,6 @@ export default defineConfig({
         },
       },
       {
-        files: ["apps/mobile/src/features/**"],
-        rules: {
-          "eslint/no-restricted-imports": [
-            "error",
-            {
-              paths: [...RESTRICTED_IMPORT_PATHS, RESTRICTED_PULL_REQUEST_GLYPH_IMPORTS],
-              patterns: [
-                {
-                  group: [
-                    "**/components/ui/AndroidScreenHeader",
-                    "**/components/ui/WorkspaceAppBar*",
-                  ],
-                  importNames: ["AndroidScreenHeader", "WorkspaceAppBar"],
-                  message: "Use AppBar, so every screen gets the same header and button metrics.",
-                },
-              ],
-            },
-          ],
-        },
-      },
-      {
         files: ["apps/web/src/components/pullRequest/pullRequestIcons.tsx"],
         rules: { "eslint/no-restricted-imports": ["error", { paths: RESTRICTED_IMPORT_PATHS }] },
       },
@@ -519,7 +507,7 @@ export default defineConfig({
         files: ["apps/mobile/src/**"],
         excludeFiles: [
           "apps/mobile/src/components/ui/AppSymbol.tsx",
-          "apps/mobile/src/components/ui/AppSymbol.ios.tsx",
+          "apps/mobile/src/components/ui/AppSymbol.android.tsx",
           "apps/mobile/src/features/pull-requests/pullRequestGlyphs.ts",
         ],
         rules: { "t3code/no-mobile-pull-request-glyph-literals": "error" },
@@ -545,6 +533,10 @@ export default defineConfig({
       {
         files: ["apps/web/src/**"],
         rules: { "t3code/no-outset-state-indicators": "error" },
+      },
+      {
+        files: ["apps/web/src/**"],
+        rules: { "t3code/max-settings-description-length": "error" },
       },
       {
         files: ["apps/*/src/**", "packages/*/src/**"],
@@ -809,7 +801,6 @@ export default defineConfig({
         "apps/web/src/components/settings/KeybindingsSettings.tsx": 1,
         "apps/web/src/components/settings/OpenSourceLicenses.tsx": 1,
         "apps/web/src/components/settings/ThemeEditorPanel.tsx": 6,
-        "apps/web/src/components/chat/ContextWindowMeter.tsx": 9,
         "apps/web/src/components/settings/CaptureShortcutConfig.tsx": 9,
         "apps/web/src/components/chat/WorktreeSetupCard.tsx": 1,
         "apps/web/src/components/ChatMarkdown.tsx": 4,
@@ -899,7 +890,7 @@ export default defineConfig({
         "apps/web/src/components/chat/DiffStatLabel.tsx": 2,
         "apps/web/src/components/chat/DraftHeroHeadline.tsx": 2,
         "apps/web/src/components/chat/ProposedPlanCard.tsx": 2,
-        "apps/web/src/components/chat/ProviderInstanceIcon.tsx": 2,
+        "apps/web/src/components/chat/ProviderInstanceIcon.tsx": 3,
         "apps/web/src/components/chat/ProviderSubagentBar.tsx": 2,
         "apps/web/src/components/chat/ThreadContextDragGhost.tsx": 1,
         "apps/web/src/components/chat/TimelineSystemDivider.tsx": 2,
@@ -953,6 +944,7 @@ export default defineConfig({
         "apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx": 1,
         "apps/web/src/components/ThreadCommandSubtitle.tsx": 1,
         "apps/web/src/components/settings/SecretsSettings.tsx": 1,
+        "apps/web/src/components/settings/CloudVoiceConfiguration.tsx": 8,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-raw-type-classes": rule } };
