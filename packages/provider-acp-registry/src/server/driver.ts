@@ -85,7 +85,12 @@ export function updateAcpRegistryEnrichmentCache(input: {
   readonly now: number;
 }): AcpRegistryEnrichmentCache {
   const { cache, configuration, customModels, now } = input;
-  if (cache.entry === null) return cache;
+  if (cache.entry === null) {
+    // No probe has landed yet, but the live session published its
+    // configuration to the snapshot. Advance the cache epoch so a probe that
+    // was still in flight cannot overwrite that newer state when it lands.
+    return { ...cache, generation: cache.generation + 1 };
+  }
   const provider = applyAcpRegistryLiveConfiguration(
     cache.entry.provider,
     configuration,
@@ -94,6 +99,10 @@ export function updateAcpRegistryEnrichmentCache(input: {
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   return {
     ...cache,
+    // The live session advanced the provider past what an in-flight probe
+    // started from; bump the epoch so the probe discards its stale result
+    // instead of overwriting this entry and publishing it.
+    generation: cache.generation + 1,
     entry: {
       ...cache.entry,
       provider,
@@ -303,8 +312,13 @@ export function applyAcpRegistryLiveConfiguration(
   // and apply any live option descriptors to it.
   const probedModels = provider.models.filter((model) => !model.isCustom);
   // A cold-start session can report one placeholder model before its catalog
-  // settles, while the probe may already have observed the full catalog.
-  const liveCatalogIsProvisional = configuration.models.length === 1 && probedModels.length > 1;
+  // settles, while the probe may already have observed the full catalog. A
+  // single model enumerated by an explicit select is not that fallback but
+  // the agent's deliberate statement, so it wins over the probe catalog.
+  const liveCatalogIsProvisional =
+    configuration.models.length === 1 &&
+    !configuration.modelsFromModelSelect &&
+    probedModels.length > 1;
   const useLiveCatalog =
     configuration.models.length > 1 ||
     (configuration.models.length === 1 && !liveCatalogIsProvisional);

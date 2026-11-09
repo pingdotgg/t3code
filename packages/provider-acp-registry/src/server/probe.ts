@@ -46,6 +46,9 @@ const MAX_COMMAND_LINE_LENGTH = 2_048;
 const PROBE_TIMEOUT_SECONDS = 60;
 const PROBE_TIMEOUT = `${PROBE_TIMEOUT_SECONDS} seconds`;
 const COMMAND_ADVERTISEMENT_GRACE = "500 millis";
+// Agents that fetch their catalog after session setup (Qoder CLI, OpenCode)
+// settle it in seconds, not milliseconds; commands arrive much sooner.
+const MODEL_ADVERTISEMENT_GRACE = "5 seconds";
 
 const boundedText = (value: string, maximumLength: number): string =>
   value.trim().slice(0, maximumLength);
@@ -168,6 +171,13 @@ export interface AcpRegistryLiveConfiguration {
   readonly models: ReadonlyArray<AcpRegistryProbeModel>;
   readonly currentModelId: string | null;
   readonly configOptions: AcpRegistryProbeResult["configOptions"];
+  /**
+   * True when the models were enumerated by an explicit model select option
+   * rather than the session's model state. A single-model select is then the
+   * agent's deliberate statement (for example an entitlement change), not a
+   * cold-start fallback, and reconciliation must honor it.
+   */
+  readonly modelsFromModelSelect: boolean;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -201,6 +211,7 @@ export function normalizeAcpRegistryLiveConfiguration(
       ? boundedCurrentModelId
       : null,
     configOptions: acpProviderOptionDescriptors({ configOptions, modeState }),
+    modelsFromModelSelect: modelOption !== undefined,
   };
 }
 
@@ -476,7 +487,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           hasInitialModels
             ? Effect.void
             : Deferred.await(modelsAdvertised).pipe(
-                Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+                Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),
               ),
           Deferred.await(commandsAdvertised).pipe(
             Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),

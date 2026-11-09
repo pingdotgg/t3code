@@ -162,7 +162,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         snapshot,
-        { models: [], currentModelId: null, configOptions: [] },
+        { models: [], currentModelId: null, configOptions: [], modelsFromModelSelect: false },
         [],
       ).auth.status,
     ).toBe("unknown");
@@ -209,6 +209,7 @@ describe("acpRegistrySnapshotReadiness", () => {
           models: [{ id: "live-model", name: "Live model", description: null }],
           currentModelId: "live-model",
           configOptions: [],
+          modelsFromModelSelect: false,
         },
         [],
       ),
@@ -221,7 +222,7 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         provider,
-        { models: [], currentModelId: null, configOptions: [] },
+        { models: [], currentModelId: null, configOptions: [], modelsFromModelSelect: false },
         [],
       ).models,
     ).toEqual(provider.models);
@@ -238,7 +239,12 @@ describe("acpRegistrySnapshotReadiness", () => {
     expect(
       applyAcpRegistryLiveConfiguration(
         provider,
-        { models: [], currentModelId: null, configOptions: liveOptions },
+        {
+          models: [],
+          currentModelId: null,
+          configOptions: liveOptions,
+          modelsFromModelSelect: false,
+        },
         [],
       ).models,
     ).toMatchObject([
@@ -571,6 +577,7 @@ describe("acpRegistrySnapshotReadiness", () => {
       ],
       currentModelId: "auto",
       configOptions: [],
+      modelsFromModelSelect: true,
     };
 
     const updated = applyAcpRegistryLiveConfiguration(initialProvider, settledLiveConfig, []);
@@ -594,6 +601,7 @@ describe("acpRegistrySnapshotReadiness", () => {
         models: [{ id: "smodel", name: "Default", description: null }],
         currentModelId: "smodel",
         configOptions: [],
+        modelsFromModelSelect: false,
       },
       [],
     );
@@ -606,12 +614,50 @@ describe("acpRegistrySnapshotReadiness", () => {
         models: [{ id: "auto", name: "Auto", description: null }],
         currentModelId: "qmodel",
         configOptions: [],
+        modelsFromModelSelect: false,
       },
       [],
     );
     expect(liveSelected.models.map((m) => m.slug)).toEqual(["auto", "qmodel", "kmodel"]);
     expect(liveSelected.models.find((m) => m.slug === "qmodel")?.isDefault).toBe(true);
     expect(liveSelected.models.find((m) => m.slug === "auto")?.isDefault).not.toBe(true);
+  });
+
+  it("honors an explicit single-model select even when it is absent from the probe catalog", () => {
+    const provider = providerWithModels(
+      [
+        { id: "auto", name: "Auto", description: null },
+        { id: "qmodel", name: "Qwen", description: null },
+        { id: "kmodel", name: "Kimi", description: null },
+      ],
+      "auto",
+    );
+
+    const entitled = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [{ id: "gmodel", name: "GPT-Pro", description: null }],
+        currentModelId: "gmodel",
+        configOptions: [],
+        modelsFromModelSelect: true,
+      },
+      [],
+    );
+    expect(entitled.models.map((m) => m.slug)).toEqual(["gmodel"]);
+    expect(entitled.models.find((m) => m.slug === "gmodel")?.isDefault).toBe(true);
+
+    const narrowed = applyAcpRegistryLiveConfiguration(
+      provider,
+      {
+        models: [{ id: "qmodel", name: "Qwen", description: null }],
+        currentModelId: "qmodel",
+        configOptions: [],
+        modelsFromModelSelect: true,
+      },
+      [],
+    );
+    expect(narrowed.models.map((m) => m.slug)).toEqual(["qmodel"]);
+    expect(narrowed.models.find((m) => m.slug === "qmodel")?.isDefault).toBe(true);
   });
 });
 
@@ -624,6 +670,7 @@ describe("acpRegistryEnrichmentCache", () => {
     ],
     currentModelId: "auto",
     configOptions: [],
+    modelsFromModelSelect: true,
   };
 
   it("does not renew the cache deadline when live configuration is replayed unchanged", () => {
@@ -672,6 +719,7 @@ describe("acpRegistryEnrichmentCache", () => {
         models: [{ id: "smodel", name: "Sonus", description: null }],
         currentModelId: "smodel",
         configOptions: [],
+        modelsFromModelSelect: false,
       },
       customModels: [],
       now: 5_000,
@@ -679,6 +727,37 @@ describe("acpRegistryEnrichmentCache", () => {
 
     expect(updated).not.toBe(cache);
     expect((updated.entry?.expiresAt ?? 0) - 5_000).toBe(30 * 1_000);
+  });
+
+  it("advances the cache epoch when a live update changes the cached entry", () => {
+    const provider = providerWithModels(
+      [{ id: "smodel", name: "Default", description: null }],
+      "smodel",
+    );
+    const cache = { generation: 4, entry: { provider, expiresAt: 1_000 } };
+
+    const updated = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: settledConfiguration,
+      customModels: [],
+      now: 5_000,
+    });
+
+    expect(updated.generation).toBe(5);
+  });
+
+  it("advances the cache epoch when a live update arrives before any probe lands", () => {
+    const cache = { generation: 4, entry: null };
+
+    const updated = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: settledConfiguration,
+      customModels: [],
+      now: 5_000,
+    });
+
+    expect(updated.generation).toBe(5);
+    expect(updated.entry).toBeNull();
   });
 });
 
