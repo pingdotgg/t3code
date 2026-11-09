@@ -10,6 +10,7 @@ import {
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
@@ -39,7 +40,7 @@ import {
   getProjectScopeSelectionTarget,
   resolveNewTaskScratchOption,
 } from "./new-task-project-selection";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
@@ -126,8 +127,6 @@ function NewTaskHeader(props: {
       <AppBar
         title={props.title}
         subtitle={props.subtitle ?? undefined}
-        sidebar={false}
-        options={{ headerBackVisible: true }}
         hideBottomBorder
         onBack={goBack}
         actions={
@@ -175,7 +174,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const screenTitle = incomingShare ? "Start a task" : "Choose project";
   const projectEmptyState = deriveProjectEmptyState(catalogState);
   const serverConfigs = useServerConfigs();
-  const listScopes = projectScopes.filter(
+  const listScopes = pickableProjectGroups(projectScopes).filter(
     (scope) =>
       !scope.projects.every((project) =>
         isScratchProject(project, serverConfigs.get(project.environmentId)?.scratchWorkspaceRoot),
@@ -403,21 +402,27 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               </Text>
               {Platform.OS === "android" ? (
                 <>
-                  <Button
-                    label={catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"}
-                    tone="primary"
-                    onPress={() =>
-                      catalogState.hasReadyEnvironment
-                        ? navigation.dispatch(StackActions.push("AddProject"))
-                        : navigation.navigate("ConnectionsNew")
-                    }
-                  />
-                  {canStartScratch ? (
+                  <View>
                     <Button
-                      label="Start without a project"
-                      tone="secondary"
-                      onPress={() => void startScratch()}
+                      label={
+                        catalogState.hasReadyEnvironment ? "Add new project" : "Add environment"
+                      }
+                      tone="primary"
+                      onPress={() =>
+                        catalogState.hasReadyEnvironment
+                          ? navigation.dispatch(StackActions.push("AddProject"))
+                          : navigation.navigate("ConnectionsNew")
+                      }
                     />
+                  </View>
+                  {canStartScratch ? (
+                    <View>
+                      <Button
+                        label="Start without a project"
+                        tone="secondary"
+                        onPress={() => void startScratch()}
+                      />
+                    </View>
                   ) : null}
                 </>
               ) : !catalogState.hasReadyEnvironment ? (
@@ -438,11 +443,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                     />
                   </View>
                   {canStartScratch ? (
-                    <Button
-                      label="Start without a project"
-                      tone="secondary"
-                      onPress={() => void startScratch()}
-                    />
+                    <View>
+                      <Button
+                        label="Start without a project"
+                        tone="secondary"
+                        onPress={() => void startScratch()}
+                      />
+                    </View>
                   ) : null}
                 </>
               )}

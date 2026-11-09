@@ -4,8 +4,7 @@ import {
   getTraitSelectChange,
   replaceDescriptorCurrentValue,
   selectableProviderOptionChoices,
-  REASONING_SELECT_DESCRIPTOR_IDS,
-  ULTRATHINK_PROMPT_PREFIX,
+  isReasoningSelect,
 } from "@t3tools/client-runtime/model-traits";
 import {
   type ModelSelection,
@@ -116,15 +115,15 @@ function getSelectedTraits(
   promptUltrathink: PromptUltrathink,
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
-  planModeEnabled: boolean,
+  includePlanAgent: boolean | undefined,
 ) {
-  const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
+  const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
   const modelIsUnavailable =
     provider === "opencode" &&
     !models.some((candidate) => candidate.slug === normalizeModelSlug(model, provider));
   const descriptors = modelIsUnavailable
     ? buildUnavailableModelOptionDescriptors(
-        planModeEnabled
+        includePlanAgent
           ? modelOptions
           : modelOptions?.filter((option) => option.id !== "agent" || option.value !== "plan"),
       )
@@ -194,7 +193,7 @@ export function getTraitsSectionVisibility(input: {
   promptUltrathink?: PromptUltrathink | undefined;
   modelOptions?: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -203,7 +202,7 @@ export function getTraitsSectionVisibility(input: {
     input.promptUltrathink ?? "none",
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
-    input.planModeEnabled,
+    input.includePlanAgent,
   );
 
   const showEffort = selected.primarySelectDescriptor !== null;
@@ -242,7 +241,7 @@ export function getReasoningTraitStep(input: {
   modelOptions: ProviderOptions | undefined;
   reportedModelSelection: ModelSelection | null | undefined;
   prompt: string;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
   direction: 1 | -1;
 }) {
   const selected = getSelectedTraits(
@@ -252,13 +251,12 @@ export function getReasoningTraitStep(input: {
     readPromptUltrathink(input.prompt),
     input.modelOptions,
     true,
-    input.planModeEnabled,
+    input.includePlanAgent,
   );
   if (selected.modelIsUnavailable || selected.ultrathinkInBodyText) return null;
-  const descriptor = selected.selectDescriptors.find((entry) =>
-    REASONING_SELECT_DESCRIPTOR_IDS.has(entry.id),
-  );
-  if (!descriptor || descriptor.options.length < 2) return null;
+  const descriptor = selected.selectDescriptors.find(isReasoningSelect);
+  const choices = descriptor ? selectableProviderOptionChoices(descriptor) : [];
+  if (!descriptor || choices.length < 2) return null;
   const isPrimary = descriptor.id === selected.primarySelectDescriptor?.id;
   const current =
     isPrimary && selected.ultrathinkPromptControlled
@@ -268,26 +266,17 @@ export function getReasoningTraitStep(input: {
           { instanceId: input.instanceId, model: input.model, options: input.modelOptions ?? [] },
           input.reportedModelSelection,
         );
+  // Walk the full catalog order so a typed Ultrathink keeps its place, then land on a pickable level.
   const ordered = input.direction > 0 ? descriptor.options : descriptor.options.toReversed();
   const position =
     [current, getDescriptorStringValue(descriptor)]
       .map((value) => ordered.findIndex((option) => option.id === value))
       .find((index) => index >= 0) ?? -1;
-  for (const option of [
-    ...ordered.slice(position + 1),
-    ...ordered.slice(0, Math.max(position, 0)),
-  ]) {
-    const change = getTraitSelectChange(selected, descriptor, input.prompt, option.id);
-    if (!change) return null;
-    if ("modelOptions" in change) {
-      return change.modelOptions
-        ? { prompt: change.prompt, modelOptions: change.modelOptions }
-        : null;
-    }
-    // A slash command refuses the Ultrathink prefix, so skip that level.
-    if (change.prompt.startsWith(ULTRATHINK_PROMPT_PREFIX)) return change;
-  }
-  return null;
+  const next = [...ordered.slice(position + 1), ...ordered.slice(0, Math.max(position, 0))].find(
+    (option) => choices.includes(option),
+  );
+  const change = next && getTraitSelectChange(selected, descriptor, input.prompt, next.id);
+  return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
 }
 
 export interface TraitsMenuContentProps {
@@ -301,7 +290,7 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
   triggerClassName?: string;
 }
 
@@ -318,7 +307,7 @@ export function useTraitsSelection({
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
-  planModeEnabled,
+  includePlanAgent,
   triggerClassName: _triggerClassName,
   ...persistence
 }: TraitsSelectionInput) {
@@ -347,7 +336,7 @@ export function useTraitsSelection({
     promptUltrathink,
     modelOptions,
     allowPromptInjectedEffort,
-    planModeEnabled,
+    includePlanAgent,
   });
   return {
     ...selected,
@@ -368,7 +357,7 @@ export function useTraitsSelection({
       onPromptEdit?.(
         (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
       );
-      if ("modelOptions" in change) updateModelOptions(change.modelOptions);
+      updateModelOptions(change.modelOptions);
     },
     changeBoolean: (descriptorId: string, value: boolean) => {
       updateModelOptions(
@@ -506,7 +495,6 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
   const { label: triggerLabel } = buildTraitsTriggerDisplay({
-    provider: props.provider,
     descriptors: traits.descriptors,
     primarySelectDescriptorId: traits.primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled: traits.ultrathinkPromptControlled,

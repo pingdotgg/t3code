@@ -1,0 +1,38 @@
+import type * as transcribe from "@distilled.cloud/aws/transcribe";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `transcribe:UpdateVocabulary` — replace a custom vocabulary's phrases (the vocabulary re-enters `PENDING` while it reprocesses).
+ *
+ * Amazon Transcribe batch actions have no resource-level IAM; the host is
+ * granted `transcribe:UpdateVocabulary` on `*`.
+ *
+ * ### Custom Vocabularies
+ * **Example:** Update a Custom Vocabulary
+ * ```typescript
+ * // init
+ * const updateVocabulary = yield* AWS.Transcribe.UpdateVocabulary();
+ *
+ * // runtime
+ * yield* updateVocabulary({
+ *   VocabularyName: "tenant-123-vocabulary",
+ *   LanguageCode: "en-US",
+ *   Phrases: ["Alchemy", "workerd", "distilled"],
+ * });
+ * ```
+ *
+ * @binding
+ */
+export interface UpdateVocabulary extends Binding.Service<
+  UpdateVocabulary,
+  "AWS.Transcribe.UpdateVocabulary",
+  () => Effect.Effect<
+    (
+      request: transcribe.UpdateVocabularyRequest,
+    ) => Effect.Effect<transcribe.UpdateVocabularyResponse, transcribe.UpdateVocabularyError>
+  >
+> {}
+export const UpdateVocabulary = Binding.Service<UpdateVocabulary>(
+  "AWS.Transcribe.UpdateVocabulary",
+);

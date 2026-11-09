@@ -29,7 +29,7 @@ type ComposerProviderStateInput = {
   models: ReadonlyArray<ServerProviderModel>;
   promptInjectionState?: ComposerPromptInjectionState;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
 };
 
 type ComposerPromptInjectionState = "none" | "ultrathink";
@@ -54,7 +54,7 @@ type ComposerTraitsTarget = {
   reportedModelSelection?: ModelSelection | null | undefined;
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
 };
 
 export function getComposerPromptInjectionState(prompt: string): ComposerPromptInjectionState {
@@ -84,12 +84,12 @@ function resolveComposerOptionSelections(
   model: string,
   provider: ProviderDriverKind,
   modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
-  planModeEnabled: boolean,
+  includePlanAgent: boolean | undefined,
 ): {
   caps: ModelCapabilities;
   selections: ReadonlyArray<ProviderOptionSelection> | undefined;
 } {
-  const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
+  const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
   return { caps, selections: withImplicitFastModeDefault(caps, modelOptions) };
 }
 
@@ -100,14 +100,14 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     models,
     modelOptions,
     promptInjectionState = "none",
-    planModeEnabled,
+    includePlanAgent,
   } = input;
   if (provider === "opencode") {
     const normalizedModel = normalizeModelSlug(model, provider);
     const modelIsInCatalog = models.some((candidate) => candidate.slug === normalizedModel);
     if (!modelIsInCatalog) {
       const preservedOptions = modelOptions?.filter(
-        (option) => planModeEnabled || option.id !== "agent" || option.value !== "plan",
+        (option) => includePlanAgent || option.id !== "agent" || option.value !== "plan",
       );
       return {
         provider,
@@ -122,7 +122,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     model,
     provider,
     modelOptions,
-    planModeEnabled,
+    includePlanAgent,
   );
   const descriptors = getProviderOptionDescriptors({ caps, selections });
   const primarySelectDescriptor = descriptors.find(
@@ -152,7 +152,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   };
 }
 
-/** Expanded caret positions stay on the same character across Ultrathink prefix changes. */
+/** The caret stays on the same character when stepping strips a typed Ultrathink prefix. */
 export function getComposerReasoningStep(input: {
   provider: ProviderDriverKind;
   instanceId: ProviderInstanceId;
@@ -162,12 +162,12 @@ export function getComposerReasoningStep(input: {
   reportedModelSelection?: ModelSelection | null | undefined;
   prompt: string;
   cursor: number;
-  planModeEnabled: boolean;
+  includePlanAgent?: boolean | undefined;
   direction: 1 | -1;
 }): {
   prompt: string;
   cursor: number;
-  modelOptions?: ReadonlyArray<ProviderOptionSelection>;
+  modelOptions: ReadonlyArray<ProviderOptionSelection>;
 } | null {
   const { prompt, cursor } = input;
   const { selections } = resolveComposerOptionSelections(
@@ -175,7 +175,7 @@ export function getComposerReasoningStep(input: {
     input.model,
     input.provider,
     input.modelOptions,
-    input.planModeEnabled,
+    input.includePlanAgent,
   );
   const step = getReasoningTraitStep({
     provider: input.provider,
@@ -185,22 +185,14 @@ export function getComposerReasoningStep(input: {
     modelOptions: selections,
     reportedModelSelection: input.reportedModelSelection,
     prompt,
-    planModeEnabled: input.planModeEnabled,
+    includePlanAgent: input.includePlanAgent,
     direction: input.direction,
   });
   if (!step) return null;
-  const modelOptions = "modelOptions" in step ? { modelOptions: step.modelOptions } : {};
-  if (step.prompt === prompt) return { prompt, cursor, ...modelOptions };
-  // Adding the prefix also trims the prompt.
-  const keptStart = "modelOptions" in step ? 0 : step.prompt.length - prompt.trim().length;
-  const offset =
-    "modelOptions" in step
-      ? step.prompt.length - prompt.length
-      : keptStart - (prompt.length - prompt.trimStart().length);
   return {
     prompt: step.prompt,
-    cursor: Math.min(step.prompt.length, Math.max(keptStart, cursor + offset)),
-    ...modelOptions,
+    cursor: Math.max(0, cursor + step.prompt.length - prompt.length),
+    modelOptions: step.modelOptions,
   };
 }
 
@@ -217,7 +209,7 @@ export function resolveComposerTraitsInput(
     input.model,
     input.provider,
     input.modelOptions,
-    input.planModeEnabled,
+    input.includePlanAgent,
   );
   const persistence = threadRef ? { threadRef } : draftId ? { draftId } : null;
   if (!persistence) return null;
