@@ -187,6 +187,15 @@ describe("Codex App Server stderr excerpt", () => {
         'oauth2: "invalid_request" "Errors.OIDCSession.RefreshTokenInvalid" | Error: provider launcher exited with code 1.',
     },
     {
+      name: "final launcher summary takes precedence over an earlier error label",
+      stderr: [
+        "Error: starting provider",
+        "lookup failed: no such host",
+        "Ошибка: exit status 1",
+      ].join("\n"),
+      excerpt: "Error: starting provider | lookup failed: no such host | Ошибка: exit status 1",
+    },
+    {
       name: "launcher summary alone",
       stderr: "Error: command failed with exit code 1\n",
       excerpt: "Error: command failed with exit code 1",

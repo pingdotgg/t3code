@@ -70,7 +70,10 @@ export const stderrExcerpt = (tail: string): string | undefined => {
     .map((line) => line.trim().replace(/\s+/g, " "))
     .filter((line) => line.length > 0);
   const errorIndex = lines.findLastIndex((candidate) => ERROR_LINE_PATTERN.test(candidate));
-  const lineIndex = errorIndex === -1 ? lines.length - 1 : errorIndex;
+  const lineIndex =
+    errorIndex === -1 || EXIT_SUMMARY_PATTERN.test(lines.at(-1) ?? "")
+      ? lines.length - 1
+      : errorIndex;
   const line = lines[lineIndex];
   if (line === undefined) {
     return undefined;
