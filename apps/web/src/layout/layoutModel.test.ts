@@ -338,3 +338,10 @@ describe("placeLayoutTabs", () => {
     expect(selectFocusedTab(after)).toBe(selectFocusedTab(before));
   });
 });
+
+describe("replaceLayoutTabContent", () => {
+  it("leaves an open thread alone when the tab to replace has already closed", () => {
+    const before = openLayoutTab(createLayoutState(), chat);
+    expect(replaceLayoutTabContent(before, "closed-tab", chat)).toBe(before);
+  });
+});
