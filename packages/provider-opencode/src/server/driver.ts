@@ -53,6 +53,7 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { providerProbeEnvironment } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -109,6 +110,7 @@ function byOpenCodeRuntime<A, E, R, PE>(
 // Hot reads use the last successful probe; session opens await it to select the correct protocol.
 function selectOpenCodeRuntimeAdapter(input: {
   readonly probe: OpenCodeRuntimeProbe;
+  readonly resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>;
   readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
@@ -122,43 +124,43 @@ function selectOpenCodeRuntimeAdapter(input: {
     planSelectionTransition: (transition) =>
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
-      Effect.flatMap(pick(input.probe.get), (adapter) => adapter.openSession(session)),
+      Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
   };
 }
 
 function selectOpenCodeRuntimeTextGeneration(
-  probe: OpenCodeRuntimeProbe,
+  resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>,
   v1: ProviderTextGeneration,
   v2: ProviderTextGeneration,
 ): ProviderTextGeneration {
   return {
     generateCommitMessage: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateCommitMessage(input),
         v2: v2.generateCommitMessage(input),
       }),
     generatePrContent: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generatePrContent(input),
         v2: v2.generatePrContent(input),
       }),
     generateBranchName: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateBranchName(input),
         v2: v2.generateBranchName(input),
       }),
     generateThreadTitle: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
     generateReviewGuide: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
     generateTranscriptionPostProcessing: (input) =>
-      byOpenCodeRuntime(probe.get, {
+      byOpenCodeRuntime(resolve, {
         v1: v1.generateTranscriptionPostProcessing(input),
         v2: v2.generateTranscriptionPostProcessing(input),
       }),
@@ -225,12 +227,20 @@ export const OpenCodeDriver: ProviderDriver<
       // The instance registry has already read a referenced password from its secret provider.
       serverPassword: settingsSecretLiteral(config.serverPassword),
     } satisfies OpenCodeSettings;
-    const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
-      probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
+    const probeRuntime = (probeEnv: NodeJS.ProcessEnv) =>
+      probeOpenCodeRuntime(effectiveConfig, probeEnv).pipe(
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, openCodeRuntime),
-      ),
+      );
+    const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
+      probeRuntime(providerProbeEnvironment(processEnv)),
     );
+    // A mise shim cannot install OpenCode offline; a session or text generation the user started
+    // may, so it re-probes online to pick the protocol of the version mise installs.
+    const resolveRuntime =
+      effectiveConfig.serverUrl.trim().length > 0
+        ? runtimeProbe.get
+        : runtimeProbe.get.pipe(Effect.catch(() => probeRuntime(processEnv)));
     const noUpdate = makeManualOnlyProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: null,
@@ -296,6 +306,7 @@ export const OpenCodeDriver: ProviderDriver<
     );
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
+      resolve: resolveRuntime,
       v1: openCodeV1Adapter,
       v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
@@ -344,7 +355,7 @@ export const OpenCodeDriver: ProviderDriver<
       environment: processEnv,
     });
     const textGeneration = selectOpenCodeRuntimeTextGeneration(
-      runtimeProbe,
+      resolveRuntime,
       yield* makeOpenCodeTextGeneration(effectiveConfig).pipe(
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       ),

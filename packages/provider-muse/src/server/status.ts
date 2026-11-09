@@ -15,6 +15,7 @@ import {
   COMPACT_SLASH_COMMAND,
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
+  parseCliVersionResult,
   providerModelsFromSettings,
   providerProbeEnvironment,
   spawnAndCollect,
@@ -106,7 +107,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseMuseVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput, parseMuseVersion);
   if (versionOutput.code !== 0) {
     return snapshot({
       installed: true,

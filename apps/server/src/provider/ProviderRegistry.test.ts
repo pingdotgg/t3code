@@ -3121,7 +3121,13 @@ it.layer(
           [
             `#!/bin/sh`,
             `case "$MISE_OFFLINE" in`,
-            `  1|true) echo "mise ERROR Failed to install aqua:anthropics/claude-code@latest" >&2; exit 1 ;;`,
+            `  1|true) cat >&2 <<'EOF'`,
+            `mise WARN  Failed to resolve tool version list for claude: [/home/u/.config/mise/config.toml] claude@latest: no versions found for claude`,
+            `mise ERROR Failed to install aqua:anthropics/claude-code@latest: no versions found for claude`,
+            `mise ERROR Version: 2026.11.5 linux-x64 (2026-11-09)`,
+            `mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information`,
+            `EOF`,
+            `  exit 1 ;;`,
             `esac`,
             `touch "${installMarker}"`,
             `echo "2.1.0 (Claude Code)"`,
@@ -3130,7 +3136,7 @@ it.layer(
         yield* fs.chmod(binaryPath, 0o755);
         const { MISE_OFFLINE: _, ...environment } = process.env;
 
-        yield* checkClaudeProviderStatus(
+        const status = yield* checkClaudeProviderStatus(
           { ...defaultClaudeSettings, binaryPath },
           claudeCapabilities(),
           environment,
@@ -3140,6 +3146,7 @@ it.layer(
           yield* fs.exists(installMarker),
           "the Claude --version status probe let mise install Claude",
         );
+        assert.isNull(status.version, "mise's own version is not Claude's");
       }),
     );
 

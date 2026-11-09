@@ -27,7 +27,7 @@ import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
   isCommandMissingCause,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   buildSelectOptionDescriptor,
   type ProviderProbeResult,
   providerModelsFromSettings,
@@ -392,7 +392,7 @@ export const checkKiroProviderStatus = Effect.fn("checkKiroProviderStatus")(func
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     return snapshot(settings, checkedAt, {
       installed: true,

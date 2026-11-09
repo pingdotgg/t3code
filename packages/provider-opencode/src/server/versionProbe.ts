@@ -9,10 +9,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import {
-  parseGenericCliVersion,
-  providerProbeEnvironment,
-} from "@t3tools/provider-core/server/snapshotProbe";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 
 export interface ProbedOpenCode {
   readonly generation: "v1" | "v2";
@@ -67,7 +64,7 @@ const probeOpenCodeBinary = Effect.fn("probeOpenCodeBinary")(function* (
     .runOpenCodeCommand({
       binaryPath,
       args: ["--version"],
-      environment: providerProbeEnvironment(environment ?? process.env),
+      ...(environment === undefined ? {} : { environment }),
     })
     .pipe(
       Effect.timeoutOrElse({

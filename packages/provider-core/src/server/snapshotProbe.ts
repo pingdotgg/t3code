@@ -145,6 +145,14 @@ export function parseGenericCliVersion(output: string): string | null {
   return match?.[1] ?? null;
 }
 
+/** A failed `--version` run reports no version: its output can be a wrapper's, such as mise's. */
+export function parseCliVersionResult(
+  result: CommandResult,
+  parse: (output: string) => string | null = parseGenericCliVersion,
+): string | null {
+  return result.code === 0 ? parse(`${result.stdout}\n${result.stderr}`) : null;
+}
+
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,

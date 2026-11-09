@@ -21,7 +21,7 @@ import {
   buildServerProvider,
   isCommandMissingCause,
   nonEmptyTrimmed,
-  parseGenericCliVersion,
+  parseCliVersionResult,
   type ProviderProbeResult,
   providerModelsFromSettings,
   type ServerProviderDraft,
@@ -180,7 +180,7 @@ export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function
     });
   }
   const versionOutput = versionResult.success.value;
-  const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
+  const version = parseCliVersionResult(versionOutput);
   if (versionOutput.code !== 0) {
     return snapshot(settings, checkedAt, {
       installed: true,
