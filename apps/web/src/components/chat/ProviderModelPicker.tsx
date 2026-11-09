@@ -228,9 +228,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.fullLabel).join(", ") || "Choose models"
     : undefined;
+  // Only when same-driver instances could be confused, e.g. one Claude instance per account.
+  const activeInstanceLabel =
+    showInstanceBadge && !selectedEntries ? activeEntry?.displayName : undefined;
   const triggerTooltipContent = [
     props.triggerLabel ?? allModelNames ?? triggerLabel,
     props.triggerDetail,
+    activeInstanceLabel,
     shortcutLabel,
   ]
     .filter(Boolean)
@@ -309,6 +313,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             aria-label={[
               props.triggerAriaLabel ?? props.triggerLabel ?? allModelNames ?? triggerLabel,
               props.triggerDetail,
+              activeInstanceLabel,
             ]
               .filter(Boolean)
               .join(", ")}
@@ -387,7 +392,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               />
             </span>
           ) : null}
-          {props.isComposerOwned ? (
+          {props.isComposerOwned && !activeInstanceLabel ? (
             <span {...triggerTextProps}>{triggerText}</span>
           ) : (
             <Tooltip>

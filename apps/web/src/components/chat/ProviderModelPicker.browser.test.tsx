@@ -79,6 +79,12 @@ it("keeps each registry image when adding a model from another ACP agent", async
   await vi.waitFor(() => expect(imageWidths()).toEqual([11]));
   await screen.getByRole("button", { name: "First model", exact: true }).click();
   await page.getByRole("button", { name: "Second agent", exact: true }).click();
+  await expect
+    .element(page.getByRole("button", { name: "First agent", exact: true }))
+    .toHaveAttribute("aria-current", "true");
+  await expect
+    .element(page.getByRole("button", { name: "Second agent", exact: true }))
+    .not.toHaveAttribute("aria-current");
   await userEvent.keyboard("{Shift>}");
   try {
     await page.getByRole("option", { name: /Second model/ }).click();
