@@ -188,7 +188,7 @@ export const install = Effect.gen(function* () {
       if (Option.isNone(oldExisting) || isOurLauncher(oldExisting.value)) {
         if (Option.getOrUndefined(oldExisting) !== legacyContent) {
           yield* fs.makeDirectory(path.dirname(oldShimPath), { recursive: true });
-          const staging = `${oldShimPath}.${process.pid}.tmp`;
+          const staging = `${oldShimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
           yield* fs.writeFileString(staging, legacyContent, { mode: 0o755 });
           yield* fs.rename(staging, oldShimPath);
         }
@@ -204,7 +204,8 @@ export const install = Effect.gen(function* () {
         return Option.some(shimPath);
       }
       yield* fs.remove(oldShimPath, { force: true }).pipe(Effect.ignore);
-      yield* fs.symlink(shimPath, oldShimPath);
+      // Best effort: a concurrent install (backend startup, first launch) may have just linked it.
+      yield* fs.symlink(shimPath, oldShimPath).pipe(Effect.ignore);
     }
     return Option.some(shimPath);
   }).pipe(

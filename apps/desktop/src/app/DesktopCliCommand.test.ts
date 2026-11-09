@@ -327,6 +327,30 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("a legacy launcher another startup call just linked does not fail the install", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const legacyShim = path.join(home, ".t3-learn", "bin", "t3-learn");
+      // Backend startup links it between this call's remove and symlink.
+      const racing = {
+        ...fs,
+        symlink: (target: string, link: string) =>
+          link === legacyShim
+            ? fs.symlink(target, link).pipe(Effect.andThen(fs.symlink(target, link)))
+            : fs.symlink(target, link),
+      };
+      const command = yield* commandIn({ home }).pipe(
+        Effect.provideService(FileSystem.FileSystem, racing),
+      );
+      expect((yield* command.install).installedPath).toBe(
+        path.join(home, ".local", "bin", "ominax"),
+      );
+      expect(yield* fs.readLink(legacyShim)).toBe(path.join(home, ".t3-learn", "bin", "ominax"));
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("leaves a foreign t3-learn alias untouched", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
