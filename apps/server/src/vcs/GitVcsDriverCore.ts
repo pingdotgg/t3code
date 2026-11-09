@@ -4254,7 +4254,40 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         prefix += character;
       }
       const directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      const projectDirectory = path.join(parentDir, repoName);
+      const toCommandError = (error: PlatformError.PlatformError) =>
+        new GitCommandError({
+          operation: "GitVcsDriver.createWorktree",
+          command: "mkdir",
+          cwd: input.cwd,
+          detail: `Could not create a worktree folder in ${projectDirectory}.`,
+          cause: error,
+        });
+      yield* fileSystem
+        .makeDirectory(projectDirectory, { recursive: true })
+        .pipe(Effect.mapError(toCommandError));
+      // Something can already sit at the generated path, so claim the first free folder.
+      for (let attempt = 1; worktreePath == null; attempt += 1) {
+        // The suffix replaces trailing hash characters, keeping the 40-byte bound.
+        const suffix = `-${attempt}`;
+        const candidate = path.join(
+          projectDirectory,
+          attempt === 1 ? directoryName : `${directoryName.slice(0, -suffix.length)}${suffix}`,
+        );
+        // Git checks out into the empty claimed folder; give it back if the worktree is not created.
+        worktreePath = yield* Effect.acquireRelease(
+          fileSystem.makeDirectory(candidate),
+          (_, exit) =>
+            Exit.isFailure(exit) ? Effect.ignore(removeEmptyDirectory(candidate)) : Effect.void,
+        ).pipe(
+          Effect.as(candidate),
+          Effect.catchIf(
+            (error) => error.reason._tag === "AlreadyExists",
+            () => Effect.succeed(null),
+          ),
+          Effect.mapError(toCommandError),
+        );
+      }
     }
     const newRefName = input.newRefName;
     if (newRefName) {
@@ -4447,7 +4480,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         refName: targetBranch,
       },
     };
-  });
+  }, Effect.scoped);
 
   const fetchRefIntoBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRefIntoBranch"] = Effect.fn(
     "GitVcsDriver.fetchRefIntoBranch",

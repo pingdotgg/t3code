@@ -5052,6 +5052,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         );
         assert.equal(yield* fileSystem.exists(created.worktree.path), true);
 
+        // A folder left at the generated path, here by an earlier worktree for the branch.
+        const occupied = created.worktree.path;
+        yield* git(cwd, ["worktree", "remove", occupied]);
+        yield* git(cwd, ["branch", "-D", "feature/custom-dir"]);
+        yield* writeTextFile(occupied, "notes.txt", "keep\n");
+        const recreated = yield* driver.createWorktree(
+          { cwd, path: null, refName: initialBranch, newRefName: "feature/custom-dir" },
+          { worktreesDirectory },
+        );
+        const claimed = `${occupied.slice(0, -2)}-2`;
+        assert.equal(recreated.worktree.path, claimed);
+        assert.equal(
+          yield* git(recreated.worktree.path, ["branch", "--show-current"]),
+          "feature/custom-dir",
+        );
+        assert.equal(
+          yield* fileSystem.readFileString(pathService.join(occupied, "notes.txt")),
+          "keep\n",
+        );
+        yield* driver
+          .createWorktree(
+            { cwd, path: null, refName: initialBranch, newRefName: "feature/custom-dir" },
+            { worktreesDirectory },
+          )
+          .pipe(Effect.flip);
+        assert.sameMembers(yield* fileSystem.readDirectory(pathService.dirname(occupied)), [
+          pathService.basename(occupied),
+          pathService.basename(claimed),
+        ]);
+
         const error = yield* driver
           .createWorktree(
             { cwd, path: null, refName: initialBranch, newRefName: "feature/relative-dir" },
