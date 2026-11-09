@@ -453,8 +453,11 @@ export const make = Effect.gen(function* () {
       });
     },
   ).pipe(
+    // Our own messages are short and name only paths; anything else is logged as a category.
     Effect.catch((error) =>
-      logWarning("did not install the t3 command on first launch", { error: String(error) }),
+      logWarning("did not install the t3 command on first launch", {
+        reason: error._tag === "DesktopCliCommandError" ? error.message : "state-write-failed",
+      }),
     ),
     Effect.withSpan("desktop.cliCommand.installOnFirstLaunch"),
   );
