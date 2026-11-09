@@ -370,7 +370,7 @@ describe("OrchestratorMcpService", () => {
           },
         ],
       } as unknown as OrchestrationV2ThreadProjection;
-      const childProjection = {
+      let childProjection = {
         thread: { id: childThreadId, title: "Child" },
         runs: [
           {
@@ -444,6 +444,49 @@ describe("OrchestratorMcpService", () => {
         assert.equal(status.workState, "waiting_for_children");
         assert.equal(status.status, "running");
         assert.isNull(status.summary);
+
+        const wakeRunId = RunId.make("run:mcp-followup-wake");
+        const wakeMessageId = MessageId.make("message:mcp-followup-wake");
+        childProjection = {
+          ...childProjection,
+          runs: [
+            ...childProjection.runs,
+            {
+              id: wakeRunId,
+              ordinal: 3,
+              status: "completed",
+              userMessageId: wakeMessageId,
+              startedAt: DateTime.makeUnsafe("2026-10-03T10:04:00Z"),
+              completedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+            },
+          ],
+          messages: [
+            {
+              id: wakeMessageId,
+              runId: wakeRunId,
+              role: "user",
+              text: "Delegated task finished.",
+              delegatedCompletion: {
+                parentRunId: RunId.make("run:mcp-followup"),
+                generation: 1,
+                taskIds: [NodeId.make("node:mcp-followup-grandchild")],
+              },
+            },
+            {
+              id: MessageId.make("message:mcp-followup-wake-result"),
+              runId: wakeRunId,
+              role: "assistant",
+              text: "The grandchild finished the next step.",
+              updatedAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+              createdAt: DateTime.makeUnsafe("2026-10-03T10:05:00Z"),
+            },
+          ],
+          subagents: [],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const settled = yield* service.taskStatus(scope, followupTaskId);
+        assert.equal(settled.workState, "result_available");
+        assert.equal(settled.status, "completed");
+        assert.equal(settled.summary, "The grandchild finished the next step.");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

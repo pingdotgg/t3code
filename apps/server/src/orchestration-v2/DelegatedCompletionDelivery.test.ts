@@ -2856,6 +2856,16 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           1,
         );
 
+        // The grandchild's completion wakes the child in a run without a delegatedTaskId.
+        const wakeRunId = RunId.make("run:followup-grandchild-wake");
+        const wakeRun = (status: "running" | "completed") =>
+          runEvent({
+            threadId: child.childThreadId,
+            runId: wakeRunId,
+            ordinal: followupRun.ordinal + 1,
+            status,
+            now,
+          });
         yield* eventSink.write({
           commandId: reconcileCommandId("followup-grandchild-settled"),
           events: [
@@ -2872,10 +2882,70 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 ...grandchild,
                 status: "completed",
                 result: "grandchild finished",
-                completionDelivery: { state: "acknowledged", observedByRunId: followupRun.id },
+                completionDelivery: { state: "acknowledged", observedByRunId: wakeRunId },
                 completedAt: now,
               },
             },
+            {
+              id: EventId.make("event:followup-grandchild-wake-message"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: wakeRunId,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make(`message:${wakeRunId}`),
+                threadId: child.childThreadId,
+                runId: wakeRunId,
+                nodeId: null,
+                role: "user",
+                text: "Delegated task finished.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                delegatedCompletion: {
+                  parentRunId: followupRun.id,
+                  generation: 1,
+                  taskIds: [grandchildId],
+                },
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            wakeRun("running"),
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const waking = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === followupTaskId,
+        );
+        assert.isNull(waking?.result ?? null, "the follow-up closed before the child's wake ended");
+
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-grandchild-wake-finished"),
+          events: [
+            {
+              id: EventId.make("event:followup-grandchild-wake-result"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: wakeRunId,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make("message:followup-grandchild-wake-result"),
+                threadId: child.childThreadId,
+                runId: wakeRunId,
+                nodeId: null,
+                role: "assistant",
+                text: "The grandchild finished the next step.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            wakeRun("completed"),
           ],
         });
         yield* orchestrator.recoverDelegatedTasks;
@@ -2883,7 +2953,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           (task) => task.id === followupTaskId,
         );
         assert.equal(settled?.status, "completed");
-        assert.isNotNull(settled?.result ?? null);
+        assert.equal(settled?.result, "The grandchild finished the next step.");
       }),
     );
   },
