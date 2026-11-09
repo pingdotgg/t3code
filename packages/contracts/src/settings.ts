@@ -954,6 +954,11 @@ export type TextGeneratorModel = typeof TextGeneratorModel.Type;
 
 export const ListTextGeneratorModelsInput = Schema.Struct({
   id: ProviderInstanceId,
+  /**
+   * Unsaved settings to check before saving, such as from the add dialog. A redacted key keeps
+   * the one saved under `id`.
+   */
+  config: Schema.optional(TextGeneratorConfig),
   /** Skip the server's cached list and ask the API again. */
   refresh: Schema.optional(Schema.Boolean),
 });

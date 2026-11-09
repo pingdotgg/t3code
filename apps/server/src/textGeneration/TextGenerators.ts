@@ -20,6 +20,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import {
   TEXT_GENERATOR_DRIVERS,
   type TextGeneratorConnection,
@@ -109,7 +110,13 @@ export const make = Effect.gen(function* () {
 
   const listModels = Effect.fn("TextGenerators.listModels")(
     function* (input: ListTextGeneratorModelsInput) {
-      const config = yield* readConfig(input.id);
+      const saved = yield* readConfig(input.id);
+      const config =
+        input.config === undefined
+          ? saved
+          : input.config.apiKey === SECRET_REDACTED
+            ? { ...input.config, apiKey: saved?.apiKey ?? "" }
+            : input.config;
       if (config === undefined) {
         return yield* new TextGeneratorRequestError({
           detail: "That text generator no longer exists.",

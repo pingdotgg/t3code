@@ -8,6 +8,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import { expect, vi } from "vite-plus/test";
 
 import * as ServerSettings from "../serverSettings.ts";
+import { SECRET_REDACTED } from "../settingsSecrets.ts";
 import * as TextGenerators from "./TextGenerators.ts";
 
 const ID = ProviderInstanceId.make("router");
@@ -138,5 +139,40 @@ it.effect("lists models once per config, following Anthropic pagination, until r
       expect(upstream).toHaveBeenCalledTimes(6);
     });
     yield* program.pipe(Effect.provide(layer({ kind: "anthropic", apiKey: "secret" })));
+  }),
+);
+
+it.effect("checks unsaved settings, keeping the saved key behind a redaction marker", () =>
+  Effect.gen(function* () {
+    const seen: Array<{ url: string; auth: string | null }> = [];
+    const upstream = vi.fn<typeof fetch>(async (url, init) => {
+      seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") });
+      return Response.json({ data: [{ id: "model-a" }] });
+    });
+    const generators = yield* TextGenerators.TextGenerators.pipe(
+      Effect.provide(layer({ apiKey: "saved-key" })),
+    );
+    const list = (id: string, config: Partial<TextGeneratorConfig>) =>
+      generators
+        .listModels({
+          id: ProviderInstanceId.make(id),
+          config: {
+            kind: "openaiCompatible",
+            baseUrl: "https://new.test/v1",
+            apiKey: "",
+            enabled: true,
+            ...config,
+          },
+        })
+        .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+
+    expect((yield* list("draft", { apiKey: "typed-key" })).models).toEqual([
+      { id: "model-a", name: "model-a" },
+    ]);
+    yield* list(ID, { apiKey: SECRET_REDACTED });
+    expect(seen).toEqual([
+      { url: "https://new.test/v1/models", auth: "Bearer typed-key" },
+      { url: "https://new.test/v1/models", auth: "Bearer saved-key" },
+    ]);
   }),
 );

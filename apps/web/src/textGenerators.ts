@@ -169,6 +169,49 @@ export async function refreshTextGeneratorModels(
     : { error: formatEnvironmentQueryError(result.cause) };
 }
 
+/** Lists the models unsaved settings reach, to check them before saving. */
+export async function checkTextGeneratorConfig(
+  environmentId: EnvironmentId,
+  id: ProviderInstanceId,
+  config: TextGeneratorConfig,
+): Promise<{ readonly models: ReadonlyArray<TextGeneratorModel> } | { readonly error: string }> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.listTextGeneratorModels,
+    { environmentId, input: { id, config } },
+    { reportFailure: false },
+  );
+  return result._tag === "Success"
+    ? { models: result.value.models }
+    : { error: formatEnvironmentQueryError(result.cause) };
+}
+
+/** A saved text generator's model list, shared with the pickers. */
+export function useTextGeneratorModels(
+  environmentId: EnvironmentId,
+  id: ProviderInstanceId,
+  config: TextGeneratorConfig,
+): AsyncResult.AsyncResult<ReadonlyArray<TextGeneratorModel>, string> {
+  return useAtomValue(
+    textGeneratorModelsAtom(
+      JSON.stringify([
+        environmentId,
+        id,
+        config.kind,
+        config.baseUrl,
+        config.apiKey,
+      ] satisfies ModelsKey),
+    ),
+  );
+}
+
+/** A fast, cheap model to suggest for short text, else the first one. */
+export function suggestTextGeneratorModel(
+  models: ReadonlyArray<TextGeneratorModel>,
+): TextGeneratorModel | undefined {
+  return models.find((model) => /haiku|mini|flash|nano/i.test(model.id)) ?? models[0];
+}
+
 function toProviderModel(model: TextGeneratorModel): ServerProviderModel {
   return { slug: model.id, name: model.name, isCustom: false, capabilities: null };
 }

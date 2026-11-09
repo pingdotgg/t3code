@@ -21,8 +21,10 @@ Give it a name if you add more than one from the same service. Your key is store
 environment, like other [secrets](./secrets.md), and can come from a secret provider instead of
 being typed in.
 
-Then pick one of its models in a text generation model picker. If a model is missing, use the
-refresh button on the generator's row in **Settings → Providers** to load the list again.
+T3 Code then lists the service's models to check the connection. Pick one, and choose which tasks
+should use it: thread titles, source control text, or voice cleanup. You can change this later in
+each task's model picker. **Models** on the generator's row shows the list again and refreshes it
+after the service adds models.
 
 Each request sends the API what the task needs, such as the staged diff for a commit message.
 
