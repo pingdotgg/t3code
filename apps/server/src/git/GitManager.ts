@@ -683,8 +683,8 @@ export const make = Effect.gen(function* () {
         !remoteUrl ||
         !provider ||
         (provider.kind === fallback.provider.kind &&
-          (fallback.context === null ||
-            sameBaseUrlHost(provider.baseUrl, fallback.context.provider.baseUrl)))
+          fallback.context !== null &&
+          sameBaseUrlHost(provider.baseUrl, fallback.context.provider.baseUrl))
       ) {
         return fallback.provider;
       }
