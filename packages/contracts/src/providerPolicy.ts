@@ -52,9 +52,10 @@ export const resolveSupportedRuntimeMode = (
 ): RuntimeMode =>
   supported === undefined || supported.length === 0 || supported.includes(mode)
     ? mode
-    : (RuntimeMode.literals.findLast(
-        (candidate) => supported.includes(candidate) && !isRuntimeModeAbove(candidate, mode),
-      ) ?? "approval-required");
+    : (supported
+        .filter((candidate) => !isRuntimeModeAbove(candidate, mode))
+        .sort((left, right) => RUNTIME_MODE_RANK[right] - RUNTIME_MODE_RANK[left])[0] ??
+      "approval-required");
 
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;

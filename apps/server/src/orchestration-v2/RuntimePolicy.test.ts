@@ -65,11 +65,9 @@ function makeThread(input: {
 
 const grokInstanceId = ProviderInstanceId.make("grok");
 const antigravityInstanceId = ProviderInstanceId.make("antigravity");
-const piInstanceId = ProviderInstanceId.make("pi");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
   [antigravityInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
-  [piInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -152,8 +150,6 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
           })
           .pipe(Effect.map((resolved) => resolved.runtimeMode));
 
-      assert.equal(yield* modeFor(piInstanceId, "auto"), "auto-accept-edits");
-      assert.equal(yield* modeFor(piInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(grokInstanceId, "auto-accept-edits"), "approval-required");
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");
