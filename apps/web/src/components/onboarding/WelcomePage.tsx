@@ -84,7 +84,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
 import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog";
-import { ChatGptWelcomeCoordinator } from "../settings/ChatGptWelcomeCoordinator";
 import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
@@ -276,7 +275,9 @@ export function WelcomePage({
                 )}
                 <Button disabled={!agentReady || isImporting} onClick={start}>
                   {isImporting
-                    ? "Importing…"
+                    ? selected.length > 0
+                      ? "Importing…"
+                      : "Starting…"
                     : newCount > 0
                       ? `Import ${newCount} ${newCount === 1 ? "project" : "projects"} and start`
                       : selected.length > 0
@@ -289,7 +290,6 @@ export function WelcomePage({
           </div>
         </div>
       </div>
-      <ChatGptWelcomeCoordinator />
     </SidebarInset>
   );
 }
@@ -714,7 +714,12 @@ function ProjectsSection({
       </WelcomeSection>
     );
   }
-  if (scan.error !== null) {
+  const retry = (
+    <Button variant="ghost" size="sm" onClick={scan.refresh}>
+      Retry
+    </Button>
+  );
+  if (scan.error !== null && candidates.length === 0) {
     return (
       <WelcomeSection title="Projects">
         <div
@@ -722,9 +727,7 @@ function ProjectsSection({
           className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
         >
           <span>Could not check projects. {scan.error}</span>
-          <Button variant="ghost" size="sm" onClick={scan.refresh}>
-            Retry
-          </Button>
+          {retry}
         </div>
       </WelcomeSection>
     );
@@ -741,17 +744,21 @@ function ProjectsSection({
 
   const allKeys = candidates.map((candidate) => candidate.key);
   const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
-  const isDefaultSelection =
-    selected.length === defaultKeys.length && defaultKeys.every((key) => selectedKeys.has(key));
+  const partial =
+    selected.length > 0 &&
+    selected.length < candidates.length &&
+    !(selected.length === defaultKeys.length && defaultKeys.every((key) => selectedKeys.has(key)));
   return (
     <WelcomeSection title="Projects" status={`From your ${IMPORT_SOURCES_LABEL} history`}>
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
         <label className="flex min-w-0 flex-1 items-center gap-3">
           <Checkbox
             checked={canWrite && selected.length > 0}
-            indeterminate={canWrite && selected.length > 0 && !isDefaultSelection}
+            indeterminate={canWrite && partial}
             disabled={isImporting || !canWrite}
-            onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
+            onCheckedChange={(checked) =>
+              setSelectedKeys(new Set(checked ? defaultKeys : []), { optedOut: !checked })
+            }
           />
           <span className="min-w-0 flex-1 text-sm text-foreground">
             {canWrite && selected.length > 0
@@ -811,6 +818,15 @@ function ProjectsSection({
         <p className="mt-2 text-xs text-muted-foreground" role="status">
           {SCAN_LIMIT_MESSAGE}
         </p>
+      ) : null}
+      {scan.error !== null ? (
+        <div
+          role="alert"
+          className="mt-2 flex items-center justify-between gap-3 text-sm text-muted-foreground"
+        >
+          <span>Could not check projects again. {scan.error}</span>
+          {retry}
+        </div>
       ) : null}
       {visibleImportError ? (
         <p className="mt-2 text-sm text-destructive">{visibleImportError}</p>
@@ -911,6 +927,21 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   const reachability = shared ? link.reachability?.status : undefined;
   if (isSignedIn && link === null && linkState.isPending) {
     return <span className="text-sm text-muted-foreground">Checking T3 Connect…</span>;
+  }
+  if (isSignedIn && linkState.error !== null) {
+    return (
+      <>
+        <span className="text-sm text-muted-foreground">Could not check T3 Connect.</span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          render={<Link to="/settings/access" />}
+        >
+          Check T3 Connect
+        </Button>
+      </>
+    );
   }
   if (isSignedIn && reachability === "reachable") {
     return (
@@ -1318,16 +1349,19 @@ function useProjectImport({
     ),
   );
   const recentKeys = new Set(recent.map((candidate) => candidate.key));
-  const selected = candidates.filter((candidate) =>
-    importSelection?.knownKeys.has(candidate.key)
-      ? importSelection.keys.has(candidate.key)
-      : recentKeys.has(candidate.key),
-  );
+  const selected = importSelection?.optedOut
+    ? []
+    : candidates.filter((candidate) =>
+        importSelection?.knownKeys.has(candidate.key)
+          ? importSelection.keys.has(candidate.key)
+          : recentKeys.has(candidate.key),
+      );
   const selectedKeys = new Set(selected.map((candidate) => candidate.key));
-  const setSelectedKeys = (keys: ReadonlySet<string>) =>
+  const setSelectedKeys = (keys: ReadonlySet<string>, { optedOut = false } = {}) =>
     onImportSelectionChange({
       knownKeys: new Set(candidates.map((candidate) => candidate.key)),
       keys,
+      optedOut,
     });
 
   const canImport = selected.every((candidate) =>
@@ -1393,10 +1427,6 @@ function useProjectImport({
       stopForDeniedAccess();
       return;
     }
-    if (selection.length === 0) {
-      void onDone();
-      return;
-    }
     setIsImporting(true);
     importWarningRef.current = "";
     importedThreadCountRef.current = 0;
@@ -1415,12 +1445,7 @@ function useProjectImport({
     const importEach = async () => {
       for (const candidate of selection) {
         const { environmentId } = candidate;
-        if (
-          importGeneration !== importGenerationRef.current ||
-          importedProjects !== importedProjectsRef.current
-        ) {
-          return false;
-        }
+        if (importGeneration !== importGenerationRef.current) return false;
         if (!hasAccess()) {
           stopForDeniedAccess();
           return false;
@@ -1449,12 +1474,7 @@ function useProjectImport({
               defaultModelSelection: null,
             },
           });
-          if (
-            importGeneration !== importGenerationRef.current ||
-            importedProjects !== importedProjectsRef.current
-          ) {
-            return false;
-          }
+          if (importGeneration !== importGenerationRef.current) return false;
           if (result._tag !== "Success") {
             if (!isAtomCommandInterrupted(result)) {
               projectAttempts.delete(candidate.key);
@@ -1472,12 +1492,7 @@ function useProjectImport({
           environmentId,
           input: { projectId, expectedWorkspaceRoot: candidate.path },
         });
-        if (
-          importGeneration !== importGenerationRef.current ||
-          importedProjects !== importedProjectsRef.current
-        ) {
-          return false;
-        }
+        if (importGeneration !== importGenerationRef.current) return false;
         if (threadImportResult._tag === "Success") {
           importedThreadCount += threadImportResult.value.importedCount;
           skippedThreadCount += threadImportResult.value.skippedCount;

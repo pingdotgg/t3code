@@ -5,6 +5,8 @@ export interface WelcomeImportSelection {
   // Projects listed when the selection changed; projects found later get the defaults.
   readonly knownKeys: ReadonlySet<string>;
   readonly keys: ReadonlySet<string>;
+  // Unchecking the main box also leaves out projects found later, until it is checked again.
+  readonly optedOut: boolean;
 }
 
 /**

@@ -165,16 +165,19 @@ function RootRouteBranch() {
   }
 
   if (pathname === "/welcome") {
+    // Settings can reopen the page mid-session, so it keeps the app's activation and threads.
     return (
       <>
-        <ActionDialogHosts />
-        {/* Settings can reopen the page while threads run. */}
+        <ChatGptWelcomeCoordinator />
+        {primaryEnvironmentAuthenticated ? <DesktopAppActivationCoordinator /> : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
+        <ActionDialogHosts />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />
           </AppSidebarLayout>
         </CommandPalette>
+        <ThemeEditorHost />
       </>
     );
   }

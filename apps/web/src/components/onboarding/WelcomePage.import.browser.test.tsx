@@ -41,6 +41,8 @@ const state = vi.hoisted(() => ({
   cloud: false,
   auth: { isLoaded: true, isSignedIn: false, userId: null as string | null },
   linkState: null as unknown,
+  linkError: null as string | null,
+  refreshLinkState: vi.fn(),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -71,7 +73,9 @@ vi.mock(import("../../cloud/cloudLinkState"), async (original) => {
     ...(await original()),
     useCloudLinkState: (() => ({
       data: useAtomValue(state.linkState as Atom.Atom<EnvironmentCloudLinkStateResult | null>),
+      error: state.linkError,
       isPending: false,
+      refresh: state.refreshLinkState,
     })) as never,
   };
 });
@@ -140,10 +144,6 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: "createProject" | "importThreads" | "refreshProviders") =>
     state[command]) as never,
-}));
-vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
-  ...(await original()),
-  ChatGptWelcomeCoordinator: () => <></>,
 }));
 
 import { welcomeImportSelectionAtom } from "../../onboarding/welcomeState";
@@ -310,6 +310,8 @@ function setup() {
   state.cloud = false;
   state.auth = { isLoaded: true, isSignedIn: false, userId: null };
   state.linkState = Atom.make<EnvironmentCloudLinkStateResult | null>(null).pipe(Atom.keepAlive);
+  state.linkError = null;
+  state.refreshLinkState.mockReset();
   appAtomRegistry.set(welcomeImportSelectionAtom(primaryId), null);
   return now;
 }
@@ -443,21 +445,27 @@ it("blocks leaving the page until the imported projects have landed", async () =
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
 
-it("selects projects that a later scan finds after the selection was changed", async () => {
+it("gives projects a later scan finds the default, unless the main box was unchecked", async () => {
   using _now = setup();
   await using _screen = await mountWelcome();
-  const bringIn = document.querySelector<HTMLElement>('[role="checkbox"]');
-  await act(async () => bringIn?.click());
-  await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
-
   // Turning on another agent rescans and finds a recent project the user has not seen.
-  await act(async () =>
-    appAtomRegistry.set(candidatesAtom(), [
-      ...appAtomRegistry.get(candidatesAtom()),
-      candidate("/projects/third"),
-    ]),
-  );
+  const findProject = (path: string) =>
+    act(async () =>
+      appAtomRegistry.set(candidatesAtom(), [
+        ...appAtomRegistry.get(candidatesAtom()),
+        candidate(path),
+      ]),
+    );
+
+  await click("Review all 2");
+  await click("Select none");
+  await findProject("/projects/third");
   await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
+
+  const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+  await act(async () => importProjects?.click());
+  await findProject("/projects/fourth");
+  await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
 });
 
 it("keeps the project choice across a visit to Settings until setup finishes", async () => {
@@ -514,8 +522,23 @@ it("says the phone is set up only once this computer is shared with the signed-i
   using _now = setup();
   state.cloud = true;
   state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
+  state.linkError = "Could not read T3 Connect link state.";
   await using _screen = await mountWelcome();
   await click("Set up");
+  // A failed read says so instead of asking to share the computer again.
+  await vi.waitFor(() => expect(pageText()).toContain("Could not check T3 Connect."));
+  expect(pageText()).not.toContain("Set up T3 Connect");
+
+  state.linkError = null;
+  await act(async () =>
+    appAtomRegistry.set(state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>, {
+      linked: false,
+      cloudUserId: null,
+      relayUrl: null,
+      relayIssuer: null,
+      publishAgentActivity: false,
+    }),
+  );
   // Signed in, but "Not now" on the share step left this computer unreachable.
   await vi.waitFor(() => expect(pageText()).toContain("Set up T3 Connect"));
 

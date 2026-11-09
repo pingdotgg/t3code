@@ -46,7 +46,7 @@ provider instance. Sensitive values remain redacted in Settings and
 terminal metadata while the terminal process can use them.
 
 **Start** waits for one ready agent. Select **Start without an agent** to finish
-without one.
+without one. Checked projects are still imported.
 
 ## Phone
 
