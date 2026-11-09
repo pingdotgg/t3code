@@ -430,6 +430,11 @@ export interface ActiveShellIndexEntry extends Pick<
   readonly mayBeLive: boolean;
 }
 
+export interface ApprovalRequestTimeoutCandidate {
+  readonly threadId: ThreadId;
+  readonly request: OrchestrationV2RuntimeRequest;
+}
+
 export interface OlderSettledThreadsQuery {
   readonly before: OrchestrationV2OlderSettledCursor;
   readonly projectIds?: ReadonlyArray<ProjectId> | undefined;
@@ -522,6 +527,11 @@ export interface ProjectionStoreV2Shape {
     ReadonlyArray<ActiveShellIndexEntry>,
     ProjectionStoreV2Error
   >;
+  /** Pending approval requests older than the timeout cutoff, in bounded due order. */
+  readonly getApprovalRequestTimeoutCandidates: (options: {
+    readonly before: DateTime.Utc;
+    readonly limit: number;
+  }) => Effect.Effect<ReadonlyArray<ApprovalRequestTimeoutCandidate>, ProjectionStoreV2Error>;
   /** Older settled thread ids below a cursor, newest settle first, and per-project counts. */
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
@@ -1570,8 +1580,16 @@ export function threadShellFromProjection(
       .filter((request) => request.status === "pending")
       .toSorted(
         (left, right) =>
-          Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
-          DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
+          Number(
+            left.kind === "user_input" ||
+              left.kind === "auth_refresh" ||
+              left.kind === "dynamic_tool_call",
+          ) -
+            Number(
+              right.kind === "user_input" ||
+                right.kind === "auth_refresh" ||
+                right.kind === "dynamic_tool_call",
+            ) || DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null,
   );
 
@@ -6297,7 +6315,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id
                   AND request.status = 'pending'
-                ORDER BY (request.kind = 'user_input') ASC,
+                ORDER BY (
+                  request.kind IN ('user_input', 'auth_refresh', 'dynamic_tool_call')
+                ) ASC,
                   request.created_at DESC, request.runtime_request_id DESC
                 LIMIT 1
               ) AS pending_request_payload_json,
@@ -7312,6 +7332,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }));
     }, Effect.mapError(shellSnapshotReadError));
 
+    const getApprovalRequestTimeoutCandidates = Effect.fn(
+      "ProjectionStore.getApprovalRequestTimeoutCandidates",
+    )(function* (options: { readonly before: DateTime.Utc; readonly limit: number }) {
+      const rows = yield* sql<{
+        readonly thread_id: ThreadId;
+        readonly payload_json: string;
+      }>`
+        SELECT request.thread_id, request.payload_json
+        FROM orchestration_v2_projection_runtime_requests request
+        INNER JOIN orchestration_v2_projection_threads thread
+          ON thread.thread_id = request.thread_id
+        WHERE request.status = 'pending'
+          AND request.kind NOT IN ('user_input', 'auth_refresh', 'dynamic_tool_call')
+          AND request.created_at <= ${DateTime.formatIso(options.before)}
+          AND thread.deleted_at IS NULL
+          AND json_extract(thread.payload_json, '$.archivedAt') IS NULL
+        ORDER BY request.created_at ASC, request.runtime_request_id ASC
+        LIMIT ${options.limit}
+      `;
+      return yield* Effect.forEach(rows, (row) =>
+        decodeRuntimeRequestPayload(row.payload_json).pipe(
+          Effect.map((request) => ({ threadId: row.thread_id, request })),
+          Effect.mapError(
+            (cause) => new ProjectionStoreReadError({ threadId: row.thread_id, cause }),
+          ),
+        ),
+      );
+    }, Effect.mapError(shellSnapshotReadError));
+
     const getThreadLinkMetadata = Effect.fn("ProjectionStore.getThreadLinkMetadata")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -7501,6 +7550,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
+      getApprovalRequestTimeoutCandidates: readOnReader(getApprovalRequestTimeoutCandidates),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),

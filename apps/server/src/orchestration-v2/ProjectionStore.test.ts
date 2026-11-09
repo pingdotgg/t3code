@@ -6666,6 +6666,92 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.isTrue(shell?.pendingRuntimeRequest?.blocking);
       }
 
+      const addRuntimeRequest = (
+        id: string,
+        kind: "permission" | "dynamic_tool_call",
+        createdAt: DateTime.Utc,
+      ) =>
+        projectionStore.apply({
+          id: EventId.make(`event:${suffix}:${id}`),
+          type: "runtime-request.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(id),
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind,
+            status: "pending",
+            responseCapability: { type: "message" },
+            createdAt,
+            resolvedAt: null,
+          },
+        });
+      yield* addRuntimeRequest(
+        "request:older-approval",
+        "permission",
+        DateTime.subtract(now, { minutes: 2 }),
+      );
+      yield* addRuntimeRequest(
+        "request:newer-internal",
+        "dynamic_tool_call",
+        DateTime.subtract(now, { minutes: 1 }),
+      );
+      for (const shell of [
+        (yield* projectionStore.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        ),
+        ProjectionStore.threadShellFromProjection(
+          yield* projectionStore.getThreadProjection(threadId),
+        ),
+      ]) {
+        assert.equal(shell?.pendingRuntimeRequest?.id, "request:older-approval");
+      }
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${suffix}:resolve-approval`),
+        type: "runtime-request.updated",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:older-approval"),
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "permission",
+          status: "resolved",
+          responseCapability: { type: "message" },
+          createdAt: DateTime.subtract(now, { minutes: 2 }),
+          resolvedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${suffix}:resolve-internal`),
+        type: "runtime-request.updated",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make("request:newer-internal"),
+          nodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "dynamic_tool_call",
+          status: "resolved",
+          responseCapability: { type: "message" },
+          createdAt: DateTime.subtract(now, { minutes: 1 }),
+          resolvedAt: now,
+        },
+      });
+
       const requestId = RuntimeRequestId.make(`request:${suffix}:async`);
       yield* projectionStore.apply({
         id: EventId.make(`event:${suffix}:async`),
