@@ -58,6 +58,9 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
+/** T3's model slug for a Pi model; Pi provider and model IDs may both contain `/`. */
+export const piModelSlug = (provider: string, modelId: string) => `${provider}/${modelId}`;
+
 function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
@@ -65,9 +68,9 @@ function parsePiModelSlug(slug: string): { provider: string; modelId: string } |
 }
 
 /**
- * Selects a T3 model slug (`provider/id`) in Pi and returns Pi's `set_model` data. Either part
- * may contain `/`, so the provider and ID come from the model Pi lists under that slug; a slug
- * Pi does not list (a custom or stale model) is split at its first `/`.
+ * Selects a T3 model slug in Pi and returns Pi's `set_model` data. The provider and ID come from
+ * the model Pi lists under that slug; a slug Pi does not list (a custom or stale model) is split
+ * at its first `/`.
  */
 export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
   request: (record: PiRpcRecord) => Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError>,
@@ -80,7 +83,9 @@ export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
   const matches = (Array.isArray(listed) ? listed : []).flatMap((model) => {
     const provider = piRecordString(model, "provider");
     const modelId = piRecordString(model, "id");
-    return provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug
+    return provider !== undefined &&
+      modelId !== undefined &&
+      piModelSlug(provider, modelId) === slug
       ? [{ provider, modelId }]
       : [];
   });

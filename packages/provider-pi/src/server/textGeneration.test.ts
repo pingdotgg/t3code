@@ -157,12 +157,6 @@ const selectModel = (model: string, models: ReadonlyArray<Record<string, unknown
 
 it.effect.each([
   {
-    name: "a provider ID with slashes",
-    model: "llama-server=http://192.168.0.2:8080/gemma-4-12b-it-qat-q4_0",
-    models: [{ provider: "llama-server=http://192.168.0.2:8080", id: "gemma-4-12b-it-qat-q4_0" }],
-    sent: { provider: "llama-server=http://192.168.0.2:8080", modelId: "gemma-4-12b-it-qat-q4_0" },
-  },
-  {
     name: "slashes in both provider and model ID",
     model: "demo=http://127.0.0.1:9/org/demo-model",
     models: [
