@@ -943,7 +943,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       navigateFolder: (ref, surfaceId, relativePath, folderTrail, keepSource = false) =>
         set((state) => {
-          const key = scopedThreadKey(ref);
+          const key = scopedThreadKey(rightPanelHostRef(ref));
           const current = state.byThreadKey[key] ?? EMPTY_THREAD_STATE;
           const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
           if (index < 0) return userAction(state, key, () => current);
