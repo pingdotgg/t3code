@@ -82,6 +82,7 @@ const VIEWER_PERMISSIONS: PullRequestViewerPermissions = {
 };
 
 const PAGE_SIZE = 100;
+const EXPIRED_LIST_POSITION = "listChangeRequests.resume";
 /** Bounds each paged read, so one very long pull request cannot stall its detail. */
 const MAX_PAGES = 10;
 
@@ -620,7 +621,7 @@ export const make = Effect.gen(function* () {
         const pageToken = resume === undefined ? undefined : pageTokens.get(resume);
         if (resume !== undefined && pageToken === undefined)
           return yield* new OriginCli.OriginCliError({
-            operation: "listChangeRequests",
+            operation: EXPIRED_LIST_POSITION,
             cwd: input.cwd,
             reason: "failed",
             detail: "This list position has expired. Refresh the list to load more pull requests.",
@@ -679,7 +680,19 @@ export const make = Effect.gen(function* () {
           ...(next === null ? {} : { resumeAfter: pageTokenKey(next) }),
         };
       },
-      Effect.mapError(fail("listChangeRequests")),
+      Effect.mapError((error) =>
+        // The list shows only a failure's access hint, and this one needs its refresh advice.
+        error.operation === EXPIRED_LIST_POSITION
+          ? new PullRequestProviderError({
+              provider: SourceControlProviderKind.make("cursor-origin"),
+              operation: "listChangeRequests",
+              reason: "failed",
+              detail: error.detail,
+              accessHint: error.detail,
+              cause: error,
+            })
+          : fail("listChangeRequests")(error),
+      ),
     ),
 
     // One read: linked threads poll this, and the full detail costs four.
