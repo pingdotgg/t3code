@@ -126,6 +126,51 @@ it("suspends question Enter and number shortcuts under an app modal and resumes 
   expect(onToggleOption).not.toHaveBeenCalled();
 });
 
+it.each(["click", "shortcut"])(
+  "cancels option auto-advance when switching to a written answer by %s",
+  async (method) => {
+    const onAdvance = vi.fn();
+    const onWriteAnswer = vi.fn();
+    const onToggleOption = vi.fn();
+    await using screen = await render(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[prompt]}
+        cwd={undefined}
+        threadRef={threadRef}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={onToggleOption}
+        onAdvance={onAdvance}
+        onDismiss={vi.fn()}
+        onWriteAnswer={onWriteAnswer}
+      />,
+    );
+    using _timers = fakeTimers();
+    await act(() => {
+      screen
+        .getByRole("radio", { name: /Incremental/ })
+        .element()
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(() => {
+      if (method === "click") {
+        screen
+          .getByRole("radio", { name: /Let me write an answer/ })
+          .element()
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      } else {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true }));
+      }
+    });
+    await act(() => vi.advanceTimersByTimeAsync(200));
+
+    expect(onToggleOption).toHaveBeenCalledExactlyOnceWith("question-0", "Incremental");
+    expect(onWriteAnswer).toHaveBeenCalledOnce();
+    expect(onAdvance).not.toHaveBeenCalled();
+  },
+);
+
 function questionProjection(threadId: ThreadId, requestIds = ["first", "second"]) {
   const projection = makeThreadProjectionFixture();
   return {
