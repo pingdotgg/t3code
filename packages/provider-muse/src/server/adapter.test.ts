@@ -1918,11 +1918,14 @@ describe("MuseAdapterV2", () => {
       const timeout = { maxAttempts: 2, retryDelayMs: 1_000, reason: "no first model event" };
       const turnRetry = yield* retry("turn/retryScheduled", "record-1", 1, timeout);
       assert.strictEqual(turnRetry?.status, "running");
-      assert.strictEqual(turnRetry?.failure.message, "no first model event");
+      assert.strictEqual(turnRetry?.failure.message, "no first model event. Retrying in 1s.");
       assert.deepStrictEqual(turnRetry?.retry, { attempt: 1, maxAttempts: 1, retryDelayMs: 1_000 });
       const http = { maxAttempts: 10, errorKind: "server", httpStatus: 504, retryDelayMs: 1_000 };
       const modelRetry = yield* retry("turn/modelRetryScheduled", "record-2", 1, http);
-      assert.strictEqual(modelRetry?.failure.message, "Model request failed (HTTP 504)");
+      assert.strictEqual(
+        modelRetry?.failure.message,
+        "Model request failed (HTTP 504). Retrying in 1s.",
+      );
       const nextChain = yield* retry("turn/retryScheduled", "record-3", 1, timeout);
       assert.strictEqual(new Set([turnRetry?.id, modelRetry?.id, nextChain?.id]).size, 3);
       const sameChain = yield* retry("turn/modelRetryScheduled", "record-4", 2, {
@@ -1948,9 +1951,13 @@ describe("MuseAdapterV2", () => {
         },
       });
       const recovered = [yield* takeRetryRow(), yield* takeRetryRow(), yield* takeRetryRow()];
-      assert.deepStrictEqual(
-        recovered.map((row) => [row?.id, row?.status]),
-        [turnRetry, nextChain, sameChain].map((row) => [row?.id, "completed"]),
+      assert.sameMembers(
+        recovered.map((row) => `${row?.id} ${row?.status} ${row?.failure.message}`),
+        [
+          `${turnRetry?.id} completed no first model event`,
+          `${nextChain?.id} completed no first model event`,
+          `${sameChain?.id} completed Model request failed (HTTP 429)`,
+        ],
       );
 
       const stalled = yield* retry("turn/modelRetryScheduled", "record-5", 1, http);

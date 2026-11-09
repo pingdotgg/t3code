@@ -7,7 +7,6 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderCapabilities,
-  type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
@@ -28,6 +27,7 @@ import {
 import type { MuseSettings } from "../settings.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -232,7 +232,8 @@ interface MuseRetryRow {
   readonly method: string;
   readonly nativeId: string;
   readonly retry: OrchestrationV2ProviderRetry;
-  readonly failure: OrchestrationV2ProviderFailure;
+  readonly cause: string;
+  readonly code: string | undefined;
   running: boolean;
 }
 
@@ -480,7 +481,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               driver: MUSE_PROVIDER,
               nodeId: turn.input.rootNodeId,
               itemOrdinal: base.ordinal,
-              failure: row.failure,
+              failure: makeProviderFailure({
+                // Clients show only the failure message, so a waiting row carries its delay.
+                message:
+                  status === "running"
+                    ? `${row.cause}. Retrying in ${formatDuration(row.retry.retryDelayMs ?? 0)}.`
+                    : row.cause,
+                code: row.code,
+                class: "provider_error",
+                retryable: true,
+              }),
               retry: row.retry,
               status,
               updatedAt: time,
@@ -1695,29 +1705,25 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             const cause =
               retry.httpStatus === undefined ? retry.errorKind : `HTTP ${retry.httpStatus}`;
             // A chain's first retry opens a row; its later attempts update that row.
-            const chain =
-              retry.attempt > 1 ? turn.retries.findLast((row) => row.method === method) : undefined;
-            if (chain) chain.running = false;
+            const index =
+              retry.attempt > 1 ? turn.retries.findLastIndex((row) => row.method === method) : -1;
             const row: MuseRetryRow = {
               method,
-              nativeId: chain?.nativeId ?? `retry:${retry.sourceRange.first.id}`,
+              nativeId: turn.retries[index]?.nativeId ?? `retry:${retry.sourceRange.first.id}`,
               // Muse counts the first request as attempt 1; T3 counts retries.
               retry: {
                 attempt: retry.attempt,
                 maxAttempts: Math.max(1, retry.maxAttempts - 1),
                 retryDelayMs: Math.trunc(retry.retryDelayMs),
               },
-              failure: makeProviderFailure({
-                message:
-                  retry.reason ??
-                  (cause ? `Model request failed (${cause})` : "Model request failed"),
-                code: retry.errorKind,
-                class: "provider_error",
-                retryable: true,
-              }),
+              cause:
+                retry.reason ??
+                (cause ? `Model request failed (${cause})` : "Model request failed"),
+              code: retry.errorKind,
               running: true,
             };
-            turn.retries.push(row);
+            if (index === -1) turn.retries.push(row);
+            else turn.retries[index] = row;
             yield* emitRetry(turn, row, "running");
             break;
           }
