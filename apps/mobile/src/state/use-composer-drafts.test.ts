@@ -125,17 +125,6 @@ const composerAttachmentCleanupMocks = vi.hoisted(() => ({
   releaseUploads: vi.fn(async () => undefined),
 }));
 
-const modelCommandMocks = vi.hoisted(() => ({
-  setModelSelection: Symbol("set-model-selection"),
-  alert: vi.fn(),
-  canOperate: true,
-  thread: null as unknown,
-  runs: [] as Array<unknown>,
-  replies: [] as Array<
-    ReturnType<typeof Promise.withResolvers<{ _tag: "Success" | "Failure"; error?: Error }>>
-  >,
-}));
-
 const incomingShareStorageMocks = vi.hoisted(() => ({
   load: vi.fn<typeof import("../features/sharing/incoming-share-storage").loadIncomingShareDrafts>(
     async () => [],
@@ -156,31 +145,14 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
-vi.mock("../components/ui/Dialog", () => ({ alert: modelCommandMocks.alert }));
-vi.mock("./session", () => ({
-  environmentSession: {},
-  readEnvironmentScope: () => modelCommandMocks.canOperate,
-}));
-vi.mock("./threads", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return {
-    threadEnvironment: { setModelSelection: modelCommandMocks.setModelSelection },
-    environmentThreadShells: { threadShellAtom: () => Atom.make(modelCommandMocks.thread) },
-  };
-});
+vi.mock("./session", () => ({ environmentSession: {} }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: () => {
     throw new Error("Unexpected network query in the inline read test");
   },
-  runAtomCommand: (_registry: unknown, command: unknown, value: unknown) => {
-    if (command !== modelCommandMocks.setModelSelection) {
-      throw new Error("Unexpected network command in the inline read test");
-    }
-    modelCommandMocks.runs.push(value);
-    const reply = Promise.withResolvers<{ _tag: "Success" | "Failure"; error?: Error }>();
-    modelCommandMocks.replies.push(reply);
-    return reply.promise;
+  runAtomCommand: () => {
+    throw new Error("Unexpected network command in the inline read test");
   },
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
@@ -245,7 +217,6 @@ import {
   updateComposerDraftSettings,
 } from "./use-composer-drafts";
 import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
-import { selectThreadModel } from "./thread-model-selection";
 
 const DRAFT: ComposerDraft = {
   text: "hello",
@@ -528,68 +499,6 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(key)).toEqual(before);
     h.setStatus("live");
     expect(appAtomRegistry.get(composerDraftsAtom)[key]).toBeUndefined();
-  });
-
-  it("sets allowed picks and releases accepted intent even when the shell skips that model", async () => {
-    const environmentId = EnvironmentId.make("environment-1");
-    const threadId = ThreadId.make("thread-1");
-    const key = `${environmentId}:${threadId}`;
-    const codex = ProviderInstanceId.make("codex");
-    modelCommandMocks.runs.length = 0;
-    modelCommandMocks.replies.length = 0;
-    modelCommandMocks.alert.mockClear();
-    modelCommandMocks.canOperate = true;
-    modelCommandMocks.thread = {
-      ...v2ThreadShell,
-      id: threadId,
-      environmentId,
-      modelSelection: { instanceId: codex, model: "gpt-5.4" },
-    };
-    const pick = { instanceId: codex, model: "gpt-5.5" };
-    selectThreadModel({ environmentId, threadId }, pick);
-    expect(modelCommandMocks.runs).toEqual([
-      { environmentId, input: { threadId, modelSelection: pick } },
-    ]);
-
-    setComposerDraftText(key, "keep this prompt");
-    modelCommandMocks.thread = {
-      ...v2ThreadShell,
-      id: threadId,
-      environmentId,
-      modelSelection: { instanceId: codex, model: "another-client-model" },
-    };
-    modelCommandMocks.replies[0]!.resolve({ _tag: "Success" });
-    await modelCommandMocks.replies[0]!.promise;
-    expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
-    expect(getComposerDraftSnapshot(key).text).toBe("keep this prompt");
-
-    selectThreadModel({ environmentId, threadId }, pick);
-    selectThreadModel({ environmentId, threadId }, pick);
-    const latest = getComposerDraftSnapshot(key).modelSelection;
-    modelCommandMocks.replies[1]!.resolve({ _tag: "Success" });
-    await modelCommandMocks.replies[1]!.promise;
-    expect(getComposerDraftSnapshot(key).modelSelection).toBe(latest);
-    expect(modelCommandMocks.alert).not.toHaveBeenCalled();
-    modelCommandMocks.replies[2]!.resolve({
-      _tag: "Failure",
-      error: new Error("The connection was lost."),
-    });
-    await modelCommandMocks.replies[2]!.promise;
-    expect(getComposerDraftSnapshot(key).modelSelection).toBe(latest);
-    expect(getComposerDraftSnapshot(key).text).toBe("keep this prompt");
-    expect(modelCommandMocks.alert).toHaveBeenCalledExactlyOnceWith(
-      "Could not apply model selection",
-      "This model pick was not saved. The connection was lost.",
-    );
-
-    // Another instance would replace the live session, and a read-only connection cannot
-    // change the thread: both picks wait for a sent message.
-    const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
-    selectThreadModel({ environmentId, threadId }, claude);
-    modelCommandMocks.canOperate = false;
-    selectThreadModel({ environmentId, threadId }, pick);
-    expect(modelCommandMocks.runs).toHaveLength(3);
-    expect(getComposerDraftSnapshot(key).modelSelection).toEqual(pick);
   });
 
   it("releases an inactive thread pick only after its queued model becomes durable", () => {

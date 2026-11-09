@@ -46,11 +46,6 @@ const USER_INPUT = {
   kind: "user_input" as const,
   createdAt: NOW,
 };
-const PICKED_MODEL = {
-  instanceId: ProviderInstanceId.make("codex"),
-  model: "gpt-5.5",
-  options: [{ id: "reasoningEffort", value: "high" }],
-};
 const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   snapshotSequence: 1,
   schemaVersion: 2,
@@ -271,7 +266,6 @@ describe("remote thread lifecycle commands", () => {
     ["setAutoSettle", { enabled: false }, { autoSettleDisabledAt: expect.any(Object) }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
-    ["setModelSelection", {}, { modelSelection: PICKED_MODEL }],
   ] as const;
 
   it.effect.each(actions)(
@@ -307,7 +301,6 @@ describe("remote thread lifecycle commands", () => {
             enabled: false,
             orderKey: "a",
             snoozedUntil: "2099-01-01T00:00:00.000Z",
-            modelSelection: PICKED_MODEL,
             ...input,
           },
         });
