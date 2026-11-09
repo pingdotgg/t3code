@@ -101,8 +101,10 @@ export function generateSpeechCatalog(
         languages,
         benchmark: {
           accuracy,
-          secondsPer30s: realtimeFactor ? BENCHMARK_DICTATION_SECONDS / realtimeFactor : null,
-          cpuSecondsPer30s: cpuFactor ? BENCHMARK_DICTATION_SECONDS / cpuFactor : null,
+          secondsPer30s: {
+            cpu: cpuFactor ? BENCHMARK_DICTATION_SECONDS / cpuFactor : null,
+            accelerated: realtimeFactor ? BENCHMARK_DICTATION_SECONDS / realtimeFactor : null,
+          },
         },
         recommended: false,
         supportsStreaming: model.capabilities.streaming,

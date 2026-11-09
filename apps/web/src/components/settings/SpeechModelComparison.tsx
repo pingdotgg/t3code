@@ -1,4 +1,4 @@
-import type { EnvironmentSpeechModel } from "@t3tools/contracts";
+import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
@@ -73,14 +73,17 @@ export function LanguageRow({
 export function ModelBenchmarks({
   model,
   languages,
+  tier,
   facts,
 }: {
   model: EnvironmentSpeechModel;
   languages: readonly string[];
+  tier: SpeechBenchmarkTier | undefined;
   /** Plain facts, such as language count and size, shown after the scores. */
   facts: readonly string[];
 }) {
   const data = model.benchmark;
+  const seconds = tier === undefined ? undefined : data?.secondsPer30s[tier];
   const visible = !data
     ? []
     : languages.length
@@ -109,12 +112,14 @@ export function ModelBenchmarks({
       {data ? (
         <span>
           Speed:{" "}
-          {data.secondsPer30s === null ? (
+          {seconds === undefined ? (
+            "update server for this benchmark"
+          ) : seconds === null ? (
             "not benchmarked"
           ) : (
             <>
               <strong className="font-medium text-foreground">
-                {Number(data.secondsPer30s.toFixed(2))} s
+                {Number(seconds.toFixed(2))} s
               </strong>{" "}
               / 30 s
             </>

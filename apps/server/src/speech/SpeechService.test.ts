@@ -60,8 +60,7 @@ const modelDefinitions = vi.hoisted(() => [
     accuracy: 1,
     benchmark: {
       accuracy: { en: { grade: "A-", errorPercent: 4 } },
-      secondsPer30s: 1.2,
-      cpuSecondsPer30s: 3,
+      secondsPer30s: { accelerated: 1.2, cpu: 3 },
     },
     speed: 1,
     recommended: true,
@@ -669,14 +668,25 @@ it.effect.each([{ devices: [] }, { devices: [{ id: "gpu", name: "Test GPU" }] }]
       const speech = yield* SpeechService.SpeechService;
       const discover = vi.mocked(listNativeSpeechGpuDevices).mockReset();
       discover.mockRejectedValueOnce(new Error("driver not ready")).mockResolvedValueOnce(devices);
-      expect(yield* speech.status).toMatchObject({ gpuDevices: [] });
+      expect(yield* speech.status).toMatchObject({ gpuDevices: [], benchmarkTier: "cpu" });
       yield* speech.status;
       expect(discover).toHaveBeenCalledOnce();
       yield* TestClock.adjust("1 minute");
-      expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
+      expect(yield* speech.status).toMatchObject({
+        gpuDevices: devices,
+        benchmarkTier: devices.length ? "accelerated" : "cpu",
+      });
       yield* TestClock.adjust("1 minute");
       expect(yield* speech.status).toMatchObject({ gpuDevices: devices });
       expect(discover).toHaveBeenCalledTimes(2);
+      yield* speech.updateAcceleration("cpu");
+      expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
+      yield* speech.updateAcceleration("gpu:test");
+      expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
+      yield* speech.updateAcceleration("auto");
+      loadNative.mockImplementationOnce(async () => ({ ...native, backend: "CPU" }));
+      yield* speech.prepareModel;
+      expect(yield* speech.status).toMatchObject({ benchmarkTier: "cpu" });
     }).pipe(Effect.provide(layer)),
 );
 
@@ -704,9 +714,14 @@ it.effect(
             ],
           };
           const speech = yield* SpeechService.SpeechService;
+          expect(yield* speech.status).toMatchObject({ benchmarkTier: "accelerated" });
           expect(yield* speech.transcribe(pcm(), options)).toBe(
             cpuSupportsVocabulary ? "git hub Bob" : "GitHub Bob",
           );
+          expect(yield* speech.status).toMatchObject({
+            acceleration: "auto",
+            benchmarkTier: "cpu",
+          });
           expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe(
             "hello",
           );

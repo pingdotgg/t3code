@@ -1,4 +1,4 @@
-import type { EnvironmentSpeechModel } from "@t3tools/contracts";
+import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { recommendSpeechModels } from "@t3tools/shared/speech";
 
 export type SpeechModelSort = "recommended" | "size" | "accuracy" | "speed";
@@ -18,8 +18,9 @@ export function filterSpeechModels(
     readonly downloadedOnly: boolean;
     readonly sort: SpeechModelSort;
     readonly accuracyLanguage: string;
+    readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   },
-  recommendations = recommendSpeechModels(models, options.languages),
+  recommendations = recommendSpeechModels(models, options.languages, options.benchmarkTier),
 ) {
   const query = options.search.trim().toLocaleLowerCase();
   const ranks = new Map([...recommendations.keys()].map((id, index) => [id, index]));
@@ -30,7 +31,9 @@ export function filterSpeechModels(
       case "accuracy":
         return model.benchmark?.accuracy[options.accuracyLanguage]?.errorPercent ?? Infinity;
       case "speed":
-        return model.benchmark?.secondsPer30s ?? Infinity;
+        return options.benchmarkTier === undefined
+          ? Infinity
+          : (model.benchmark?.secondsPer30s[options.benchmarkTier] ?? Infinity);
       case "recommended":
         return modelSortOrder(model) * 4 + (ranks.get(model.id) ?? 3);
     }

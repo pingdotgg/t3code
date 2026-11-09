@@ -143,12 +143,15 @@ function ModelStats(props: { readonly model: EnvironmentSpeechModel; readonly la
           ],
         ] as const)
       : []),
-    ...(data && data.secondsPer30s !== null
+    ...(data && data.secondsPer30s.accelerated !== null
       ? ([
           [
             "speed",
             <>
-              <Text className="font-t3-medium text-foreground">{data.secondsPer30s} s</Text> / 30 s
+              <Text className="font-t3-medium text-foreground">
+                {Number(data.secondsPer30s.accelerated.toFixed(2))} s
+              </Text>{" "}
+              / 30 s
             </>,
           ],
         ] as const)

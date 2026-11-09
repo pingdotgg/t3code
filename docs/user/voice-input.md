@@ -56,8 +56,10 @@ The recommendation uses your Voice language, or your system’s preferred langua
 
 Select the languages you dictate in to compare models that support all of them.
 Accuracy shows how often the model got words or characters wrong in each
-language; speed is the time to transcribe 30 seconds on a reference GPU. Choose
-**All languages** to browse the full catalog. Filtering does not switch your model.
+language; speed is the time to transcribe 30 seconds on a reference CPU or GPU,
+matching the selected environment's transcription backend. Recommendations use
+the same reference tier for every selected language. Choose **All languages** to
+browse without a language preference. Filtering does not switch your model.
 
 **Advanced** controls GPU or CPU use and when an idle model is unloaded. With hardware set to
 **Auto**, a recording that fails on the GPU is retried once on that same

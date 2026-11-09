@@ -17,7 +17,8 @@ const generate = (models = catalog.models) =>
   );
 
 it("reproduces the bundled registry byte for byte without upstream requests", async () => {
-  expect(policy).toEqual(catalog.methodology);
+  const { fastCpuMaxWaitSeconds, ...methodology } = catalog.methodology;
+  expect(policy).toEqual({ ...methodology, fastMaxWaitSeconds: fastCpuMaxWaitSeconds });
   expect(NodeFS.readFileSync(new URL("../src/speech/catalog.json", import.meta.url), "utf8")).toBe(
     await renderSpeechCatalog(
       catalog.data,
@@ -48,13 +49,27 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   );
   expect(withoutFrenchOrSpeed.models[0]?.benchmark).toEqual({
     accuracy: { en: { grade: "A-", errorPercent: 3.99 } },
-    secondsPer30s: null,
-    cpuSecondsPer30s: null,
+    secondsPer30s: { cpu: null, accelerated: null },
   });
-  expect(generate().models[0]?.benchmark.secondsPer30s).toBeCloseTo(1.19, 2);
+  expect(generate().models[0]?.benchmark.secondsPer30s.accelerated).toBeCloseTo(1.19, 2);
+  for (const performance of [{ cpu: 2 }, { accelerated: 10 }, { cpu: 2, accelerated: 10 }]) {
+    const result = generateSpeechCatalog(
+      {
+        ...catalog.data,
+        models: [parakeet],
+        results: { [parakeet.id]: { accuracy: { en: { error: 3.99 } }, performance } },
+      },
+      "0.2.3",
+      "0.4.1",
+    );
+    expect(result.models[0]?.benchmark.secondsPer30s).toEqual({
+      cpu: performance.cpu ? 30 / performance.cpu : null,
+      accelerated: performance.accelerated ? 30 / performance.accelerated : null,
+    });
+  }
 });
 
-it("uses Handy's reference scoring on offered models before selecting recommendations", () => {
+it("preserves Handy's accelerated balanced pick after filtering T3's offered candidates", () => {
   const offered = generate().models;
   const sources = catalog.models.filter((model) =>
     offered.some(({ id }) => id === model.repository),
@@ -62,21 +77,18 @@ it("uses Handy's reference scoring on offered models before selecting recommenda
   for (const languages of [["en"], ["de"], ["ja"], ["en", "de"], ["en", "fr"], ["hi", "mr"]]) {
     const expected = catalog
       .recommendModels(sources, languages)
-      .filter((pick) => pick.status !== "unbenchmarked")
-      .map((pick) => [
-        pick.model.repository,
-        pick.roles.includes("best")
-          ? "recommended"
-          : pick.roles.includes("fast")
-            ? "faster"
-            : "accurate",
-      ]);
-    expect([...recommendSpeechModels(offered, languages)], languages.join(",")).toEqual(expected);
+      .find((pick) => pick.status !== "unbenchmarked" && pick.roles.includes("best"));
+    expect(
+      recommendSpeechModels(offered, languages, "accelerated").keys().next().value,
+      languages.join(","),
+    ).toBe(expected?.model.repository);
   }
   const excluded = { ...catalog.models[0]!, license: "cc-by-nc-4.0" };
   const allowed = { ...catalog.models[1]!, languages: ["en"] };
   const filtered = generate([excluded, allowed]).models;
-  expect([...recommendSpeechModels(filtered, ["en"]).keys()]).toEqual([allowed.repository]);
+  expect([...recommendSpeechModels(filtered, ["en"], "accelerated").keys()]).toEqual([
+    allowed.repository,
+  ]);
 });
 
 it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {
