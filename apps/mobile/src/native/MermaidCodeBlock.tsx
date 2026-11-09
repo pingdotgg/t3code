@@ -6,7 +6,7 @@ import { Suspense, use, useRef, useState } from "react";
 import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { parse, Svg, SvgXml } from "react-native-svg";
 
-import { FilePreviewModal } from "../components/FilePreviewModal";
+import { FilePreviewModal } from "../components/ui/FilePreviewModal";
 import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { mermaidSvgForNative, withDiagramBackground } from "../lib/mermaidSvg";
