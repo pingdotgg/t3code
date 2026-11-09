@@ -1,7 +1,6 @@
 import {
   type ProviderInstanceId,
   type ServerProvider,
-  textGeneratorForSelection,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
@@ -13,12 +12,18 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
-import { resolveScopedModelInstanceId } from "./scopedModelSelection";
+import {
+  resolveScopedModelInstanceId,
+  scopedTextGenerator,
+  supportsScopedTextGenerator,
+  type ScopedModelSettingKey,
+} from "./scopedModelSelection";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
+  key: ScopedModelSettingKey = "textGenerationModelSelection",
 ) {
   const { targets, target: source } = useSettingsScope();
   const { environments } = useEnvironments();
@@ -28,17 +33,18 @@ export function useScopedModelDisabledReason(
     const sourceEnvironment = {
       providers: (source && providersByEnvironment.get(source.environmentId)) ?? [],
     };
-    const shownGenerator = textGeneratorForSelection(settings, instanceId);
+    const shownGenerator = scopedTextGenerator(settings, instanceId, key);
     const peers: ServerProvider[] = [];
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
       const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
-      const generator = textGeneratorForSelection(candidate.settings, instanceId);
+      const generator = scopedTextGenerator(candidate.settings, instanceId, key);
       if (shownGenerator !== undefined || generator !== undefined) {
         // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
         if (
+          !supportsScopedTextGenerator(key) ||
           !generator?.enabled ||
           generator.kind !== shownGenerator?.kind ||
           generator.baseUrl !== shownGenerator.baseUrl
@@ -54,6 +60,7 @@ export function useScopedModelDisabledReason(
         sourceEnvironment,
         { providers, settings: candidate.settings },
         peers,
+        key,
       );
       if (localId === null) {
         return `A unique matching account could not be verified on ${environment.label}. Select that environment to choose its model separately.`;

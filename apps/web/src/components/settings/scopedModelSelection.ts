@@ -15,6 +15,21 @@ export const SCOPED_MODEL_SETTING_KEYS = [
   "reviewGuideModelSelection",
   "speechPostProcessingModelSelection",
 ] as const;
+export type ScopedModelSettingKey = (typeof SCOPED_MODEL_SETTING_KEYS)[number];
+
+export const supportsScopedTextGenerator = (key: ScopedModelSettingKey) =>
+  key === "textGenerationModelSelection" ||
+  key === "sourceControlWriterModelSelection" ||
+  key === "speechPostProcessingModelSelection";
+
+export const scopedTextGenerator = (
+  settings: Pick<ServerSettings, "textGenerators">,
+  instanceId: ProviderInstanceId,
+  key: ScopedModelSettingKey,
+) =>
+  key === "defaultModelSelection" || key === "fallbackModelSelection"
+    ? undefined
+    : textGeneratorForSelection(settings, instanceId);
 
 export interface ScopedModelEnvironment {
   readonly providers: readonly ServerProvider[];
@@ -53,9 +68,15 @@ export function resolveScopedModelInstanceId(
   sourceEnvironment: Pick<ScopedModelEnvironment, "providers">,
   destination: ScopedModelEnvironment,
   peers: readonly ServerProvider[] = [],
+  key: ScopedModelSettingKey = "defaultModelSelection",
 ): ProviderInstanceId | null {
   const source = find(sourceEnvironment.providers, instanceId);
   if (!source) return null;
+  if (
+    key === "reviewGuideModelSelection" &&
+    scopedTextGenerator(destination.settings, instanceId, key)
+  )
+    return null;
   const sameId = find(destination.providers, instanceId);
   const compatible = (provider: ServerProvider) =>
     !peers.some((peer) => knownConflict(peer, provider));
@@ -70,7 +91,7 @@ export function resolveScopedModelInstanceId(
     rest.length === 0 &&
     matches(sourceEnvironment.providers).length === 1 &&
     compatible(match) &&
-    textGeneratorForSelection(destination.settings, match.instanceId) === undefined
+    scopedTextGenerator(destination.settings, match.instanceId, key) === undefined
     ? match.instanceId
     : null;
 }
@@ -80,12 +101,14 @@ export function scopedModelSelectionsEqual(
   firstEnvironment: ScopedModelEnvironment,
   second: ModelSelection | null,
   secondEnvironment: ScopedModelEnvironment,
+  key: ScopedModelSettingKey = "defaultModelSelection",
 ): boolean {
   if (first === null || second === null) return first === second;
-  const firstGenerator = textGeneratorForSelection(firstEnvironment.settings, first.instanceId);
-  const secondGenerator = textGeneratorForSelection(secondEnvironment.settings, second.instanceId);
+  const firstGenerator = scopedTextGenerator(firstEnvironment.settings, first.instanceId, key);
+  const secondGenerator = scopedTextGenerator(secondEnvironment.settings, second.instanceId, key);
   if (firstGenerator || secondGenerator) {
     return (
+      supportsScopedTextGenerator(key) &&
       firstGenerator?.kind === secondGenerator?.kind &&
       firstGenerator?.baseUrl === secondGenerator?.baseUrl &&
       Equal.equals(first, second)
@@ -96,9 +119,19 @@ export function scopedModelSelectionsEqual(
   const sameInstance =
     first.instanceId === second.instanceId
       ? !(firstProvider && secondProvider && knownConflict(firstProvider, secondProvider))
-      : resolveScopedModelInstanceId(first.instanceId, firstEnvironment, secondEnvironment) ===
-          second.instanceId &&
-        resolveScopedModelInstanceId(second.instanceId, secondEnvironment, firstEnvironment) ===
-          first.instanceId;
+      : resolveScopedModelInstanceId(
+          first.instanceId,
+          firstEnvironment,
+          secondEnvironment,
+          [],
+          key,
+        ) === second.instanceId &&
+        resolveScopedModelInstanceId(
+          second.instanceId,
+          secondEnvironment,
+          firstEnvironment,
+          [],
+          key,
+        ) === first.instanceId;
   return sameInstance && Equal.equals({ ...first, instanceId: second.instanceId }, second);
 }

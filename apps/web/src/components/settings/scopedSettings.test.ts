@@ -923,11 +923,35 @@ describe("model selections across environments' provider instances", () => {
     const source = withGenerator(laptop, openrouter);
     const generator = { providers: [a(id)], settings: source.serverConfig!.settings };
     expect(
+      scopedModelSelectionsEqual(
+        selection,
+        generator,
+        selection,
+        {
+          ...generator,
+          providers: [a(id, other)],
+        },
+        "textGenerationModelSelection",
+      ),
+    ).toBe(true);
+    expect(
       scopedModelSelectionsEqual(selection, generator, selection, {
         ...generator,
         providers: [a(id, other)],
       }),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      planScopedSettingsPatch(
+        all,
+        [source, withGenerator(server, openrouter)],
+        forKeys(selection, [
+          "defaultModelSelection",
+          "fallbackModelSelection",
+          "reviewGuideModelSelection",
+        ]),
+        from(providers([a(id)], [a(id, other)]), source),
+      ).serverWrites,
+    ).toEqual([]);
     const plan = (serverGenerator?: typeof openrouter) =>
       planScopedSettingsPatch(
         all,

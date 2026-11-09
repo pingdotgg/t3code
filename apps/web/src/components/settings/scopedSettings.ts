@@ -12,7 +12,6 @@ import {
   type ProjectSettingsOverrides,
   ServerSettings,
   type T3ProjectFile,
-  textGeneratorForSelection,
   type ServerProvider,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -31,6 +30,8 @@ import {
   resolveScopedModelInstanceId,
   SCOPED_MODEL_SETTING_KEYS,
   scopedModelSelectionsEqual,
+  scopedTextGenerator,
+  supportsScopedTextGenerator,
 } from "./scopedModelSelection";
 
 export type ScopedSettingsPatch = ServerSettingsPatch & ClientSettingsPatch;
@@ -157,6 +158,7 @@ export function scopedSettingsAreMixed(
                 at(reference),
                 candidate.settings[key],
                 at(candidate),
+                key,
               )
             : !Equal.equals(reference.settings[key], candidate.settings[key]),
         ),
@@ -260,10 +262,11 @@ function forDestinationModels(
     const selection = patch[key];
     if (selection?.instanceId === undefined) continue;
     if (!settings) return null;
-    const shownGenerator = textGeneratorForSelection(source.settings, selection.instanceId);
-    const generator = textGeneratorForSelection(settings, selection.instanceId);
+    const shownGenerator = scopedTextGenerator(source.settings, selection.instanceId, key);
+    const generator = scopedTextGenerator(settings, selection.instanceId, key);
     if (shownGenerator !== undefined || generator !== undefined) {
       if (
+        !supportsScopedTextGenerator(key) ||
         !generator?.enabled ||
         generator.kind !== shownGenerator?.kind ||
         generator.baseUrl !== shownGenerator.baseUrl
@@ -279,6 +282,7 @@ function forDestinationModels(
       { providers: providersByEnvironment.get(source.environmentId) ?? [] },
       { providers, settings },
       peers,
+      key,
     );
     if (instanceId === null) return null;
     matched.set(key, [...peers, providers.find((provider) => provider.instanceId === instanceId)!]);
