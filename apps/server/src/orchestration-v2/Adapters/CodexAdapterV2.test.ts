@@ -85,6 +85,7 @@ const isProviderAdapterEventStreamError = Schema.is(
   ProviderAdapter.ProviderAdapterEventStreamError,
 );
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 describe("CodexAdapterV2 context usage", () => {
   it("uses the current context rather than cumulative processed tokens", () => {
@@ -152,10 +153,20 @@ describe("CodexAdapterV2 assistant message streaming", () => {
 });
 
 describe("CodexAdapterV2 runtime policy", () => {
-  it.effect.each([undefined, false, true])(
-    "selects native collaboration modes without prompt overrides with hasT3Mcp=%s",
-    (hasT3Mcp) =>
+  it.effect.each([
+    ...[undefined, false, true].map((hasT3Mcp) => ({
+      hasT3Mcp,
+      reasoningSummary: undefined,
+    })),
+    ...(["auto", "concise", "detailed", "none"] as const).map((reasoningSummary) => ({
+      hasT3Mcp: true,
+      reasoningSummary,
+    })),
+  ])(
+    "selects native collaboration modes without prompt overrides with hasT3Mcp=$hasT3Mcp and summary=$reasoningSummary",
+    ({ hasT3Mcp, reasoningSummary }) =>
       Effect.gen(function* () {
+        const settings = decodeCodexSettings({ reasoningSummary });
         for (const interactionMode of ["plan", "default"] as const) {
           for (const reasoningEffort of [undefined, "high"] as const) {
             const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
@@ -170,6 +181,7 @@ describe("CodexAdapterV2 runtime policy", () => {
                   : { options: [{ id: "reasoningEffort", value: reasoningEffort }] }),
               },
               ...(hasT3Mcp === undefined ? {} : { hasT3Mcp }),
+              reasoningSummary: settings.reasoningSummary,
             });
 
             assert.deepEqual(params.collaborationMode, {
@@ -180,6 +192,7 @@ describe("CodexAdapterV2 runtime policy", () => {
               },
             });
             assert.equal(params.effort, reasoningEffort);
+            assert.equal(params.summary, reasoningSummary ?? "detailed");
             assert.equal(params.additionalContext !== undefined, hasT3Mcp === true);
           }
         }
@@ -193,6 +206,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       ) =>
         CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: `native-${runtimeMode}`,
+          reasoningSummary: DEFAULT_CODEX_SETTINGS.reasoningSummary,
           codexInput: [{ type: "text", text: "test" }],
           runtimePolicy: {
             runtimeMode,
@@ -232,6 +246,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       const appContext = [{ key: "mcp_app_todos_list_todos_item-1", text: "Filtered to overdue" }];
       const alone = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-app-context",
+        reasoningSummary: DEFAULT_CODEX_SETTINGS.reasoningSummary,
         codexInput: [{ type: "text", text: "what's on my list?" }],
         runtimePolicy: policy,
         modelSelection,
@@ -242,6 +257,7 @@ describe("CodexAdapterV2 runtime policy", () => {
       });
       const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-app-context",
+        reasoningSummary: DEFAULT_CODEX_SETTINGS.reasoningSummary,
         codexInput: [{ type: "text", text: "what's on my list?" }],
         runtimePolicy: policy,
         modelSelection,
@@ -479,7 +495,7 @@ describe("CodexAdapterV2 fork boundary", () => {
   );
 });
 
-const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
+const DEFAULT_CODEX_SETTINGS = decodeCodexSettings({});
 const CHATGPT_SHARING_LIMIT_MESSAGE =
   "stream disconnected before completion: The ChatGPT user has reached their Subscription Sharing usage limit. Ask the user to try again after their usage limit resets or use an API key instead.";
 const CODEX_TEST_MODEL_SELECTION = {
@@ -2409,6 +2425,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const nativeTurnId = "context-turn";
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
+          reasoningSummary: DEFAULT_CODEX_SETTINGS.reasoningSummary,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,

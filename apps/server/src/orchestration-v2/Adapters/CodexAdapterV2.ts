@@ -766,6 +766,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
+    readonly reasoningSummary: CodexSettings["reasoningSummary"];
     readonly hasT3Mcp?: boolean;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -818,8 +819,8 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
-      // Catalogues can default summaries to "none"; request them explicitly on every turn.
-      summary: "detailed",
+      // Send the configured summary explicitly; catalogues can default to "none".
+      summary: input.reasoningSummary,
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
@@ -6856,6 +6857,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
+              reasoningSummary: adapterOptions.settings.reasoningSummary,
               hasT3Mcp: mcpSession !== undefined,
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,

@@ -1230,6 +1230,9 @@ export function ProviderInstanceCard({
       value={instance.config}
       idPrefix={`provider-instance-${instanceId}`}
       variant="settings"
+      hiddenFields={
+        runtime ? ["binaryPath", "homePath", "shadowHomePath", "launchArgs"] : undefined
+      }
       onChange={updateConfig}
       managed={instanceLocks && { keys: instanceLocks.configKeys, reason: instanceLocks.reason }}
       environmentId={environmentId}
@@ -1325,7 +1328,8 @@ export function ProviderInstanceCard({
             title="Runtime"
             headerPlacement="outside"
           >
-            {runtime ?? runtimeFields}
+            {runtime}
+            {runtimeFields}
           </FoldedSettingsSection>
         </div>
       ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (

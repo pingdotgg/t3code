@@ -722,13 +722,29 @@ export const CodexSettings = makeProviderSettingsSchema(
         description: "Additional CLI arguments passed to codex app-server on session start.",
       }),
     ),
+    reasoningSummary: Schema.Literals(["auto", "concise", "detailed", "none"]).pipe(
+      Schema.withDecodingDefault(Effect.succeed("detailed")),
+      Schema.annotateKey({
+        title: "Reasoning summary",
+        description: "Detail level for reasoning summaries. Some gateways require Auto.",
+        providerSettingsForm: {
+          control: "select",
+          options: [
+            { value: "detailed", label: "Detailed (default)" },
+            { value: "auto", label: "Auto" },
+            { value: "concise", label: "Concise" },
+            { value: "none", label: "Off" },
+          ],
+        },
+      }),
+    ),
     customModels: Schema.Array(CustomModelSetting).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
   {
-    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs"],
+    order: ["binaryPath", "homePath", "shadowHomePath", "launchArgs", "reasoningSummary"],
   },
 );
 export type CodexSettings = typeof CodexSettings.Type;
