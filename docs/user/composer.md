@@ -58,10 +58,14 @@ also send files to T3 Code through another app's system share sheet.
 On Android, you can also drag images from another app into the message input
 in split screen.
 
-In the desktop app, when the thread's environment runs on this computer, drag a
-folder onto the composer or choose **Folder…** from the attach button to add its
-path. Nothing is uploaded, so there is no size limit; the agent reads the folder
-in place.
+To attach a folder, drag or paste it into the composer, or choose **Folder…**
+from the attach button. In the desktop app, when the thread's environment runs on
+this computer, the folder is added as a path and nothing is uploaded, so there is
+no size limit; the agent reads the folder in place. Everywhere else, the folder
+is uploaded as one ZIP file attachment that the agent extracts. `.git` and
+`node_modules` folders are left out, and the folder can hold up to 2,048 files and
+folders and 200 MB before compression, and must fit the file size limit once
+compressed.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 

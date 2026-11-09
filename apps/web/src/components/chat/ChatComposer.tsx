@@ -52,6 +52,13 @@ import { formatComposerModelMention } from "@t3tools/client-runtime/composer-mod
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import {
+  buildFolderZip,
+  collectFolderEntries,
+  collectPickedFolderEntries,
+  FolderArchiveError,
+  type FolderCollection,
+} from "./folderArchive";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
@@ -281,11 +288,13 @@ function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   return armed;
 }
 
+const isFolderArchiveError = Schema.is(FolderArchiveError);
+
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
   addDroppedFiles: (files: File[]) => void;
-  addDroppedFolders: (folders: File[]) => void;
+  addDroppedFolders: (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
@@ -2609,27 +2618,63 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     return inserted;
   };
-  const addComposerFolders = (folders: File[]) => {
-    const target = resolveFolderTarget();
-    if (target === "remote") {
-      toastManager.add({
+  // A folder the server can't reach by path is uploaded as one ZIP file attachment.
+  const attachFolderArchive = async (
+    folderName: string,
+    collect: () => Promise<FolderCollection> | FolderCollection,
+  ) => {
+    if (fileStagingLimit === null) {
+      toastManager.add({ type: "error", title: "This server does not support file attachments." });
+      return;
+    }
+    const toastId = toastManager.add({ type: "loading", title: `Compressing "${folderName}"…` });
+    let zip: File;
+    let skipped: FolderCollection["skipped"];
+    try {
+      const collection = await collect();
+      skipped = collection.skipped;
+      zip = await buildFolderZip(collection, { maxZipBytes: fileStagingLimit });
+    } catch (error) {
+      toastManager.update(toastId, {
         type: "error",
-        title: "Folders can only be referenced on a server running on this computer",
+        title: `Couldn't attach "${folderName}"`,
+        description: isFolderArchiveError(error) ? error.message : "The folder could not be read.",
       });
       return;
     }
-    for (const folder of folders) {
-      const path = resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile);
-      if (path === null) {
+    if (skipped.length === 0) {
+      toastManager.close(toastId);
+    } else {
+      toastManager.update(toastId, {
+        type: "info",
+        title: `Attached ${zip.name}`,
+        description: `Left out ${skipped.map(({ name }) => name).join(" and ")}.`,
+      });
+    }
+    await addComposerAttachments([zip]);
+  };
+  const addComposerFolders = (folders: File[], folderEntries: FileSystemDirectoryEntry[]) => {
+    const target = resolveFolderTarget();
+    folders.forEach((folder, index) => {
+      const path =
+        target === "local"
+          ? resolveDroppedFolderPath(folder, window.desktopBridge?.getPathForFile)
+          : null;
+      if (path !== null) {
+        insertFolderPathLink(path);
+        return;
+      }
+      const entry = folderEntries[index];
+      if (entry === undefined) {
         toastManager.add({
           type: "error",
-          title: `Couldn't get the path of "${folder.name}"`,
+          title: `Couldn't read "${folder.name}"`,
           description: "Type the folder path with @ instead.",
         });
-        continue;
+        return;
       }
-      if (!insertFolderPathLink(path)) break;
-    }
+      void attachFolderArchive(entry.name, () => collectFolderEntries(entry));
+    });
     focusComposer();
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
@@ -2660,9 +2705,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     focusComposer();
   };
   const attachLocalFolderStable = useStableCallback(attachLocalFolder);
+  const addPickedFolder = (files: File[]) => {
+    // Browsers without folder picking (iOS Safari) return plain files with no relative path.
+    const folderName = files[0]?.webkitRelativePath.split("/")[0];
+    if (!folderName) {
+      if (files.length > 0) {
+        toastManager.add({ type: "error", title: "This browser can't attach a folder" });
+      }
+      return;
+    }
+    void attachFolderArchive(folderName, () => collectPickedFolderEntries(files));
+  };
+  const addPickedFolderStable = useStableCallback(addPickedFolder);
 
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
-    const { files, folders } = splitTransferredFiles(event.clipboardData);
+    const { files, folders, folderEntries } = splitTransferredFiles(event.clipboardData);
     const plainText = event.clipboardData.getData("text/plain");
     const bypassAutoAttachment = consumePasteAsTextShortcut(pasteAsTextShortcutUntilRef);
     if (
@@ -2673,7 +2730,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ) {
       event.preventDefault();
       event.stopPropagation();
-      if (folders.length > 0) addComposerFoldersStable(folders);
+      if (folders.length > 0) addComposerFoldersStable(folders, folderEntries);
       if (files.length > 0) {
         void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
       }
@@ -3228,6 +3285,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerAttachments={addComposerAttachments}
       focusComposer={focusComposer}
       attachFolder={canPickLocalFolder ? attachLocalFolderStable : undefined}
+      addPickedFolder={addPickedFolderStable}
     />
   ) : null;
   return (

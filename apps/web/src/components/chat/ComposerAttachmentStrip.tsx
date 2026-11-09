@@ -680,14 +680,20 @@ export function ComposerAttachButton({
   addComposerAttachments,
   focusComposer,
   attachFolder,
+  addPickedFolder,
 }: {
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
-  /** Present when a folder can be attached; the button then opens a Files / Folder menu. */
+  /** Picks a folder by path on this computer; preferred over `addPickedFolder` when present. */
   readonly attachFolder?: (() => void) | undefined;
+  /** Receives the files of a folder chosen in the browser's folder picker. */
+  readonly addPickedFolder?: ((files: File[]) => void) | undefined;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const label = attachFolder ? "Attach files or a folder" : "Attach files";
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const canPickFolder = attachFolder !== undefined || addPickedFolder !== undefined;
+  const pickFolder = () => (attachFolder ? attachFolder() : folderInputRef.current?.click());
+  const label = canPickFolder ? "Attach files or a folder" : "Attach files";
   const triggerButton = (
     <Button
       type="button"
@@ -695,7 +701,7 @@ export function ComposerAttachButton({
       size="icon-sm"
       aria-label={label}
       // Keeps editor focus for the direct picker; the menu opens on mousedown, which this would cancel.
-      {...(attachFolder
+      {...(canPickFolder
         ? {}
         : {
             onPointerDown: (event: { preventDefault(): void }) => event.preventDefault(),
@@ -723,7 +729,23 @@ export function ComposerAttachButton({
           });
         }}
       />
-      {attachFolder ? (
+      {addPickedFolder && !attachFolder ? (
+        <input
+          // React has no prop for this non-standard attribute.
+          ref={(input) => {
+            folderInputRef.current = input;
+            input?.setAttribute("webkitdirectory", "");
+          }}
+          type="file"
+          className="hidden"
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            addPickedFolder(files);
+          }}
+        />
+      ) : null}
+      {canPickFolder ? (
         <Menu>
           <Tooltip>
             <TooltipTrigger render={<MenuTrigger render={triggerButton} />}>{icon}</TooltipTrigger>
@@ -734,7 +756,7 @@ export function ComposerAttachButton({
               <FileIcon />
               Files…
             </MenuItem>
-            <MenuItem onClick={attachFolder}>
+            <MenuItem onClick={pickFolder}>
               <FolderIcon />
               Folder…
             </MenuItem>

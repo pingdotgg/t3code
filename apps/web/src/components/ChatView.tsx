@@ -3149,8 +3149,8 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.addDroppedFiles(files),
   );
   const addDroppedFoldersToComposer = useStableCallback(
-    (folders: Parameters<ChatComposerHandle["addDroppedFolders"]>[0]) =>
-      composerRef.current?.addDroppedFolders(folders),
+    (...args: Parameters<ChatComposerHandle["addDroppedFolders"]>) =>
+      composerRef.current?.addDroppedFolders(...args),
   );
   // Above the early return, where React Compiler can cache it for the side chat pane.
   const sideChatParentPanel = {
