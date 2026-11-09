@@ -20,6 +20,7 @@ const makeFakePi = (
   setModelError?: string,
   turnEvents: ReadonlyArray<Record<string, unknown>> = [],
   models: ReadonlyArray<Record<string, unknown>> = [],
+  catalogError?: string,
 ) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -43,7 +44,11 @@ const makeFakePi = (
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
           } else if (record["type"] === "get_available_models") {
-            yield* emit({ ...response, success: true, data: { models } });
+            yield* emit(
+              catalogError === undefined
+                ? { ...response, success: true, data: { models } }
+                : { ...response, success: false, error: catalogError },
+            );
           } else if (record["type"] === "set_model" && setModelError !== undefined) {
             yield* emit({ ...response, success: false, error: setModelError });
           } else {
@@ -127,13 +132,18 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
   }),
 );
 
-const selectModel = (model: string, models: ReadonlyArray<Record<string, unknown>>) =>
+const selectModel = (
+  model: string,
+  models: ReadonlyArray<Record<string, unknown>>,
+  catalogError?: string,
+) =>
   Effect.gen(function* () {
     const pi = yield* makeFakePi(
       JSON.stringify({ subject: "Update README", body: "" }),
       undefined,
       [],
       models,
+      catalogError,
     );
     const textGeneration = yield* makePiTextGeneration(
       { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
@@ -194,6 +204,16 @@ it.effect("refuses a model slug that matches two listed Pi models", () =>
     ]);
 
     assert.include(error?.detail, "Pi lists more than one model as 'a/b/c'");
+    assert.notInclude(error?.detail ?? "", "--no-extensions");
+    assert.isUndefined(sent);
+  }),
+);
+
+it.effect("preserves model discovery errors during text generation", () =>
+  Effect.gen(function* () {
+    const { error, sent } = yield* selectModel("demo/org/model", [], "Catalog unavailable");
+
+    assert.include(error?.detail ?? "", "Catalog unavailable");
     assert.notInclude(error?.detail ?? "", "--no-extensions");
     assert.isUndefined(sent);
   }),
