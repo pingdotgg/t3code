@@ -17,21 +17,17 @@ export async function getAssetWithMetadataFromKV(
 
   while (attempts <= retries) {
     try {
-      const asset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(
-        assetKey,
-        {
-          type: "stream",
-          cacheTtl: 31536000, // 1 year
-        },
-      );
+      const asset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
+        type: "stream",
+        cacheTtl: 31536000, // 1 year
+      });
 
       if (asset.value === null) {
         // Don't cache a 404 for a year by re-requesting with a minimum cacheTtl
-        const retriedAsset =
-          await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
-            type: "stream",
-            cacheTtl: 60, // Minimum value allowed
-          });
+        const retriedAsset = await assetsKVNamespace.getWithMetadata<AssetMetadata>(assetKey, {
+          type: "stream",
+          cacheTtl: 60, // Minimum value allowed
+        });
 
         if (retriedAsset.value !== null && sentry) {
           sentry.captureException(

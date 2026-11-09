@@ -40,15 +40,11 @@ const fetchHandler: FetchHandler = (request) =>
     addCookieHeader: true,
     // The Function URL (and CloudFront in front of it) prepend the viewer
     // ip to `x-forwarded-for`; surface it as `Astro.clientAddress`.
-    clientAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      undefined,
+    clientAddress: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
   });
 
 const streaming =
-  typeof __ALCHEMY_ASTRO_AWS_STREAMING__ === "boolean"
-    ? __ALCHEMY_ASTRO_AWS_STREAMING__
-    : true;
+  typeof __ALCHEMY_ASTRO_AWS_STREAMING__ === "boolean" ? __ALCHEMY_ASTRO_AWS_STREAMING__ : true;
 
 export const handler =
   streaming && (globalThis as { awslambda?: unknown }).awslambda !== undefined
