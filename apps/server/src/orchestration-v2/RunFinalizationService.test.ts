@@ -95,7 +95,7 @@ it.effect.each(
         expected: [],
       },
       {
-        label: "does not refresh another thread's checkout",
+        label: "leaves a branch checked out outside the project folder",
         branch: "feature",
         checkedOut: "other",
         activeRun: null,
