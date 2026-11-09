@@ -484,7 +484,7 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
-      yield* fs.writeFileString(executable, "#!/bin/sh\n");
+      yield* fs.writeFileString(executable, "#!/bin/sh\necho 'Zed 0.200.0'\n");
       yield* fs.chmod(executable, 0o755);
     }
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
@@ -529,7 +529,7 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
     );
     yield* fs.chmod(zfsZed, 0o755);
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolved = yield* resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: binDir }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, {
         ...path,
@@ -541,7 +541,13 @@ it.effect.skipIf(windowsHost)("does not offer the OpenZFS zed daemon as Zed on L
           ),
       }),
     );
-    assert.deepEqual(resolved, Option.none());
+    assert.deepEqual(yield* resolve, Option.none());
+
+    const zedEditor = path.join(home, ".local/bin/zed");
+    yield* fs.makeDirectory(path.dirname(zedEditor), { recursive: true });
+    yield* fs.writeFileString(zedEditor, "#!/bin/sh\necho 'Zed 0.200.0'\n");
+    yield* fs.chmod(zedEditor, 0o755);
+    assert.deepEqual(yield* resolve, Option.some({ command: zedEditor, baseArgs: [] }));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
