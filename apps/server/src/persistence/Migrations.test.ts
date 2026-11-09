@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import ApprovalRequestTimeoutIndex from "./Migrations/081_ApprovalRequestTimeoutIndex.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -161,6 +162,14 @@ describe("runMigrations", () => {
       `;
 
       assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("applies the approval request timeout index more than once", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 80 });
+      yield* ApprovalRequestTimeoutIndex;
+      yield* ApprovalRequestTimeoutIndex;
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 });

@@ -3,6 +3,7 @@ import { CommandId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -13,6 +14,7 @@ import {
   approvalRequestTimeoutCommand,
   APPROVAL_REQUEST_TIMEOUT_REASON,
   isAlreadyResolvedRuntimeRequestFailure,
+  logApprovalRequestTimeoutDispatchFailure,
 } from "./ApprovalRequestTimeoutWorker.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -109,6 +111,15 @@ describe("approval request timeout races", () => {
     assert.isFalse(isAlreadyResolvedRuntimeRequestFailure(Cause.die("unrelated failure")));
   });
 
+  it("does not treat a not-resumable dispatch failure as already resolved", () => {
+    const failure = new Orchestrator.OrchestratorDispatchError({
+      commandId: CommandId.make("command:timeout"),
+      commandType: "runtime-request.respond",
+      cause: "Runtime request request:approval-timeout is not resumable.",
+    });
+    assert.isFalse(isAlreadyResolvedRuntimeRequestFailure(Cause.fail(failure)));
+  });
+
   it("uses a bounded candidate page", () => {
     assert.equal(APPROVAL_REQUEST_TIMEOUT_BATCH_SIZE, 100);
   });
@@ -163,3 +174,31 @@ it.effect("asks the projection store for one bounded timeout page", () =>
     );
   }),
 );
+
+it.effect("logs a not-resumable dispatch failure instead of an already-resolved race", () => {
+  const messages: Array<string> = [];
+  const logger = Logger.make(({ message }) => {
+    messages.push(String(message));
+  });
+  const failure = new Orchestrator.OrchestratorDispatchError({
+    commandId: CommandId.make("command:timeout"),
+    commandType: "runtime-request.respond",
+    cause: "Runtime request request:approval-timeout is not resumable.",
+  });
+  return Effect.provide(
+    Effect.gen(function* () {
+      yield* logApprovalRequestTimeoutDispatchFailure({
+        cause: Cause.fail(failure),
+        threadId,
+        requestId: request.id,
+      });
+      assert.isTrue(
+        messages.some((message) => message.includes("approval-request-timeout.dispatch-failed")),
+      );
+      assert.isFalse(
+        messages.some((message) => message.includes("approval-request-timeout.already-resolved")),
+      );
+    }),
+    Logger.layer([logger], { mergeWithExisting: false }),
+  );
+});

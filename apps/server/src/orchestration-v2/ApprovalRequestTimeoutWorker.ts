@@ -55,10 +55,25 @@ export function isAlreadyResolvedRuntimeRequestFailure(cause: Cause.Cause<unknow
   return (
     error._tag === "OrchestratorDispatchError" &&
     typeof error.cause === "string" &&
-    error.cause.startsWith("Runtime request ") &&
-    error.cause.includes(" is ")
+    /^Runtime request .+ is (?:resolved|expired|cancelled)\.$/.test(error.cause)
   );
 }
+
+export const logApprovalRequestTimeoutDispatchFailure = (input: {
+  readonly cause: Cause.Cause<unknown>;
+  readonly threadId: ThreadId;
+  readonly requestId: OrchestrationV2RuntimeRequest["id"];
+}) =>
+  isAlreadyResolvedRuntimeRequestFailure(input.cause)
+    ? Effect.logInfo("orchestration-v2.approval-request-timeout.already-resolved", {
+        threadId: input.threadId,
+        requestId: input.requestId,
+      })
+    : Effect.logWarning("orchestration-v2.approval-request-timeout.dispatch-failed", {
+        threadId: input.threadId,
+        requestId: input.requestId,
+        cause: input.cause,
+      });
 
 const makeSweep = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -96,16 +111,11 @@ const makeSweep = Effect.gen(function* () {
       });
       yield* orchestrator.dispatch(command).pipe(
         Effect.catchCause((cause) =>
-          isAlreadyResolvedRuntimeRequestFailure(cause)
-            ? Effect.logInfo("orchestration-v2.approval-request-timeout.already-resolved", {
-                threadId: candidate.threadId,
-                requestId: candidate.request.id,
-              })
-            : Effect.logWarning("orchestration-v2.approval-request-timeout.dispatch-failed", {
-                threadId: candidate.threadId,
-                requestId: candidate.request.id,
-                cause,
-              }),
+          logApprovalRequestTimeoutDispatchFailure({
+            cause,
+            threadId: candidate.threadId,
+            requestId: candidate.request.id,
+          }),
         ),
       );
     }
