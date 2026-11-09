@@ -792,6 +792,117 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
   });
 
   describe("browse", () => {
+    it.effect("lists available Windows drives instead of the current drive's folders", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const directoryStat = yield* Effect.promise(() => NodeFSP.stat(process.cwd()));
+        vi.spyOn(NodeFSP, "stat").mockImplementation(async (drive) => {
+          if (drive === "C:\\" || drive === "E:\\") {
+            return directoryStat;
+          }
+          throw Object.assign(new Error("Drive unavailable"), { code: "ENOENT" });
+        });
+
+        const result = yield* workspaceEntries
+          .browse({ partialPath: "/", mode: "roots" })
+          .pipe(Effect.provideService(HostProcess.Platform, "win32"));
+
+        expect(result).toEqual({
+          parentPath: "/",
+          entries: [
+            { name: "C:", fullPath: "C:\\" },
+            { name: "E:", fullPath: "E:\\" },
+          ],
+        });
+      }),
+    );
+
+    it.effect("lists macOS volumes alongside the filesystem root", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const volumes = yield* makeTempDir();
+        yield* writeTextFile(volumes, "External SSD/project/README.md");
+        yield* writeTextFile(volumes, "not-a-drive.txt");
+        const dirents = yield* Effect.promise(() =>
+          NodeFSP.readdir(volumes, { withFileTypes: true }),
+        );
+        const directoryStat = yield* Effect.promise(() => NodeFSP.stat(volumes));
+        const readDirectory: (
+          directory: string,
+          options: { withFileTypes: true },
+        ) => Promise<typeof dirents> = NodeFSP.readdir;
+        vi.mocked(readDirectory).mockResolvedValueOnce(dirents);
+        vi.spyOn(NodeFSP, "stat").mockResolvedValue(directoryStat);
+
+        const result = yield* workspaceEntries
+          .browse({ partialPath: "/", mode: "roots" })
+          .pipe(Effect.provideService(HostProcess.Platform, "darwin"));
+
+        expect(result.entries).toEqual([
+          { name: "Filesystem", fullPath: "/" },
+          { name: "External SSD", fullPath: "/Volumes/External SSD" },
+        ]);
+      }),
+    );
+
+    it.effect("lists Linux disk and network mounts, including custom mount paths", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const directoryStat = yield* Effect.promise(() => NodeFSP.stat(process.cwd()));
+        vi.spyOn(NodeFSP, "readFile").mockResolvedValue(
+          [
+            "1 0 8:1 / / rw - ext4 /dev/sda1 rw",
+            "2 1 8:2 / /srv/External\\040SSD rw shared:1 - exfat /dev/sdb1 rw",
+            "3 1 0:22 / /mnt/team rw - nfs4 server:/team rw",
+            "4 1 0:1 / /proc rw - proc proc rw",
+            "5 1 0:2 / /run rw - tmpfs tmpfs rw",
+          ].join("\n"),
+        );
+        vi.spyOn(NodeFSP, "stat").mockResolvedValue(directoryStat);
+
+        const result = yield* workspaceEntries
+          .browse({ partialPath: "/", mode: "roots" })
+          .pipe(Effect.provideService(HostProcess.Platform, "linux"));
+
+        expect(result.entries).toEqual([
+          { name: "Filesystem", fullPath: "/" },
+          { name: "External SSD", fullPath: "/srv/External SSD" },
+          { name: "team", fullPath: "/mnt/team" },
+        ]);
+      }),
+    );
+
+    it.effect.each(["darwin", "linux"] as const)(
+      "keeps the filesystem root available when %s drive discovery fails",
+      (platform) =>
+        Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          if (platform === "darwin") {
+            vi.mocked(NodeFSP.readdir).mockRejectedValueOnce(new Error("Volumes unavailable"));
+          } else {
+            vi.spyOn(NodeFSP, "readFile").mockRejectedValueOnce(
+              new Error("Mount table unavailable"),
+            );
+          }
+
+          const result = yield* workspaceEntries
+            .browse({ partialPath: "/", mode: "roots" })
+            .pipe(Effect.provideService(HostProcess.Platform, platform));
+
+          expect(result.entries).toEqual([{ name: "Filesystem", fullPath: "/" }]);
+        }),
+    );
+
+    it.effect("preserves browsing '/' as a real directory", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        vi.mocked(NodeFSP.readdir).mockResolvedValueOnce([]);
+        const result = yield* workspaceEntries.browse({ partialPath: "/" });
+        expect(result).toEqual({ parentPath: path.resolve("/"), entries: [] });
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

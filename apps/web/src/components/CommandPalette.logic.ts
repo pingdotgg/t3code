@@ -693,11 +693,15 @@ export function buildBrowseGroups(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseQuery: string;
   canBrowseUp: boolean;
+  isDriveList: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
+  driveIcon: ReactNode;
   browseUp: () => void | Promise<void>;
-  browseTo: (name: string) => void | Promise<void>;
+  browseDrives: () => void | Promise<void>;
+  browseTo: (name: string, fullPath: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
+  const isDriveList = input.isDriveList;
   const items: CommandPaletteActionItem[] = [];
 
   if (input.canBrowseUp) {
@@ -720,15 +724,37 @@ export function buildBrowseGroups(input: {
       value: `browse:${entry.fullPath}`,
       searchTerms: [input.browseQuery, entry.fullPath, entry.name],
       title: entry.name,
-      icon: input.directoryIcon,
+      ...(isDriveList ? { description: entry.fullPath } : {}),
+      icon: isDriveList ? input.driveIcon : input.directoryIcon,
       keepOpen: true,
       run: async () => {
-        await input.browseTo(entry.name);
+        await input.browseTo(entry.name, entry.fullPath);
       },
     });
   }
 
-  return [{ value: "directories", label: "Directories", items }];
+  const groups: CommandPaletteGroup[] = [];
+  if (!isDriveList) {
+    groups.push({
+      value: "locations",
+      label: "Locations",
+      items: [
+        {
+          kind: "action",
+          value: "browse:drives",
+          searchTerms: ["drives"],
+          title: "Drives",
+          icon: input.driveIcon,
+          keepOpen: true,
+          run: async () => {
+            await input.browseDrives();
+          },
+        },
+      ],
+    });
+  }
+  groups.push({ value: "directories", label: isDriveList ? "Drives" : "Directories", items });
+  return groups;
 }
 
 export function filterPinnedBrowseEntries(input: {

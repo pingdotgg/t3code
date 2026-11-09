@@ -143,6 +143,12 @@ export function createFilesystemEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
+    roots: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:filesystem:roots",
+      tag: WS_METHODS.filesystemBrowse,
+      staleTimeMs: 0,
+      idleTtlMs: BROWSE_IDLE_TTL_MS,
+    }),
     getMetadata: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:filesystem:get-metadata",
       tag: WS_METHODS.filesystemGetMetadata,

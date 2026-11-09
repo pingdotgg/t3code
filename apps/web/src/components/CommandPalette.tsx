@@ -63,6 +63,7 @@ import {
   FileSearchIcon,
   FolderGit2Icon,
   FolderIcon,
+  HardDriveIcon,
   FolderPlusIcon,
   MessageSquareDashedIcon,
   LinkIcon,
@@ -425,7 +426,11 @@ function OpenCommandPaletteDialog(props: {
       : createCommandPaletteSearchState(initialSearch.query);
   });
   const { query, views: viewStack } = searchState;
-  const setQuery = (query: string) => dispatchSearch({ type: "query", query });
+  const [isDriveList, setIsDriveList] = useState(false);
+  const setQuery = (query: string) => {
+    setIsDriveList(false);
+    dispatchSearch({ type: "query", query });
+  };
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
@@ -451,6 +456,10 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const loadBrowseRoots = useAtomQueryRunner(filesystemEnvironment.roots, {
     reportFailure: false,
     reportDefect: false,
   });
@@ -654,7 +663,16 @@ function OpenCommandPaletteDialog(props: {
       : "";
   const canBrowsePaths =
     browseEnvironmentId !== null && !isRemoteProjectRepositoryStep && newProjectFlow === null;
-  const browsePath = getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
+  const browsePath =
+    isDriveList && canBrowsePaths
+      ? {
+          isBrowsing: true,
+          directoryPath: "/",
+          filterQuery: query,
+          parentPath: null,
+          canBrowseUp: false,
+        }
+      : getFilesystemBrowsePath(query, browseEnvironmentPlatform, canBrowsePaths);
   const isBrowsing = browsePath.isBrowsing;
   const browseDirectoryPath = browsePath.directoryPath;
   const paletteMode = getCommandPaletteMode({ currentView, isBrowsing });
@@ -707,7 +725,9 @@ function OpenCommandPaletteDialog(props: {
   const getBrowseCwdForEnvironment = (environmentId: EnvironmentId | null): string | null =>
     environmentId && currentProjectEnvironmentId === environmentId ? currentProjectCwd : null;
   const relativePathNeedsActiveProject =
-    isExplicitRelativeProjectPath(query.trim()) && currentProjectCwdForBrowse === null;
+    !isDriveList &&
+    isExplicitRelativeProjectPath(query.trim()) &&
+    currentProjectCwdForBrowse === null;
   const browseAccess = useFilesystemReadAccess(browseEnvironmentId);
   const hasBrowseTarget =
     isBrowsing &&
@@ -716,13 +736,18 @@ function OpenCommandPaletteDialog(props: {
     !relativePathNeedsActiveProject;
   const browseQuery = useEnvironmentQuery(
     browseAccess.canReadFiles && hasBrowseTarget
-      ? filesystemEnvironment.browse({
-          environmentId: browseEnvironmentId,
-          input: {
-            partialPath: browsePath.directoryPath,
-            ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
-          },
-        })
+      ? isDriveList
+        ? filesystemEnvironment.roots({
+            environmentId: browseEnvironmentId,
+            input: { partialPath: "/", mode: "roots" },
+          })
+        : filesystemEnvironment.browse({
+            environmentId: browseEnvironmentId,
+            input: {
+              partialPath: browsePath.directoryPath,
+              ...(currentProjectCwdForBrowse ? { cwd: currentProjectCwdForBrowse } : {}),
+            },
+          })
       : null,
   );
   const browseResult = browseQuery.data;
@@ -733,7 +758,7 @@ function OpenCommandPaletteDialog(props: {
       : null;
   const browseEntries = browseResult?.entries ?? EMPTY_BROWSE_ENTRIES;
   const { visibleEntries: visibleBrowseEntries, exactEntry: exactBrowseEntry } =
-    pinnedCloneDirectoryName
+    pinnedCloneDirectoryName && !isDriveList
       ? filterPinnedBrowseEntries({
           browseEntries,
           filterQuery: browsePath.filterQuery,
@@ -916,6 +941,7 @@ function OpenCommandPaletteDialog(props: {
     .slice(0, RECENT_THREAD_LIMIT);
 
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
+    setIsDriveList(false);
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
     highlightClearedRef.current = true;
@@ -923,6 +949,7 @@ function OpenCommandPaletteDialog(props: {
   });
 
   function popView(): void {
+    setIsDriveList(false);
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
@@ -939,6 +966,10 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
+    if (isDriveList && !isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) {
+      dispatchSearch({ type: "query", query: resolvedQuery });
+      return;
+    }
     // A rewritten paste has no matching offsets, so its caret lands at the end.
     if (
       source instanceof HTMLInputElement &&
@@ -2210,15 +2241,18 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
-  const browseTo = async (name: string): Promise<void> => {
-    const nextQuery = pinnedCloneDirectoryName
-      ? getCloneDestinationBrowsePath({
-          browseDirectoryPath: browsePath.directoryPath,
-          selectedDirectoryName: name,
-          cloneDirectoryName: pinnedCloneDirectoryName,
-          caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
-        })
-      : appendBrowsePathSegment(query, name);
+  const browseTo = async (name: string, fullPath?: string): Promise<void> => {
+    const nextQuery =
+      isDriveList && fullPath
+        ? getCloneDestinationPath(ensureBrowseDirectoryPath(fullPath), pinnedCloneDirectoryName)
+        : pinnedCloneDirectoryName
+          ? getCloneDestinationBrowsePath({
+              browseDirectoryPath: browsePath.directoryPath,
+              selectedDirectoryName: name,
+              cloneDirectoryName: pinnedCloneDirectoryName,
+              caseSensitive: !isWindowsPlatform(browseEnvironmentPlatform),
+            })
+          : appendBrowsePathSegment(query, name);
     await browseNavigation.run(
       () => prefetchBrowsePath(getBrowseDirectoryPath(nextQuery)),
       () => {
@@ -2228,6 +2262,24 @@ function OpenCommandPaletteDialog(props: {
       },
     );
   };
+
+  const browseDrives = useStableCallback(async (): Promise<void> => {
+    if (!browseEnvironmentId || !browseAccess.canReadFiles) return;
+    await browseNavigation.run(
+      async () => {
+        await loadBrowseRoots({
+          environmentId: browseEnvironmentId,
+          input: { partialPath: "/", mode: "roots" },
+        });
+      },
+      () => {
+        clearTypedHighlight();
+        dispatchSearch({ type: "query", query: "" });
+        setIsDriveList(true);
+        setBrowseGeneration((generation) => generation + 1);
+      },
+    );
+  });
 
   const browseUp = async (): Promise<void> => {
     const parentPath = browsePath.parentPath;
@@ -2256,13 +2308,18 @@ function OpenCommandPaletteDialog(props: {
     browseEntries: visibleBrowseEntries,
     browseQuery: query,
     canBrowseUp,
+    isDriveList,
     upIcon: <CornerLeftUpIcon className={ITEM_ICON_CLASS} />,
     directoryIcon: <FolderIcon className={ITEM_ICON_CLASS} />,
+    driveIcon: <HardDriveIcon className={ITEM_ICON_CLASS} />,
     browseUp,
+    browseDrives,
     browseTo,
   });
   const cloneDestinationBrowseGroups = browseGroups.map((group) =>
-    group.value === "directories" ? { ...group, label: "Select where to clone" } : group,
+    group.value === "directories" && !isDriveList
+      ? { ...group, label: "Select where to clone" }
+      : group,
   );
 
   const newProjectsRoot = newProjectFlow ? newProjectsRootFor(newProjectFlow.environmentId) : null;
@@ -2411,8 +2468,9 @@ function OpenCommandPaletteDialog(props: {
   const autoHighlightsFirstRow =
     !isBrowsing && !isRemoteProjectCloneFlow && newProjectFlow === null;
 
-  const inputPlaceholder =
-    newProjectFlow !== null
+  const inputPlaceholder = isDriveList
+    ? "Search drives..."
+    : newProjectFlow !== null
       ? "Project name"
       : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
         getCommandPaletteInputPlaceholder(paletteMode));
@@ -2430,6 +2488,7 @@ function OpenCommandPaletteDialog(props: {
   const isCloneDestinationStep = addProjectCloneFlow?.step === "confirm";
   const canSubmitBrowsePath =
     isBrowsing &&
+    !isDriveList &&
     !relativePathNeedsActiveProject &&
     canCreateProject &&
     (!isCloneDestinationStep || canCloneProject) &&
@@ -2618,6 +2677,10 @@ function OpenCommandPaletteDialog(props: {
         void browseUp();
         return;
       }
+      if (highlightedItemValue === "browse:drives") {
+        void browseDrives();
+        return;
+      }
       const highlightedEntry = visibleBrowseEntries.find(
         (entry) => `browse:${entry.fullPath}` === highlightedItemValue,
       );
@@ -2625,10 +2688,13 @@ function OpenCommandPaletteDialog(props: {
         ? { name: highlightedEntry.name, isComplete: true }
         : getFilesystemBrowseTabCompletion(visibleBrowseEntries, browsePath.filterQuery);
       if (completion?.isComplete) {
-        void browseTo(completion.name);
-      } else if (completion && !pinnedCloneDirectoryName) {
+        const entry =
+          highlightedEntry ?? visibleBrowseEntries.find((entry) => entry.name === completion.name);
+        void browseTo(completion.name, entry?.fullPath);
+      } else if (completion && (isDriveList || !pinnedCloneDirectoryName)) {
         setHighlightedItemValue(null);
-        setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
+        if (isDriveList) dispatchSearch({ type: "query", query: completion.name });
+        else setQuery(`${getBrowseDirectoryPath(query)}${completion.name}`);
       }
       return;
     }
@@ -2820,13 +2886,14 @@ function OpenCommandPaletteDialog(props: {
               : "This connection cannot add projects."
         }
         disabled={
+          isDriveList ||
           !canCreateProject ||
           !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
           relativePathNeedsActiveProject ||
           (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))
         }
         onSubmit={() => {
-          if (relativePathNeedsActiveProject) {
+          if (isDriveList || relativePathNeedsActiveProject) {
             return;
           }
           if (isCloneDestinationStep) {
@@ -2944,7 +3011,7 @@ function OpenCommandPaletteDialog(props: {
         </div>
       ) : isBrowsePending && browseResult === null ? (
         <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
-          Loading folders...
+          {isDriveList ? "Loading drives..." : "Loading folders..."}
         </div>
       ) : null}
       <CommandPaletteVirtualizedResults
