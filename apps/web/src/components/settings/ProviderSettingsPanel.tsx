@@ -351,25 +351,9 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
       hasServerConfig: environment.serverConfig !== null,
     }),
   )?.environmentId;
-  const searchableCursorEnvironmentId = options.find(
-    (environment) =>
-      environment.serverConfig?.environment.platform.os === "darwin" &&
-      isProviderSettingsEnvironmentAvailable({
-        connectionPhase: environment.connection.phase,
-        hasServerConfig: true,
-      }),
-  )?.environmentId;
   let searchRedirectEnvironmentId: EnvironmentId | undefined;
   {
     if (
-      !target.scoped &&
-      searchTargetId === searchableSetting("cursor-keychain-usage").id &&
-      (!selectedEnvironmentCanRenderSettings ||
-        selectedEnvironment?.serverConfig?.environment.platform.os !== "darwin") &&
-      searchableCursorEnvironmentId !== undefined
-    ) {
-      searchRedirectEnvironmentId = searchableCursorEnvironmentId;
-    } else if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
         searchTargetId === searchableSetting("usage-providers").id) &&
@@ -1110,7 +1094,6 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
-        cursorKeychainUsageEnabled={settings.cursorKeychainUsageEnabled}
         readOnly={readOnly}
       />
 

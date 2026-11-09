@@ -357,6 +357,7 @@ export function PullRequestListFilters(props: {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
+      style={{ overflow: "visible" }}
       // In the Android sidebar the first pill lines up with the rows' content instead
       // (8dp row margin + 12dp padding).
       contentContainerStyle={

@@ -508,7 +508,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     }
     setSidebarWidth(resolveInitialThreadSidebarWidth(null, viewportWidth));
   };
-  const [sidebarOpenStore] = useState(() => createSidebarOpenStore(true));
+  const [sidebarOpenStore] = useState(() =>
+    createSidebarOpenStore(true, "chat_thread_sidebar_open"),
+  );
   const { open: isSidebarOpen } = useSyncExternalStore(
     sidebarOpenStore.subscribe,
     sidebarOpenStore.getSnapshot,

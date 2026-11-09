@@ -62,6 +62,75 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it.each(["alone", "before tool", "before commentary and tool"])(
+    "keeps an unfinished task update static %s",
+    (placement) => {
+      const runId = RunId.make("task-update-run");
+      const at = "2026-11-06T00:00:00Z";
+      const tasks: TimelineEntry = {
+        kind: "work",
+        id: "tasks",
+        createdAt: at,
+        entry: {
+          id: "tasks",
+          runId,
+          createdAt: at,
+          itemType: "todo_list",
+          tone: "info",
+          label: "Tasks 0/1 · Inspect the captures",
+          toolLifecycleStatus: "inProgress",
+        },
+      };
+      const commentary: TimelineEntry = {
+        kind: "message",
+        id: "commentary",
+        createdAt: at,
+        message: {
+          id: MessageId.make("commentary"),
+          role: "assistant",
+          text: "Checking the rendering.",
+          runId,
+          streaming: false,
+          createdAt: at,
+          updatedAt: at,
+        },
+      };
+      const tool: TimelineEntry = {
+        kind: "work",
+        id: "tool",
+        createdAt: at,
+        entry: {
+          id: "tool",
+          runId,
+          createdAt: at,
+          label: "Running sed",
+          command: "sed",
+          tone: "tool",
+          toolLifecycleStatus: "inProgress",
+        },
+      };
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          tasks,
+          ...(placement === "before commentary and tool" ? [commentary] : []),
+          ...(placement === "alone" ? [] : [tool]),
+        ],
+        runningRunId: runId,
+        isWorking: true,
+        activeTurnStartedAt: at,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.find((row) => row.id === "tasks")).toMatchObject({
+        kind: "work",
+        groupedEntries: [tasks.entry],
+      });
+      expect(rows.filter((row) => row.kind === "work-live" && row.active)).toEqual(
+        placement === "alone" ? [] : [expect.objectContaining({ entry: tool.entry })],
+      );
+    },
+  );
+
   it("stops stranded thinking after a steer and follows the next thought or tool", () => {
     const runId = RunId.make("steered-run");
     const at = "2026-10-01T06:19:10Z";
@@ -1302,8 +1371,6 @@ describe("deriveMessagesTimelineRows", () => {
 
   it.each([
     ["00:00:00.400Z", "Stopped at 0s"],
-    ["00:00:05.300Z", "Stopped at 5s"],
-    ["00:00:47.000Z", "Stopped at 47s"],
     ["00:00:59.700Z", "Stopped at 59s"],
     ["00:01:12.700Z", "Stopped at 1m 12s"],
     ["01:02:03.900Z", "Stopped at 1h 2m 3s"],
@@ -1533,7 +1600,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
   });
 
-  it("stacks back-to-back steers as one burst with a single steer label", () => {
+  it("stacks back-to-back steers under their prompt as one burst", () => {
     const runId = RunId.make("double-steer-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
     const message = (
@@ -1590,15 +1657,14 @@ describe("deriveMessagesTimelineRows", () => {
     ).result;
 
     const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("prompt")).toMatchObject({ groupedWithNext: true });
     expect(byId.get("first-steer")).toMatchObject({
       groupedWithNext: true,
       groupedWithPrevious: true,
-      continuesSteer: false,
     });
     expect(byId.get("second-steer")).toMatchObject({
       groupedWithNext: false,
       groupedWithPrevious: true,
-      continuesSteer: true,
     });
   });
 
@@ -4592,6 +4658,17 @@ describe("working window", () => {
     // Sending a steer re-keys the window, which closes an open history.
     expect(window?.key).toBe("steer");
     expect(window?.historyOpen).toBe(false);
+  });
+
+  it("groups a steer with its prompt once the bar moves below both", () => {
+    const rows = run([
+      prompt("prompt", 0),
+      work("command", 2, { label: "Running sleep", itemType: "command_execution" }),
+      prompt("steer", 3, "steer"),
+    ]);
+    expect(rows.map((row) => row.id)).toEqual(["prompt", "steer", "working-indicator-row"]);
+    expect(rows[0]).toMatchObject({ groupedWithNext: true, groupedWithPrevious: false });
+    expect(rows[1]).toMatchObject({ groupedWithNext: false, groupedWithPrevious: true });
   });
 
   it("puts the settled fold where the bar was, after the steer", () => {

@@ -12,7 +12,7 @@ const DIALOG_POPUP_CLASS = `surface-dialog kbd-in-popover ${DIALOG_POPUP_BASE_CL
 const COMMAND_DIALOG_POPUP_CLASS = `surface-palette kbd-in-popover ${DIALOG_POPUP_BASE_CLASS} rounded-pane`;
 const DIALOG_MEDIA_POPUP_CLASS = `${DIALOG_POPUP_BASE_CLASS} max-h-[92vh] w-auto max-w-[92vw] overflow-visible rounded-none border border-transparent bg-transparent p-0 shadow-none`;
 
-const DIALOG_APP_POPUP_CLASS = `${DIALOG_POPUP_CLASS} size-full overflow-hidden text-body max-sm:rounded-none max-sm:pt-safe max-sm:pb-safe duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] starting:scale-[0.985] sm:max-h-[60rem] sm:max-w-[80rem]`;
+const DIALOG_APP_POPUP_CLASS = `${DIALOG_POPUP_CLASS} size-full overflow-hidden text-body max-sm:rounded-none max-sm:pt-(--app-modal-top-inset) max-sm:pb-safe duration-150 ease-out data-ending-style:scale-[0.985] data-starting-style:scale-[0.985] starting:scale-[0.985] sm:max-h-[60rem] sm:max-w-[80rem]`;
 
 const DIALOG_MOBILE_SHEET_CLASS =
   "max-sm:max-w-none max-sm:rounded-none max-sm:border-x-0 max-sm:border-t max-sm:border-b-0 max-sm:opacity-[calc(1-min(var(--nested-dialogs),1))] max-sm:data-ending-style:translate-y-4 max-sm:data-starting-style:translate-y-4";
