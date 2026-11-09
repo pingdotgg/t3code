@@ -44,5 +44,12 @@ it.effect("reads the sign-in from an Origin CLI that wants its --json fields nam
     const item = yield* discovery.probe("/repo");
     assert.strictEqual(item.auth.status, "authenticated");
     assert.deepStrictEqual(item.auth.account, Option.some("acme"));
+    // Discovery shows the namespace instead, so only the viewer lookup needs the email.
+    assert.strictEqual(
+      OriginCli.originAccount(
+        OriginCli.parseOriginAuthStatus(origin(OriginCli.ORIGIN_AUTH_STATUS_ARGS).stdout),
+      ),
+      "dev@example.test",
+    );
   }),
 );
