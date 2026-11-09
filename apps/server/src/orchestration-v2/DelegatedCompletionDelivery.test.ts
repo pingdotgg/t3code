@@ -2979,6 +2979,228 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         assert.equal(settled?.result, "The grandchild finished the next step.");
       }),
     );
+
+    it.effect("settles a follow-up on a held older run that received its subagent's wake", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const later = DateTime.add(now, { seconds: 1 });
+        const parentThreadId = ThreadId.make("thread:followup-held-wake-parent");
+        const projectId = ProjectId.make("project:followup-held-wake");
+        const parentRunId = RunId.make("run:followup-held-wake-parent");
+        const rootNodeId = NodeId.make("node:followup-held-wake-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:followup-held-wake-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "followup-held-wake-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        // An older untagged run waits in a held queue while the follow-up runs ahead of it.
+        const heldRunId = RunId.make("run:followup-held-wake-held");
+        const heldOrdinal =
+          Math.max(
+            ...(yield* orchestrator.getThreadProjection(child.childThreadId)).runs.map(
+              (run) => run.ordinal,
+            ),
+          ) + 1;
+        const heldRun = (status: "queued" | "running" | "completed") => {
+          const event = runEvent({
+            threadId: child.childThreadId,
+            runId: heldRunId,
+            ordinal: heldOrdinal,
+            status,
+            now: status === "queued" ? now : later,
+          });
+          return status === "queued"
+            ? {
+                ...event,
+                payload: { ...event.payload, queueHeld: true, startedAt: null, completedAt: null },
+              }
+            : event;
+        };
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-held-wake-held"),
+          events: [heldRun("queued")],
+        });
+
+        const followupMessageId = MessageId.make("message:followup-held-wake-send");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:followup-held-wake-send"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: followupMessageId,
+          text: "Now delegate the next step.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const followupRun = (yield* orchestrator.getThreadProjection(
+          child.childThreadId,
+        )).runs.find((run) => run.userMessageId === followupMessageId)!;
+        assert.isAbove(followupRun.ordinal, heldOrdinal);
+        const followupTaskId = followupRun.delegatedTaskId!;
+
+        const grandchildId = NodeId.make("node:followup-held-wake-grandchild");
+        const grandchild = {
+          id: grandchildId,
+          threadId: child.childThreadId,
+          runId: followupRun.id,
+          parentNodeId: NodeId.make("node:followup-held-wake-child-root"),
+          origin: "app_owned" as const,
+          createdBy: "agent" as const,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerThreadId: null,
+          childThreadId: ThreadId.make("thread:followup-held-wake-grandchild"),
+          nativeTaskRef: null,
+          prompt: "Do the next step.",
+          title: null,
+          model: null,
+          completionWake: "always" as const,
+          status: "running" as const,
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-held-wake-turn-ended"),
+          events: [
+            {
+              id: EventId.make("event:followup-held-wake-grandchild-started"),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              nodeId: grandchildId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: grandchild,
+            },
+            {
+              id: EventId.make("event:followup-held-wake-run-completed"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              occurredAt: now,
+              payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        // The held run is released and the grandchild's completion is steered into it.
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-held-wake-steered"),
+          events: [
+            {
+              id: EventId.make("event:followup-held-wake-grandchild-completed"),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              nodeId: grandchildId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: later,
+              payload: {
+                ...grandchild,
+                status: "completed",
+                result: "grandchild finished",
+                completionDelivery: { state: "acknowledged", observedByRunId: heldRunId },
+                completedAt: later,
+              },
+            },
+            {
+              id: EventId.make("event:followup-held-wake-message"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: heldRunId,
+              occurredAt: later,
+              payload: {
+                id: MessageId.make("message:followup-held-wake-steer"),
+                threadId: child.childThreadId,
+                runId: heldRunId,
+                nodeId: null,
+                role: "user",
+                text: "Delegated task finished.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                delegatedCompletion: {
+                  parentRunId: followupRun.id,
+                  generation: 1,
+                  taskIds: [grandchildId],
+                },
+                createdAt: later,
+                updatedAt: later,
+              },
+            },
+            heldRun("running"),
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === followupTaskId,
+          )?.result ?? null,
+          "the follow-up closed while the run holding its wake was still running",
+        );
+
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-held-wake-finished"),
+          events: [
+            {
+              id: EventId.make("event:followup-held-wake-result"),
+              type: "message.updated",
+              threadId: child.childThreadId,
+              runId: heldRunId,
+              occurredAt: later,
+              payload: {
+                id: MessageId.make("message:followup-held-wake-result"),
+                threadId: child.childThreadId,
+                runId: heldRunId,
+                nodeId: null,
+                role: "assistant",
+                text: "The grandchild finished the next step.",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: later,
+                updatedAt: later,
+              },
+            },
+            heldRun("completed"),
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const settled = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === followupTaskId,
+        );
+        assert.equal(settled?.status, "completed");
+        assert.equal(settled?.result, "The grandchild finished the next step.");
+      }),
+    );
   },
 );
 

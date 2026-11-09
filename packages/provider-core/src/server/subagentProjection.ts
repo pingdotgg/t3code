@@ -278,29 +278,46 @@ export function delegatedRunOwners(
     if (message.delegatedCompletion === undefined) continue;
     const { parentRunId } = message.delegatedCompletion;
     wokenByMessage.set(message.id, parentRunId);
-    if (message.runId !== null) {
-      wokenInRun.set(message.runId, [...(wokenInRun.get(message.runId) ?? []), parentRunId]);
+    if (message.runId === null) continue;
+    const woken = wokenInRun.get(message.runId);
+    if (woken === undefined) wokenInRun.set(message.runId, [parentRunId]);
+    else woken.push(parentRunId);
+  }
+  const runs = new Map(projection.runs.map((run) => [run.id, run]));
+  // Resolved through each run's sources, not by ordinal: held queues run out of ordinal order.
+  const owners = new Map<RunId, NodeId | undefined>();
+  const ownerOf = (runId: RunId | undefined): NodeId | undefined => {
+    const run = runId === undefined ? undefined : runs.get(runId);
+    if (run === undefined) return undefined;
+    if (owners.has(run.id)) return owners.get(run.id);
+    owners.set(run.id, undefined);
+    let owner = run.delegatedTaskId;
+    if (
+      owner === undefined &&
+      run.status !== "rolled_back" &&
+      !(run.status === "queued" && run.queueHeld === true)
+    ) {
+      for (const source of [
+        run.restartContinuationOfRunId,
+        wokenByMessage.get(run.userMessageId),
+        ...(wokenInRun.get(run.id) ?? []),
+      ]) {
+        owner = ownerOf(source);
+        if (owner !== undefined) break;
+      }
     }
+    owners.set(run.id, owner);
+    return owner;
+  };
+  const resolved = new Map<RunId, NodeId>();
+  for (const run of projection.runs) {
+    const owner = ownerOf(run.id);
+    if (owner !== undefined) resolved.set(run.id, owner);
   }
-  const owners = new Map<RunId, NodeId>();
-  for (const run of projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)) {
-    const owner =
-      run.delegatedTaskId ??
-      (run.status === "rolled_back" || (run.status === "queued" && run.queueHeld === true)
-        ? undefined
-        : [
-            run.restartContinuationOfRunId,
-            wokenByMessage.get(run.userMessageId),
-            ...(wokenInRun.get(run.id) ?? []),
-          ]
-            .map((source) => (source === undefined ? undefined : owners.get(source)))
-            .find((taskId) => taskId !== undefined));
-    if (owner !== undefined) owners.set(run.id, owner);
-  }
-  return owners;
+  return resolved;
 }
 
-/** A follow-up task's runs by ordinal. Its result is the last one, as the original task's is. */
+/** A follow-up task's runs in execution order; its result is the last, as the original's is. */
 export function delegatedFollowupRuns(
   projection: FollowupAttributionProjection,
   taskId: NodeId,
@@ -308,7 +325,7 @@ export function delegatedFollowupRuns(
   const owners = delegatedRunOwners(projection);
   return projection.runs
     .filter((run) => owners.get(run.id) === taskId)
-    .toSorted((a, b) => a.ordinal - b.ordinal);
+    .toSorted((a, b) => (runRanAfter(a, b) ? 1 : runRanAfter(b, a) ? -1 : 0));
 }
 
 const subagentHoldsCompletion = (

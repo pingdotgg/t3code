@@ -563,6 +563,21 @@ describe("OrchestratorMcpService", () => {
         acknowledged.length = 0;
         yield* service.readThread(scope, { threadId: childThreadId, runLimit: 0 });
         assert.deepEqual(acknowledged, [followupTaskId]);
+
+        // A held queue can run an older run after the follow-up; that run's wake reply counts too.
+        childProjection = {
+          ...childProjection,
+          runs: childProjection.runs.map((run) =>
+            run.id === wakeRunId
+              ? { ...run, ordinal: 2 }
+              : run.delegatedTaskId === followupTaskId
+                ? { ...run, ordinal: 3 }
+                : run,
+          ),
+        } as unknown as OrchestrationV2ThreadProjection;
+        acknowledged.length = 0;
+        yield* service.readThread(scope, { threadId: childThreadId, runLimit: 0 });
+        assert.deepEqual(acknowledged, [followupTaskId]);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

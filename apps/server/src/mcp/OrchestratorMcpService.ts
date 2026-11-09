@@ -3087,18 +3087,24 @@ const make = Effect.gen(function* () {
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
-      // Wake runs after a follow-up may belong to it; their wake messages say which.
-      const firstFollowupOrdinal =
+      // Runs that ran after a follow-up may be its wakes; their wake messages say which.
+      const firstFollowup =
         parent?.thread.id === target.thread.lineage.parentThreadId
-          ? Math.min(
-              ...target.runs.flatMap((run) =>
-                run.delegatedTaskId === undefined ? [] : [run.ordinal],
-              ),
+          ? target.runs.reduce<OrchestrationV2Run | undefined>(
+              (first, run) =>
+                run.delegatedTaskId !== undefined &&
+                (first === undefined || runRanAfter(first, run))
+                  ? run
+                  : first,
+              undefined,
             )
-          : Infinity;
-      const wakeRunIds = target.runs
-        .filter((run) => run.delegatedTaskId === undefined && run.ordinal > firstFollowupOrdinal)
-        .map((run) => run.id);
+          : undefined;
+      const wakeRunIds =
+        firstFollowup === undefined
+          ? []
+          : target.runs
+              .filter((run) => run.delegatedTaskId === undefined && runRanAfter(run, firstFollowup))
+              .map((run) => run.id);
       const attributed = {
         ...target,
         messages:
