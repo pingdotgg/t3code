@@ -800,6 +800,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     wakeLabel == null && !showsWoke && statusLabel === undefined && props.timeLabel
       ? props.timeLabel
       : null,
+    messagePreview
+      ? messagePreview.speaker === "you"
+        ? `You: ${messagePreview.text}`
+        : messagePreview.text
+      : null,
     providerInstance?.displayName ?? null,
     props.hasQueuedMessages ? "messages queued to send" : null,
     isRegeneratingTitle ? "regenerating title" : null,

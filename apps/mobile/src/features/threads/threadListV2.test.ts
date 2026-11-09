@@ -229,8 +229,16 @@ describe("resolveThreadListV2SwipeActions", () => {
         settlementSupported: true,
         snoozeSupported: true,
         snoozable: canSnooze(thread, { now: NOW }),
-      }).secondary,
-    ).toBe("snooze");
+      }),
+    ).toEqual({ primary: "settle", secondary: "snooze" });
+    expect(
+      resolveThreadListV2SwipeActions({
+        settled: true,
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: canSnooze(thread, { now: NOW }),
+      }),
+    ).toEqual({ primary: "unsettle", secondary: "snooze" });
 
     const layout = buildThreadListV2Items({
       threads: [{ ...thread, snoozedAt: NOW, snoozedUntil: "2026-06-03T00:00:00.000Z" }],
