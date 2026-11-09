@@ -207,12 +207,10 @@ function defaultViewMode(path: string | null): FileViewMode {
 function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
   const navigation = useNavigation();
   const [selection, setSelection] = useState<{
-    readonly from: number | null | undefined;
     readonly line: number;
     readonly active: boolean;
   } | null>(null);
-  const current = selection?.from === props.initialLine ? selection : null;
-  usePreventRemove(current?.active === true, ({ data }) => {
+  usePreventRemove(selection?.active === true, ({ data }) => {
     setSelection((value) => value && { ...value, active: false });
     // The re-dispatched action skips this guard, so "Return to chat" still leaves in one tap.
     if (data.action.type !== "GO_BACK" && data.action.type !== "POP") {
@@ -222,12 +220,10 @@ function FileSourceSurface(props: ComponentProps<typeof SourceFileSurface>) {
   return (
     <SourceFileSurface
       {...props}
-      initialLine={current?.line ?? props.initialLine}
-      selectable={current?.active === true}
+      initialLine={selection?.line ?? props.initialLine}
+      selectable={selection?.active === true}
       onLongPressLine={
-        Platform.OS === "android"
-          ? (line) => setSelection({ from: props.initialLine, line, active: true })
-          : undefined
+        Platform.OS === "android" ? (line) => setSelection({ line, active: true }) : undefined
       }
     />
   );
@@ -345,6 +341,7 @@ function FileContent(props: {
         />
       ) : (
         <FileSourceSurface
+          key={props.initialLine}
           contents={props.fileContents}
           path={props.relativePath}
           initialLine={props.initialLine}

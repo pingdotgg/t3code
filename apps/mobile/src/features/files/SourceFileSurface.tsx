@@ -310,7 +310,6 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const selectableBlock = usesTextSelection ? (
     <SourceText
       selectable
-      selectionColorClassName={Platform.OS === "android" ? "accent-focus/32" : undefined}
       style={{
         color: foreground,
         fontFamily: REVIEW_MONO_FONT_FAMILY,
