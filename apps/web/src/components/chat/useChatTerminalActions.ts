@@ -257,6 +257,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       stopOnSettle: script.stopOnSettle ?? false,
       ...(options?.env ? { extraEnv: options.env } : {}),
+      initialCommand: script.command,
     });
     if (!launched) return;
     const targetTerminalId = launched.terminalId;
@@ -273,22 +274,27 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
       return;
     }
 
-    const writeResult = await terminalActions.writeToTerminal(
-      targetTerminalId,
-      options?.shellHistory === "preserve"
-        ? `${script.command}\r`
-        : projectScriptTerminalInput(script.command),
-    );
-    if (!writeResult) return;
-    if (writeResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(writeResult)) {
-        const error = squashAtomCommandFailure(writeResult);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
-        );
+    // Older remote servers ignore the optional initialCommand field. Keep project
+    // actions working across version skew, even though only newer servers avoid the
+    // fresh-shell startup race.
+    if (openResult.value.initialCommandHandled !== true) {
+      const writeResult = await terminalActions.writeToTerminal(
+        targetTerminalId,
+        options?.shellHistory === "preserve"
+          ? `${script.command}\r`
+          : projectScriptTerminalInput(script.command),
+      );
+      if (!writeResult) return;
+      if (writeResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(writeResult)) {
+          const error = squashAtomCommandFailure(writeResult);
+          setThreadError(
+            activeThreadId,
+            error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
       }
-      return;
     }
     if (script.autoOpenPreview && script.previewUrl && isPreviewSupportedInRuntime()) {
       const previewResult = await openUrlInPreview({

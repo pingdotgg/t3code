@@ -431,6 +431,91 @@ it.layer(
     }),
   );
 
+  it.effect("runs an initial command during fresh shell startup", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
+      });
+
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs[0]?.args).toEqual([
+        "-o",
+        "nopromptsp",
+        "-i",
+        "-c",
+        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
+      ]);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBe(true);
+    }),
+  );
+
+  it.effect("leaves an initial command unhandled for an existing shell", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBeUndefined();
+    }),
+  );
+
+  it.effect("handles an initial command when open restarts a running session", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, baseDir } = yield* createManager(5, {
+        shellResolver: () => "/bin/zsh",
+      });
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const originalCwd = path.join(baseDir, "original");
+      const differentCwd = path.join(baseDir, "different");
+      yield* fs.makeDirectory(originalCwd, { recursive: true });
+      yield* fs.makeDirectory(differentCwd, { recursive: true });
+
+      yield* manager.open(openInput({ cwd: originalCwd }));
+      const reopened = yield* manager.open(
+        openInput({ cwd: differentCwd, initialCommand: "npm run dev" }),
+      );
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]?.args).toEqual([
+        "-o",
+        "nopromptsp",
+        "-i",
+        "-c",
+        "trap ':' INT\nnpm run dev\nexec '/bin/zsh' '-o' 'nopromptsp'",
+      ]);
+      expect(reopened.initialCommandHandled).toBe(true);
+      expect(reopened.cwd).toBe(differentCwd);
+    }),
+  );
+
+  it.effect("leaves a Windows shell unchanged for an initial command", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        env: {
+          PATH: "C:\\Windows\\System32",
+          SystemRoot: "C:\\Windows",
+        },
+      }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+
+      const snapshot = yield* manager.open(openInput({ initialCommand: "npm run dev" }));
+
+      expect(ptyAdapter.spawnInputs[0]).toEqual(
+        expect.objectContaining({
+          shell: "pwsh.exe",
+          args: ["-NoLogo"],
+        }),
+      );
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(snapshot.initialCommandHandled).toBeUndefined();
+    }),
+  );
+
   it.effect("keeps attach streams live when a terminal id is closed and reopened", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
