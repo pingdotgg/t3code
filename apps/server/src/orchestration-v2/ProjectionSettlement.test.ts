@@ -350,6 +350,7 @@ it.effect(
             thread: {
               ...expected,
               latestUserAuthoredMessageAt: candidate.latestUserAuthoredMessageAt,
+              heldWorkEndedAt: candidate.heldWorkEndedAt,
             },
           }),
         );
@@ -363,6 +364,66 @@ it.effect(
         "ProjectionStoreThreadNotFoundError",
       );
     }).pipe(Effect.provide(layerSql)),
+);
+
+it.effect("sql: records when a provider thread's roster stops holding work", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* createThread("held-work");
+    yield* createRun(threadId);
+    const roster = (
+      name: string,
+      at: DateTime.Utc,
+      pendingBackgroundTasks: ReadonlyArray<{
+        readonly taskId: string;
+        readonly kind: "command";
+        readonly awaited?: true;
+      }>,
+    ) =>
+      store.apply({
+        id: EventId.make(`event:settlement:held-work:${name}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: at,
+        payload: {
+          id: ProviderThreadId.make("provider-thread:settlement:held-work"),
+          appThreadId: threadId,
+          ownerNodeId: null,
+          driver: ProviderDriverKind.make("claudeAgent"),
+          providerInstanceId,
+          providerSessionId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: old,
+          updatedAt: at,
+          pendingBackgroundTasks,
+        },
+      });
+    const heldWorkEndedAt = Effect.map(store.getSettlementCandidates(threadId), ([candidate]) =>
+      candidate?.heldWorkEndedAt == null ? null : DateTime.formatIso(candidate.heldWorkEndedAt),
+    );
+    const ended = DateTime.subtract(now, { minutes: 1 });
+
+    yield* roster("created", DateTime.subtract(now, { minutes: 5 }), []);
+    assert.isNull(yield* heldWorkEndedAt);
+    // A command nobody waits on, such as a dev server, never held the thread.
+    yield* roster("dev-server", DateTime.subtract(now, { minutes: 4 }), [
+      { taskId: "dev", kind: "command" },
+    ]);
+    yield* roster("dev-server-ended", DateTime.subtract(now, { minutes: 3 }), []);
+    assert.isNull(yield* heldWorkEndedAt);
+    yield* roster("awaited", DateTime.subtract(now, { minutes: 2 }), [
+      { taskId: "tests", kind: "command", awaited: true },
+    ]);
+    yield* roster("awaited-ended", ended, []);
+    yield* roster("idle-again", now, []);
+    assert.equal(yield* heldWorkEndedAt, DateTime.formatIso(ended));
+  }).pipe(Effect.provide(layerSql)),
 );
 
 it.effect("sql: the user-authored message time ignores agent notifications", () =>
