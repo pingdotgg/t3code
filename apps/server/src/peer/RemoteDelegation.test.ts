@@ -1782,6 +1782,8 @@ it.effect.each([
         const delegated = yield* delegateToBox(a);
         const status =
           scenario === "cancelled" || scenario === "interrupted" ? scenario : "completed";
+        const modelNote = scenario === "terminal" || scenario === "long";
+        if (modelNote) yield* Ref.set(thread.executedModel, "gpt-5.4-mini");
         yield* Ref.set(thread.status, status);
         yield* Deferred.succeed(thread.finished, undefined);
         if (scenario === "cancel") {
@@ -1797,7 +1799,9 @@ it.effect.each([
         } else {
           expect(yield* taskResult(a, delegated.taskId)).toMatchObject({
             status,
-            result,
+            result: modelNote
+              ? `Requested model gpt-5.4; the provider reported running gpt-5.4-mini.\n\n${result}`
+              : result,
           });
         }
         const pages = reads.filter((read) => read.itemId === undefined);
