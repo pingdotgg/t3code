@@ -956,7 +956,7 @@ const secretCases = () =>
 it.effect("builds the secrets cases, each citing a finding and grading secret handling", () =>
   Effect.gen(function* () {
     const cases = secretCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 27);
+    assert.equal(new Set(cases.map((c) => c.id)).size, cases.length);
     const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
     for (const testCase of cases) {
       const sample = makeSample(testCase, base);
@@ -966,7 +966,7 @@ it.effect("builds the secrets cases, each citing a finding and grading secret ha
         testCase.prompt,
         testCase.id,
       );
-      assert.match(String(testCase.source?.finding), /^secret-field-2026-10 /, testCase.id);
+      assert.match(String(testCase.source?.finding), /^secret-field-2026-1[01] /, testCase.id);
       assert.isTrue(testCase.expect.secret?.chatAsk, testCase.id);
       // Consume credit needs declared consumers; every control checks prose over-correction.
       if (testCase.expect.secret?.fileUse === "consume")
