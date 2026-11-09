@@ -20,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -278,7 +279,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   if (continuationEnabled) {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
-      "Claude ACP v2 must report background work after foreground idle",
+      `${agentId} must report background work after foreground idle`,
     );
   }
   const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
@@ -2743,6 +2744,112 @@ describe("AcpRegistryAdapterV2", () => {
       assert.equal(yield* runTurn(1), "failed");
       assert.equal(yield* runTurn(2), "completed");
       assert.equal(spawned, restarts ? 2 : 1);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("shows Droid's reply after a background Task finishes behind a settled turn", () =>
+    Effect.gen(function* () {
+      const sessionId = CLAUDE_ROOT_SESSION;
+      const gate = makeProviderReplayGate(["wake"]);
+      const { update } = claudeFrames;
+      const expectPrompt = {
+        type: "expect_outbound",
+        frame: { kind: "request", method: "session/prompt", params: "<any>" },
+      };
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: { protocolVersion: 1, agentCapabilities: {} },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          expectPrompt,
+          update(sessionId, {
+            sessionUpdate: "tool_call",
+            toolCallId: "task-1",
+            title: "Explorer: list files",
+            kind: "other",
+            name: "Task",
+            status: "pending",
+            rawInput: { subagent_type: "explorer", description: "list files" },
+          }),
+          update(sessionId, {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "task-1",
+            name: "Task",
+            status: "in_progress",
+            rawOutput: { text: "Running in background" },
+          }),
+          update(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "waiting",
+            content: { type: "text", text: "waiting" },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update(sessionId, {
+              sessionUpdate: "tool_call_update",
+              toolCallId: "task-1",
+              name: "Task",
+              status: "completed",
+              rawOutput: { text: "listing done" },
+            }),
+            label: "wake",
+          },
+          update(sessionId, {
+            sessionUpdate: "agent_message_chunk",
+            messageId: "follow-up",
+            content: { type: "text", text: "The subagent listed the files." },
+          }),
+          update(sessionId, { sessionUpdate: "session_info_update", title: "after wake" }),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        gate,
+        true,
+        "factory-droid",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("wake");
+      yield* session.throughMarker("after wake");
+      assert.lengthOf(session.offers, 1, "Droid's late reply must open a continuation run");
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("3 seconds");
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.isTrue(
+        continuation.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "The subagent listed the files.",
+        ),
+      );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });

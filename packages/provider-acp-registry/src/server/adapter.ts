@@ -221,7 +221,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "factory-droid"
-      ? { extractElicitationForm: extractDroidElicitationForm }
+      ? {
+          extractElicitationForm: extractDroidElicitationForm,
+          // Droid wakes itself when a background Task finishes, after its prompt has settled.
+          enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: true,
+        }
       : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
