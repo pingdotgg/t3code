@@ -7,9 +7,7 @@ import { env } from "../env.ts";
 // the deployed Worker (or, under `alchemy dev`, in TanStack Start's own
 // Vite dev server). The `env` declared on the Website in alchemy.run.ts
 // is available through the `cloudflare:workers` env proxy.
-const getGreeting = createServerFn({ method: "GET" }).handler(
-  () => env.GREETING ?? "Hello!",
-);
+const getGreeting = createServerFn({ method: "GET" }).handler(() => env.GREETING ?? "Hello!");
 
 export const Route = createFileRoute("/")({
   loader: () => getGreeting(),

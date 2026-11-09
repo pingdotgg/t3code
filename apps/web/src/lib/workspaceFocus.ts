@@ -90,10 +90,28 @@ function revealInScrollers(target: HTMLElement) {
 export function createWorkspaceFocusController(doc: Document) {
   const lastFocused = new Map<string, HTMLElement>();
   let lastArea: string | undefined;
+  // An area that took focus itself from the keyboard. Chromium's :focus-visible also matches
+  // a clicked area after any later key press, so the ring and window return read this mark.
+  let keyboardArea: HTMLElement | undefined;
+  let previousTarget: EventTarget | null = null;
+  const unmarkKeyboardArea = () => {
+    keyboardArea?.removeAttribute("data-workspace-keyboard-focus");
+    keyboardArea = undefined;
+  };
+  const markKeyboardArea = (area: HTMLElement) => {
+    if (!area.matches(":focus-visible")) return;
+    keyboardArea = area;
+    area.setAttribute("data-workspace-keyboard-focus", "");
+  };
   const remember = (event: FocusEvent) => {
+    if (event.target !== keyboardArea) unmarkKeyboardArea();
+    // Window activation refocuses the same element; only focus arriving from elsewhere counts.
+    const arrived = event.target !== previousTarget;
+    previousTarget = event.target;
     if (!(event.target instanceof HTMLElement)) return;
     const area = workspaceArea(event.target);
     if (!area?.dataset.workspaceArea) return;
+    if (arrived && event.target === area) markKeyboardArea(area);
     lastArea = area.dataset.workspaceArea;
     const key = area.dataset.workspaceFocusKey ?? lastArea;
     lastFocused.delete(key);
@@ -114,7 +132,7 @@ export function createWorkspaceFocusController(doc: Document) {
       !element.matches(":disabled");
     const preferred = Array.from(
       area.querySelectorAll<HTMLElement>(
-        '[data-workspace-focus-default], [role="treeitem"][tabindex="0"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
+        '[data-workspace-focus-default], [data-sidebar-row][aria-current="page"], [data-settings-section][tabindex="0"], .xterm-helper-textarea, [contenteditable="true"]',
       ),
     ).find(belongs);
     const fallback = Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
@@ -162,6 +180,8 @@ export function createWorkspaceFocusController(doc: Document) {
       const active = root instanceof ShadowRoot ? root.activeElement : doc.activeElement;
       if (active === target || (active && target.contains(active))) {
         if (target !== area && !isConversation) revealInScrollers(target);
+        // Focusing the already focused area fires no focusin, as when F6 has nowhere else to go.
+        if (target === area) markKeyboardArea(area);
         return true;
       }
     }
@@ -240,25 +260,31 @@ export function createWorkspaceFocusController(doc: Document) {
     return focusArea(area);
   };
 
-  // Focus that drops to the body because its element was hidden, made inert, or removed
-  // returns to the same control when React remounted it, else to its area, else the content.
+  // Focus that drops to the body because its element was hidden, made inert, disabled, or removed
+  // returns to a remounted control, else its area, or the composer for a finished timeline prompt.
   const recover = (event: FocusEvent) => {
     const lost = event.target;
     if (!(lost instanceof HTMLElement) || event.relatedTarget) return;
     const areaName = workspaceArea(lost)?.dataset.workspaceArea;
+    const recoveryArea = areaName === "conversation" ? "composer" : areaName;
     const label = lost.getAttribute("aria-label");
     requestAnimationFrame(() => {
-      if (doc.activeElement !== doc.body || !doc.hasFocus() || isWorkspaceElementVisible(lost))
+      if (
+        doc.activeElement !== doc.body ||
+        !doc.hasFocus() ||
+        (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
+      )
         return;
       const remounted = Array.from(doc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
         (element) =>
           element.tagName === lost.tagName &&
           ((lost.id && element.id === lost.id) ||
             (label && element.getAttribute("aria-label") === label)) &&
-          isWorkspaceElementVisible(element),
+          isWorkspaceElementVisible(element) &&
+          !element.matches(":disabled"),
       );
       if (remounted) remounted.focus({ preventScroll: true });
-      else if (!areaName || !focus(areaName)) focus("content");
+      else if (!recoveryArea || !focus(recoveryArea)) focus("content");
     });
   };
   doc.addEventListener("focusout", recover);
@@ -302,7 +328,11 @@ export function createWorkspaceFocusController(doc: Document) {
   const onUserInput = () => {
     if (cancelOnInput) cancelRequest();
   };
-  doc.addEventListener("pointerdown", onUserInput, true);
+  const onPointerDown = () => {
+    unmarkKeyboardArea();
+    onUserInput();
+  };
+  doc.addEventListener("pointerdown", onPointerDown, true);
   doc.addEventListener("keydown", onUserInput, true);
 
   return {
@@ -314,9 +344,10 @@ export function createWorkspaceFocusController(doc: Document) {
     request,
     dispose: () => {
       cancelRequest();
+      unmarkKeyboardArea();
       doc.removeEventListener("focusin", remember);
       doc.removeEventListener("focusout", recover);
-      doc.removeEventListener("pointerdown", onUserInput, true);
+      doc.removeEventListener("pointerdown", onPointerDown, true);
       doc.removeEventListener("keydown", onUserInput, true);
     },
   };
