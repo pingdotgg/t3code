@@ -16,6 +16,15 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type ReactNode, useEffect, useState } from "react";
 
+import {
+  approveAgentUrl,
+  clearPendingApproval,
+  newApprovalNonce,
+  pendingValue,
+  readConnectApprovalReturn,
+  readPendingApproval,
+  rememberPendingApproval,
+} from "~/cloud/connectAgentApproval";
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
@@ -80,6 +89,21 @@ function runApproval<A>(
   ).catch((): Answer<A> => ({ kind: "error", message: UNREACHABLE }));
 }
 
+/** Sends the decision and follows its redirect; otherwise the message to show. */
+async function submitDecision(
+  authorization: AuthMcpAuthorizationRequest,
+  decision: AuthMcpApprovalDecision,
+): Promise<string | null> {
+  const answer = await runApproval((client) =>
+    client.mcpOAuth.decision({ payload: { authorization, decision } }),
+  );
+  if (answer.kind === "redirect") {
+    window.location.replace(answer.url);
+    return null;
+  }
+  return answer.kind === "error" ? answer.message : "The sign-in could not continue.";
+}
+
 const decodeAuthorizationRequest = Schema.decodeSync(AuthMcpAuthorizationRequest);
 
 function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
@@ -88,6 +112,9 @@ function readAuthorizationRequest(): AuthMcpAuthorizationRequest {
 
 export function ConnectAgentSurface() {
   const [authorization] = useState(readAuthorizationRequest);
+  const [connectReturn] = useState(() =>
+    readConnectApprovalReturn(window.location.hash, window.location.search, readPendingApproval()),
+  );
   const [loaded, setLoaded] = useState<Loaded>({ status: "loading" });
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
   const [pairingCode, setPairingCode] = useState("");
@@ -96,12 +123,21 @@ export function ConnectAgentSurface() {
     loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
     pairingCode.trim().length > 0,
   );
-  const [errorMessage, setErrorMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState(
+    connectReturn.status === "discarded"
+      ? "The T3 Connect approval did not come back to the tab that started it, so it was not used. Try again here, or paste a sign-in code."
+      : "",
+  );
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- fetches the MCP OAuth approval and redirects the window or stores details, ignoring stale answers
   useEffect(() => {
     let cancelled = false;
+    // The code is one-use; keep it out of history, bookmarks and a reload.
+    if (connectReturn.status !== "none") {
+      clearPendingApproval();
+      window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    }
     void runApproval((client) => client.mcpOAuth.approval({ payload: authorization })).then(
       (answer) => {
         if (cancelled) return;
@@ -109,36 +145,59 @@ export function ConnectAgentSurface() {
           window.location.replace(answer.url);
           return;
         }
-        setLoaded(
-          answer.kind === "error"
-            ? { status: "invalid", message: answer.message }
-            : { status: "ready", details: answer.value },
-        );
+        if (answer.kind === "error") {
+          setLoaded({ status: "invalid", message: answer.message });
+          return;
+        }
+        setLoaded({ status: "ready", details: answer.value });
+        // This tab chose the app and level before leaving for T3 Connect, so that was the approval.
+        const decision =
+          connectReturn.status === "approved"
+            ? resolveApprovalDecision({
+                code: connectReturn.code,
+                access: "read-only",
+                details: answer.value,
+              })
+            : null;
+        if (decision === null) return;
+        setPending("approve");
+        void submitDecision(authorization, decision).then((message) => {
+          if (cancelled || message === null) return;
+          setPending(null);
+          setErrorMessage(message);
+        });
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [authorization]);
+  }, [authorization, connectReturn]);
 
-  const decide = async (choice: "approve" | "deny") => {
-    if (loaded.status !== "ready") return;
+  const continueWithConnect = (connect: NonNullable<AuthMcpApprovalDetails["connectSignIn"]>) => {
+    const nonce = newApprovalNonce();
+    rememberPendingApproval(pendingValue(nonce, access, window.location.search));
+    window.location.assign(
+      approveAgentUrl(connect.hostedAppUrl, {
+        environmentId: connect.environmentId,
+        access,
+        nonce,
+        returnTo: `${window.location.origin}${window.location.pathname}${window.location.search}`,
+      }),
+    );
+  };
+
+  const decide = async (choice: "approve" | "deny", details: AuthMcpApprovalDetails) => {
     const decision: AuthMcpApprovalDecision | null =
       choice === "deny"
         ? { _tag: "deny" }
-        : resolveApprovalDecision({ code: pairingCode, access, details: loaded.details });
+        : resolveApprovalDecision({ code: pairingCode, access, details });
     if (decision === null) return;
     setPending(choice);
     setErrorMessage("");
-    const answer = await runApproval((client) =>
-      client.mcpOAuth.decision({ payload: { authorization, decision } }),
-    );
-    if (answer.kind === "redirect") {
-      window.location.replace(answer.url);
-      return;
-    }
+    const message = await submitDecision(authorization, decision);
+    if (message === null) return;
     setPending(null);
-    setErrorMessage(answer.kind === "error" ? answer.message : "The sign-in could not continue.");
+    setErrorMessage(message);
   };
 
   if (loaded.status === "loading") {
@@ -167,8 +226,34 @@ export function ConnectAgentSurface() {
   const { details } = loaded;
   const canApprove =
     pending === null && resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
+  // A typed code or a browser session that can approve takes precedence.
+  const connectSignIn =
+    pairingCode.trim().length === 0 && !canApprove ? details.connectSignIn : undefined;
   // A code from "Use T3 Code in another app" names its level, so the page does not ask again.
   const codeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  const codeField = (
+    <div className="space-y-2">
+      <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
+        {details.connectSignIn ? "Or paste a sign-in code" : "Sign-in code"}
+      </label>
+      <Input
+        id="connect-agent-pairing-code"
+        autoCapitalize="none"
+        autoComplete="one-time-code"
+        autoCorrect="off"
+        disabled={pending !== null}
+        nativeInput
+        onChange={(event) => setPairingCode(event.currentTarget.value)}
+        placeholder="Paste a code"
+        spellCheck={false}
+        value={pairingCode}
+      />
+      <p className="text-xs text-muted-foreground">
+        Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or{" "}
+        <code>t3 auth pairing create</code> on this machine.
+      </p>
+    </div>
+  );
 
   return (
     <StandalonePage>
@@ -203,30 +288,10 @@ export function ConnectAgentSurface() {
         className="mt-6 space-y-5"
         onSubmit={(event) => {
           event.preventDefault();
-          if (canApprove) void decide("approve");
+          if (canApprove) void decide("approve", details);
         }}
       >
-        <div className="space-y-2">
-          <label className="text-sm font-medium" htmlFor="connect-agent-pairing-code">
-            Sign-in code
-          </label>
-          <Input
-            id="connect-agent-pairing-code"
-            autoCapitalize="none"
-            autoComplete="one-time-code"
-            autoCorrect="off"
-            disabled={pending !== null}
-            nativeInput
-            onChange={(event) => setPairingCode(event.currentTarget.value)}
-            placeholder="Paste a code"
-            spellCheck={false}
-            value={pairingCode}
-          />
-          <p className="text-xs text-muted-foreground">
-            Get one from Use T3 Code in another app (MCP), Settings → Sharing & access, or{" "}
-            <code>t3 auth pairing create</code> on this machine.
-          </p>
-        </div>
+        {details.connectSignIn ? null : codeField}
 
         {codeAccess ? (
           <p className="text-sm">
@@ -266,22 +331,34 @@ export function ConnectAgentSurface() {
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          <Button disabled={!canApprove} type="submit">
-            {pending === "approve"
-              ? "Approving…"
-              : codeAccess
-                ? `Approve ${accessConfig[codeAccess].label}`
-                : "Approve"}
-          </Button>
+          {connectSignIn ? (
+            <Button
+              disabled={pending !== null}
+              onClick={() => continueWithConnect(connectSignIn)}
+              type="button"
+            >
+              {`Approve ${accessConfig[access].label} with T3 Connect`}
+            </Button>
+          ) : (
+            <Button disabled={!canApprove} type="submit">
+              {pending === "approve"
+                ? "Approving…"
+                : codeAccess
+                  ? `Approve ${accessConfig[codeAccess].label}`
+                  : "Approve"}
+            </Button>
+          )}
           <Button
             disabled={pending !== null}
-            onClick={() => void decide("deny")}
+            onClick={() => void decide("deny", details)}
             type="button"
             variant="outline"
           >
             {pending === "deny" ? "Denying…" : "Deny"}
           </Button>
         </div>
+
+        {details.connectSignIn ? codeField : null}
       </form>
     </StandalonePage>
   );
