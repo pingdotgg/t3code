@@ -119,11 +119,11 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     }),
   );
 
+  const requestedRef = { environmentId: input.target.environmentId, projectId: input.projectId };
+  const requestedKey = scopedProjectKey(requestedRef);
   // Marked before the start request, since the clone list can arrive before its reply.
-  silenceProjectCloneToasts({
-    environmentId: input.target.environmentId,
-    projectId: input.projectId,
-  });
+  silenceProjectCloneToasts(requestedRef);
+  if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
   const started = await runAtomCommand(
     appAtomRegistry,
     sourceControlEnvironment.startProjectClone,
@@ -139,16 +139,24 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
     },
     { label: "Add project to machine", reportFailure: false },
   );
-  if (started._tag === "Failure") throw new Error(failureMessage(started));
+  if (started._tag === "Failure") {
+    setFileCopy(requestedKey, null);
+    throw new Error(failureMessage(started));
+  }
   // The server clones for the existing project when one already owns the empty destination.
   const { projectId } = started.value;
   const targetRef = { environmentId: input.target.environmentId, projectId };
-  silenceProjectCloneToasts(targetRef);
+  const copyKey = scopedProjectKey(targetRef);
+  if (projectId !== input.projectId) {
+    silenceProjectCloneToasts(targetRef);
+    if (reads.length > 0) {
+      setFileCopy(copyKey, { phase: "copying" });
+      setFileCopy(requestedKey, null);
+    }
+  }
   void suggestAppAccessForRemote(input.target.environmentId, input.remoteUrl);
   if (reads.length === 0) return projectId;
 
-  const copyKey = scopedProjectKey(targetRef);
-  setFileCopy(copyKey, { phase: "copying" });
   void (async () => {
     const clone = await waitForClone(input.target.environmentId, projectId);
     if (!clone) {
