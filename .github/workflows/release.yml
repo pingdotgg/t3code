@@ -69,6 +69,8 @@ jobs:
         env:
           DISPATCH_CHANNEL: ${{ inputs.channel }}
         with:
+          # Every call here is a read; retry GitHub's transient 5xx and dropped connections.
+          retries: 3
           script: |
             const {
               assertCommitOnDefaultBranch,
