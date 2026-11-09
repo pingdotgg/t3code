@@ -262,6 +262,7 @@ export function WorkspaceBrowserPreview(props: {
   ) {
     setSettledMutationId(props.workspaceMutationId);
   }
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const fileRevision = pdf && assetUrl._tag === "Success" ? assetUrl.fileRevision : undefined;
   const revision = fileRevision ?? (pdf ? props.workspaceMutationId : settledMutationId);
   const revisionSuffix =
@@ -271,9 +272,12 @@ export function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-destructive">
-        Unable to load file preview.
-      </div>
+      <FileSurfaceFailure
+        message="Unable to load file preview."
+        onRetry={() => {
+          void refreshAssetUrl().catch(() => undefined);
+        }}
+      />
     );
   }
   if (
@@ -293,6 +297,7 @@ export function WorkspaceBrowserPreview(props: {
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
+      refreshSrc={refreshAssetUrl}
     />
   );
 }
