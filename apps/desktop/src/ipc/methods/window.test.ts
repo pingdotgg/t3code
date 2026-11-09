@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { vi } from "vite-plus/test";
+import type * as Electron from "electron";
 
 const { focusedWebContents, ownerWindow, protocolHandler } = vi.hoisted(() => ({
   focusedWebContents: vi.fn(),
@@ -35,6 +36,7 @@ import {
   installRelayTelemetryEnabled,
   pickProjectFavicon,
   probeRemoteEditors,
+  readMedia,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -232,6 +234,54 @@ describe("installRelayTelemetryEnabled", () => {
           new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
         ),
       );
+    }),
+  );
+});
+
+describe("readMedia", () => {
+  it.effect("reads http(s) media only for the main window", () =>
+    Effect.gen(function* () {
+      const mib = new Uint8Array(1024 * 1024);
+      const fetch = vi.fn(async (url: string) => {
+        if (url.endsWith("/missing.png")) return new Response("Not Found", { status: 404 });
+        if (url.endsWith("/small.png")) return new Response(new Uint8Array([1, 2]));
+        let sent = 0;
+        // 257 MiB from one reused chunk: over the cap without allocating it.
+        const huge = new ReadableStream<Uint8Array>({
+          pull: (controller) => (sent++ < 257 ? controller.enqueue(mib) : controller.close()),
+        });
+        return new Response(huge);
+      });
+      const main = {
+        webContents: { id: 1, session: { fetch } },
+      } as unknown as Electron.BrowserWindow;
+      const read = (url: string, senderId: number) =>
+        readMedia
+          .handler(url, { sender: { id: senderId } })
+          .pipe(
+            Effect.provide(
+              Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(main) }),
+            ),
+          );
+
+      assert.strictEqual(yield* read("https://example.com/a.png", 2), null);
+      assert.strictEqual(yield* read("file:///etc/passwd", 1), null);
+      assert.strictEqual(fetch.mock.calls.length, 0);
+      assert.deepEqual(yield* read("https://example.com/small.png", 1), {
+        status: 200,
+        mimeType: "",
+        data: Buffer.from([1, 2]),
+      });
+      assert.deepEqual(yield* read("https://example.com/missing.png", 1), {
+        status: 404,
+        mimeType: "text/plain;charset=UTF-8",
+        data: new Uint8Array(),
+      });
+      assert.deepEqual(yield* read("https://example.com/huge.mp4", 1), {
+        status: 413,
+        mimeType: "",
+        data: new Uint8Array(),
+      });
     }),
   );
 });

@@ -23,7 +23,7 @@ its records. A hostname can belong to only one Function target at a time.
 Inside your stack, using an existing `api` Function:
 
 ```typescript
-import * as Neon from "alchemy/Neon";
+import * as Neon from "@alchemy.run/neon";
 
 const domain = yield* Neon.CustomDomain("ApiDomain", {
   function: api,
@@ -68,6 +68,20 @@ At your DNS provider, configure:
 After reviewing their ownership, remove conflicting A, AAAA, or CNAME records for
 that hostname. A proxy can prevent Neon validation even when the browser appears
 to reach an edge server. Wait for the applicable DNS TTL before judging propagation.
+
+If the domain's DNS is in Cloudflare, Route 53, or Hetzner DNS, the Website can
+publish the CNAME for you. Pass the DNS host as `dns`, and keep Cloudflare records
+DNS-only (the default):
+
+```typescript
+const site = yield* Neon.Website.Vite("Web", {
+  branch,
+  rootDir: "./web",
+  domain: { name: "app.example.com", dns: Cloudflare.DNS.Adapter() },
+});
+```
+
+See [DNS Adapters](/infrastructure-as-code/dns-adapters).
 
 ## Check certificate-authority restrictions
 

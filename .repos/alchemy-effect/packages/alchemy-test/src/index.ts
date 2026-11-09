@@ -15,6 +15,7 @@ export {
   exclusiveOf,
   it,
   layer,
+  registerFileCleanup,
   registerHook,
   registerTest,
   retryOf,
@@ -45,6 +46,7 @@ export {
 export { currentFile } from "./Registry.ts";
 export type { Tags, TestTag, TestTags } from "./Tags.ts";
 export type {
+  Exclusive,
   FileSuite,
   Hook,
   LogEntry,

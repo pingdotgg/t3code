@@ -1,0 +1,38 @@
+import type {
+  Account as StripeAccount,
+  UpdateAccountError,
+  UpdateAccountRequest as DistilledUpdateAccountRequest,
+} from "@distilled.cloud/stripe/stripe";
+import * as Binding from "alchemy/Binding";
+import type { RuntimeContext } from "alchemy/RuntimeContext";
+import type * as Effect from "effect/Effect";
+import type { Account } from "./Account.ts";
+
+export interface UpdateAccountRequest extends Omit<DistilledUpdateAccountRequest, "account"> {}
+
+/**
+ * Update a bound Stripe Connect Account over HTTP.
+ *
+ * ### Updating an Account
+ * **Example:** Bind and update
+ * ```typescript
+ * const update = yield* Stripe.UpdateAccount(merchant);
+ * const live = yield* update({ email: "merchant@example.com" });
+ * ```
+ *
+ * @binding
+ * @product Account
+ */
+export interface UpdateAccount extends Binding.Service<
+  UpdateAccount,
+  "Stripe.UpdateAccount",
+  (
+    account: Account,
+  ) => Effect.Effect<
+    (
+      request?: UpdateAccountRequest,
+    ) => Effect.Effect<StripeAccount, UpdateAccountError, RuntimeContext>
+  >
+> {}
+
+export const UpdateAccount = Binding.Service<UpdateAccount>("Stripe.UpdateAccount");

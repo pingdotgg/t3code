@@ -121,21 +121,9 @@ export const asciiGlyphs: { readonly [Key in GlyphName]: string } = {
   overflowRight: ">",
 };
 
-export const glyphsFor = (unicode: boolean) =>
-  unicode ? theme.glyph : asciiGlyphs;
+export const glyphsFor = (unicode: boolean) => (unicode ? theme.glyph : asciiGlyphs);
 
-const spinnerFrames = [
-  "⠋",
-  "⠙",
-  "⠹",
-  "⠸",
-  "⠼",
-  "⠴",
-  "⠦",
-  "⠧",
-  "⠇",
-  "⠏",
-] as const;
+const spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
 const asciiSpinnerFrames = ["-", "\\", "|", "/"] as const;
 
 export const spinnerFramesFor = (unicode: boolean): readonly string[] =>
@@ -146,5 +134,4 @@ export type StatusVariant = "info" | "success" | "warning" | "error";
 export const statusColor = (variant: StatusVariant): string =>
   variant === "error" ? theme.color.danger : theme.color[variant];
 
-export const statusPaint = (variant: StatusVariant): Paint =>
-  theme.paint[variant];
+export const statusPaint = (variant: StatusVariant): Paint => theme.paint[variant];
