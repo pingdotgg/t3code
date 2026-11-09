@@ -679,13 +679,16 @@ export function windowResetCredits(
 
 /**
  * Names the offered credit, so a confirmation that outlives a refresh cannot spend
- * a different grant. Servers that predate per-credit redeems ignore the id.
+ * a different grant. Servers that predate per-credit redeems ignore the id; hub
+ * inputs already carry the hub's own credit id.
  */
 export function resetCreditInput(
   input: ProviderConsumeResetCreditInput,
   credits: ServerProviderResetCredits | undefined,
 ): ProviderConsumeResetCreditInput {
-  return credits?.nextCreditId ? { ...input, creditId: credits.nextCreditId } : input;
+  return "instanceId" in input && credits?.nextCreditId
+    ? { ...input, creditId: credits.nextCreditId }
+    : input;
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {

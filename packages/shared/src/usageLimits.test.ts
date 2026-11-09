@@ -232,6 +232,12 @@ describe("windowResetCredits", () => {
       instanceId,
       creditId: "fable",
     });
+    const hub = {
+      sourceId: UsageLimitSourceId.make("hub"),
+      accountId: "a",
+      creditId: "hub-credit",
+    };
+    expect(resetCreditInput(hub, windowResetCredits(limits, "five_hour"))).toEqual(hub);
   });
 });
 
