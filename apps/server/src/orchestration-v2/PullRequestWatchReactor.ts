@@ -91,6 +91,7 @@ interface WatchGroup {
 
 interface LastRead {
   readonly at: number;
+  readonly detailAt: number;
   readonly checkedAt: number;
   readonly fingerprint: string;
   readonly inFlight: boolean;
@@ -186,7 +187,8 @@ function planRead(
 }
 
 const notificationsCanGate = (last: LastRead, now: number) =>
-  now - last.checkedAt >= FINGERPRINT_REREAD_MS && now - last.at < NOTIFIED_REREAD_CEILING_MS;
+  now - last.checkedAt >= FINGERPRINT_REREAD_MS &&
+  now - Math.min(last.at, last.detailAt) < NOTIFIED_REREAD_CEILING_MS;
 
 const gatesReread = (
   group: WatchGroup,
@@ -594,6 +596,7 @@ export const make = Effect.gen(function* () {
         : last.at;
     lastReads.set(group.key, {
       at,
+      detailAt: plan.detail || last === undefined ? now : last.detailAt,
       checkedAt: plan.activity || last === undefined ? at : moved === false ? now : last.checkedAt,
       fingerprint: group.fingerprint,
       inFlight:

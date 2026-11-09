@@ -8930,7 +8930,7 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
 
 const watchCostScenarios = [
   { name: "quiet PR", saves: 48 },
-  { name: "review comment edited", reviewCommentEdit: 40, saves: 48 },
+  { name: "review comment edited", reviewCommentEdit: 40, saves: 32 },
   {
     name: "review comment edit missing from the inbox",
     reviewCommentEdit: 40,
@@ -8939,6 +8939,13 @@ const watchCostScenarios = [
     saves: 48,
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
+  {
+    name: "checks swap while the pull request keeps moving",
+    pullRequestInboxEveryMinute: true,
+    checksSwapAt: 10,
+    ceilingWake: 120,
+    saves: 0,
+  },
   { name: "notifications readable again", notificationsReadableFrom: 60, saves: 32 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
@@ -9004,6 +9011,9 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         if (scenario.inboxEveryMinute) {
           for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
         }
+        if (scenario.pullRequestInboxEveryMinute) {
+          for (let minute = 0; at(minute) <= now; minute += 1) bump(number, at(minute) + 3_000);
+        }
         return times;
       };
 
@@ -9024,14 +9034,23 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
                   };
                 }),
               detail: () =>
-                Effect.sync(() => {
+                Effect.map(Clock.currentTimeMillis, (now) => {
                   cost.graphql += 1;
+                  const check = (name: string, failed: boolean) => ({
+                    name,
+                    status: failed ? ("failure" as const) : ("success" as const),
+                    description: null,
+                    url: null,
+                  });
+                  const swapped =
+                    scenario.checksSwapAt !== undefined && now >= at(scenario.checksSwapAt);
                   return {
                     ...watchedPullRequestDetail({ projectId, number, at: iso(startedAt) }),
                     headSha: "abc1234def",
-                    checks: [
-                      { name: "ci", status: "success" as const, description: null, url: null },
-                    ],
+                    checks:
+                      scenario.checksSwapAt === undefined
+                        ? [check("ci", false)]
+                        : [check("lint", !swapped), check("test", swapped)],
                   };
                 }),
               activity: () =>
