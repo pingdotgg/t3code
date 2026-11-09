@@ -35,6 +35,8 @@ export interface AddProjectAtPathInput {
   readonly rawCwd: string;
   readonly platform: string;
   readonly currentProjectCwd: string | null;
+  /** False once the caller no longer wants to land in the new project. */
+  readonly isCurrent?: () => boolean;
 }
 
 function toastError(title: string, description: string) {
@@ -106,12 +108,21 @@ export function useAddProjectAtPath() {
         getClientSettings().sidebarThreadSortOrder,
       );
       if (latestThread && latestThread.settledOverride !== "settled") {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(
-            scopeThreadRef(latestThread.environmentId, latestThread.id),
-          ),
-        });
+        const navigationResult = await settlePromise(() =>
+          navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(
+              scopeThreadRef(latestThread.environmentId, latestThread.id),
+            ),
+          }),
+        );
+        if (navigationResult._tag === "Failure") {
+          toastError(
+            "Failed to open project",
+            errorDescription(squashAtomCommandFailure(navigationResult)),
+          );
+          return false;
+        }
         return true;
       }
       const navigationResult = await settlePromise(() =>
@@ -152,6 +163,7 @@ export function useAddProjectAtPath() {
       return false;
     }
 
+    if (input.isCurrent?.() === false) return false;
     const navigationResult = await settlePromise(() =>
       handleNewThread(scopeProjectRef(input.environmentId, projectId)),
     );

@@ -94,13 +94,12 @@ type Step =
 const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
 
 // Only absolute and ~/ paths: a bare or ./ name would land in the server's working folder.
+// Dot segments are refused too, since they would miss an existing project's saved path.
 function isHostPath(value: string, platform: string) {
-  const { isBrowsing, filterQuery } = getFilesystemBrowsePath(value, platform);
   return (
-    isBrowsing &&
+    getFilesystemBrowsePath(value, platform).isBrowsing &&
     !isExplicitRelativeProjectPath(value) &&
-    filterQuery !== "." &&
-    filterQuery !== ".."
+    !value.split(/[\\/]/).some((segment) => segment === "." || segment === "..")
   );
 }
 const EMPTY_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
@@ -439,11 +438,9 @@ function FolderStep({
   const isCurrentListing = deferredPath === path;
   const parentPath = getBrowseParentPath(listing?.parentPath ?? browsePath.directoryPath);
   const pathMissing =
-    (isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true) ||
-    (browsePath.filterQuery.length > 0 &&
-      listing !== null &&
-      exactEntry === null &&
-      isHostPath(deferredPath.trim(), platform));
+    isHostPath(deferredPath.trim(), platform) &&
+    ((isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true) ||
+      (browsePath.filterQuery.length > 0 && listing !== null && exactEntry === null));
   const rows = [
     ...(parentPath !== null ? [{ key: "..", name: "..", target: parentPath }] : []),
     ...visibleEntries.map((entry) => ({
@@ -467,6 +464,12 @@ function FolderStep({
   const submit = async () => {
     if (!canSubmit || environmentId === null) return;
     const typed = path.trim();
+    const { session } = useAddProjectDialog.getState();
+    // A reopened dialog is a new session; this add must not touch it.
+    const isCurrent = () => {
+      const state = useAddProjectDialog.getState();
+      return state.open && state.session === session;
+    };
     useAddProjectDialog.setState({ submitting: environmentId });
     const added = await addProjectAtPath({
       environmentId,
@@ -477,7 +480,9 @@ function FolderStep({
           : typed,
       platform,
       currentProjectCwd: null,
-    }).catch(() => false);
+      isCurrent,
+    });
+    if (!isCurrent()) return;
     useAddProjectDialog.setState({ submitting: null });
     if (added) closeAddProjectDialog();
   };
