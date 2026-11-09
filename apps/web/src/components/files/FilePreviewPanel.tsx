@@ -1142,6 +1142,13 @@ export default function FilePreviewPanel({
     !(tableDelimiter && renderTable) &&
     !renderBrowserFile &&
     !isDocument;
+  // Only where the decoded text is on screen: not media, not the large-file reader's own text.
+  const showsInvalidUtf8 =
+    file.data?.invalidUtf8 === true &&
+    attachment === undefined &&
+    !isMedia &&
+    (showsRawText || (isMarkdown && renderMarkdown)) &&
+    !(file.data.truncated && !draft && !isMarkdown && !isMermaid && !isHtml);
   const rendered = isMermaid
     ? renderMermaid
     : isMarkdown
@@ -1355,6 +1362,12 @@ export default function FilePreviewPanel({
           Preview limited to the first 1 MB of a {file.data.byteLength.toLocaleString()} byte file.
         </div>
       ) : null}
+      {showsInvalidUtf8 ? (
+        <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
+          This file is not UTF-8, so it is read-only here. Saving it would replace the characters it
+          cannot show.
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
@@ -1501,7 +1514,12 @@ export default function FilePreviewPanel({
                 threadRef={threadRef}
                 contents={file.data.contents}
                 workspaceMutationId={workspaceMutationId}
-                readOnly={file.data.truncated || isHostFile || !canWriteFiles}
+                readOnly={
+                  file.data.truncated ||
+                  file.data.invalidUtf8 === true ||
+                  isHostFile ||
+                  !canWriteFiles
+                }
                 onPendingChange={onPendingChange}
               />
             ) : tableDelimiter && renderTable ? (
@@ -1511,7 +1529,10 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : file.data.truncated ||
+              file.data.invalidUtf8 === true ||
+              isHostFile ||
+              !canWriteFiles ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}

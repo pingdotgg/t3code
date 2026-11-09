@@ -49,6 +49,9 @@ vi.mock(import("~/hooks/useWorkspaceMutationRefresh"), () => ({
   useWorkspaceMutationRefresh: vi.fn(),
 }));
 vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
+vi.mock(import("./ReadOnlySourcePreview"), () => ({
+  default: () => <div data-testid="read-only-source" />,
+}));
 vi.mock(import("./projectFilesQueryState"), async (original) => ({
   ...(await original()),
   useProjectFileQuery: () => ({
@@ -95,19 +98,13 @@ function setup() {
   };
 }
 
-function markdownPreview(truncated: boolean) {
-  state.file = {
-    relativePath: "tasks.md",
-    contents: "- [ ] Keep the rest of this file\n",
-    byteLength: truncated ? 1_200_000 : 32,
-    truncated,
-  };
+function preview(relativePath: string) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
-      relativePath="tasks.md"
+      relativePath={relativePath}
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
@@ -123,6 +120,23 @@ function markdownPreview(truncated: boolean) {
       workspaceMutationId={null}
     />
   );
+}
+
+function markdownPreview(truncated: boolean) {
+  state.file = {
+    relativePath: "tasks.md",
+    contents: "- [ ] Keep the rest of this file\n",
+    byteLength: truncated ? 1_200_000 : 32,
+    truncated,
+  };
+  return preview("tasks.md");
+}
+
+const NOT_UTF8_NOTICE = "This file is not UTF-8, so it is read-only here.";
+
+function nonUtf8Preview(relativePath: string, contents: string) {
+  state.file = { relativePath, contents, byteLength: 16, truncated: false, invalidUtf8: true };
+  return preview(relativePath);
 }
 
 describe("rendered Markdown task saves", () => {
@@ -158,5 +172,27 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+
+  it("keeps a non-UTF-8 Markdown read read-only without queuing a replacement", async () => {
+    using _settings = setup();
+    await using screen = await render(nonUtf8Preview("tasks.md", "- [ ] caf\uFFFD\n"));
+    using _timers = fakeTimers();
+    const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    expect(checkbox).not.toBeNull();
+    expect(checkbox.disabled).toBe(true);
+    expect(screen.container.textContent).toContain(NOT_UTF8_NOTICE);
+    await act(async () => checkbox.click());
+    await vi.advanceTimersByTimeAsync(500);
+    expect(state.optimistic).toBeNull();
+    expect(state.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("renders no editable surface for a non-UTF-8 source file", async () => {
+    using _settings = setup();
+    await using screen = await render(nonUtf8Preview("notes.txt", "caf\uFFFD\n"));
+    expect(screen.container.querySelector('[data-testid="read-only-source"]')).not.toBeNull();
+    expect(screen.container.querySelector(".file-preview-virtualizer")).toBeNull();
+    expect(screen.container.textContent).toContain(NOT_UTF8_NOTICE);
   });
 });

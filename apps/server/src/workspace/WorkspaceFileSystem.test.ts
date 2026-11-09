@@ -449,6 +449,57 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("does not flag a multibyte character split by the read limit", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        const limit = 1024 * 1024;
+        const cat = new TextEncoder().encode("🐈");
+        const bytes = new Uint8Array(limit - 2 + cat.length).fill(0x61);
+        bytes.set(cat, limit - 2);
+        yield* fileSystem.writeFile(path.join(cwd, "large.txt"), bytes);
+
+        const result = yield* files.readFile({ cwd, relativePath: "large.txt" });
+
+        expect(result.truncated).toBe(true);
+        expect(result.invalidUtf8).toBeUndefined();
+      }),
+    );
+
+    it.effect("flags bytes that are not UTF-8 and still returns the readable text", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        // "café\n" in Windows-1252: the lone E9 byte is not valid UTF-8.
+        yield* fileSystem.writeFile(
+          path.join(cwd, "latin.txt"),
+          Uint8Array.from([0x63, 0x61, 0x66, 0xe9, 0x0a]),
+        );
+
+        const result = yield* files.readFile({ cwd, relativePath: "latin.txt" });
+
+        expect(result.invalidUtf8).toBe(true);
+        expect(result.contents).toContain("caf");
+      }),
+    );
+
+    it.effect("does not flag valid multibyte UTF-8", () =>
+      Effect.gen(function* () {
+        const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "utf8.txt", "café 🐈 €\n");
+
+        const result = yield* files.readFile({ cwd, relativePath: "utf8.txt" });
+
+        expect(result.contents).toBe("café 🐈 €\n");
+        expect(result.invalidUtf8).toBeUndefined();
+      }),
+    );
+
     it.effect("rejects binary files without leaking their contents into the error", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;

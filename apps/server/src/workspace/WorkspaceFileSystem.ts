@@ -432,12 +432,21 @@ export const make = Effect.gen(function* () {
           }
 
           const truncated = stat.size > PROJECT_READ_FILE_MAX_BYTES;
+          // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
+          const isValidUtf8 = (() => {
+            try {
+              new TextDecoder("utf-8", { fatal: true }).decode(fileBytes, { stream: truncated });
+              return true;
+            } catch {
+              return false;
+            }
+          })();
           return {
             relativePath: target.relativePath,
-            // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
             contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
             byteLength: stat.size,
             truncated,
+            ...(isValidUtf8 ? {} : { invalidUtf8: true }),
           };
         }),
       (handle) =>
