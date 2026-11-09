@@ -2181,6 +2181,7 @@ function makeProviderThread(input: {
   readonly ownerNodeId?: OrchestrationV2ProviderThread["ownerNodeId"];
   readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
   readonly nativeThreadId: string;
+  readonly nativeStorageFolder?: string;
   readonly forkedFrom?: NonNullable<OrchestrationV2ProviderThread["forkedFrom"]>;
   readonly nativeMetadata?: NonNullable<OrchestrationV2ProviderThread["nativeMetadata"]>;
   readonly now: DateTime.Utc;
@@ -2201,6 +2202,9 @@ function makeProviderThread(input: {
       strength: "strong",
     },
     nativeConversationHeadRef: null,
+    ...(input.nativeStorageFolder === undefined
+      ? {}
+      : { nativeStorageFolder: input.nativeStorageFolder }),
     status: "idle",
     firstRunOrdinal: null,
     lastRunOrdinal: null,
@@ -4462,6 +4466,8 @@ interface ClaudeLiveQueryContext {
   // Per process, not per session: a relative temp dir follows the cwd this CLI
   // was launched in, and a later turn's cwd can differ.
   readonly taskOutputRoot: string | undefined;
+  // Set when this process created its session without resume: Claude stores it under this folder.
+  readonly createdSessionFolder: string | undefined;
 }
 
 interface ActiveClaudeToolCall {
@@ -6241,11 +6247,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return;
           }
+          const { input: turnInput } = resume.context;
+          const storageFolder =
+            turnInput.providerThread.nativeStorageFolder ??
+            (yield* turnInput.readNativeStorageFolder ?? Effect.undefined) ??
+            turnInput.runtimePolicy.cwd;
           const launchToolUseId = yield* queryRunner
             .subagentLaunchToolUseId({
               sessionId: resume.nativeThreadId,
               agentId: resume.taskId,
-              dir: resume.context.input.runtimePolicy.cwd,
+              dir: storageFolder,
               threadId: resume.context.input.threadId,
               providerSessionId: input.providerSessionId,
             })
@@ -11072,6 +11083,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* resetBackgroundTaskStateForNativeThreadProcess(nativeThreadId, {
             status: "active",
           });
+          if (!shouldResume && turnInput.runtimePolicy.cwd !== null) {
+            // Before the prompt goes out: a refused prompt or an early exit must not lose it.
+            yield* (
+              turnInput.recordNativeStorageFolder?.(turnInput.runtimePolicy.cwd) ?? Effect.void
+            );
+            yield* emitProviderThreadRoster({
+              nativeThreadId,
+              providerThread: {
+                ...turnInput.providerThread,
+                nativeStorageFolder: turnInput.runtimePolicy.cwd,
+              },
+              status: "active",
+            });
+          }
           const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             queryPolicy,
@@ -11102,6 +11127,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               resolvedTurnCwd,
               hostPlatform,
             ),
+            createdSessionFolder: shouldResume
+              ? undefined
+              : (turnInput.runtimePolicy.cwd ?? undefined),
           };
           // One step, so the replaced process cannot exit between the install and the handoff.
           yield* Ref.update(queryContext, (replaced) => {
@@ -11277,13 +11305,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     Effect.provideService(Path.Path, path),
                   );
             const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const storedTurnInput =
+              querySession.createdSessionFolder === undefined
+                ? turnInput
+                : {
+                    ...turnInput,
+                    providerThread: {
+                      ...turnInput.providerThread,
+                      nativeStorageFolder: querySession.createdSessionFolder,
+                    },
+                  };
             const autoCompactWindow = yield* resolveAutoCompactWindow(
               querySession.settingsCwd,
               turnInput.modelSelection,
               querySession.launchArgSettings,
             );
             const context: ActiveClaudeTurnContext = {
-              input: turnInput,
+              input: storedTurnInput,
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,
@@ -12372,8 +12410,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const sourceNativeThreadId = yield* getNativeThreadId(forkInput.sourceProviderThread);
               yield* closeLiveQueryForNativeThread(sourceNativeThreadId);
               const upToMessageId = yield* resolveClaudeForkUpToMessageId(forkInput);
+              const storageFolder =
+                forkInput.sourceProviderThread.nativeStorageFolder ??
+                forkInput.sourceNativeStorageFolder ??
+                input.runtimePolicy.cwd;
               const forkOptions: ForkSessionOptions = {
-                ...(input.runtimePolicy.cwd === null ? {} : { dir: input.runtimePolicy.cwd }),
+                ...(storageFolder === null ? {} : { dir: storageFolder }),
                 ...(upToMessageId === undefined ? {} : { upToMessageId }),
               };
               const forked = yield* queryRunner.forkSession({
@@ -12400,6 +12442,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ownerNodeId: forkInput.ownerNodeId ?? null,
                 providerSessionId: input.providerSessionId,
                 nativeThreadId: forked.sessionId,
+                ...(storageFolder === null ? {} : { nativeStorageFolder: storageFolder }),
                 forkedFrom: {
                   providerThreadId: forkInput.sourceProviderThread.id,
                   ...(forkInput.providerTurnId === undefined

@@ -566,6 +566,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly attemptId: RunAttemptId;
   readonly providerTurnOrdinal: number;
   readonly nativeThreadHasTurns?: boolean;
+  readonly readNativeStorageFolder?: ProviderAdapter.ProviderAdapterV2TurnInput["readNativeStorageFolder"];
   readonly loadInheritedBackgroundTurnItems?: () => Effect.Effect<
     ReadonlyArray<InheritedBackgroundTurnItemRoute>,
     unknown
@@ -1692,6 +1693,7 @@ export const layer: Layer.Layer<
           key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
           text: entry.text,
         }));
+        let recordedNativeStorageFolder: string | undefined;
         const turnInput = {
           appThread: input.appThread,
           threadId: input.run.threadId,
@@ -1713,6 +1715,13 @@ export const layer: Layer.Layer<
           modelSelection: input.modelSelection,
           runtimePolicy: input.runtimePolicy,
           ...(appContext.length === 0 ? {} : { appContext }),
+          ...(input.readNativeStorageFolder === undefined
+            ? {}
+            : { readNativeStorageFolder: input.readNativeStorageFolder }),
+          recordNativeStorageFolder: (folder: string) =>
+            Effect.sync(() => {
+              recordedNativeStorageFolder = folder;
+            }),
         };
         // Check after the context read: ingestion can settle the run while
         // it awaits. A failed ownership read fails the start below.
@@ -1756,6 +1765,12 @@ export const layer: Layer.Layer<
             }).pipe(
               Effect.andThen(Fiber.interrupt(providerEventFiber)),
               Effect.andThen(Ref.get(latestProviderThread)),
+              // Interrupting ingestion can drop the adapter's update that carried the folder.
+              Effect.map((providerThread) =>
+                recordedNativeStorageFolder === undefined
+                  ? providerThread
+                  : { ...providerThread, nativeStorageFolder: recordedNativeStorageFolder },
+              ),
               Effect.flatMap((providerThread) =>
                 Ref.get(latestTurnItemOrdinal).pipe(
                   Effect.flatMap((latestItemOrdinal) =>

@@ -2051,6 +2051,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ...queuedProviderThread,
             nativeThreadRef: activeProviderThread.nativeThreadRef,
             nativeConversationHeadRef: activeProviderThread.nativeConversationHeadRef,
+            nativeStorageFolder: activeProviderThread.nativeStorageFolder,
             nativeMetadata: activeProviderThread.nativeMetadata,
           }
         : queuedProviderThread;

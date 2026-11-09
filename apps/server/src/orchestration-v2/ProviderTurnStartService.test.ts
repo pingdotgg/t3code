@@ -6,6 +6,7 @@ import {
   CheckpointScopeId,
   ContextHandoffId,
   ContextTransferId,
+  EventId,
   GitCommandError,
   MessageId,
   NodeId,
@@ -33,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -45,6 +47,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -136,6 +139,7 @@ function startWithMissingWorktree(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventStore.EventStoreV2)({}),
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
@@ -285,6 +289,7 @@ function makeLocalCommandHarness(input: {
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
   readonly failReadsAfterRunning?: boolean;
+  readonly driver?: ProviderDriverKind;
   readonly previousTurn?: {
     readonly runStatus: "failed" | "completed";
     readonly turnStatus: "running" | "completed" | "interrupted";
@@ -303,6 +308,8 @@ function makeLocalCommandHarness(input: {
     readonly nativeForkFrom?: "idle" | "busy";
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
+    readonly parentRunCwd?: string;
+    readonly parentStorageFolder?: string;
   };
 }) {
   const settledRuns: Array<string> = [];
@@ -337,7 +344,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver: input.driver ?? ProviderDriverKind.make("codex"),
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,
@@ -489,6 +496,9 @@ function makeLocalCommandHarness(input: {
       nativeId: "side-chat-parent-native",
       strength: "strong" as const,
     },
+    ...(input.sideChat?.parentStorageFolder === undefined
+      ? {}
+      : { nativeStorageFolder: input.sideChat.parentStorageFolder }),
   };
   const parentProviderTurn = (ordinal: number, attemptRunId: RunId) => ({
     attempt: {
@@ -496,6 +506,7 @@ function makeLocalCommandHarness(input: {
       id: RunAttemptId.make(`side-chat-parent-attempt-${ordinal}`),
       runId: attemptRunId,
       providerThreadId: parentProviderThread.id,
+      nativeThreadId: "side-chat-parent-native",
       status: "completed" as const,
     },
     turn: {
@@ -532,6 +543,7 @@ function makeLocalCommandHarness(input: {
         activeAttemptId: parentTurns[0]!.attempt.id,
         status: "completed" as const,
         completedAt: now,
+        ...(input.sideChat?.parentRunCwd === undefined ? {} : { cwd: input.sideChat.parentRunCwd }),
       },
       {
         ...run,
@@ -561,6 +573,31 @@ function makeLocalCommandHarness(input: {
     providerTurns: parentTurns.map(({ turn }) => turn),
     turnItems: [],
   };
+  const parentScopeEvents = [
+    [parentRunId, "/repo/side-chat-parent"] as const,
+    [parentRolledBackRunId, "/repo/side-chat-parent-later"] as const,
+  ].map(([scopeRunId, cwd], index) => ({
+    sequence: index + 1,
+    commandId: null,
+    event: {
+      id: EventId.make(`side-chat-parent-scope-${index}`),
+      type: "checkpoint-scope.created" as const,
+      threadId: parentThreadId,
+      runId: scopeRunId,
+      occurredAt: now,
+      payload: {
+        ...projection.checkpointScopes[0]!,
+        id: CheckpointScopeId.make("side-chat-parent-root-scope"),
+        threadId: parentThreadId,
+        runId: scopeRunId,
+        providerThreadId: parentProviderThread.id,
+        cwd,
+      },
+    },
+  }));
+  const readEvents = vi.fn<EventStore.EventStoreV2["Service"]["read"]>((request) =>
+    Stream.fromIterable(request?.threadId === parentThreadId ? parentScopeEvents : []),
+  );
   if (input.sideChat !== undefined) {
     const earlierRunId = RunId.make("side-chat-earlier-run");
     projection = {
@@ -832,6 +869,7 @@ function makeLocalCommandHarness(input: {
                     providerSession,
                     ensureThread: () => Effect.succeed(providerThread),
                     resumeThread: () => Effect.succeed(projection.providerThreads[0]),
+                    startTurn,
                   } as never)
                 : Effect.die("A local command must not open a native session."),
   );
@@ -940,6 +978,7 @@ function makeLocalCommandHarness(input: {
               return [];
             }),
         }),
+        Layer.mock(EventStore.EventStoreV2)({ read: readEvents }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -1021,6 +1060,7 @@ function makeLocalCommandHarness(input: {
     startRootRun,
     startTurn,
     forkThread,
+    readEvents,
     interruptTurn,
     tryHandlePromptCommand,
     events,
@@ -1304,6 +1344,16 @@ effectIt.effect.each([
     }),
 );
 
+const forkHarness = (
+  sideChat: Partial<NonNullable<Parameters<typeof makeLocalCommandHarness>[0]["sideChat"]>> = {},
+  driver = "claudeAgent",
+) =>
+  makeLocalCommandHarness({
+    text: "What is the main thread doing?",
+    driver: ProviderDriverKind.make(driver),
+    sideChat: { contextRun: "current", nativeForkFrom: "idle", ...sideChat },
+  });
+
 effectIt.effect.each([
   { nativeForkFrom: "idle", forks: true, transferStatus: "consumed", handoffIds: [] },
   {
@@ -1336,6 +1386,32 @@ effectIt.effect.each([
       );
       expect(harness.projection().providerThreads[0]?.handoffIds).toEqual(handoffIds);
     }),
+);
+
+effectIt.effect.each([
+  { folder: "/repo/side-chat-parent", eventReads: 1 },
+  { sideChat: { parentRunCwd: "/repo/parent-run" }, folder: "/repo/parent-run" },
+  {
+    sideChat: { parentStorageFolder: "/repo/parent-recorded" },
+    folder: "/repo/parent-recorded",
+    recorded: true,
+  },
+  { driver: "codex" },
+])("forks a Claude parent from its session's storage folder: %j", (row) =>
+  Effect.gen(function* () {
+    const harness = forkHarness(row.sideChat ?? {}, row.driver ?? "claudeAgent");
+
+    yield* harness.start;
+
+    expect(
+      harness.forkThread.mock.calls.map(([fork]) => [
+        fork.sourceNativeStorageFolder,
+        fork.sourceProviderThread.nativeStorageFolder,
+      ]),
+    ).toEqual([[row.folder, row.recorded === true ? row.folder : undefined]]);
+    expect(harness.readEvents).toHaveBeenCalledTimes(row.eventReads ?? 0);
+    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+  }),
 );
 
 effectIt.effect.each([

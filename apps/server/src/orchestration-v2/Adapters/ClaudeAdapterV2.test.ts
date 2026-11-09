@@ -2447,7 +2447,7 @@ describe("ClaudeAdapterV2 attachments", () => {
 });
 
 describe("ClaudeAdapterV2 native fork", () => {
-  it.effect("forks at the source assistant cursor and resumes the forked session", () =>
+  it.effect("forks at the source cursor in the current folder and resumes the fork", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -2564,6 +2564,7 @@ describe("ClaudeAdapterV2 native fork", () => {
         assert.equal(forkedProviderThread.nativeThreadRef?.nativeId, "forked-native-session");
         assert.equal(forkedProviderThread.forkedFrom?.providerThreadId, sourceProviderThread.id);
         assert.equal(forkedProviderThread.forkedFrom?.providerTurnId, providerTurnId);
+        assert.equal(forkedProviderThread.nativeStorageFolder, "/workspace");
 
         yield* runtime.startTurn({
           appThread: {
@@ -2956,8 +2957,9 @@ describe("ClaudeAdapterV2 native session identity", () => {
                   updatedAt: now,
                 },
               });
-        yield* runtime.startTurn(
-          makeClaudeTestTurnInput({
+        const recordedFolders: Array<string> = [];
+        yield* runtime.startTurn({
+          ...makeClaudeTestTurnInput({
             threadId,
             providerThread,
             now,
@@ -2967,8 +2969,22 @@ describe("ClaudeAdapterV2 native session identity", () => {
             providerTurnOrdinal,
             ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
           }),
+          recordNativeStorageFolder: (folder) =>
+            Effect.sync(() => void recordedFolders.push(folder)),
+        });
+        const published = yield* runtime.events.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "provider_thread.updated" || event.type === "provider_turn.updated",
+          ),
+          Stream.runHead,
+          Effect.map((first) =>
+            Option.isSome(first) && first.value.type === "provider_thread.updated"
+              ? first.value.providerThread.nativeStorageFolder
+              : undefined,
+          ),
         );
-        return openedQueries;
+        return { openedQueries, storageFolder: { recorded: recordedFolders, published } };
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -2985,29 +3001,36 @@ describe("ClaudeAdapterV2 native session identity", () => {
     "resumes the native session on a fresh session instance when prior provider turns exist",
     () =>
       Effect.gen(function* () {
-        const openedQueries = yield* openTurnWithOrdinal(2);
+        const { openedQueries, storageFolder } = yield* openTurnWithOrdinal(2);
         assert.equal(openedQueries.length, 1);
         assert.equal(openedQueries[0]?.options.resume, "native-session-identity");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
         assert.equal(openedQueries[0]?.options.title, "Claude attachment test");
+        assert.deepEqual(storageFolder, { recorded: [], published: undefined });
       }),
   );
 
   it.effect("creates a fresh native session despite earlier provider-thread turns", () =>
     Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(4, false);
+      const { openedQueries, storageFolder } = yield* openTurnWithOrdinal(4, false);
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
       assert.equal(openedQueries[0]?.options.resume, undefined);
       assert.equal(openedQueries[0]?.options.title, "Claude attachment test");
+      assert.deepEqual(storageFolder, { recorded: ["/workspace"], published: "/workspace" });
     }),
   );
 
   it.effect("resumes an imported native session on its first T3 turn", () =>
     Effect.gen(function* () {
-      const openedQueries = yield* openTurnWithOrdinal(1, false, "imported-native-session");
+      const { openedQueries, storageFolder } = yield* openTurnWithOrdinal(
+        1,
+        false,
+        "imported-native-session",
+      );
       assert.equal(openedQueries.length, 1);
       assert.equal(openedQueries[0]?.options.resume, "imported-native-session");
       assert.equal(openedQueries[0]?.options.sessionId, undefined);
+      assert.deepEqual(storageFolder, { recorded: [], published: undefined });
     }),
   );
 });
@@ -3297,6 +3320,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "provider_thread.updated" }>
         >();
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
+      const subagentLookups: Array<ClaudeAdapterV2.ClaudeAgentSdkSubagentLookupInput> = [];
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
@@ -3404,7 +3428,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               };
             }),
           forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
-          subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+          subagentLaunchToolUseId: (lookup) =>
+            Effect.sync(() => {
+              subagentLookups.push(lookup);
+              return options?.subagentLaunchToolUseId ?? null;
+            }),
           assertComplete: Effect.void,
         },
       });
@@ -3485,6 +3513,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtimeRequestReceipts,
         planReceipts,
         providerThreadReceipts,
+        subagentLookups,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
         hasPendingBackgroundWork,
@@ -3523,6 +3552,74 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ? [`${event.providerTurn.runAttemptId}:${event.providerTurn.status}`]
         : [],
     );
+
+  it.effect.each([
+    { name: "its record", recorded: "/repo/a", history: "/repo/h" },
+    { name: "run history", history: "/repo/a" },
+  ])("forks a session created in the old root, found from $name", ({ recorded, history }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-old-root-" });
+        const sessionId = "22222222-2222-4222-8222-222222222222";
+        const projectDir = path.join(configDir, "projects", "-repo-a");
+        const question = "cccccccc-0000-4000-8000-000000000001";
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        const entry = (type: string, uuid: string, parent: string | null, content: unknown) =>
+          JSON.stringify({
+            type,
+            uuid,
+            parentUuid: parent,
+            message: { role: type, content },
+            sessionId,
+            cwd: "/repo/a",
+            isSidechain: false,
+            timestamp: "2026-11-01T00:00:00.000Z",
+          });
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, `${sessionId}.jsonl`),
+          [
+            entry("user", question, null, "Remember the number 42."),
+            entry("assistant", "cccccccc-0000-4000-8000-000000000002", question, [
+              { type: "text", text: "Noted." },
+            ]),
+          ].join("\n"),
+        );
+        const harness = yield* makeWakeHarnessWithOptions({
+          environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
+          forkSession: (yield* ClaudeAdapterV2.ClaudeAgentSdkQueryRunner).forkSession,
+        });
+        const forked = yield* harness.runtime.forkThread({
+          sourceProviderThread: {
+            ...harness.providerThread,
+            nativeThreadRef: { ...harness.providerThread.nativeThreadRef!, nativeId: sessionId },
+            ...(recorded === undefined ? {} : { nativeStorageFolder: recorded }),
+          },
+          targetThreadId: ThreadId.make("thread-claude-storage-folder-root-edit-fork"),
+          ...(history === undefined ? {} : { sourceNativeStorageFolder: history }),
+        });
+
+        const forkedId = forked.nativeThreadRef?.nativeId;
+        assert.isString(forkedId);
+        assert.notEqual(forkedId, sessionId);
+        assert.include(
+          yield* fileSystem.readFileString(path.join(projectDir, `${forkedId}.jsonl`)),
+          "Remember the number 42.",
+        );
+        // Only a head lookup in the same storage finds the forked transcript's last message.
+        assert.isString(forked.nativeMetadata?.forkHeadMessageId);
+        assert.equal(forked.nativeStorageFolder, "/repo/a");
+      }).pipe(
+        Effect.provide(ClaudeAdapterV2.layerQueryRunner.pipe(Layer.provide(PortScanner.layerTest))),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+        Effect.provide(layerClaudeTestServices),
+      ),
+    ),
+  );
 
   it.effect.each([
     "rejects",
@@ -18333,22 +18430,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("projects workflow member threads after resuming a restarted session", () =>
+  it.effect.each([
+    { from: "its record", recorded: "/repo/a", history: "/repo/h", resumed: true, dir: "/repo/a" },
+    { from: "run history", history: "/repo/h", resumed: true, dir: "/repo/h" },
+    { from: "the folder its query created", history: "/repo/h", resumed: false, dir: "/workspace" },
+  ])("projects workflow member threads after resuming a restarted session from $from", (row) =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWorkflowHarnessWithOptions({
           subagentLaunchToolUseId: WORKFLOW_TOOL_USE_ID,
         });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeClaudeTestTurnInput({
             threadId: harness.threadId,
-            providerThread: harness.providerThread,
+            providerThread: { ...harness.providerThread, nativeStorageFolder: row.recorded },
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("attempt-claude-workflow-resume"),
             text: "Continue the workflow.",
             attachments: [],
+            nativeThreadHasTurns: row.resumed,
           }),
-        );
+          ...(row.history === undefined
+            ? {}
+            : { readNativeStorageFolder: Effect.succeed(row.history) }),
+        });
         yield* harness.offerAndWait(
           claudeSdkFrame({
             ...workflowToolUse,
@@ -18375,6 +18480,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001041", result: "Resumed." }),
         );
         yield* Queue.take(harness.terminalReceipts);
+        assert.deepEqual(
+          harness.subagentLookups.map((lookup) => lookup.dir),
+          [row.dir],
+        );
         const member = workflowMemberEvents(harness.events, 1).at(-1)?.subagent;
         const coordinator = workflowCoordinatorEvents(harness.events).at(-1)?.subagent;
         assert.isDefined(member);

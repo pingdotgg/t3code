@@ -34,9 +34,11 @@ import { findRepositoryRoot } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
+import * as EventStore from "./EventStore.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { isActiveRun } from "./CommandPolicy.ts";
+import { nativeStorageFolders } from "./NativeStorageFolder.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -134,6 +136,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
   | EventSink.EventSinkV2
+  | EventStore.EventStoreV2
   | ContextHandoffService.ContextHandoffServiceV2
   | IdAllocator.IdAllocatorV2
   | FileSystem.FileSystem
@@ -151,6 +154,7 @@ export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const eventStore = yield* EventStore.EventStoreV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -225,6 +229,27 @@ export const layer: Layer.Layer<
           ...(base.baseRefName === undefined ? {} : { baseRefName: base.baseRefName }),
           path: worktreePath,
         });
+      },
+    );
+
+    const readNativeStorageFolder = Effect.fn("ProviderTurnStartService.readNativeStorageFolder")(
+      function* (
+        threadId: ThreadId,
+        providerThread: OrchestrationV2ProviderThread,
+        history: Pick<Parameters<typeof nativeStorageFolders>[2], "runs" | "attempts">,
+      ) {
+        const folders = yield* nativeStorageFolders(eventStore, threadId, {
+          ...history,
+          providerThreads: [providerThread],
+        }).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("orchestration-v2.native-storage-folder-read-failed", {
+              threadId,
+              cause,
+            }).pipe(Effect.as(undefined)),
+          ),
+        );
+        return folders?.get(providerThread.id);
       },
     );
 
@@ -1167,9 +1192,15 @@ export const layer: Layer.Layer<
                 )
                 .map((attempt) => attempt.id),
             );
+            const sourceNativeStorageFolder = yield* readNativeStorageFolder(
+              nativeForkTransfer.sourceThreadId,
+              sourceProviderThread,
+              sourceProjection,
+            );
             return yield* loadFromProvider(
               session.forkThread({
                 sourceProviderThread,
+                ...(sourceNativeStorageFolder === undefined ? {} : { sourceNativeStorageFolder }),
                 sourceProviderTurns: sourceProjection.providerTurns.filter(
                   (turn) =>
                     turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId),
@@ -1747,6 +1778,13 @@ export const layer: Layer.Layer<
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
+        ...(runningProviderThread.nativeStorageFolder === undefined
+          ? {
+              readNativeStorageFolder: yield* Effect.cached(
+                readNativeStorageFolder(projection.thread.id, runningProviderThread, projection),
+              ),
+            }
+          : {}),
         message: {
           messageId: message.id,
           text: userText,

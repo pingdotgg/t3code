@@ -75,6 +75,7 @@ export function providerThread(input: {
   readonly threadId: ThreadId;
   readonly providerInstanceId: ProviderInstanceId;
   readonly nativeId: string;
+  readonly nativeStorageFolder?: string | undefined;
 }): OrchestrationV2ProviderThread {
   return {
     id: ProviderThreadId.make(input.id),
@@ -85,6 +86,9 @@ export function providerThread(input: {
     ownerNodeId: null,
     nativeThreadRef: { driver: claudeDriver, nativeId: input.nativeId, strength: "strong" },
     nativeConversationHeadRef: null,
+    ...(input.nativeStorageFolder === undefined
+      ? {}
+      : { nativeStorageFolder: input.nativeStorageFolder }),
     status: "idle",
     firstRunOrdinal: null,
     lastRunOrdinal: null,
