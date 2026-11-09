@@ -1,5 +1,9 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  formatComposerContextReference,
+  toComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -80,6 +84,11 @@ it("previews assistant quotes as readable text and preserves the citation when e
     suffix: "",
   });
   const quoteAndText = `${quote}\n\nWhy per worktree?`;
+  const inlineImage = formatComposerContextReference({
+    kind: "image",
+    contextId: toComposerContextId("header"),
+    label: "header.png",
+  });
   state.projection = { projection: { messages: [] } };
   state.workflow = {
     activeRun: { id: "run:active" },
@@ -95,6 +104,11 @@ it("previews assistant quotes as readable text and preserves the citation when e
         text: quoteAndText,
         attachments: [],
       },
+      {
+        run: { id: "run:inline-image", userMessageId: "message:inline-image" },
+        text: `Make the header look like ${inlineImage} and keep the logo.`,
+        attachments: [{ type: "image", id: "attachment:header", name: "header.png" }],
+      },
     ],
   };
   const onEditQueuedRun = vi.fn();
@@ -103,6 +117,11 @@ it("previews assistant quotes as readable text and preserves the citation when e
   await expect.element(page.getByText(quotedText, { exact: true })).toBeVisible();
   await expect
     .element(page.getByText(`${quotedText} Why per worktree?`, { exact: true }))
+    .toBeVisible();
+  await expect
+    .element(
+      page.getByText("Make the header look like header.png and keep the logo.", { exact: true }),
+    )
     .toBeVisible();
 
   await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
