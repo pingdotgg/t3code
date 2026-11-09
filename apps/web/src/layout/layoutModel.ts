@@ -1211,9 +1211,13 @@ export function replaceLayoutTabContent(
         ? { ...pane, tabs: pane.tabs.filter((tab) => tab.id !== duplicate.tab.id) }
         : pane;
     if (!withoutDuplicate.tabs.some((tab) => tab.id === tabId)) return withoutDuplicate;
+    const tabs =
+      ghostOf === undefined
+        ? withoutDuplicate.tabs
+        : withoutDuplicate.tabs.filter((tab) => tab.id === tabId || !isLayoutGhostTab(tab));
     return {
       ...withoutDuplicate,
-      tabs: withoutDuplicate.tabs.map((tab) =>
+      tabs: tabs.map((tab) =>
         tab.id === tabId &&
         (layoutTabContentKey(tab.content) !== key ||
           (isLayoutPageContent(tab.content) &&
