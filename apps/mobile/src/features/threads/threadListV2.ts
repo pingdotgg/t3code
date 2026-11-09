@@ -26,6 +26,7 @@ import {
 import {
   sortActiveThreadsByOrderKey,
   resolveSettledThreadTimestamp,
+  resolveThreadActivityTimestamp,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@t3tools/client-runtime/state/thread-sort";
@@ -533,7 +534,7 @@ function resolveThreadListV2ItemTimeLabel(
   const settledTimestamp =
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
-    settledTimestamp ?? thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+    settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
   );
 }
 
