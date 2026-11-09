@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as PullRequestSyncReactor from "../../../orchestration-v2/PullRequestSyncReactor.ts";
 import {
   type PullRequestTestThread,
   v2PullRequestThread,
@@ -143,6 +144,8 @@ interface HarnessOptions {
     PullRequestReviewGuideResult & { started: boolean },
     PullRequestOperationError
   >;
+  /** What the host reports when a link is resynced; unset leaves the stored snapshot as is. */
+  readonly hostState?: "open" | "closed" | "merged";
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -152,7 +155,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
 ) {
   const commands = yield* Ref.make<ReadonlyArray<OrchestrationCommand>>([]);
   const guideRequests = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
-  const thread = options.thread === undefined ? makeThread([]) : options.thread;
+  const threadRef = yield* Ref.make(options.thread === undefined ? makeThread([]) : options.thread);
   const project = options.project === undefined ? makeProject() : options.project;
   const dispatch: Orchestrator.OrchestratorV2Shape["dispatch"] = (command) =>
     Effect.gen(function* () {
@@ -191,8 +194,38 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
     }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) =>
-        Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
+        Ref.get(threadRef).pipe(
+          Effect.map((current) =>
+            current !== null && id === current.id ? v2PullRequestThread(current) : null,
+          ),
+        ),
       dispatch,
+    }),
+    Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({
+      drain: Effect.void,
+      requestSync: (key) =>
+        Ref.update(threadRef, (current) => {
+          const hostState = options.hostState;
+          if (current === null || hostState === undefined) return current;
+          return {
+            ...current,
+            pullRequests: current.pullRequests.map((link) =>
+              link.host === key.host &&
+              link.repository === key.repository &&
+              link.number === key.number &&
+              link.snapshot !== null
+                ? {
+                    ...link,
+                    snapshot: {
+                      ...link.snapshot,
+                      state: hostState,
+                      mergedAt: hostState === "merged" ? link.snapshot.mergedAt : null,
+                    },
+                  }
+                : link,
+            ),
+          };
+        }),
     }),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
@@ -326,6 +359,29 @@ describe("pull request toolkit handlers", () => {
       ).toMatchObject({ wasWatching: true });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.watch", number: 3, watching: false },
+      ]);
+    }),
+  );
+
+  it.effect("watches a pull request saved as merged when the host now reports it open", () =>
+    Effect.gen(function* () {
+      const stale = makeLink(1, { headBranch: "reused-number" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          {
+            ...stale,
+            snapshot: stale.snapshot && {
+              ...stale.snapshot,
+              state: "merged",
+              mergedAt: "2026-08-25T00:00:00.000Z",
+            },
+          },
+        ]),
+        hostState: "open",
+      });
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 1 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 1, watching: true },
       ]);
     }),
   );
