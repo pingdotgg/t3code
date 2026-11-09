@@ -105,7 +105,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
-import { useShortcutModifierState } from "../shortcutModifierState";
+import { useShortcutModifierSelector } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -217,7 +217,6 @@ import {
   sortThreadsForSidebar,
   sortWorkingThreadsBySend,
   useSnoozeWakeClock,
-  useThreadJumpHintsVisible,
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarRowThreadId,
@@ -1137,7 +1136,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } | null>(null);
   const snoozingThreadKeysRef = useRef(new Set<string>());
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-  const shortcutModifiers = useShortcutModifierState();
   const terminalFocused = useTerminalFocus();
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
@@ -3125,21 +3123,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threadByKey,
   ]);
 
-  const shouldShowJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
-    shortcutModifiers,
-    keybindings,
-    {
-      platform: navigator.platform,
-      context: {
-        terminalFocus: terminalFocused,
-        terminalOpen: routeTerminalOpen,
-        modelPickerOpen: isModelPickerOpen(),
-        isWeb: !isElectron,
-        isDesktop: isElectron,
-      },
-    },
+  // Reads held modifiers outside render state so a quick chord like Mod+K never re-renders the list.
+  const showJumpHints = useShortcutModifierSelector(
+    (shortcutModifiers, held) =>
+      held &&
+      shouldShowThreadJumpHintsForModifiers(shortcutModifiers, keybindings, {
+        platform: navigator.platform,
+        context: {
+          terminalFocus: terminalFocused,
+          terminalOpen: routeTerminalOpen,
+          modelPickerOpen: isModelPickerOpen(),
+          isWeb: !isElectron,
+          isDesktop: isElectron,
+        },
+      }),
   );
-  const showJumpHints = useThreadJumpHintsVisible(shouldShowJumpHintsNow);
 
   const handleNewThreadClick = () => {
     if (isMobile) setOpenMobile(false);
