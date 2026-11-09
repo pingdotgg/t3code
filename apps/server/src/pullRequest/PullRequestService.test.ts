@@ -2453,7 +2453,7 @@ it.effect("continues GitLab projects read together by each project's own GraphQL
     // Newest first; the newest 10 of acme/big are approved and filtered out below.
     const mergeRequests: Record<string, ReadonlyArray<number>> = {
       "acme/big": Array.from({ length: 41 }, (_, index) => 41 - index),
-      "acme/small": [3, 2, 1],
+      "acme/small": Array.from({ length: 25 }, (_, index) => 25 - index),
     };
     const node = (repository: string, iid: number) => {
       const approved = repository === "acme/big" && iid > 31;
@@ -2471,11 +2471,14 @@ it.effect("continues GitLab projects read together by each project's own GraphQL
       };
     };
     const pageOf = (repository: string, after: unknown, first: number) => {
-      const offset = after === null || after === undefined ? 0 : Number(String(after).slice(1));
+      const offset = typeof after === "string" ? Number(after.split(":")[1]) : 0;
       const iids = mergeRequests[repository]!.slice(offset, offset + first);
       const end = offset + iids.length;
       return {
-        pageInfo: { hasNextPage: end < mergeRequests[repository]!.length, endCursor: `c${end}` },
+        pageInfo: {
+          hasNextPage: end < mergeRequests[repository]!.length,
+          endCursor: `${repository.split("/")[1]}:${end}`,
+        },
         nodes: iids.map((iid) => node(repository, iid)),
       };
     };
@@ -2492,7 +2495,7 @@ it.effect("continues GitLab projects read together by each project's own GraphQL
           },
         };
       }
-      afters.push(variables.after);
+      afters.push(`${String(variables.fullPath)} ${String(variables.after)}`);
       return {
         metadata: { enterprise: false },
         project: {
@@ -2522,13 +2525,15 @@ it.effect("continues GitLab projects read together by each project's own GraphQL
     expect(listed.toSorted()).toEqual(
       [
         ...Array.from({ length: 31 }, (_, index) => `acme/big!${index + 1}`),
-        "acme/small!1",
-        "acme/small!2",
-        "acme/small!3",
+        ...Array.from({ length: 25 }, (_, index) => `acme/small!${index + 1}`),
       ].toSorted(),
     );
-    expect(firstCursors).toEqual(["gitlab.com acme/big"]);
-    expect(afters).toEqual(["c20", "c40"]);
+    expect(firstCursors.toSorted()).toEqual(["gitlab.com acme/big", "gitlab.com acme/small"]);
+    expect(afters.toSorted()).toEqual([
+      "acme/big big:20",
+      "acme/big big:40",
+      "acme/small small:20",
+    ]);
     expect(reads.filter((path) => path.includes("merge_requests"))).toEqual([]);
   }),
 );
