@@ -1,4 +1,9 @@
-import { PrimaryConnectionTarget, RelayConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  BearerConnectionTarget,
+  PrimaryConnectionTarget,
+  RelayConnectionTarget,
+  type PreparedConnection,
+} from "@t3tools/client-runtime/connection";
 import type * as Effect from "effect/Effect";
 import {
   EnvironmentId,
@@ -71,6 +76,128 @@ vi.mock("../../connection/runtime", async () => {
   };
 });
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+it.each([{ cpu: null, accelerated: 2.1 }, { cpu: 5, accelerated: null }, { accelerated: 2.1 }])(
+  "uses the destination environment's benchmark tier across switches with measurements %j",
+  async (secondsPer30s) => {
+    const target = new PrimaryConnectionTarget({
+      environmentId: EnvironmentId.make("voice-local"),
+      label: "Local CPU",
+      httpBaseUrl: window.location.origin,
+      wsBaseUrl: "ws://localhost",
+    });
+    const local: PreparedConnection = {
+      ...target,
+      target,
+      socketUrl: target.wsBaseUrl,
+      httpAuthorization: null,
+    };
+    const remote: PreparedConnection = {
+      environmentId: EnvironmentId.make("voice-remote"),
+      label: "Remote GPU",
+      httpBaseUrl: "https://voice.example.test",
+      socketUrl: "wss://voice.example.test/ws",
+      httpAuthorization: { _tag: "Bearer", token: "test-token" },
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("voice-remote"),
+        label: "Remote GPU",
+        connectionId: "remote",
+      }),
+    };
+    let prepared = local;
+    const remoteStatus = deferred<Response>();
+    const remoteRequested = deferred<void>();
+    const status = {
+      supported: true,
+      state: "ready",
+      modelId: "both",
+      model: "Bilingual",
+      size: 100,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      acceleration: "auto",
+      modelUnloadTimeout: "never",
+      gpuDevices: [],
+      benchmarkTier: "cpu",
+    } satisfies EnvironmentSpeechStatus;
+    const model: EnvironmentSpeechModel = {
+      id: "both",
+      name: "Bilingual",
+      description: "",
+      size: 100,
+      languages: ["en"],
+      accuracy: 1,
+      speed: 1,
+      recommended: true,
+      supportsStreaming: false,
+      supportsTranslation: false,
+      supportsLanguageDetection: false,
+      active: false,
+      state: "downloadable",
+      benchmark: {
+        accuracy: { en: { grade: "A-", errorPercent: 4 } },
+        secondsPer30s,
+      },
+    };
+    const cpuBenchmark = `Speed: ${secondsPer30s.cpu === undefined ? "update server" : secondsPer30s.cpu === null ? "not benchmarked" : `${secondsPer30s.cpu} s / 30 s`}`;
+    const gpuBenchmark = `Speed: ${secondsPer30s.accelerated === null ? "not benchmarked" : `${secondsPer30s.accelerated} s / 30 s`}`;
+    const fetch = globalThis.fetch;
+    using _network = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input, window.location.href);
+      if (url.pathname === "/api/voice/status") {
+        if (url.origin === remote.httpBaseUrl) {
+          remoteRequested.resolve();
+          return remoteStatus.promise;
+        }
+        return Promise.resolve(Response.json(status));
+      }
+      if (url.pathname === "/api/voice/models")
+        return Promise.resolve(Response.json({ models: [model] }));
+      return fetch(input, init);
+    });
+    await vi.mocked(useVoiceTranscriptionDestination).withImplementation(
+      () => ({
+        environmentId: prepared.environmentId,
+        label: prepared.label,
+        grantId: "test",
+        prepared,
+      }),
+      async () => {
+        const panel = () => (
+          <SettingsScopeProvider search={{}} onChange={() => {}}>
+            <VoiceSettingsPanel />
+          </SettingsScopeProvider>
+        );
+        await using screen = await render(panel());
+        await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        prepared = remote;
+        await screen.rerender(panel());
+        await remoteRequested.promise;
+        await expect.element(screen.getByText(cpuBenchmark)).not.toBeInTheDocument();
+        remoteStatus.resolve(
+          Response.json({
+            ...status,
+            benchmarkTier: "accelerated",
+            gpuDevices: [{ id: "gpu", name: "Remote GPU" }],
+          }),
+        );
+        await expect.element(screen.getByText(gpuBenchmark)).toBeVisible();
+        prepared = local;
+        await screen.rerender(panel());
+        await expect.element(screen.getByText(cpuBenchmark)).toBeVisible();
+        await expect.element(screen.getByText(gpuBenchmark)).not.toBeInTheDocument();
+      },
+    );
+  },
+);
+
 it("tests the selected model after download and preserves its transcript across filters", async () => {
   const target = new PrimaryConnectionTarget({
     environmentId: EnvironmentId.make("voice-filter"),
@@ -105,6 +232,7 @@ it("tests the selected model after download and preserves its transcript across 
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   } satisfies EnvironmentSpeechStatus;
   let installed = false;
   const fetch = globalThis.fetch;
@@ -136,7 +264,7 @@ it("tests the selected model after download and preserves its transcript across 
                         en: { grade: "A-", errorPercent: 4 },
                         fr: { grade: "B+", errorPercent: 5.5 },
                       },
-                      secondsPer30s: 2.1,
+                      secondsPer30s: { cpu: 5, accelerated: 2.1 },
                     },
                   }
                 : {}),
@@ -269,6 +397,7 @@ it("loads the models of a relay-connected destination", async () => {
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   } satisfies EnvironmentSpeechStatus;
   const authorizations: Array<string | null> = [];
   const fetch = globalThis.fetch;
@@ -335,6 +464,7 @@ it("recovers from a failed download progress poll without notifying, but reports
     acceleration: "cpu",
     modelUnloadTimeout: "never",
     gpuDevices: [],
+    benchmarkTier: "cpu",
   };
   const unavailable = () => new Response(null, { status: 503 });
   const readModels = vi
@@ -399,7 +529,7 @@ it.each([
       .element(screen.getByRole("combobox", { name: "Transcribe with" }))
       .toHaveTextContent("Off");
     await expect
-      .element(screen.getByRole("switch", { name: "Clean up transcripts with a provider" }))
+      .element(screen.getByRole("switch", { name: "Clean up transcripts" }))
       .not.toBeChecked();
   },
 );
