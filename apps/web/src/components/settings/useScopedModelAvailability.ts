@@ -17,6 +17,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 export function useScopedModelDisabledReason(
   settings: UnifiedSettings,
   entries: readonly ProviderInstanceEntry[],
+  purpose: "turn" | "textGeneration" = "turn",
 ) {
   const { targets } = useSettingsScope();
   const { environments } = useEnvironments();
@@ -51,6 +52,9 @@ export function useScopedModelDisabledReason(
       const options = getCustomModelOptionsByInstance(
         mergeEnvironmentSettings(candidate.settings, settings),
         providers,
+        undefined,
+        undefined,
+        purpose,
       ).get(instanceId);
       if (
         !entry?.enabled ||

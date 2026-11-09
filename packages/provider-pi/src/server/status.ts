@@ -41,6 +41,7 @@ import {
   type ProviderMaintenanceCapabilities,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import { EMPTY_PI_MODEL_CAPABILITIES, piModelCapabilities } from "./modelCapabilities.ts";
+import { buildPiTextGenerationLaunch } from "./textGeneration.ts";
 import {
   parsePiDiscoveredCommands,
   withPiBuiltinSlashCommands,
@@ -135,13 +136,11 @@ function parseDiscoveredModels(
   return Result.succeed(parsed);
 }
 
-const makePiDiscoveryConnection = Effect.fnUntraced(function* (
-  piSettings: PiSettings,
-  environment: NodeJS.ProcessEnv,
+const buildPiDiscoveryLaunch = (
   launchArgs: ReadonlyArray<string>,
-  cwd?: string,
-) {
-  const launch = buildPiRpcLaunch({
+  environment: NodeJS.ProcessEnv,
+) =>
+  buildPiRpcLaunch({
     launchArgs,
     environment,
     mcpSession: undefined,
@@ -149,6 +148,12 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
     ephemeral: true,
     shortLived: true,
   });
+
+const makePiDiscoveryConnection = Effect.fnUntraced(function* (
+  piSettings: PiSettings,
+  launch: ReturnType<typeof buildPiRpcLaunch>,
+  cwd?: string,
+) {
   const connection = yield* makePiRpcConnection({
     command: piSettings.binaryPath || "pi",
     args: launch.args,
@@ -163,18 +168,53 @@ const makePiDiscoveryConnection = Effect.fnUntraced(function* (
   return connection;
 });
 
+/** Model slugs text generation's own launch lists, which loads no extensions or packages. */
+const listPiTextGenerationModelSlugs = Effect.fnUntraced(function* (
+  piSettings: PiSettings,
+  environment: NodeJS.ProcessEnv,
+  launchArgs: ReadonlyArray<string>,
+  cwd?: string,
+) {
+  const connection = yield* makePiDiscoveryConnection(
+    piSettings,
+    buildPiTextGenerationLaunch(launchArgs, environment),
+    cwd,
+  );
+  const modelsData = yield* connection.request({ type: "get_available_models" });
+  const models = yield* Effect.fromResult(parseDiscoveredModels(modelsData, undefined));
+  return new Set(models.map((model) => model.slug));
+}, Effect.scoped);
+
 const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv,
   launchArgs: ReadonlyArray<string>,
   cwd?: string,
 ) {
-  const connection = yield* makePiDiscoveryConnection(piSettings, environment, launchArgs, cwd);
-  const stateData = yield* connection.request({ type: "get_state" });
-  const modelsData = yield* connection.request({ type: "get_available_models" });
-  const commandsData = yield* connection
-    .request({ type: "get_commands" })
-    .pipe(Effect.orElseSucceed(() => undefined));
+  const [{ stateData, modelsData, commandsData }, textGenerationSlugs] = yield* Effect.all(
+    [
+      Effect.gen(function* () {
+        const connection = yield* makePiDiscoveryConnection(
+          piSettings,
+          buildPiDiscoveryLaunch(launchArgs, environment),
+          cwd,
+        );
+        const stateData = yield* connection.request({ type: "get_state" });
+        const modelsData = yield* connection.request({ type: "get_available_models" });
+        const commandsData = yield* connection
+          .request({ type: "get_commands" })
+          .pipe(Effect.orElseSucceed(() => undefined));
+        return { stateData, modelsData, commandsData };
+      }),
+      // Unknown availability keeps every model offered; text generation then names the cause.
+      listPiTextGenerationModelSlugs(piSettings, environment, launchArgs, cwd).pipe(
+        // This optional probe must finish before the normal discovery deadline.
+        Effect.timeout("10 seconds"),
+        Effect.option,
+      ),
+    ],
+    { concurrency: "unbounded" },
+  );
   const discoveredModels = yield* Effect.fromResult(parseDiscoveredModels(modelsData, stateData));
   const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
   // Pi lists only models of providers it holds credentials for, including extension, virtual and
@@ -183,7 +223,13 @@ const discoverPiViaRpc = Effect.fn("PiProviderStatus.discoverPiViaRpc")(function
   const activeProvider = recordString(activeModel, "provider");
   const activeModelId = recordString(activeModel, "id");
   return {
-    models: discoveredModels,
+    models: Option.match(textGenerationSlugs, {
+      onNone: () => discoveredModels,
+      onSome: (slugs) =>
+        discoveredModels.map((model) =>
+          slugs.has(model.slug) ? model : { ...model, supportsTextGeneration: false },
+        ),
+    }),
     slashCommands: withPiBuiltinSlashCommands(slashCommands),
     skills,
     authenticated: discoveredModels.length > 0,
@@ -204,8 +250,7 @@ export const discoverPiCommandsForCwd = Effect.fn("discoverPiCommandsForCwd")(
     }
     const connection = yield* makePiDiscoveryConnection(
       piSettings,
-      environment,
-      launchArgs.args,
+      buildPiDiscoveryLaunch(launchArgs.args, environment),
       cwd,
     );
     // A failed read must not replace a previously usable workspace catalog with an empty one.

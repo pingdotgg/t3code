@@ -6,6 +6,7 @@ import {
   type ServerProvider,
   TextGeneratorConfig,
   type TextGeneratorModel,
+  textGenerationProviders,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { AsyncResult } from "effect/reactivity";
@@ -517,7 +518,7 @@ function TextGenerationTaskPicker({
   const targets = useTextGenerationTargets({
     environmentId,
     settings,
-    providers: providers.filter((provider) => provider.supportsTextGeneration !== false),
+    providers: textGenerationProviders(providers),
     projectId: null,
     selections: [selection],
   });
@@ -568,6 +569,7 @@ function TextGenerationTaskPicker({
             targets.providers,
             selection.instanceId,
             selection.model,
+            "textGeneration",
           )}
           triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
           onInstanceModelChange={(instanceId, model) =>

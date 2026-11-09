@@ -5,6 +5,7 @@ import {
   type ServerSettings,
   type SourceControlWritingStyleMode,
   textGeneratorForSelection,
+  textGenerationProviders,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -105,11 +106,9 @@ export function SourceControlWritingSettingsSection() {
     style.mode !== defaults.mode ||
     style.customInstructions !== defaults.customInstructions;
 
-  const textGenerationProviders = serverProviders.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
+  const writingProviders = textGenerationProviders(serverProviders);
   const instanceEntries = providerInstanceEntriesFor(
-    textGenerationProviders,
+    writingProviders,
     settings,
     target?.projectId ?? null,
   );
@@ -117,7 +116,7 @@ export function SourceControlWritingSettingsSection() {
   const writerTargets = useTextGenerationTargets({
     environmentId,
     settings,
-    providers: textGenerationProviders,
+    providers: writingProviders,
     projectId: target?.projectId ?? null,
     selections: [settings.sourceControlWriterModelSelection, settings.textGenerationModelSelection],
   });
@@ -155,14 +154,19 @@ export function SourceControlWritingSettingsSection() {
     projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
+    "textGeneration",
   );
-  const writerModelDisabledReason = useScopedModelDisabledReason(settings, writerEntries);
+  const writerModelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    writerEntries,
+    "textGeneration",
+  );
   const writerInstanceEntry = writerEntries.find(
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
   const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
   // Resolve against agents this project can use, so the fallback never lands on one it turned off.
-  const projectAgentProviders = textGenerationProviders.filter((provider) =>
+  const projectAgentProviders = writingProviders.filter((provider) =>
     instanceEntries.some(
       (entry) => entry.instanceId === provider.instanceId && entry.enabled && entry.isAvailable,
     ),
@@ -183,6 +187,7 @@ export function SourceControlWritingSettingsSection() {
     projectAgentProviders,
     reviewGuideSelection.instanceId,
     reviewGuideSelection.model,
+    "textGeneration",
   );
   const canEnableReviewGuideModel = instanceEntries.some(
     (entry) =>

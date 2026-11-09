@@ -24,6 +24,23 @@ const piTurnErrorDetail = (errorMessage: string | undefined) => {
     : `Pi could not generate text: the model provider returned HTTP ${status}.`;
 };
 
+/** The Pi launch text generation runs; status lists its models to mark which ones it can load. */
+export const buildPiTextGenerationLaunch = (
+  launchArgs: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+) =>
+  buildPiRpcLaunch({
+    launchArgs,
+    environment,
+    mcpSession: undefined,
+    extensionPath: undefined,
+    ephemeral: true,
+    shortLived: true,
+    disableExtensions: true,
+    // Background naming/content helpers must never mutate the workspace.
+    disableTools: true,
+  });
+
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -41,17 +58,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
           detail: resolvedLaunchArgs.message,
         });
       }
-      const launch = buildPiRpcLaunch({
-        launchArgs: resolvedLaunchArgs.args,
-        environment,
-        mcpSession: undefined,
-        extensionPath: undefined,
-        ephemeral: true,
-        shortLived: true,
-        disableExtensions: true,
-        // Background naming/content helpers must never mutate the workspace.
-        disableTools: true,
-      });
+      const launch = buildPiTextGenerationLaunch(resolvedLaunchArgs.args, environment);
       const connection = yield* makePiRpcConnection({
         command: piSettings.binaryPath || "pi",
         args: launch.args,

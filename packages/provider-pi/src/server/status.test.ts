@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -57,14 +58,52 @@ function piProbeSpawner(version: string) {
   });
 }
 
-/** Fails the test if status runs `pi auth check` without `authCheck` or with other arguments. */
+/**
+ * Fails the test if status runs `pi auth check` without `authCheck` or with other arguments.
+ * A `--no-extensions` launch lists `textGenerationInventory`, or fails when it is `null`.
+ */
 const piDiscoverySpawner = (
   inventory: unknown,
   options: {
     readonly version?: string;
     readonly state?: unknown;
     readonly authCheck?: string | undefined;
+    readonly textGenerationInventory?: unknown;
+    readonly textGenerationAnswered?: Effect.Effect<void>;
+    readonly discoveryAnswered?: Effect.Effect<void>;
   } = {},
+) =>
+  Effect.succeed(
+    ChildProcessSpawner.make((command) => {
+      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
+      if (args.includes("--version")) {
+        return Effect.succeed(processHandle({ stdout: `pi ${options.version ?? "0.84.3"}\n` }));
+      }
+      if (args[0] === "auth") {
+        const expected = ["auth", "check", "--provider", "openai", "--json", "--no-refresh"];
+        return options.authCheck === undefined || args.join(" ") !== expected.join(" ")
+          ? Effect.die(`Unexpected pi ${args.join(" ")}`)
+          : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
+      }
+      if (!args.includes("--no-extensions")) {
+        return piRpcProcess(inventory, options.state, Effect.void, options.discoveryAnswered);
+      }
+      return options.textGenerationInventory === null
+        ? Effect.succeed(processHandle({ stderr: "RPC startup failed", exitCode: 1 }))
+        : piRpcProcess(
+            options.textGenerationInventory ?? inventory,
+            options.state,
+            options.textGenerationAnswered,
+          );
+    }),
+  );
+
+/** One `pi --mode rpc` process answering from `inventory`. */
+const piRpcProcess = (
+  inventory: unknown,
+  state: unknown,
+  modelsAnswered: Effect.Effect<void> = Effect.void,
+  commandsAnswered: Effect.Effect<void> = Effect.void,
 ) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -85,37 +124,25 @@ const piDiscoverySpawner = (
               : request.type === "get_commands"
                 ? { commands: [] }
                 : request.type === "get_state"
-                  ? (options.state ?? {})
+                  ? (state ?? {})
                   : {};
+          if (request.type === "get_available_models") yield* modelsAnswered;
           yield* Queue.offer(
             stdout,
             encoder.encode(
               `${encodeJsonLine({ type: "response", id: request.id, command: request.type, success: true, data })}\n`,
             ),
           );
+          if (request.type === "get_commands") yield* commandsAnswered;
         }
       }),
     );
-    return ChildProcessSpawner.make((command) => {
-      const args = ChildProcess.isStandardCommand(command) ? command.args : [];
-      if (args.includes("--version")) {
-        return Effect.succeed(processHandle({ stdout: `pi ${options.version ?? "0.84.3"}\n` }));
-      }
-      if (args[0] === "auth") {
-        const expected = ["auth", "check", "--provider", "openai", "--json", "--no-refresh"];
-        return options.authCheck === undefined || args.join(" ") !== expected.join(" ")
-          ? Effect.die(`Unexpected pi ${args.join(" ")}`)
-          : Effect.succeed(processHandle({ stdout: options.authCheck, exitCode: 1 }));
-      }
-      return Effect.succeed(
-        ChildProcessSpawner.makeHandle({
-          ...processHandle({}),
-          exitCode: Effect.never,
-          isRunning: Effect.succeed(true),
-          stdin,
-          stdout: Stream.fromQueue(stdout),
-        }),
-      );
+    return ChildProcessSpawner.makeHandle({
+      ...processHandle({}),
+      exitCode: Effect.never,
+      isRunning: Effect.succeed(true),
+      stdin,
+      stdout: Stream.fromQueue(stdout),
     });
   });
 
@@ -273,6 +300,79 @@ describe("PiProvider", () => {
       assert.equal(snapshot.auth.status, "authenticated");
       if (row.message === undefined) assert.isUndefined(snapshot.message);
       else assert.include(snapshot.message ?? "", row.message);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([
+    {
+      label: "lists only built-in and models.json models",
+      hangs: false,
+      textGenerationInventory: {
+        models: [
+          { provider: "openai", id: "gpt-6-luna" },
+          { provider: "local", id: "qwen-coder" },
+        ],
+      },
+      excluded: ["auto/gpt-6-luna", "demo/echo"],
+    },
+    { label: "fails", textGenerationInventory: null, excluded: [], hangs: false },
+    { label: "hangs", textGenerationInventory: undefined, excluded: [], hangs: true },
+  ])("excludes extension models from text generation when its launch $label", (row) =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      const discoveryAnswered = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void>();
+      const spawner = yield* piDiscoverySpawner(
+        {
+          models: [
+            { provider: "openai", id: "gpt-6-luna" },
+            { provider: "local", id: "qwen-coder" },
+            { provider: "auto", id: "gpt-6-luna" },
+            { provider: "demo", id: "echo" },
+          ],
+        },
+        {
+          textGenerationInventory: row.textGenerationInventory,
+          discoveryAnswered: Deferred.succeed(discoveryAnswered, undefined).pipe(Effect.asVoid),
+          textGenerationAnswered: row.hangs
+            ? Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        },
+      );
+      const fiber = yield* checkPiProviderStatus({
+        ...settings,
+        customModels: ["openai/gpt-6-next"],
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.tap(() => Deferred.succeed(completed, undefined)),
+        Effect.forkChild,
+      );
+      if (row.hangs) {
+        yield* Deferred.await(probeStarted);
+        yield* Deferred.await(discoveryAnswered);
+        yield* TestClock.adjust("15 seconds");
+        assert.isTrue(yield* Deferred.isDone(completed));
+      }
+      const snapshot = yield* Fiber.join(fiber);
+      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.auth.status, "authenticated");
+      assert.deepEqual(
+        snapshot.models.map((model) => model.slug),
+        [
+          "default",
+          "openai/gpt-6-luna",
+          "local/qwen-coder",
+          "auto/gpt-6-luna",
+          "demo/echo",
+          "openai/gpt-6-next",
+        ],
+      );
+      assert.deepEqual(
+        snapshot.models
+          .filter((model) => model.supportsTextGeneration === false)
+          .map((model) => model.slug),
+        row.excluded,
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

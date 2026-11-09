@@ -24,6 +24,7 @@ import {
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
   type VoiceShortcutMode,
+  textGenerationProviders,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
@@ -463,14 +464,14 @@ function CleanupModelRow() {
   const targets = useTextGenerationTargets({
     environmentId: environment?.environmentId ?? null,
     settings,
-    providers: providers.filter((provider) => provider.supportsTextGeneration !== false),
+    providers: textGenerationProviders(providers),
     projectId: null,
     selections: [
       settings.speechPostProcessingModelSelection,
       settings.textGenerationModelSelection,
     ],
   });
-  const textGenerationProviders = targets.providers;
+  const targetProviders = targets.providers;
   const instanceEntries = targets.entries;
   const hasProvider = instanceEntries.some((entry) => entry.enabled && entry.isAvailable);
   const dedicated = settings.speechPostProcessingModelSelection !== null;
@@ -479,19 +480,24 @@ function CleanupModelRow() {
       ...settings,
       textGenerationModelSelection: resolveSpeechPostProcessingModelSelection(
         settings,
-        textGenerationProviders,
+        targetProviders,
       ),
     },
-    textGenerationProviders,
+    targetProviders,
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    targetProviders,
     selection.instanceId,
     selection.model,
+    "textGeneration",
   );
   const instanceEntry = instanceEntries.find((entry) => entry.instanceId === selection.instanceId);
-  const modelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const modelDisabledReason = useScopedModelDisabledReason(
+    settings,
+    instanceEntries,
+    "textGeneration",
+  );
   const setModel = (next: ReturnType<typeof createModelSelection>) => {
     const reason = modelDisabledReason(next.instanceId, next.model);
     if (reason) {

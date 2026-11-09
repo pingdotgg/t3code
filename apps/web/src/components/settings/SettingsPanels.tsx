@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type SidebarProjectGroupingMode,
+  textGenerationProviders,
 } from "@t3tools/contracts";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -1536,15 +1537,12 @@ export function ThreadsSettingsPanel() {
   const textGenerationTargets = useTextGenerationTargets({
     environmentId,
     settings,
-    providers: serverProviders.filter((provider) => provider.supportsTextGeneration !== false),
+    providers: textGenerationProviders(serverProviders),
     projectId: target?.projectId ?? null,
     selections: [settings.textGenerationModelSelection],
   });
-  const textGenerationProviders = textGenerationTargets.providers;
-  const textGenerationModelSelection = resolveAppModelSelectionState(
-    settings,
-    textGenerationProviders,
-  );
+  const targetProviders = textGenerationTargets.providers;
+  const textGenerationModelSelection = resolveAppModelSelectionState(settings, targetProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
@@ -1559,9 +1557,10 @@ export function ThreadsSettingsPanel() {
     textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
   const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    targetProviders,
     textGenInstanceId,
     textGenModel,
+    "textGeneration",
   );
   const isTextGenerationModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -1570,6 +1569,7 @@ export function ThreadsSettingsPanel() {
   const textGenerationModelDisabledReason = useScopedModelDisabledReason(
     settings,
     textGenerationModelInstanceEntries,
+    "textGeneration",
   );
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
@@ -1842,7 +1842,7 @@ export function ThreadsSettingsPanel() {
                           ...settings,
                           textGenerationModelSelection: createModelSelection(instanceId, model),
                         },
-                        textGenerationProviders,
+                        targetProviders,
                       ),
                     });
                   }}
@@ -1867,7 +1867,7 @@ export function ThreadsSettingsPanel() {
                               nextOptions,
                             ),
                           },
-                          textGenerationProviders,
+                          targetProviders,
                         ),
                       });
                     }}

@@ -25,6 +25,7 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
   resolveAppModelSelectionState,
   resolveEffectiveDefaultModelSelection,
@@ -805,6 +806,59 @@ describe("instance-scoped model selection", () => {
       ProviderInstanceId.make("codex"),
     );
   });
+  it.each([
+    ["an extension model", "auto/gpt-6-luna", "default", false],
+    ["a custom alias of an extension model", "auto/gpt-6-luna", "default", true],
+    ["a built-in model", "openai/gpt-6-luna", "openai/gpt-6-luna", false],
+    ["a models.json model", "local/qwen-coder", "local/qwen-coder", false],
+    ["a custom model", "openai/gpt-6-next", "openai/gpt-6-next", false],
+    ["a stale model", "removed/model", "default", false],
+    ["the runtime default", "default", "default", false],
+  ])(
+    "resolves a stored Pi text generation pick of %s, %s, to %s",
+    (_label, stored, expected, customExtension) => {
+      const pi = provider({
+        provider: ProviderDriverKind.make("pi"),
+        instanceId: "pi",
+        models: ["default", "openai/gpt-6-luna", "local/qwen-coder", "auto/gpt-6-luna"],
+      });
+      const providers = [
+        {
+          ...pi,
+          models: pi.models.map((model) =>
+            model.slug === "auto/gpt-6-luna" ? { ...model, supportsTextGeneration: false } : model,
+          ),
+        },
+      ];
+      const settings: UnifiedSettings = {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerInstances: {
+          [ProviderInstanceId.make("pi")]: {
+            driver: ProviderDriverKind.make("pi"),
+            config: {
+              customModels: customExtension
+                ? ["openai/gpt-6-next", "auto/gpt-6-luna"]
+                : ["openai/gpt-6-next"],
+            },
+          },
+        },
+        textGenerationModelSelection: createModelSelection(ProviderInstanceId.make("pi"), stored),
+      };
+
+      expect(resolveAppModelSelectionState(settings, providers).model).toBe(expected);
+      expect(
+        getCustomModelOptionsByInstance(settings, providers)
+          .get(ProviderInstanceId.make("pi"))
+          ?.map((model) => model.slug),
+      ).toContain("auto/gpt-6-luna");
+      expect(
+        getCustomModelOptionsByInstance(settings, providers, null, null, "textGeneration")
+          .get(ProviderInstanceId.make("pi"))
+          ?.map((model) => model.slug),
+      ).not.toContain("auto/gpt-6-luna");
+    },
+  );
+
   it("falls back to the text generation default, not the chat default, for a removed model", () => {
     const codex = provider({ instanceId: "codex", models: ["gpt-6-astra", "gpt-6-luna"] });
     const providers = [

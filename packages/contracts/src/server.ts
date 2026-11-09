@@ -83,6 +83,8 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  // False when the text generation launch cannot load this model; absent preserves legacy availability.
+  supportsTextGeneration: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -277,6 +279,11 @@ export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
 /** Legacy producers omit this field and support text generation. */
 export const isProviderTextGenerationCapable = (snapshot: ServerProvider): boolean =>
   snapshot.supportsTextGeneration !== false;
+
+/** Text-capable providers, preserving model capabilities for option derivation. */
+export const textGenerationProviders = (
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider> => providers.filter(isProviderTextGenerationCapable);
 
 export const OtlpEndpointSource = Schema.Literals(["environment", "bootstrap", "settings"]);
 export type OtlpEndpointSource = typeof OtlpEndpointSource.Type;
