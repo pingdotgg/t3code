@@ -351,6 +351,18 @@ export function findLayoutPane(
   return findPane(state, paneId);
 }
 
+const layoutTabIds = (state: LayoutState): string[] =>
+  state.workspaces.flatMap((workspace) =>
+    workspace.columns.flatMap((column) =>
+      column.panes.flatMap((pane) => pane.tabs.map((tab) => tab.id)),
+    ),
+  );
+
+export function closedLayoutTabIds(before: LayoutState, after: LayoutState): string[] {
+  const open = new Set(layoutTabIds(after));
+  return layoutTabIds(before).filter((tabId) => !open.has(tabId));
+}
+
 /** How many tabs the layout holds across every workspace. */
 export function countLayoutTabs(state: LayoutState): number {
   let count = 0;

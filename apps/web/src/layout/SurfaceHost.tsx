@@ -15,7 +15,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
 import { cn, isMacPlatform } from "../lib/utils";
 import { sidewaysWheelScrollsStrip, wheelDeltaPx } from "../motion/gesture";
-import { keepClosingPane, usePaneMotion } from "../motion/paneMotion";
+import { usePaneMotion } from "../motion/paneMotion";
 import {
   PanelAnimationSuppressionProvider,
   usePanelNavigationSuppression,
@@ -59,7 +59,6 @@ import { useThreeFingerSwipe } from "./useThreeFingerSwipe";
 import { ThreadSurfaceServices, ThreadSurfaceTab } from "../components/ThreadSurfaceTab";
 import { findThreadChat, useLayoutSurfaceSync } from "./surfaceSync";
 import {
-  findLayoutTab,
   isLayoutPageContent,
   selectFocusedPane,
   selectFocusedTab,
@@ -1711,7 +1710,6 @@ function LayoutSurfaceTabSurface({
   // Focus that lands on the pane (cmd+J, alt+cmd+B, a launcher's letter, a
   // click on its tab) moves the keyboard in.
   usePaneKeyboard(slotRef, focused && !staged, surfaceKeyboardTarget);
-  useKeepClosingPane(slotRef, tabId);
   const claimFocus = () => {
     const store = useLayoutStore.getState();
     if (selectFocusedTab(store.layout)?.id !== tabId) store.focusTab(tabId);
@@ -1763,17 +1761,6 @@ function settingsKeyboardTarget(pane: HTMLElement): HTMLElement {
 function launcherKeyboardTarget(pane: HTMLElement): HTMLElement | null {
   const launcher = pane.querySelector<HTMLElement>("[data-new-tab-launcher]");
   return launcher ? launcherFocusTarget(launcher) : null;
-}
-
-function useKeepClosingPane(paneRef: React.RefObject<HTMLElement | null>, tabId: string): void {
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Copy a closed tab's pane before React detaches it, so its ghost slides away showing it.
-  useLayoutEffect(() => {
-    const pane = paneRef.current;
-    return () => {
-      const closed = !findLayoutTab(useLayoutStore.getState().layout, (tab) => tab.id === tabId);
-      if (pane && closed) keepClosingPane(tabId, pane);
-    };
-  }, [paneRef, tabId]);
 }
 
 /** Release DOM focus immediately when layout focus leaves, even if the next pane is still rendering;
@@ -2034,7 +2021,6 @@ function LayoutPageSurface({
   } satisfies LayoutPaneState;
   const settingsRef = useRef<HTMLDivElement | null>(null);
   usePaneKeyboard(settingsRef, focused && !staged, settingsKeyboardTarget);
-  useKeepClosingPane(settingsRef, tabId);
   const claimFocus = () => {
     const store = useLayoutStore.getState();
     if (selectFocusedTab(store.layout)?.id !== tabId) store.focusTab(tabId);
