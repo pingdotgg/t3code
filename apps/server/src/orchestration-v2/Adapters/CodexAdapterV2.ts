@@ -6149,11 +6149,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 return false;
               }
               if (input.stalledRetry !== undefined) {
-                // Model output clears the retry under this permit, so check it here.
+                // Checked under the permit so item/started cannot clear the retry mid-finalize.
                 const retries = yield* Ref.get(providerRetries);
-                if (retries.get(input.context.providerTurnId) !== input.stalledRetry.state)
+                if (
+                  retries.get(input.context.providerTurnId) !== input.stalledRetry.state ||
+                  (yield* Ref.get(interruptingNativeTurns)).has(input.nativeTurnId)
+                )
                   return false;
-                input.context.latestProviderFailure = input.stalledRetry.failure;
+                input.context.latestProviderFailure ??= input.stalledRetry.failure;
               }
               input.context.fileChangeKindsByItem.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
