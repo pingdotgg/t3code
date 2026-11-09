@@ -252,12 +252,14 @@ export function captureAssistantTextSelection(
   return selector === null ? null : { source, selector, range };
 }
 
-/** The whole response as a citation, cut to the citation limit. `source` is null when virtualized away. */
+/** The whole response as a citation, cut to the citation limit. Falls back to the raw text when
+ * the source is virtualized away or renders no text, as in an image-only response. */
 export function captureAssistantMessage(
   source: HTMLElement | null,
   fallbackText: string,
 ): AssistantTextSelector | null {
-  const text = source ? readAssistantText(source).text : fallbackText;
+  const rendered = source ? readAssistantText(source).text : "";
+  const text = rendered.trim() ? rendered : fallbackText;
   const rawStart = text.length - text.trimStart().length;
   let rawEnd = Math.min(text.trimEnd().length, rawStart + ASSISTANT_CITATION_MAX_TEXT_LENGTH);
   if (splitsSurrogatePair(text, rawEnd)) rawEnd -= 1;
