@@ -242,7 +242,6 @@ export function usePullRequestCloseBatch(
 export interface PullRequestThreadTask {
   prompt: string;
   reviewComments?: ReadonlyArray<ReviewCommentContext>;
-  additive?: boolean;
 }
 
 export function writeHandoffToComposer(
@@ -250,13 +249,6 @@ export function writeHandoffToComposer(
   task: PullRequestThreadTask,
 ) {
   const store = useComposerDraftStore.getState();
-  if (task.additive === true) {
-    // The caret may be in a provider question's answer, which is not this draft.
-    for (const comment of task.reviewComments ?? []) {
-      store.addReviewComment(target, comment, { insertAtCaret: false });
-    }
-    return;
-  }
   const draft = store.getComposerDraft(target);
   const next = appendHandoff(
     { prompt: draft?.prompt ?? "", reviewComments: draft?.reviewComments ?? [] },

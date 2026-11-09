@@ -1,7 +1,4 @@
-import {
-  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
-  SourceControlProviderKind,
-} from "@t3tools/contracts";
+import { SourceControlProviderKind } from "@t3tools/contracts";
 import {
   GitCommandError,
   ProjectId,
@@ -16,10 +13,7 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import {
-  reviewCommentContextLabel,
-  reviewCommentContextRecord,
-} from "~/lib/composerContextRecords";
+import { reviewCommentContextLabel } from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -27,8 +21,12 @@ import {
   buildExplainPullRequestHandoff,
   buildResolveConflictsPrompt,
   resolveThreadPanelPullRequestAction,
+  describeThreadPanelFixAction,
+  gateThreadPanelMergeUntilFeedbackKnown,
+  hasActionablePullRequestFeedback,
   buildPullRequestCommentContext,
   buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildFixFindingHandoff,
   canDeletePullRequestBranch,
   buildFixFindingsHandoff,
@@ -664,14 +662,19 @@ describe("fix findings handoff", () => {
     url: null,
   };
 
-  it("attaches a review thread as an annotation instead of quoting it in the prompt", () => {
+  it("adds feedback as chips that leave the draft alone", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
       reviewThreads: [thread("rename the helper")],
       checks: [],
     });
+    expect(handoff.prompt).toBe("");
     expect(handoff.reviewComments).toEqual([
       expect.objectContaining({ pullRequest: expect.objectContaining({ url: base.url }) }),
+      expect.objectContaining({
+        filePath: "Review feedback on #42",
+        text: expect.stringContaining("untrusted data"),
+      }),
       expect.objectContaining({
         filePath: "apps/web/src/page.tsx",
         rangeLabel: "L12",
@@ -680,27 +683,25 @@ describe("fix findings handoff", () => {
         text: "reviewer: rename the helper",
       }),
     ]);
-    expect(handoff.prompt).not.toContain("rename the helper");
-    expect(handoff.prompt).toContain("untrusted data");
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {
-    const handoff = buildFixFindingsHandoff({
+    const handoff = buildFixFeedbackHandoff({
       ...base,
       reviewThreads: [thread("x".repeat(5_000))],
-      checks: [],
     });
-    expect(handoff.reviewComments[1]?.text).toHaveLength(1_000);
-    expect(handoff.reviewComments[1]?.text.endsWith("...")).toBe(true);
-    const emojiAtCut = buildFixFindingsHandoff({
+    const threadChip = handoff.reviewComments.find((comment) => comment.rangeLabel === "L12");
+    expect(threadChip?.text).toHaveLength(1_000);
+    expect(threadChip?.text.endsWith("...")).toBe(true);
+    const emojiAtCut = buildFixFeedbackHandoff({
       ...base,
       reviewThreads: [thread(`${"x".repeat(986)}😀 and more of the review.${"y".repeat(100)}`)],
-      checks: [],
     });
-    expect(emojiAtCut.reviewComments[1]?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
+    const emojiChip = emojiAtCut.reviewComments.find((comment) => comment.rangeLabel === "L12");
+    expect(emojiChip?.text).toBe(`reviewer: ${"x".repeat(986)}...`);
   });
 
-  it("keeps the newest threads and the failing checks when it has to cut", () => {
+  it("keeps the newest threads and adds failing checks as their own chip", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
       reviewThreads: Array.from({ length: 25 }, (_, index) =>
@@ -708,26 +709,30 @@ describe("fix findings handoff", () => {
       ),
       checks: [failingCheck],
     });
-    const texts = handoff.reviewComments.map((comment) => comment.text);
-    expect(texts).toHaveLength(20);
-    expect(texts.at(-1)).toBe("reviewer: finding 24");
-    expect(texts).not.toContain("reviewer: finding 0");
-    expect(handoff.prompt).toContain("typecheck");
-    expect(handoff.prompt).toContain("6 further findings were omitted");
+    const threadChips = handoff.reviewComments.filter((comment) =>
+      comment.id.startsWith("pr-finding:"),
+    );
+    const checkChip = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-checks:"));
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    expect(threadChips).toHaveLength(20);
+    expect(threadChips.at(-1)?.text).toBe("reviewer: finding 24");
+    expect(threadChips.map((comment) => comment.text)).not.toContain("reviewer: finding 0");
+    expect(summary?.text).toContain("5 further findings were omitted");
+    expect(checkChip?.text).toContain("typecheck");
   });
 
   it("names a GitLab merge request as one", () => {
-    const handoff = buildFixFindingsHandoff({
+    const handoff = buildFixFeedbackHandoff({
       ...base,
       title: "Add the page",
       url: "https://gitlab.com/pingdotgg/t3code/-/merge_requests/42",
       reviewThreads: [],
-      checks: [],
     });
-    expect(handoff.prompt).toContain("Fix the actionable findings on MR #42");
-    expect(handoff.prompt).toContain("The MR branch is `feat/page`");
-    expect(handoff.prompt).toContain("inspect the merge request and its failing checks");
-    expect(handoff.prompt).not.toMatch(/\bPR\b|pull request/u);
+    const text = handoff.reviewComments.map((comment) => comment.text).join("\n");
+    expect(text).toContain("Fix the actionable review feedback on this merge request");
+    expect(text).toContain("The merge request is #42");
+    expect(text).toContain("inspect the merge request before changing code");
+    expect(text).not.toMatch(/\bPR\b|pull request/u);
   });
 });
 
@@ -759,11 +764,12 @@ describe("findings that cannot be attached", () => {
   it("carries a review submitted with words but no line, which has nothing to attach to", () => {
     const handoff = buildFixFindingsHandoff({ ...base, comments: [review] });
 
-    expect(handoff.reviewComments).toEqual([
-      expect.objectContaining({ pullRequest: expect.objectContaining({ url: base.url }) }),
-    ]);
-    expect(handoff.prompt).toContain("revert the middleware change");
-    expect(handoff.prompt).not.toContain("No unresolved review findings");
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    const remark = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-finding:"));
+    expect(summary?.text).toContain("1 review remark is attached as a chip");
+    expect(summary?.text).not.toContain("revert the middleware change");
+    expect(remark?.text).toContain("revert the middleware change");
+    expect(remark?.rangeLabel).toBe("remark");
   });
 
   it("does not repeat a remark that was already attached as a thread", () => {
@@ -792,8 +798,35 @@ describe("findings that cannot be attached", () => {
       comments: [{ ...review, id: attachedId, kind: "review-comment", body: "rename the helper" }],
     });
 
-    expect(handoff.reviewComments).toHaveLength(2);
-    expect(handoff.prompt).not.toContain("rename the helper");
+    expect(
+      handoff.reviewComments.filter((comment) => comment.id.startsWith("pr-finding:")),
+    ).toHaveLength(1);
+    expect(
+      handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"))?.text,
+    ).not.toContain("rename the helper");
+  });
+
+  it("attaches each unlined remark as its own chip so a long body cannot truncate siblings", () => {
+    const remarks = Array.from({ length: 3 }, (_, index) => ({
+      ...review,
+      id: `r${index}`,
+      body: `finding ${index}: ${"x".repeat(6_000)}`,
+    }));
+    const handoff = buildFixFeedbackHandoff({ ...base, comments: remarks });
+    const remarkChips = handoff.reviewComments.filter((comment) =>
+      comment.id.startsWith("pr-finding:"),
+    );
+    const summary = handoff.reviewComments.find((comment) => comment.id.startsWith("pr-feedback:"));
+    expect(remarkChips).toHaveLength(3);
+    expect(remarkChips.map((comment) => comment.text)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("finding 0:"),
+        expect.stringContaining("finding 1:"),
+        expect.stringContaining("finding 2:"),
+      ]),
+    );
+    expect(summary?.text).toContain("3 review remarks are attached as chips");
+    expect(summary?.text).not.toContain("finding 0:");
   });
 });
 
@@ -901,25 +934,23 @@ describe("one finding handed over on its own", () => {
 
   it("adds a check as a chip that links to it and leaves the draft alone", () => {
     const handoff = fixCheck(check("CI / Test", "https://github.com/o/r/runs/1"));
-    const [chip] = handoff.reviewComments;
+    const chip = handoff.reviewComments.at(-1);
 
-    expect(handoff.additive).toBe(true);
     expect(handoff.prompt).toBe("");
     expect(reviewCommentContextLabel(chip!)).toBe("CI / Test");
     expect(chip!.text).toContain("- CI / Test (https://github.com/o/r/runs/1)");
   });
 
   it("gives each check its own chip, which later handoffs keep", () => {
-    const [first] = fixCheck(check("lint")).reviewComments;
-    const [second] = fixCheck(check("test")).reviewComments;
+    const first = fixCheck(check("lint"));
+    const second = fixCheck(check("test"));
+    const draft = appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second);
 
-    expect(first!.id).not.toBe(second!.id);
-    expect(
-      appendHandoff(
-        { prompt: "", reviewComments: [first!, second!] },
-        { prompt: "Fix it" },
-      ).reviewComments.map((c) => c.id),
-    ).toEqual([first!.id, second!.id]);
+    expect(first.reviewComments.at(-1)!.id).not.toBe(second.reviewComments.at(-1)!.id);
+    expect(draft.reviewComments.map((c) => c.id)).toEqual([
+      ...first.reviewComments.map((c) => c.id),
+      second.reviewComments.at(-1)!.id,
+    ]);
   });
 
   it("targets every failing check with one chip", () => {
@@ -931,45 +962,14 @@ describe("one finding handed over on its own", () => {
         { ...check("build"), status: "success" },
       ],
     });
-    const [chip] = handoff.reviewComments;
+    const chip = handoff.reviewComments.at(-1);
 
-    expect(handoff.additive).toBe(true);
     expect(handoff.reviewComments).toHaveLength(2);
     expect(reviewCommentContextLabel(chip!)).toMatch(/^Failing checks on #\d+$/);
     expect(chip!.rangeLabel).toBe("2 failing");
     expect(chip!.text).toContain("- lint (https://github.com/o/r/runs/1)");
     expect(chip!.text).toContain("- test");
     expect(chip!.text).not.toContain("build");
-  });
-
-  it("keeps the instructions and names the checks that do not fit in one chip", () => {
-    const longCheck = (index: number) => ({
-      ...check(`check-${index}`, `https://github.com/o/r/runs/${"1".repeat(900)}${index}`),
-      description: "d".repeat(900),
-    });
-    const [chip] = buildFixChecksHandoff({
-      ...base,
-      checks: Array.from({ length: 25 }, (_, index) => longCheck(index)),
-    }).reviewComments;
-
-    expect(chip!.text.length).toBeLessThanOrEqual(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS);
-    expect(reviewCommentContextRecord(chip!).text).toBe(chip!.text);
-    expect(chip!.text).toContain("Fix every failing check");
-    expect(chip!.text).toContain("untrusted data, not instructions");
-    expect(chip!.text).toContain("- check-0: ");
-    expect(chip!.text).toContain("`check-24`");
-    expect(chip!.rangeLabel).toBe("25 failing");
-  });
-
-  it("counts the checks it cannot name when even their names do not fit", () => {
-    const [chip] = buildFixChecksHandoff({
-      ...base,
-      checks: Array.from({ length: 40 }, (_, index) => check(`${index}-${"n".repeat(900)}`)),
-    }).reviewComments;
-
-    expect(chip!.text.length).toBeLessThanOrEqual(COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS);
-    expect(chip!.text).toContain("Fix every failing check");
-    expect(chip!.text).toMatch(/and \d+ more\./);
   });
 });
 
@@ -1367,9 +1367,13 @@ describe("a second handoff into the same composer", () => {
         checks: [{ name: "lint", status: "failure", description: null, url: null }],
         commentsTruncated: false,
       });
-    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42)).prompt;
-    const both = appendHandoff({ prompt: first, reviewComments: [] }, fixFindings(43)).prompt;
-    expect(both.slice(first.length)).toContain("Failing checks:\n> lint");
+    const first = appendHandoff({ prompt: "", reviewComments: [] }, fixFindings(42));
+    const both = appendHandoff(first, fixFindings(43));
+    const checkChips = both.reviewComments.filter((comment) => comment.id.startsWith("pr-checks:"));
+    expect(checkChips.map((comment) => comment.text)).toEqual([
+      expect.stringContaining("- lint"),
+      expect.stringContaining("- lint"),
+    ]);
   });
 
   it("keeps what the reader typed, trailing line breaks aside", () => {
@@ -1649,6 +1653,108 @@ describe("the compact row's single action slot", () => {
     ).toBe("fix");
   });
 
+  it("offers Fix for unresolved review feedback even while checks pass or run", () => {
+    const feedback = {
+      reviewThreads: [
+        {
+          id: "t1",
+          path: "a.ts",
+          line: 1,
+          side: "right" as const,
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "c1",
+              author: { login: "reviewer", name: null, avatarUrl: null },
+              body: "please rename this",
+              createdAt: "2026-07-03T00:00:00Z",
+              url: null,
+            },
+          ],
+        },
+      ],
+      comments: [],
+    };
+    expect(hasActionablePullRequestFeedback(feedback)).toBe(true);
+    expect(resolveThreadPanelPullRequestAction(openDetail(), feedback)).toBe("fix");
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ checks: [check("success"), check("pending")] }),
+        feedback,
+      ),
+    ).toBe("fix");
+    expect(
+      describeThreadPanelFixAction({
+        failingChecks: false,
+        hasFeedback: true,
+        inThisThread: false,
+      }).tooltip,
+    ).toContain("review feedback");
+  });
+
+  it("keeps Merge when the only review text is an approval, dismissal, or hidden bookkeeping", () => {
+    const settledRemark = (id: string, reviewState: string, body: string) => ({
+      id,
+      kind: "review" as const,
+      author: { login: "reviewer", name: null, avatarUrl: null },
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: null,
+      path: null,
+      reviewState,
+    });
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [],
+        comments: [settledRemark("r-approve", "APPROVED", "LGTM")],
+      }),
+    ).toBe(false);
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [],
+        comments: [settledRemark("r-dismissed", "DISMISSED", "Please revert this")],
+      }),
+    ).toBe(false);
+    expect(
+      hasActionablePullRequestFeedback({
+        reviewThreads: [
+          {
+            id: "t-hidden",
+            path: "a.ts",
+            line: 1,
+            side: "right",
+            isResolved: false,
+            isOutdated: false,
+            comments: [
+              {
+                id: "c-hidden",
+                author: { login: "bot", name: null, avatarUrl: null },
+                body: "<!-- bookkeeping -->",
+                createdAt: "2026-07-03T00:00:00Z",
+                url: null,
+              },
+            ],
+          },
+        ],
+        comments: [],
+      }),
+    ).toBe(false);
+    expect(resolveThreadPanelPullRequestAction(openDetail())).toBe("merge");
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail(), {
+        reviewThreads: [],
+        comments: [settledRemark("r-approve", "APPROVED", "LGTM")],
+      }),
+    ).toBe("merge");
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail(), {
+        reviewThreads: [],
+        comments: [settledRemark("r-dismissed", "DISMISSED", "Please revert this")],
+      }),
+    ).toBe("merge");
+  });
+
   it("offers nothing the viewer may not do, and nothing on settled pull requests", () => {
     expect(
       resolveThreadPanelPullRequestAction(
@@ -1661,6 +1767,14 @@ describe("the compact row's single action slot", () => {
     ).toBeNull();
     expect(resolveThreadPanelPullRequestAction(openDetail({ state: "merged" }))).toBeNull();
     expect(resolveThreadPanelPullRequestAction(null)).toBeNull();
+  });
+
+  it("holds Merge until review activity has loaded, and leaves every other action alone", () => {
+    expect(gateThreadPanelMergeUntilFeedbackKnown("merge", false)).toBeNull();
+    expect(gateThreadPanelMergeUntilFeedbackKnown("merge", true)).toBe("merge");
+    expect(gateThreadPanelMergeUntilFeedbackKnown("fix", false)).toBe("fix");
+    expect(gateThreadPanelMergeUntilFeedbackKnown("ready", false)).toBe("ready");
+    expect(gateThreadPanelMergeUntilFeedbackKnown(null, false)).toBeNull();
   });
 });
 

@@ -116,12 +116,12 @@ import {
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildFixChecksHandoff,
+  buildFixFeedbackHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
   buildPullRequestContext,
   buildResolveConflictsPrompt,
-  classifyPullRequestChecks,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
@@ -130,6 +130,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
@@ -147,7 +148,7 @@ import {
   shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
 import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logic";
-import { PullRequestChecksPopover, PullRequestFixButton } from "./PullRequestChecksPopover";
+import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
   PullRequestMetaLine,
@@ -738,7 +739,6 @@ export function PullRequestDetailPanel({
   type ThreadTask = {
     prompt: string;
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
-    additive?: boolean;
   };
 
   const attachTarget = composerDraftTarget ?? null;
@@ -1092,6 +1092,25 @@ export function PullRequestDetailPanel({
         state: detail.state,
         isDraft: detail.isDraft,
         checks: detail.checks,
+      }),
+    );
+  };
+
+  const startFixFeedback = () => {
+    if (!detail) return;
+    void startHandoff(
+      PULL_REQUEST_FIX_FEEDBACK_KEY,
+      buildFixFeedbackHandoff({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+        reviewThreads: detail.reviewThreads,
+        comments: detail.comments,
+        commentsTruncated: detail.commentsTruncated,
       }),
     );
   };
@@ -1611,52 +1630,31 @@ export function PullRequestDetailPanel({
             }}
           >
             {tab === "summary" ? (
-              <>
-                {showsApproveWorkflows ? (
-                  <PullRequestApproveWorkflowsButton
-                    pullRequestKey={pullRequestKey}
-                    pendingAction={pendingAction}
-                    perform={perform}
-                  />
-                ) : (
-                  <PullRequestChecksStatusLine
-                    className="text-muted-foreground"
-                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-                    icon={
-                      checksState !== null ? (
-                        <PullRequestChecksPopover
-                          checks={detail.checks}
-                          stale={checksStale}
-                          checksState={checksState}
-                          threadRef={threadRef}
-                          fix={
-                            canFixFindings
-                              ? {
-                                  onFixCheck: (check) => startFixFinding({ kind: "check", check }),
-                                  onFixAll: startFixChecks,
-                                  pending: handoff,
-                                }
-                              : undefined
-                          }
-                        />
-                      ) : (
-                        <CircleDotIcon aria-hidden className="size-3.5" />
-                      )
-                    }
-                    label={checksSummary}
-                  />
-                )}
-                {canFixFindings &&
-                !checksStale &&
-                classifyPullRequestChecks(detail.checks) === "failing" ? (
-                  <PullRequestFixButton
-                    aria-label="Fix all failing checks"
-                    pending={handoff === PULL_REQUEST_FIX_CHECKS_KEY}
-                    disabled={handoff !== null}
-                    onClick={startFixChecks}
-                  />
-                ) : null}
-              </>
+              showsApproveWorkflows ? (
+                <PullRequestApproveWorkflowsButton
+                  pullRequestKey={pullRequestKey}
+                  pendingAction={pendingAction}
+                  perform={perform}
+                />
+              ) : (
+                <PullRequestChecksStatusLine
+                  className="text-muted-foreground"
+                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                  icon={
+                    checksState !== null ? (
+                      <PullRequestChecksPopover
+                        checks={detail.checks}
+                        stale={checksStale}
+                        checksState={checksState}
+                        threadRef={threadRef}
+                      />
+                    ) : (
+                      <CircleDotIcon aria-hidden className="size-3.5" />
+                    )
+                  }
+                  label={checksSummary}
+                />
+              )
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine
@@ -1797,7 +1795,16 @@ export function PullRequestDetailPanel({
                   activityError={activityError}
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
-                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                  fixCheckLabel={handoffLabels.fixCheck}
+                  fixChecksLabel={handoffLabels.fixChecks}
+                  fixFeedbackLabel={handoffLabels.fixFeedback}
+                  {...(canFixFindings
+                    ? {
+                        onFixFinding: startFixFinding,
+                        onFixChecks: startFixChecks,
+                        onFixFeedback: startFixFeedback,
+                      }
+                    : {})}
                   {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                   onRefresh={refreshDetail}
                   onRefreshChecks={refreshFromHost}

@@ -8,26 +8,18 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type {
-  EnvironmentId,
-  ProjectId,
-  PullRequestCheck,
-  PullRequestRef,
-  ScopedThreadRef,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
   EyeIcon,
   EyeOffIcon,
   FileDiffIcon,
   GitBranchIcon,
-  HammerIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
-import type { DraftId } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
@@ -35,6 +27,7 @@ import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useUiStateStore } from "~/uiStateStore";
 import {
+  useEnvironmentQuery,
   useEnvironmentQueryIsNewer,
   useEnvironmentQueryRefresh,
   useEnvironmentQuerySelector,
@@ -42,15 +35,17 @@ import {
 
 import {
   buildFixChecksHandoff,
-  buildFixFindingHandoff,
+  buildFixFeedbackHandoff,
   buildResolveConflictsPrompt,
   classifyPullRequestChecks,
   describePullRequestChecks,
+  describeThreadPanelFixAction,
+  gateThreadPanelMergeUntilFeedbackKnown,
+  hasActionablePullRequestFeedback,
   isPullRequestConflicting,
   resolvePullRequestMergeMethod,
   allowedPullRequestMergeMethods,
   resolveThreadPanelPullRequestAction,
-  type PullRequestFinding,
 } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
@@ -63,8 +58,6 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
   usePullRequestHandoffs,
-  writeHandoffToComposer,
-  type PullRequestThreadTask,
 } from "../pullRequest/usePullRequestActions";
 import {
   ChangeRequestStatusIcon,
@@ -81,7 +74,6 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
-import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -106,8 +98,6 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
-  composerTarget,
-  threadRef = null,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -120,8 +110,6 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
-  composerTarget: ScopedThreadRef | DraftId;
-  threadRef?: ScopedThreadRef | null;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -155,6 +143,18 @@ export function ThreadDetailsPrRow({
   const checksQuery = useEnvironmentQueryRefresh(checksAtom);
   const checksAreNewer = useEnvironmentQueryIsNewer(checksAtom, detailAtom);
   const detail = resolvePullRequestDetailChecks(detailData, checksData, checksAreNewer);
+  const activityAtom =
+    reference !== null && detailData !== null
+      ? pullRequestEnvironment.activity({ environmentId, input: reference })
+      : null;
+  const activityQuery = useEnvironmentQuery(activityAtom);
+  const activity = activityQuery.data;
+  const activityError = activity === null ? activityQuery.error : null;
+  const feedback = {
+    reviewThreads: activity?.reviewThreads ?? [],
+    comments: activity?.comments ?? [],
+  };
+  const hasFeedback = hasActionablePullRequestFeedback(feedback);
   const terminology = sourceControlClients.get(
     detail?.provider ?? project?.repositoryIdentity?.provider,
   ).changeRequest;
@@ -163,6 +163,7 @@ export function ThreadDetailsPrRow({
   useLiveRefresh(
     () => {
       if (!detailQuery.isPending()) detailQuery.refresh();
+      if (!activityQuery.isPending) activityQuery.refresh();
     },
     { enabled: open, key: `workspace-pr:${refreshKey}`, intervalMs: 10 * 60_000 },
   );
@@ -181,6 +182,7 @@ export function ThreadDetailsPrRow({
     terminology,
     onSuccess: () => {
       checksQuery.refresh();
+      activityQuery.refresh();
       onActed?.();
     },
   });
@@ -192,13 +194,24 @@ export function ThreadDetailsPrRow({
   );
   const [confirmingMerge, setConfirmingMerge] = useState(false);
 
-  const rowAction = resolveThreadPanelPullRequestAction(detail);
+  const rowAction = gateThreadPanelMergeUntilFeedbackKnown(
+    resolveThreadPanelPullRequestAction(detail, feedback),
+    activityQuery.isSuccess && !activityQuery.isPending,
+  );
   if (confirmingMerge && rowAction !== "merge") {
     setConfirmingMerge(false);
   }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
   const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
+  const fixAction =
+    detail === null
+      ? null
+      : describeThreadPanelFixAction({
+          failingChecks: checksState === "failing",
+          hasFeedback,
+          inThisThread: false,
+        });
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedPullRequestMergeMethods(detail),
     null,
@@ -218,29 +231,38 @@ export function ThreadDetailsPrRow({
     });
   };
 
-  const addToComposer = (task: PullRequestThreadTask) => {
-    writeHandoffToComposer(composerTarget, task);
-    toastManager.add({
-      type: "success",
-      title: "Added to the composer",
-      description: "The task is in the composer. Read it over, then send.",
-    });
-  };
-  const fixAllChecks = () => {
+  const startFixFindings = () => {
     if (detail === null) return;
-    addToComposer(buildFixChecksHandoff(detail));
+    const reviewComments = [
+      ...(hasFeedback
+        ? buildFixFeedbackHandoff({
+            number: detail.number,
+            title: detail.title,
+            url: detail.url,
+            headBranch: detail.headBranch,
+            baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
+            reviewThreads: feedback.reviewThreads,
+            comments: feedback.comments,
+            commentsTruncated: activity?.commentsTruncated ?? false,
+          }).reviewComments
+        : []),
+      ...(checksState === "failing"
+        ? buildFixChecksHandoff({
+            number: detail.number,
+            title: detail.title,
+            url: detail.url,
+            headBranch: detail.headBranch,
+            baseBranch: detail.baseBranch,
+            state: detail.state,
+            isDraft: detail.isDraft,
+            checks: detail.checks,
+          }).reviewComments
+        : []),
+    ];
+    void startHandoff("findings", { prompt: "", reviewComments });
   };
-  const checksFix =
-    detail !== null && open
-      ? {
-          onFixCheck: (check: PullRequestCheck) => {
-            const finding: PullRequestFinding = { kind: "check", check };
-            addToComposer(buildFixFindingHandoff({ ...detail, finding }));
-          },
-          onFixAll: fixAllChecks,
-          pending: null,
-        }
-      : undefined;
 
   const statePresentation =
     detail === null
@@ -319,6 +341,14 @@ export function ThreadDetailsPrRow({
                 </div>
               </div>
             ) : null}
+            {detail.state === "open" && activityError ? (
+              <div className="flex min-w-0 items-start gap-2 text-destructive">
+                <TriangleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+                <div className="min-w-0 flex-1 wrap-break-word">
+                  Couldn't load review activity. Open the {terminology.singular} for details.
+                </div>
+              </div>
+            ) : null}
             <div className="flex min-w-0 items-center gap-2">
               <FileDiffIcon className="size-3 shrink-0 stroke-muted-foreground" />
               <div className="min-w-0 flex items-baseline gap-1 truncate text-foreground/75">
@@ -360,16 +390,15 @@ export function ThreadDetailsPrRow({
             tooltip: `Mark this ${terminology.singular} as ready for review`,
             onClick: () => void perform("ready"),
           }
-        : rowAction === "fix"
+        : rowAction === "fix" && fixAction !== null
           ? {
-              label: "Fix",
-              pendingLabel: "Fix",
-              pending: false,
+              label: fixAction.label,
+              pendingLabel: "Preparing...",
+              pending: handoff === "findings",
               destructive: true,
-              icon: <HammerIcon aria-hidden className="size-3 shrink-0" />,
-              suffix: null,
-              tooltip: "Add the failing checks to the composer",
-              onClick: fixAllChecks,
+              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
+              tooltip: fixAction.tooltip,
+              onClick: startFixFindings,
             }
           : rowAction === "merge"
             ? {
@@ -467,8 +496,6 @@ export function ThreadDetailsPrRow({
               <PullRequestChecksPopover
                 checksState={checksRollup}
                 checks={detail.checks}
-                threadRef={threadRef}
-                fix={checksFix}
                 variant="count"
                 render={<ThreadDetailsControl part="meta" />}
               />
@@ -490,7 +517,6 @@ export function ThreadDetailsPrRow({
                     />
                   }
                 >
-                  {trailingAction.icon}
                   {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
                   {trailingAction.suffix}
                 </TooltipTrigger>

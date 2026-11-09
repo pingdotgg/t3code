@@ -28,6 +28,7 @@ import { useRef, useState, type ReactNode } from "react";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
@@ -42,10 +43,11 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { PullRequestCheckRow, useOpenPullRequestCheck } from "./PullRequestChecksPopover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   PullRequestActorLabel,
+  PullRequestCheckStatusIcon,
+  pullRequestCheckStatusLabel,
   PullRequestLabelChip,
   PullRequestReviewOutcomeBadge,
   pullRequestReviewOutcomeLabel,
@@ -64,6 +66,10 @@ import {
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
+  PULL_REQUEST_FIX_CHECKS_KEY,
+  PULL_REQUEST_FIX_FEEDBACK_KEY,
+  classifyPullRequestChecks,
+  hasActionablePullRequestFeedback,
   pullRequestFindingKey,
   pullRequestReviewOutcome,
   visibleBody,
@@ -430,7 +436,12 @@ export function PullRequestSummaryTab({
   activityError,
   pendingFinding,
   fixFindingLabel = "Fix in a thread",
+  fixCheckLabel = "Fix",
+  fixChecksLabel = "Fix all",
+  fixFeedbackLabel = "Fix all",
   onFixFinding,
+  onFixChecks,
+  onFixFeedback,
   onAddToChat,
   onRefresh,
   onRefreshChecks = onRefresh,
@@ -445,7 +456,12 @@ export function PullRequestSummaryTab({
   activityError: string | null;
   pendingFinding?: string | null;
   fixFindingLabel?: string;
+  fixCheckLabel?: string;
+  fixChecksLabel?: string;
+  fixFeedbackLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  onFixChecks?: () => void;
+  onFixFeedback?: () => void;
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: (subject: PullRequestChatSubject) => void;
   onRefresh: () => void;
@@ -521,7 +537,13 @@ export function PullRequestSummaryTab({
       })),
   ];
 
-  const openCheck = useOpenPullRequestCheck(threadRef);
+  const openLink = useOpenLink(threadRef);
+  const openCheck = (url: string) => {
+    void openLink(url).catch((error: unknown) => {
+      console.error(error);
+      toastManager.add({ type: "error", title: "Unable to open check details" });
+    });
+  };
 
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -624,7 +646,8 @@ export function PullRequestSummaryTab({
     const finding: PullRequestFinding | null =
       reply ||
       (comment.kind !== "review" && comment.kind !== "review-comment") ||
-      outcome === "approved"
+      outcome === "approved" ||
+      outcome === "dismissed"
         ? null
         : thread === undefined
           ? body === null
@@ -865,7 +888,25 @@ export function PullRequestSummaryTab({
         </div>
       </Section>
 
-      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
+      <Section
+        key={`checks:${detail.url}`}
+        title="Checks"
+        defaultOpen={false}
+        actions={
+          onFixChecks && !checksStale && classifyPullRequestChecks(detail.checks) === "failing" ? (
+            <Button
+              size="xs"
+              variant="ghost"
+              className="shrink-0"
+              disabled={pendingFinding !== null && pendingFinding !== undefined}
+              onClick={onFixChecks}
+            >
+              <HammerIcon className="size-3" />
+              {pendingFinding === PULL_REQUEST_FIX_CHECKS_KEY ? "Preparing..." : fixChecksLabel}
+            </Button>
+          ) : undefined
+        }
+      >
         {checksStale ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>Check details are out of date.</span>
@@ -877,15 +918,49 @@ export function PullRequestSummaryTab({
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
           detail.checks.map(
-            (check, index) => (
-              /* oxlint-disable react/no-array-index-key -- Check names and URLs can repeat; these status rows have no local state. */ <PullRequestCheckRow
-                key={`${index}:${check.name}:${check.url ?? ""}`}
-                check={check}
-                onOpen={openCheck}
-                onFix={onFixFinding && ((value) => onFixFinding({ kind: "check", check: value }))}
-                pendingFix={pendingFinding}
-              />
-            ) /* oxlint-enable react/no-array-index-key */,
+            (
+              check,
+              index,
+            ) => /* oxlint-disable react/no-array-index-key -- Check names and URLs can repeat; these status rows have no local state. */ {
+                const finding = { kind: "check", check } as const;
+                const failing = check.status === "failure" || check.status === "cancelled";
+                return (
+                  <div
+                    key={`${index}:${check.name}:${check.url ?? ""}`}
+                    className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
+                  >
+                    <button
+                      type="button"
+                      disabled={!check.url}
+                      onClick={() => check.url && openCheck(check.url)}
+                      className={cn(
+                        "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
+                        check.url ? "cursor-pointer" : "cursor-default",
+                      )}
+                    >
+                      <PullRequestCheckStatusIcon status={check.status} />
+                      <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
+                      <span className="shrink-0 text-muted-foreground">
+                        {pullRequestCheckStatusLabel(check)}
+                      </span>
+                    </button>
+                    {onFixFinding && failing ? (
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        className="shrink-0"
+                        disabled={pendingFinding !== null && pendingFinding !== undefined}
+                        onClick={() => onFixFinding(finding)}
+                      >
+                        <HammerIcon className="size-3" />
+                        {pendingFinding === pullRequestFindingKey(finding)
+                          ? "Preparing..."
+                          : fixCheckLabel}
+                      </Button>
+                    ) : null}
+                  </div>
+                );
+              } /* oxlint-enable react/no-array-index-key */,
           )
         )}
       </Section>
@@ -894,6 +969,24 @@ export function PullRequestSummaryTab({
         title={`Comments (${detail.commentCount})`}
         actions={
           <div className="flex shrink-0 items-center gap-1">
+            {onFixFeedback &&
+            hasActionablePullRequestFeedback({
+              reviewThreads: detail.reviewThreads,
+              comments: detail.comments,
+            }) ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pendingFinding !== null && pendingFinding !== undefined}
+                onClick={onFixFeedback}
+              >
+                <HammerIcon className="size-3" />
+                {pendingFinding === PULL_REQUEST_FIX_FEEDBACK_KEY
+                  ? "Preparing..."
+                  : fixFeedbackLabel}
+              </Button>
+            ) : null}
             <Menu>
               <MenuTrigger
                 render={<Button size="xs" variant="ghost-muted" />}

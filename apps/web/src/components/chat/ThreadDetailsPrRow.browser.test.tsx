@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { DraftId } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -7,7 +7,26 @@ const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
+  reviewThreads: [] as Array<{
+    id: string;
+    path: string;
+    line: number;
+    side: "right";
+    isResolved: boolean;
+    isOutdated: boolean;
+    comments: Array<{
+      id: string;
+      author: { login: string; name: null; avatarUrl: null };
+      body: string;
+      createdAt: string;
+      url: null;
+    }>;
+  }>,
+  activityPending: false,
+  activitySuccess: true,
+  activityError: null as string | null,
   perform: vi.fn(),
+  startHandoff: vi.fn(),
   newThread: vi.fn(),
   prepareThread: vi.fn(),
   checkoutError: null as Error | null,
@@ -53,6 +72,9 @@ const queryData = () => ({
     squash: state.mergeMethods.includes("squash"),
     rebase: state.mergeMethods.includes("rebase"),
   },
+  reviewThreads: state.reviewThreads,
+  comments: [],
+  commentsTruncated: false,
 });
 vi.mock(import("~/state/query"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -62,18 +84,29 @@ vi.mock(import("~/state/query"), async (importOriginal) => ({
   useEnvironmentQueryRefresh: () => ({ refresh: vi.fn(), isPending: () => false }),
   useEnvironmentQuery: (() => ({
     data: {
+      ...queryData(),
       code: { additions: 1, deletions: 0 },
       tests: { additions: 0, deletions: 0 },
       mocks: { additions: 0, deletions: 0 },
       generated: { additions: 0, deletions: 0 },
       docs: { additions: 7, deletions: 3 },
     },
-    isPending: false,
+    dataUpdatedAt: 1,
+    error: state.activityError,
+    failure: null,
+    isPending: state.activityPending,
+    isSuccess: state.activitySuccess,
+    refresh: vi.fn(),
   })) as never,
 }));
 vi.mock(import("../pullRequest/usePullRequestActions"), async (importOriginal) => ({
   ...(await importOriginal()),
   usePullRequestActionRunner: () => ({ actionPending: false, perform: state.perform }),
+  usePullRequestHandoffs: () => ({
+    handoff: null,
+    startAsk: vi.fn(),
+    startHandoff: state.startHandoff,
+  }),
 }));
 
 vi.mock(import("~/hooks/useHandleNewThread"), async (original) => ({
@@ -120,7 +153,6 @@ it("merges with the last selected merge method", async () => {
         label="Test PR"
         openAriaLabel="Open PR"
         onOpen={vi.fn()}
-        composerTarget={DraftId.make("draft")}
       />,
     );
   });
@@ -137,57 +169,100 @@ it("merges with the last selected merge method", async () => {
   expect(state.perform).toHaveBeenCalledWith("merge", "squash");
 });
 
-it("adds fixes from the row and checks popover to this thread's composer without a new thread", async () => {
+it("adds unresolved review feedback to the composer as chips", async () => {
   await using screen = await setup();
-  state.status = "failure";
-  const composerTarget = {
-    environmentId: EnvironmentId.make("environment"),
-    threadId: ThreadId.make("thread"),
-  };
-  await act(
-    async () =>
-      await screen.rerender(
-        <ThreadDetailsPrRow
-          environmentId={EnvironmentId.make("environment")}
-          pr={null}
-          number={1}
-          reference={{ repository: "owner/repo", number: 1 }}
-          status={null}
-          project={{ id: ProjectId.make("project") } as never}
-          label="Test PR"
-          openAriaLabel="Open PR"
-          onOpen={vi.fn()}
-          composerTarget={composerTarget}
-        />,
-      ),
+  const { container } = screen;
+  state.reviewThreads = [
+    {
+      id: "t1",
+      path: "src/a.ts",
+      line: 4,
+      side: "right",
+      isResolved: false,
+      isOutdated: false,
+      comments: [
+        {
+          id: "c1",
+          author: { login: "reviewer", name: null, avatarUrl: null },
+          body: "rename this helper",
+          createdAt: "2026-07-03T00:00:00Z",
+          url: null,
+        },
+      ],
+    },
+  ];
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  const fix = [...container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Fix",
   );
-  const insertAtCaret = vi.fn(() => true);
-  const removeHandler = useComposerDraftStore
-    .getState()
-    .setContextInsertionHandler(composerTarget, insertAtCaret);
-  using _handler = { [Symbol.dispose]: () => removeHandler?.() };
-  await act(async () =>
-    [...screen.container.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Fix")!
-      .click(),
+  expect(fix).toBeTruthy();
+  await act(async () => {
+    fix!.click();
+  });
+  expect(state.startHandoff).toHaveBeenCalledWith(
+    "findings",
+    expect.objectContaining({
+      prompt: "",
+      reviewComments: expect.arrayContaining([
+        expect.objectContaining({
+          filePath: "Review feedback on #1",
+        }),
+        expect.objectContaining({
+          text: expect.stringContaining("rename this helper"),
+        }),
+      ]),
+    }),
   );
-  await act(async () =>
-    screen.container.querySelector<HTMLElement>('[aria-label^="Open checks"]')!.click(),
-  );
-  await act(async () =>
-    document.querySelector<HTMLElement>('[aria-label="Fix CI-failure"]')!.click(),
-  );
+});
 
-  const draft = useComposerDraftStore.getState().getComposerDraft(composerTarget);
-  const comments = draft?.reviewComments;
-  expect(comments?.map((comment) => comment.filePath)).toEqual([
-    "Failing checks on #1",
-    "CI-failure",
-    "PR #1",
-  ]);
-  expect(insertAtCaret).not.toHaveBeenCalled();
-  expect(draft?.prompt).toContain("Failing checks on #1");
-  expect(state.newThread).not.toHaveBeenCalled();
+it("hides Merge while review activity is still fetching or failed", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  const render = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />
+  );
+  const mergeButton = () =>
+    [...container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Merge",
+    );
+
+  state.activityPending = true;
+  state.activitySuccess = true;
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeUndefined();
+
+  state.activityPending = false;
+  state.activitySuccess = false;
+  state.activityError = "The environment request failed.";
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeUndefined();
+
+  state.activitySuccess = true;
+  state.activityError = null;
+  await act(async () => await screen.rerender(render()));
+  expect(mergeButton()).toBeTruthy();
 });
 
 it("requires a new merge click after passing checks become pending and pass again", async () => {
@@ -203,7 +278,6 @@ it("requires a new merge click after passing checks become pending and pass agai
       label="Test PR"
       openAriaLabel="Open PR"
       onOpen={vi.fn()}
-      composerTarget={DraftId.make("draft")}
     />
   );
   const clickMerge = async () =>
@@ -234,6 +308,7 @@ it("requires a new merge click after passing checks become pending and pass agai
 
 async function setup() {
   state.perform.mockReset();
+  state.startHandoff.mockReset();
   state.checkoutError = null;
   state.newThread.mockReset().mockResolvedValue({
     draftId: DraftId.make("new-draft"),
@@ -246,6 +321,10 @@ async function setup() {
   state.status = "success";
   state.extraStatus = null;
   state.mergeMethods = ["merge"];
+  state.reviewThreads = [];
+  state.activityPending = false;
+  state.activitySuccess = true;
+  state.activityError = null;
   useUiStateStore.getState().setPullRequestMergeMethod("merge");
   return renderUi(null);
 }
