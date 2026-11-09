@@ -4,8 +4,13 @@ import {
 } from "@t3tools/client-runtime/operations/projects";
 import { connectionStatusText } from "@t3tools/client-runtime/connection";
 import {
+  filterFilesystemBrowseEntries,
+  getFilesystemBrowsePath,
+} from "@t3tools/client-runtime/state/filesystem";
+import {
   ensureBrowseDirectoryPath,
   getBrowseParentPath,
+  hasTrailingPathSeparator,
 } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
@@ -102,9 +107,12 @@ function environmentLabel(environment: EnvironmentPresentation) {
 function AddProjectDialog() {
   const { environments } = useEnvironments();
   const hasDesktopBridge = typeof window !== "undefined" && window.desktopBridge !== undefined;
-  // On the web with a single machine there is nothing to pick.
+  // On the web with a single connected machine there is nothing to pick.
   const [step, setStep] = useState<Step>(() =>
-    !hasDesktopBridge && environments.length === 1 && environments[0]
+    !hasDesktopBridge &&
+    environments.length === 1 &&
+    environments[0] &&
+    canCreateProjectInEnvironment(environments[0].connection.phase)
       ? { kind: "folder", environmentId: environments[0].environmentId }
       : { kind: "machine", error: null },
   );
@@ -210,8 +218,9 @@ function MachineStep({
   const noMachine =
     newSshHosts.length === 0 &&
     !sshHosts.isPending &&
-    !environments.some((environment) =>
-      canCreateProjectInEnvironment(environment.connection.phase),
+    !environments.some(
+      ({ connection: { phase } }) =>
+        canCreateProjectInEnvironment(phase) || phase === "connecting" || phase === "reconnecting",
     );
   const sortedEnvironments = environments.toSorted((left, right) => {
     const leftPrimary = isPrimaryEnvironment(left);
@@ -377,21 +386,32 @@ function FolderStep({
   const path =
     pathOverride ??
     getAddProjectInitialQuery(environment?.serverConfig?.settings.addProjectBaseDirectory);
-  const directory = ensureBrowseDirectoryPath(useDeferredValue(path));
+  const platform = getEnvironmentBrowsePlatform(environment?.serverConfig?.environment.platform.os);
+  const deferredPath = useDeferredValue(path);
+  // Like the palette: list the parent folder and filter it by the typed name.
+  const browsePath = getFilesystemBrowsePath(deferredPath, platform);
   const access = useFilesystemReadAccess(connected ? environmentId : null);
   const browse = useEnvironmentQuery(
-    connected && environmentId !== null && access.canReadFiles && directory.length > 0
-      ? filesystemEnvironment.browse({ environmentId, input: { partialPath: directory } })
+    connected && environmentId !== null && access.canReadFiles && browsePath.isBrowsing
+      ? filesystemEnvironment.browse({
+          environmentId,
+          input: { partialPath: browsePath.directoryPath },
+        })
       : null,
   );
   const listing = browse.data;
-  const isCurrentListing = listing !== null && directory === ensureBrowseDirectoryPath(path);
-  const parentPath = getBrowseParentPath(listing?.parentPath ?? path);
+  const { visibleEntries, exactEntry } = filterFilesystemBrowseEntries(
+    listing?.entries ?? [],
+    browsePath.filterQuery,
+  );
+  const isCurrentListing = listing !== null && deferredPath === path;
+  const parentPath = getBrowseParentPath(listing?.parentPath ?? browsePath.directoryPath);
   const pathMissing =
-    isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true;
+    (isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true) ||
+    (browsePath.filterQuery.length > 0 && listing !== null && visibleEntries.length === 0);
   const rows = [
     ...(parentPath !== null ? [{ key: "..", name: "..", target: parentPath }] : []),
-    ...(listing?.entries ?? []).map((entry) => ({
+    ...visibleEntries.map((entry) => ({
       key: entry.fullPath,
       name: entry.name,
       target: ensureBrowseDirectoryPath(entry.fullPath),
@@ -410,13 +430,22 @@ function FolderStep({
   const submit = async () => {
     if (!environmentId || !connected || submitting) return;
     setSubmitting(true);
+    const { session } = useAddProjectDialog.getState();
+    // A loaded listing names the folder exactly, with "~" expanded.
+    const listedPath =
+      isCurrentListing && listing
+        ? hasTrailingPathSeparator(path)
+          ? listing.parentPath
+          : exactEntry?.fullPath
+        : undefined;
     const added = await addProjectAtPath({
       environmentId,
-      // A loaded listing names the folder exactly, with "~" expanded.
-      rawCwd: isCurrentListing && listing ? listing.parentPath : path.trim(),
-      platform: getEnvironmentBrowsePlatform(environment?.serverConfig?.environment.platform.os),
+      rawCwd: listedPath ?? path.trim(),
+      platform,
       currentProjectCwd: null,
     });
+    // The user may have closed this dialog and opened a new one meanwhile.
+    if (useAddProjectDialog.getState().session !== session) return;
     if (added) closeAddProjectDialog();
     else setSubmitting(false);
   };
@@ -495,7 +524,7 @@ function FolderStep({
           empty={
             pathMissing
               ? "New folder. Add project creates it."
-              : listing !== null && listing.entries.length === 0
+              : listing !== null && visibleEntries.length === 0
                 ? "No folders inside."
                 : null
           }

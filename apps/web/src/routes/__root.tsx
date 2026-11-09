@@ -171,6 +171,7 @@ function RootRouteBranch() {
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <AddProjectDialogHost />
+        <SshPasswordPromptDialog />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />

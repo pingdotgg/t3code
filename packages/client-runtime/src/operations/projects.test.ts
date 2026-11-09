@@ -170,12 +170,40 @@ describe("add project shared logic", () => {
   });
 
   it.each([
-    { rawPath: "C:\\code\\app", currentProjectCwd: null },
-    { rawPath: "./app", currentProjectCwd: null },
-    { rawPath: "../app", currentProjectCwd: "/home/me/web", path: "/home/me/app" },
-    { rawPath: "  /home/me/app/ ", currentProjectCwd: null, path: "/home/me/app" },
-  ])("resolves the add-project path $rawPath", ({ rawPath, currentProjectCwd, path }) => {
-    const result = resolveAddProjectPath({ rawPath, currentProjectCwd, platform: "Linux" });
-    expect(result.ok ? result.path : null).toBe(path ?? null);
+    {
+      rawPath: "   ",
+      currentProjectCwd: null,
+      expected: { ok: false, error: "Enter a project path." },
+    },
+    {
+      rawPath: "C:\\code\\app",
+      currentProjectCwd: null,
+      expected: {
+        ok: false,
+        error: "Windows-style paths are only supported on Windows environments.",
+      },
+    },
+    {
+      rawPath: "./app",
+      currentProjectCwd: null,
+      expected: {
+        ok: false,
+        error: "Relative paths require an active project in this environment.",
+      },
+    },
+    {
+      rawPath: "../app",
+      currentProjectCwd: "/home/me/web",
+      expected: { ok: true, path: "/home/me/app" },
+    },
+    {
+      rawPath: "  /home/me/app/ ",
+      currentProjectCwd: null,
+      expected: { ok: true, path: "/home/me/app" },
+    },
+  ])("resolves the add-project path $rawPath", ({ rawPath, currentProjectCwd, expected }) => {
+    expect(resolveAddProjectPath({ rawPath, currentProjectCwd, platform: "Linux" })).toEqual(
+      expected,
+    );
   });
 });
