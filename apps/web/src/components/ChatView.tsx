@@ -360,7 +360,7 @@ import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { useLayoutPane, useLayoutPaneFocusedRef } from "../layout/layoutPaneContext";
 import { publishThreadChatBridge } from "../layout/threadSurfaceBridge";
-import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
+import { runInNewLayoutTab } from "../layout/layoutStore";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { assetEnvironment } from "../state/assets";
@@ -3126,11 +3126,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  // Writing in a ghost tab keeps it open.
-  const onComposerSendStable = useStableCallback((...args: Parameters<typeof onSend>) => {
-    if (layoutPane.tabId !== null) useLayoutStore.getState().keepTab(layoutPane.tabId);
-    return onSend(...args);
-  });
+  const onComposerSendStable = useStableCallback(onSend);
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
