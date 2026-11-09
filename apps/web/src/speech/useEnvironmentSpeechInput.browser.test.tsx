@@ -55,9 +55,10 @@ const mocks = vi.hoisted(() => ({
   cleanupOptions: [] as SpeechPostProcessingOptions[],
   recordingOptions: [] as SpeechTranscriptionOptions[],
   projectWords: {} as Record<string, SpeechCustomWords>,
-  transcripts: [] as Array<string | Error>,
+  transcripts: [] as Array<string | Error | Promise<string>>,
   committed: vi.fn(),
   draft: "",
+  drafts: {} as Record<string, string>,
 }));
 
 vi.mock("../state/session", () => ({
@@ -361,6 +362,91 @@ it.each([
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
 });
+
+function SubmissionProbe({ owner }: { owner: string }) {
+  const text = mocks.drafts[owner] ?? "";
+  const readDraft = () => ({
+    text: mocks.drafts[owner] ?? "",
+    selection: { start: text.length, end: text.length },
+  });
+  const value = useEnvironmentSpeechInput({
+    environmentId: THREAD_ENV as EnvironmentId,
+    ownerKey: owner,
+    draftText: text,
+    readDraft,
+    commitDraft: (next) => {
+      mocks.drafts[owner] = next;
+    },
+    captureSubmissionDraft: () => ({
+      readDraft,
+      commitDraft: (next: string) => {
+        mocks.drafts[owner] = next;
+      },
+    }),
+  });
+  useLayoutEffect(() => {
+    mocks.voice = value;
+  });
+  return null;
+}
+
+it("finishes a confirmed dictation send after unmount", async () => {
+  setup({ destination: "env-a" });
+  let finish!: (text: string) => void;
+  mocks.transcripts = [
+    new Promise<string>((resolve) => {
+      finish = resolve;
+    }),
+  ];
+  const drafts = { "thread-a": "Fix", "thread-b": "Do not send" };
+  mocks.drafts = drafts;
+  const submit = vi.fn();
+  await using screen = await render(<SubmissionProbe owner="thread-a" />);
+  await act(() => mocks.voice.start());
+  await act(() => mocks.voice.submitAfterDictation(submit));
+  await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+  await screen.rerender(<div />);
+  await act(async () => {
+    finish("the login bug");
+  });
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("Fix the login bug"));
+  expect(drafts).toEqual({ "thread-a": "Fix the login bug", "thread-b": "Do not send" });
+});
+
+it.each(["cancel", "off", "destination", "cleanup", "edit"])(
+  "does not send a confirmed recording after %s",
+  async (action) => {
+    setup({ destination: "env-a" });
+    if (action === "cleanup") chooseTranscriptCleanup(true);
+    let finish!: (text: string) => void;
+    mocks.transcripts = [
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+    ];
+    const drafts = { "thread-a": "Fix" };
+    mocks.drafts = drafts;
+    const submit = vi.fn();
+    const cancel = vi.fn();
+    await using screen = await render(<SubmissionProbe owner="thread-a" />);
+    await act(() => mocks.voice.start());
+    await act(() => mocks.voice.submitAfterDictation(submit, cancel));
+    await vi.waitFor(() => expect(mocks.transcribeCalls).toEqual(["env-a"]));
+    if (action === "cancel") await act(() => mocks.voice.cancel());
+    else if (action === "edit") drafts["thread-a"] = "A later edit";
+    else {
+      await screen.rerender(<div />);
+      if (action === "cleanup") chooseTranscriptCleanup(false);
+      else setDestination(action === "off" ? null : "env-b");
+    }
+    await act(async () => {
+      finish("the login bug");
+    });
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+    expect(submit).not.toHaveBeenCalled();
+    expect(drafts["thread-a"]).toBe(action === "edit" ? "A later edit" : "Fix");
+  },
+);
 
 it("retries a failed transcription on the same chosen environment", async () => {
   setup({ destination: "env-a" });

@@ -2948,7 +2948,14 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
-  const onComposerSendStable = useStableCallback(onSend);
+  const onComposerSendStable = useStableCallback(
+    (
+      event?: { preventDefault: () => void },
+      mode?: Parameters<typeof onSend>[1],
+      intent?: Parameters<typeof onSend>[2],
+      dictation?: Promise<string | null>,
+    ) => onSend(event, mode, intent, undefined, dictation),
+  );
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,

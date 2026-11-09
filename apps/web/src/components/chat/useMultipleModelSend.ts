@@ -133,9 +133,11 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
         text: messageText,
         attachments: attachmentsSnapshot,
       });
-      promptRef.current = "";
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
       clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
       clearedDraft = true;
       const clearedDraftSnapshot = useComposerDraftStore
         .getState()
