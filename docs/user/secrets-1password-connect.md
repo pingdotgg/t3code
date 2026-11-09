@@ -24,13 +24,14 @@ Then use references as usual, for example `op://Automation/provider-token/creden
 
 ## Check that it works
 
-Confirm the address is a Connect server, then read a secret with a clean environment so only the Connect
-variables can sign in:
+On the server's machine, set `OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in your shell to the values the
+server uses. Confirm the address is a Connect server, then read a secret with a clean environment so only
+the Connect variables can sign in:
 
 ```bash
 curl -s "$OP_CONNECT_HOST/health"
 env -i PATH="$PATH" HOME="$(mktemp -d)" OP_CONNECT_HOST="$OP_CONNECT_HOST" OP_CONNECT_TOKEN="$OP_CONNECT_TOKEN" \
-  op read --no-newline "op://Automation/provider-token/credential"
+  op read --no-newline "op://Automation/provider-token/credential" >/dev/null && echo "Secret read"
 ```
 
 The health response names the 1Password Connect API. Any other page means the address points at something
@@ -38,6 +39,8 @@ else, such as a reverse proxy that answers for every hostname.
 
 ## Things to know
 
+- Agents run with the server's environment, so an agent can use the Connect token to read anything it can.
+  Give the token only vaults whose items you would let an agent read.
 - Through Connect, `op` can read items but cannot list vaults or accounts. Test with `op read` or
   `op item get`, not `op vault list`.
 - A name in a reference can contain letters, digits, spaces, `.`, `_`, and `-`. An item titled

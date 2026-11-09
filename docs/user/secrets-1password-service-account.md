@@ -29,17 +29,20 @@ Then use references as usual, for example `op://Automation/provider-token/creden
 
 ## Check that it works
 
-Run this on the server's machine with a clean environment, so only the token can sign in:
+On the server's machine, set `OP_SERVICE_ACCOUNT_TOKEN` in your shell to the same token the server uses,
+then read a secret with a clean environment so only the token can sign in:
 
 ```bash
 env -i PATH="$PATH" HOME="$(mktemp -d)" OP_SERVICE_ACCOUNT_TOKEN="$OP_SERVICE_ACCOUNT_TOKEN" \
-  op read --no-newline "op://Automation/provider-token/credential"
+  op read --no-newline "op://Automation/provider-token/credential" >/dev/null && echo "Secret read"
 ```
 
-If it prints the secret, T3 Code can read it. `op whoami` reports a user type of `SERVICE_ACCOUNT`.
+If it prints `Secret read`, T3 Code can read it. `op whoami` reports a user type of `SERVICE_ACCOUNT`.
 
 ## Things to know
 
+- Agents run with the server's environment, so an agent can use the token to read anything the service
+  account can. Give it only vaults whose items you would let an agent read.
 - A name in a reference can contain letters, digits, spaces, `.`, `_`, and `-`. An item titled
   `Service Token: CI` cannot be written as a reference, so use its item ID instead, for example
   `op://Automation/<item-id>/credential`.
