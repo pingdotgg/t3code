@@ -12,9 +12,9 @@ import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient, HttpClientRequest } from "effect/http";
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import { Agent } from "@effect/platform-node/Undici";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import * as NodeModule from "node:module";
+import type * as Undici from "undici";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
@@ -493,18 +493,31 @@ const make = Effect.gen(function* () {
  * request always outlasts; Origin keeps one open for minutes, and HTTP/2 carries a detail's
  * parallel reads on it at once.
  */
-const httpClientLayer = NodeHttpClient.layerUndiciNoDispatcher.pipe(
-  Layer.provide(
-    Layer.effect(NodeHttpClient.Dispatcher)(
-      Effect.acquireRelease(
-        Effect.sync(
-          () =>
-            new Agent({ allowH2: true, keepAliveTimeout: 300_000, keepAliveMaxTimeout: 300_000 }),
-        ),
-        (agent) => Effect.promise(() => agent.destroy()),
+const httpClientLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    // The CLI single-executable resolves only builtin imports; undici loads from disk through require.
+    const undici = NodeModule.createRequire(import.meta.url)("undici") as typeof Undici;
+    const dispatcher = yield* Effect.acquireRelease(
+      Effect.sync(
+        () =>
+          new undici.Agent({
+            allowH2: true,
+            keepAliveTimeout: 300_000,
+            keepAliveMaxTimeout: 300_000,
+          }),
       ),
-    ),
-  ),
+      (agent) => Effect.promise(() => agent.destroy()),
+    );
+    // FetchHttpClient always passes a URL; undici's Response is structurally the web Response.
+    // Manual redirects keep the status classifyOriginResponse saw before this used fetch.
+    const fetch = ((url: URL, init?: Undici.RequestInit) =>
+      undici.fetch(url, {
+        ...init,
+        dispatcher,
+        redirect: "manual",
+      })) as unknown as typeof globalThis.fetch;
+    return FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch)));
+  }),
 );
 
 export const layer = Layer.effect(OriginCli, make).pipe(Layer.provide(httpClientLayer));
