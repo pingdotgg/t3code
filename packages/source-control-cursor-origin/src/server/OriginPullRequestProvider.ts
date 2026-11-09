@@ -553,7 +553,7 @@ export const make = Effect.gen(function* () {
     );
 
   // Origin pages by a token longer than the service's cursor can carry, so the cursor names it by
-  // hash. A cursor from before a restart finds nothing and ends the list there.
+  // hash. A cursor from before a restart, or one evicted since, fails and asks for a refresh.
   const pageTokens = new Map<string, string>();
   const pageTokenKey = (token: string) => {
     const key = `${(Hash.string(token) >>> 0).toString(36)}-${token.length}`;
@@ -619,7 +619,12 @@ export const make = Effect.gen(function* () {
         const resume = input.cursor?.resumeAfter;
         const pageToken = resume === undefined ? undefined : pageTokens.get(resume);
         if (resume !== undefined && pageToken === undefined)
-          return { items: [], truncated: false, continues: false };
+          return yield* new OriginCli.OriginCliError({
+            operation: "listChangeRequests",
+            cwd: input.cwd,
+            reason: "failed",
+            detail: "This list position has expired. Refresh the list to load more pull requests.",
+          });
         const query = new URLSearchParams({
           state: input.state,
           pageSize: String(limit),
