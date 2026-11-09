@@ -2831,6 +2831,7 @@ function OpenCommandPaletteDialog(props: {
 
   return (
     <CommandPaletteContent
+      key={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
       aria-label="Command palette"
       autoHighlight={autoHighlightsFirstRow ? "always" : false}
       footerActionLabel={footerActionLabel}
@@ -2911,7 +2912,6 @@ function OpenCommandPaletteDialog(props: {
       ) : null}
       <CommandPaletteVirtualizedResults
         rows={resultRows.rows}
-        dataKey={`${viewStack.length}-${browseGeneration}-${isBrowsing}-${newProjectFlow ? "new-project" : (addProjectCloneFlow?.step ?? "none")}`}
         listRef={resultListRef}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
