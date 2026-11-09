@@ -22,7 +22,8 @@ const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
 
 /**
  * An agent's state for new threads on this computer. The server also lists agents that only some
- * projects turn on, and lists an agent it could not load as off, which Turn on cannot fix.
+ * projects turn on, lists an agent it could not load as off, which Turn on cannot fix, and can pass
+ * a CLI whose version it knows is broken.
  */
 export function welcomeAgentState(
   provider: ServerProvider,
@@ -33,6 +34,7 @@ export function welcomeAgentState(
     return "disabled";
   }
   const state = getOnboardingProviderState(provider);
+  if (state === "ready" && provider.compatibilityAdvisory?.status === "broken") return "attention";
   // An ACP agent that is not prepared reports the same fields as one still being checked.
   return state === "checking" && provider.driver === ACP_REGISTRY_DRIVER ? "attention" : state;
 }
@@ -40,7 +42,7 @@ export function welcomeAgentState(
 /**
  * Splits a computer's allowed providers into agents already on it and agents the user can add.
  * Order inside each group is by state, then by the name the user sees. Agents still being
- * checked stay visible with the ones to add, so a slow check never hides an agent.
+ * checked are listed with the ones to add, so a slow check never drops an agent.
  */
 export function groupWelcomeAgents(
   providers: ReadonlyArray<ServerProvider> | null | undefined,

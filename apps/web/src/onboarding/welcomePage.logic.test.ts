@@ -79,6 +79,15 @@ describe("groupWelcomeAgents", () => {
           availability: "unavailable",
           unavailableReason: "Invalid config for instance 'broken'.",
         }),
+        // Signed in and healthy, but the server knows this CLI version is broken.
+        provider("Codex", {
+          compatibilityAdvisory: {
+            status: "broken",
+            message: "Update Codex to 0.170 or later.",
+            recommendedVersion: "0.170.0",
+            recommendedRange: null,
+          },
+        }),
         // An ACP agent that is not prepared looks like one still being checked.
         provider("Registry", {
           driver: acpRegistry,
@@ -92,7 +101,7 @@ describe("groupWelcomeAgents", () => {
       allowAll,
     );
 
-    expect(names(groups.found)).toEqual(["Broken", "Registry"]);
+    expect(names(groups.found)).toEqual(["Broken", "Codex", "Registry"]);
     expect(names(groups.available)).toEqual(["Pi"]);
     expect(groups.readyCount).toBe(0);
     expect(groups.checking).toBe(false);

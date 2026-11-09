@@ -23,8 +23,8 @@ unreadable settings with defaults.
 ## Agents
 
 T3 Code lists the agents it found on the computer first, ready ones on top.
-**Add more agents** lists every other agent T3 Code supports, A to Z, and opens by
-itself when no agent is found:
+**Add more agents** lists every other agent T3 Code supports, A to Z. When no agent
+is found, it reads **Set up an agent** and opens by itself:
 
 - **Turn on** enables an agent that is off on this computer, including one only
   some projects use. T3 Code then checks whether it is installed and signed in.
@@ -66,7 +66,8 @@ group shows the repository as `owner/name`. Clones with the same remote share
 one group. Directories that are not git repositories sit under "Other folders".
 
 The page offers git repositories active within the last 30 days with at least
-three conversations, already checked. Uncheck the row to start without them, or
+three conversations, already checked. Projects already in T3 Code are not checked
+again. Uncheck the box to start without them, or
 select **Review all** to pick from everything found, with "Select all" and
 "Select none". Linked worktrees of bare repositories
 can be offered as separate projects. Other linked git worktrees, Codex scratch
@@ -78,7 +79,8 @@ projects it found and warns when projects or conversations may be missing.
 
 Imported projects include Claude, Codex and Pi conversations active within the last
 30 days. You can continue those conversations in T3 Code. Pi is off by default:
-select **Turn on** next to Pi, and the page looks for its sessions too. Pi sessions
+open **Add more agents** and select **Turn on** next to Pi, and the page looks for
+its sessions too. Pi sessions
 are read from each enabled Pi provider's session directory, which follows
 `PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
 Pi conversation imports its active branch, the one Pi reopens.

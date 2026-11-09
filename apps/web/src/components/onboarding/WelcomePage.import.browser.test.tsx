@@ -43,6 +43,7 @@ const state = vi.hoisted(() => ({
   linkState: null as unknown,
   linkError: null as string | null,
   refreshLinkState: vi.fn(),
+  scanError: null as string | null,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -133,7 +134,7 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => {
           environmentId,
           data: { candidates, truncated: false } as never,
           isPending: false,
-          error: null,
+          error: state.scanError,
           refresh: state.refreshScan,
         };
       });
@@ -146,7 +147,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
     state[command]) as never,
 }));
 
-import { welcomeImportSelectionAtom } from "../../onboarding/welcomeState";
+import { welcomeImportSelectionKey } from "../../onboarding/welcomeState";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { WelcomePage } from "./WelcomePage";
 
@@ -201,7 +202,10 @@ function setGrant(environmentId: EnvironmentId, allowed: boolean) {
 // Default selection only picks recently active projects, so pin "now".
 const NOW = Date.parse("2026-01-01T00:00:00.000Z");
 
-function candidate(path: string): AgentSessionProjectCandidate {
+function candidate(
+  path: string,
+  overrides: Partial<AgentSessionProjectCandidate> = {},
+): AgentSessionProjectCandidate {
   return {
     path,
     title: path.split("/").at(-1)!,
@@ -209,6 +213,7 @@ function candidate(path: string): AgentSessionProjectCandidate {
     threadCount: 10,
     lastActiveAt: new Date(NOW - 60_000).toISOString(),
     alreadyImported: false,
+    ...overrides,
   };
 }
 
@@ -312,7 +317,8 @@ function setup() {
   state.linkState = Atom.make<EnvironmentCloudLinkStateResult | null>(null).pipe(Atom.keepAlive);
   state.linkError = null;
   state.refreshLinkState.mockReset();
-  appAtomRegistry.set(welcomeImportSelectionAtom(primaryId), null);
+  state.scanError = null;
+  localStorage.removeItem(welcomeImportSelectionKey(primaryId));
   return now;
 }
 
@@ -505,6 +511,32 @@ it("stays busy while setup saves after an import with nothing to open", async ()
   });
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.createProject).toHaveBeenCalledOnce();
+});
+
+it("leaves projects already in T3 Code out of the default import", async () => {
+  using _now = setup();
+  const existing = ProjectId.make("existing");
+  appAtomRegistry.set(projectsAtom(), [
+    { id: existing, environmentId: primaryId, workspaceRoot: "/projects/first" },
+  ]);
+  appAtomRegistry.set(candidatesAtom(), [
+    candidate("/projects/first", { alreadyImported: true, projectId: existing }),
+    candidate("/projects/second"),
+  ]);
+  await using _screen = await mountWelcome();
+  await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
+});
+
+it("keeps the project controls when a later scan fails", async () => {
+  using _now = setup();
+  await using _screen = await mountWelcome();
+  state.scanError = "The scan timed out.";
+  await act(async () =>
+    appAtomRegistry.set(candidatesAtom(), [...appAtomRegistry.get(candidatesAtom())]),
+  );
+  await vi.waitFor(() => expect(pageText()).toContain("Could not check projects again."));
+  expect(button("Import 2 projects and start").disabled).toBe(false);
+  expect(button("Retry").disabled).toBe(false);
 });
 
 it("starts without importing when this connection cannot import projects", async () => {

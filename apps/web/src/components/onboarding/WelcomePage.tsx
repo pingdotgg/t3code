@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
@@ -10,7 +10,10 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
   AuthProvidersManageScope,
@@ -63,8 +66,9 @@ import {
   welcomePhonePath,
 } from "../../onboarding/welcomePage.logic";
 import {
+  StoredWelcomeImportSelection,
   type WelcomeImportSelection,
-  welcomeImportSelectionAtom,
+  welcomeImportSelectionKey,
 } from "../../onboarding/welcomeState";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
@@ -128,8 +132,11 @@ export function WelcomePage({
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
-  const importSelection = useAtomValue(welcomeImportSelectionAtom(environmentId));
-  const setImportSelection = useAtomSet(welcomeImportSelectionAtom(environmentId));
+  const [importSelection, setImportSelection] = useLocalStorage(
+    welcomeImportSelectionKey(environmentId),
+    null,
+    StoredWelcomeImportSelection,
+  );
   const [isImporting, setIsImporting] = useState(false);
   // True from Start until the landing; leaving earlier would drop the import or the landing.
   const holdPageRef = useRef(false);
@@ -406,8 +413,8 @@ function AgentsSection({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  // Decided once the first check ends: with nothing on this computer, adding an agent is the task.
-  if (moreOpen === null && !checking) setMoreOpen(found.length === 0);
+  // Decided once, when an agent is found or every check ends: with nothing found, adding one is the task.
+  if (moreOpen === null && (found.length > 0 || !checking)) setMoreOpen(found.length === 0);
   const showMore = moreOpen === true;
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
@@ -479,7 +486,12 @@ function AgentsSection({
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        toastManager.add({ type: "error", title: `Could not turn on ${agentName(provider)}` });
+        const cause = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: `Could not turn on ${agentName(provider)}`,
+          ...(cause instanceof Error ? { description: cause.message } : {}),
+        });
       }
       return;
     }
@@ -548,10 +560,10 @@ function AgentsSection({
     <WelcomeSection
       title="Agents"
       status={
-        checking && found.length === 0
-          ? `Checking ${label}…`
-          : readyCount > 0
-            ? `${readyCount} ready on ${label}`
+        readyCount > 0
+          ? `${readyCount} ready on ${label}`
+          : checking
+            ? `Checking ${label}…`
             : `None ready on ${label} yet`
       }
     >
@@ -743,7 +755,9 @@ function ProjectsSection({
   }
 
   const allKeys = candidates.map((candidate) => candidate.key);
-  const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
+  const defaultKeys = (
+    recent.length > 0 ? recent : candidates.filter((candidate) => !candidate.alreadyImported)
+  ).map((candidate) => candidate.key);
   const partial =
     selected.length > 0 &&
     selected.length < candidates.length &&
@@ -1092,6 +1106,9 @@ function AgentCard({
         ? null
         : state === "attention"
           ? (provider.unavailableReason ??
+            (provider.compatibilityAdvisory?.status === "broken"
+              ? provider.compatibilityAdvisory.message
+              : null) ??
             provider.message ??
             getProviderSummary(provider).headline)
           : getProviderSummary(provider).headline;
@@ -1339,7 +1356,7 @@ function useProjectImport({
     };
   }, []);
 
-  const { available: candidates, recent } = partitionOnboardingProjects(
+  const { available: candidates, recent: recentActive } = partitionOnboardingProjects(
     scans.flatMap((scan) =>
       (scan.data?.candidates ?? []).map((candidate) => ({
         ...candidate,
@@ -1348,31 +1365,32 @@ function useProjectImport({
       })),
     ),
   );
+  // Projects already in T3 Code stay in the list, but reopening the page does not import their
+  // history again unless the user picks them.
+  const recent = recentActive.filter((candidate) => !candidate.alreadyImported);
   const recentKeys = new Set(recent.map((candidate) => candidate.key));
+  const knownKeys = new Set(importSelection?.knownKeys);
+  const pickedKeys = new Set(importSelection?.keys);
   const selected = importSelection?.optedOut
     ? []
     : candidates.filter((candidate) =>
-        importSelection?.knownKeys.has(candidate.key)
-          ? importSelection.keys.has(candidate.key)
+        knownKeys.has(candidate.key)
+          ? pickedKeys.has(candidate.key)
           : recentKeys.has(candidate.key),
       );
   const selectedKeys = new Set(selected.map((candidate) => candidate.key));
   const setSelectedKeys = (keys: ReadonlySet<string>, { optedOut = false } = {}) =>
     onImportSelectionChange({
-      knownKeys: new Set(candidates.map((candidate) => candidate.key)),
-      keys,
+      knownKeys: candidates.map((candidate) => candidate.key),
+      keys: [...keys],
       optedOut,
     });
 
+  const canWrite = scans.every((scan) => writableEnvironments.has(scan.environmentId));
   const canImport = selected.every((candidate) =>
     writableEnvironments.has(candidate.environmentId),
   );
-  const [importError, setImportError] = useState("");
-  const visibleImportError = !canImport
-    ? IMPORT_PERMISSION_MESSAGE
-    : importError === IMPORT_PERMISSION_MESSAGE
-      ? ""
-      : importError;
+  const visibleImportError = canWrite && canImport ? "" : IMPORT_PERMISSION_MESSAGE;
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
@@ -1419,10 +1437,8 @@ function useProjectImport({
       selection.every((candidate) =>
         readEnvironmentScope(candidate.environmentId, AuthOrchestrationOperateScope),
       );
-    const stopForDeniedAccess = () => {
-      setIsImporting(false);
-      setImportError(IMPORT_PERMISSION_MESSAGE);
-    };
+    // The permission message shows from the session's scopes.
+    const stopForDeniedAccess = () => setIsImporting(false);
     if (!hasAccess()) {
       stopForDeniedAccess();
       return;
@@ -1538,7 +1554,7 @@ function useProjectImport({
   };
 
   return {
-    canWrite: scans.every((scan) => writableEnvironments.has(scan.environmentId)),
+    canWrite,
     candidates,
     recent,
     selected,
