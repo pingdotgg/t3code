@@ -63,6 +63,7 @@ import {
   runLayoutTabMenuAction,
   useLayoutPaneSiblingTabs,
   useLayoutTabGhostOf,
+  useLayoutTabGhostShown,
 } from "../../layout/PaneTabs";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { useLayoutStore } from "../../layout/layoutStore";
@@ -153,7 +154,8 @@ export const ChatHeader = memo(function ChatHeader({
     if (layoutTabId !== null) beginLayoutTabDrag(event, layoutTabId);
   };
   const siblingTabs = useLayoutPaneSiblingTabs();
-  const ghostOf = useLayoutTabGhostOf(layoutTabId);
+  const ghostShown = useLayoutTabGhostShown(layoutTabId);
+  const ghostOf = useLayoutTabGhostOf(ghostShown ? layoutTabId : null);
   const ghostParent = useQuietThreadShell(ghostOf);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const layoutMenuItems = () =>
@@ -253,7 +255,7 @@ export const ChatHeader = memo(function ChatHeader({
     if ((event.target as HTMLElement).closest("[data-thread-title-chevron]") !== null) return;
     closeMenu();
     // A ghost tab is kept first; the next double-click renames.
-    if (ghostOf && layoutTabId !== null) {
+    if (ghostShown && layoutTabId !== null) {
       useLayoutStore.getState().keepTab(layoutTabId);
       return;
     }
@@ -318,11 +320,12 @@ export const ChatHeader = memo(function ChatHeader({
   );
   // The project name left the header with the breadcrumb; the tab's tooltip
   // keeps it, in the breadcrumb's old order.
-  const tabTooltip = ghostOf
-    ? ghostTabTooltip(activeThreadTitle, ghostParent?.title)
-    : activeProjectName
-      ? `${activeProjectName} / ${activeThreadTitle}`
-      : activeThreadTitle;
+  const plainTooltip = activeProjectName
+    ? `${activeProjectName} / ${activeThreadTitle}`
+    : activeThreadTitle;
+  const tabTooltip = ghostShown
+    ? ghostTabTooltip(ghostOf ? activeThreadTitle : plainTooltip, ghostParent?.title)
+    : plainTooltip;
   // The parent's own tab already leads this one in the strip.
   const parentTabShown =
     parentThreadLink !== null &&
@@ -413,7 +416,7 @@ export const ChatHeader = memo(function ChatHeader({
                     className={cn(
                       "min-w-0",
                       PANE_TAB_TITLE_CLASS,
-                      ghostOf && PANE_GHOST_TAB_TITLE_CLASS,
+                      ghostShown && PANE_GHOST_TAB_TITLE_CLASS,
                     )}
                     dir={textDirection(activeThreadTitle)}
                   >
