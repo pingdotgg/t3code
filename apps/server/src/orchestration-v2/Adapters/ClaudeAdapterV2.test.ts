@@ -12654,83 +12654,106 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("starts the wake run when Claude opens the wake turn, before its output", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
+  // A lesson's wake-turn status line is a Thought; Claude's result frame repeats it (APP-109).
+  it.effect.each([false, true])(
+    "starts the wake run when Claude opens the wake turn, before its output (lesson %s)",
+    (lesson) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const now = yield* DateTime.now;
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
-            text: "Run the build in the background.",
-            attachments: [],
-          }),
-        );
-        yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
-        yield* Queue.offer(harness.sdkMessages, turnOneResult);
-        yield* harness.awaitTerminal(1);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-init-1"),
+              text: "Run the build in the background.",
+              attachments: [],
+            }),
+          );
+          yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+          yield* Queue.offer(harness.sdkMessages, turnOneResult);
+          yield* harness.awaitTerminal(1);
 
-        yield* harness.offerAndWait(wakeNotification);
-        assert.lengthOf(harness.continuationRequests, 0);
-        yield* harness.offerAndWait(wakeTurnInit);
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
+          yield* harness.offerAndWait(wakeNotification);
+          assert.lengthOf(harness.continuationRequests, 0);
+          yield* harness.offerAndWait(wakeTurnInit);
+          assert.lengthOf(harness.continuationRequests, 1);
+          assert.equal(harness.continuationRequests[0]?.detail, WAKE_SUMMARY);
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
-            text: "Background task completed.",
-            attachments: [],
-            lesson: true,
-            providerTurnOrdinal: 2,
-            messageCreatedBy: "agent",
-            messageCreationSource: "provider",
-          }),
-        );
-        assert.lengthOf(harness.terminalEvents(), 1);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
+              text: "Background task completed.",
+              attachments: [],
+              lesson,
+              providerTurnOrdinal: 2,
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          assert.lengthOf(harness.terminalEvents(), 1);
 
-        yield* harness.offerAndWait(
-          makeAssistantTextFrame({
-            uuid: "provider-continuation-status",
-            text: "That notification is just the broad file search I started earlier... I didn't change any files.",
-          }),
-        );
-        yield* harness.offerAndWait(wakeResult);
-        yield* harness.awaitTerminal(2);
-        assert.equal(harness.terminalEvents()[1]?.status, "completed");
-        assert.lengthOf(harness.continuationRequests, 1);
-        assert.isTrue(
-          harness.events.some(
-            (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
-          ),
-        );
-        assert.deepEqual(
-          harness.events
-            .filter(
-              (event) =>
-                event.type === "turn_item.updated" && event.turnItem.text.includes("notification"),
-            )
-            .map((event) => event.turnItem.type),
-          ["reasoning"],
-        );
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
+          const status =
+            "That notification is just the broad file search I started earlier, and I no longer need it. I didn't change any files.";
+          yield* harness.offerAndWait(
+            lesson
+              ? makeAssistantTextFrame({
+                  uuid: "00000000-0000-4000-8000-000000000107",
+                  text: status,
+                })
+              : wakeAssistant,
+          );
+          yield* harness.offerAndWait(
+            lesson
+              ? makeResultFrame({
+                  uuid: "00000000-0000-4000-8000-000000000104",
+                  result: status,
+                  origin: { kind: "task-notification" },
+                })
+              : wakeResult,
+          );
+          yield* harness.awaitTerminal(2);
+          assert.equal(harness.terminalEvents()[1]?.status, "completed");
+          assert.lengthOf(harness.continuationRequests, 1);
+          if (lesson) {
+            assert.isFalse(
+              harness.events.some(
+                (event) => event.type === "message.updated" && event.message.text === status,
+              ),
+            );
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "turn_item.updated" &&
+                  event.turnItem.type === "reasoning" &&
+                  event.turnItem.text === status,
+              ),
+            );
+          } else {
+            assert.isTrue(
+              harness.events.some(
+                (event) =>
+                  event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
+              ),
+            );
+          }
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              IdAllocator.layer,
+              McpProviderSessions.layer,
+              NodeServices.layer,
+              NodeCrypto.layer,
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect.each([true, false])(

@@ -8074,11 +8074,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else if (
             isLessonTurn(input.context.input) &&
             isClaudeProviderContinuationTurn(input.context.input) &&
+            input.context.assistant.heldText.length > 0 &&
             input.context.assistant.heldText.reduce((total, item) => total + item.text.length, 0) <=
               300
           ) {
             const held = input.context.assistant.heldText;
             input.context.assistant.heldText = [];
+            // The result frame repeats this text; it must not come back as the fallback message.
+            input.context.assistant.fallbackText = "";
             for (const item of held) {
               yield* emitHeldAssistantTextItemAsReasoning(input.context, item);
             }
