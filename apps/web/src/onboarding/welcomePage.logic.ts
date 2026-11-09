@@ -86,8 +86,9 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
-  // A broken version is updated from its row, and a signed-in CLI needs no terminal.
-  if (isBrokenVersion(provider) || provider.auth.status === "authenticated") return "done";
+  // A broken version is updated from its row, and an installed, signed-in CLI needs no terminal.
+  if (isBrokenVersion(provider)) return "done";
+  if (provider.installed && provider.auth.status === "authenticated") return "done";
   // The terminal shows the command first, so it also helps a CLI whose check failed.
   const fixable =
     state === "install" ||

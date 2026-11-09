@@ -613,6 +613,44 @@ it("offers Update for a signed-in agent whose version is broken, and keeps Start
   expect(button("Import 2 projects and start").disabled).toBe(true);
 });
 
+it("keeps an import opt-out on the page when storage cannot save it", async () => {
+  using _now = setup();
+  await using _screen = await mountWelcome();
+  using _full = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+  });
+  const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+  await act(async () => importProjects?.click());
+
+  await click("Start");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.createProject).not.toHaveBeenCalled();
+});
+
+it("opens the list of agents to add once the checks find none, even after a wrong first status", async () => {
+  using _now = setup();
+  const pi = {
+    ...readyClaude,
+    instanceId: ProviderInstanceId.make("pi"),
+    driver: ProviderDriverKind.make("pi"),
+  };
+  // Pi's first status says installed before its check runs.
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+    { ...pi, status: "warning", auth: { status: "unknown" } },
+  ]);
+  await using _screen = await mountWelcome();
+  await act(async () =>
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+      { ...pi, installed: false, status: "error", auth: { status: "unknown" } },
+    ]),
+  );
+  const fold = () =>
+    [...document.querySelectorAll("button")].find((element) =>
+      element.textContent?.startsWith("Set up an agent"),
+    );
+  await vi.waitFor(() => expect(fold()?.getAttribute("aria-expanded")).toBe("true"));
+});
+
 it("starts without importing when this connection cannot import projects", async () => {
   using _now = setup();
   setGrant(primaryId, false);

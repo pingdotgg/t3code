@@ -431,9 +431,9 @@ function AgentsSection({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  // Decided once, when an agent is found or every check ends: with nothing found, adding one is the task.
-  if (moreOpen === null && (found.length > 0 || !checking)) setMoreOpen(found.length === 0);
-  const showMore = moreOpen === true;
+  // Until the user opens or closes it, the list follows the finished checks: with nothing found,
+  // adding an agent is the task. A first status can be wrong, so this is not decided early.
+  const showMore = moreOpen ?? (!checking && found.length === 0);
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
   const needsInstallOrSignIn = (provider: ServerProvider) => {
@@ -454,10 +454,13 @@ function AgentsSection({
         provider.instanceId === codexSetupId &&
         (codexNeedsSetup(provider, serverConfig?.settings) || stateOf(provider) === "checking"),
     ) ?? null;
-  // Once the card closes, a later status change does not reopen it and move the page.
-  if (codexSetupId !== null && providers != null && codexSetupProvider === null) {
-    setCodexSetupId(null);
-  }
+  // Once the card closes, a later status change does not reopen it and move the page. A list
+  // that briefly lacks the instance does not count.
+  const trackedCodex =
+    codexSetupId === null
+      ? undefined
+      : providers?.find((provider) => provider.instanceId === codexSetupId);
+  if (trackedCodex !== undefined && codexSetupProvider === null) setCodexSetupId(null);
 
   const openTerminal = (provider: ServerProvider) => {
     if (
@@ -623,7 +626,10 @@ function AgentsSection({
       ) : null}
       {!canManageProviders &&
       (acpAllowed ||
-        [...found, ...available].some((provider) => stateOf(provider) === "disabled")) ? (
+        [...found, ...available].some(
+          (provider) =>
+            stateOf(provider) === "disabled" || codexNeedsSetup(provider, serverConfig?.settings),
+        )) ? (
         <p className="mt-2 text-sm text-muted-foreground">This connection cannot manage agents.</p>
       ) : null}
       <Collapsible
@@ -706,7 +712,11 @@ function AgentsSection({
           environmentLabel={label}
           showMoreProviders
           onOpenChange={setAddingProvider}
-          onCreated={() => void refreshProviders({ environmentId, input: {} })}
+          onCreated={() => {
+            void refreshProviders({ environmentId, input: {} });
+            // A new Claude Code, Codex, or Pi instance can bring more history to import.
+            onImportSourceEnabled();
+          }}
         />
       ) : null}
     </WelcomeSection>

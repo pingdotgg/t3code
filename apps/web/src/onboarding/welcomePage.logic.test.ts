@@ -168,6 +168,8 @@ describe("cliTerminalStep", () => {
     ).toBe("done");
     // Signed in but needing a look for another reason: a sign-in would not help.
     expect(step({ status: "warning" })).toBe("done");
+    // Signed in from its home files with the binary gone: the installer.
+    expect(step({ installed: false, status: "error" })).toBe("open");
     expect(step()).toBe("done");
   });
 });

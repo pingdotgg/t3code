@@ -35,7 +35,8 @@ is found, it reads **Set up an agent** and opens by itself:
   Codex CLI. **Use existing CLI** opens the terminal to install or sign in, and
   **Continue with ChatGPT** stays available until Codex is signed in.
 - When T3 Code knows an installed version does not work with it, **Update** opens
-  the agent in **Settings → Providers**, which updates it the way it was installed.
+  the agent in **Settings → Providers**, which shows the version to use and updates it
+  when it can.
 - Other agents, and agents that could not load, open their page in
   **Settings → Providers**.
 - **Browse** opens the ACP Registry for more agents.
