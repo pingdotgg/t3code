@@ -2284,9 +2284,8 @@ export const layerWithOptions = (
               runningRetries.set(retryItem.providerTurnId, retryItem);
               return { event, armed: retryItem };
             }
+            // A stall marker is set only once the stop is sent, so only the terminal clears it.
             runningRetries.delete(retryItem.providerTurnId);
-            // Adapters mark the retry stopped before the interrupted terminal; only recovery clears it.
-            if (item.status === "completed") stalledRetries.delete(retryItem.providerTurnId);
             return { event, settled: retryItem.providerTurnId };
           }
           if (event.type === "provider_turn.updated") {
