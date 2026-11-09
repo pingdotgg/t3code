@@ -450,6 +450,7 @@ export interface ChatComposerProps {
     e?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
+    dictation?: Promise<string | null>,
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
@@ -1822,6 +1823,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     projectName,
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     disabled: dictationDisabled,
+    captureSubmissionDraft: questionAttachmentTarget
+      ? undefined
+      : () => {
+          const target = routeThreadRef;
+          const captured = getComposerDraft(target);
+          return {
+            readDraft: () => {
+              if (getComposerDraft(target) !== captured) return null;
+              const text = captured?.prompt ?? "";
+              return { text, selection: { start: text.length, end: text.length } };
+            },
+            commitDraft: (text) => setComposerDraftPrompt(target, text),
+          };
+        },
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -2124,11 +2139,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     dispatchMode?: ComposerDispatchMode,
     submissionIntent?: ComposerSubmissionIntent,
   ) => {
-    if (voiceInputActive) {
-      event?.preventDefault();
-      submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
-      return false;
-    }
     if (submissionBlocked || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
       event?.preventDefault();
       return false;
@@ -2153,6 +2163,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: "Send again once its chip resolves.",
       });
       return false;
+    }
+    if (voiceInputActive) {
+      event?.preventDefault();
+      if (activePendingProgress) {
+        submitAfterDictation(() => submitComposerRef.current(dispatchMode, submissionIntent));
+        return;
+      }
+      const transcript = new Promise<string | null>((resolve) => {
+        submitAfterDictation(resolve, () => resolve(null));
+      });
+      onSend(
+        undefined,
+        dispatchMode ??
+          resolveComposerDispatchMode({
+            running: phase === "running",
+            alternateModifier: false,
+            activeTurnDefault: followUpBehavior,
+            canSteer: !isCompacting,
+          }),
+        submissionIntent,
+        transcript,
+      );
+      return;
     }
     // An empty draft has nothing to send; Enter does what the Resume thread button does.
     if (showResumeAction && !activePendingProgress) {
@@ -2190,7 +2223,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
   const submitComposerStable = useStableCallback(submitComposer);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes the committed submission handler to the asynchronous dictation completion
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- question submissions need the answers from the render that committed their transcript
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
   }, [submitComposerStable]);
