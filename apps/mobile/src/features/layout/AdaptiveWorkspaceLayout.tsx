@@ -117,7 +117,7 @@ import { workspaceUsesColumns, type WorkspaceTab } from "./workspace/workspace-t
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
-import { WorkspaceSettingsSidebar } from "../settings/SettingsRouteScreen";
+import { WorkspaceSettingsSidebar } from "../settings/WorkspaceSettingsSidebar";
 
 export { useAdaptiveWorkspaceLayout };
 
