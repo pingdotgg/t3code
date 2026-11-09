@@ -182,7 +182,7 @@ import {
   endRunlessRootTurns,
   makeSubagentChildThread,
   subagentResultForRun,
-  delegatedFollowupRuns,
+  delegatedFollowupProgress,
   delegatedTaskProgress,
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -12798,7 +12798,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
-        readonly progress: ReturnType<typeof delegatedTaskProgress>;
+        readonly resultRun?: OrchestrationV2Run;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12810,13 +12810,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ) {
         return;
       }
-      const taskRuns = delegatedFollowupRuns(childControls, options.task.id);
+      const followup = delegatedFollowupProgress(childControls, options.task.id);
+      const taskRuns = followup.runs;
       const childRun =
         taskRuns.length === 0
           ? options.task.id === forkedFrom.nodeId
-            ? options.progress.resultRun
+            ? options.resultRun
             : undefined
-          : taskRuns.at(-1);
+          : followup.resultRun;
       if (childRun === undefined) return;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
@@ -12877,7 +12878,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       // A follow-up turn that started its own subagents ends with them, as the first turn does.
-      if (options.progress.state === "waiting_for_children") return;
+      if (followup.state === "waiting_for_children") return;
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -13096,7 +13097,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
-      yield* finalizeAppOwnedSubagentTask(childControls, { ...options, task, progress });
+      yield* finalizeAppOwnedSubagentTask(childControls, {
+        ...options,
+        task,
+        ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
+      });
     }
 
     const { resultRun } = progress;
@@ -14386,10 +14391,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         { messageRoles: ["user"] },
       );
       if (taskId !== undefined) {
-        const runs = delegatedFollowupRuns(child, taskId);
-        const run = runs.at(-1);
-        if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
+        const followup = delegatedFollowupProgress(child, taskId);
+        if (followup.state !== "result_available" || followup.resultRun === undefined) return true;
+        return yield* childAwaitsRestartContinuation(followup.runs, followup.resultRun);
       }
       const progress = delegatedTaskProgress(child);
       if (progress.state !== "result_available") return true;
