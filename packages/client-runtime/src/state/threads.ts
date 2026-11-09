@@ -948,7 +948,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // status. A replacement session or foreground resubscribe on the same scope
   // may have missed events, so those show sync progress until confirmed.
   const resumingLive = yield* Ref.make(initialState.status === "live");
-  const socketSnapshotFailed = yield* Ref.make(false);
+  // A cold open tries the socket snapshot once. Any later cold attempt, after a
+  // failure or a dropped session, asks HTTP, which also tells a missing thread
+  // apart from a failed load.
+  const socketOpenTried = yield* Ref.make(false);
   const socketOnlyOpen = yield* Ref.make(false);
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
@@ -978,15 +981,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* Ref.set(resumingLive, false);
 
         // A server that pages snapshots sends the same bounded window over the
-        // socket, so a cold open skips the HTTP round trip. After a socket
-        // failure, HTTP tells a missing thread apart from a failed load.
-        const socketSnapshot =
+        // socket, so a cold open can skip the HTTP round trip.
+        const socketOnly =
+          Option.isNone(current.data) &&
           canLoadHistory &&
-          !(yield* Ref.get(socketSnapshotFailed)) &&
-          Option.exists(config, (value) => value.threadSnapshotPagination === true);
-        yield* Ref.set(socketOnlyOpen, socketSnapshot && Option.isNone(current.data));
+          Option.exists(config, (value) => value.threadSnapshotPagination === true) &&
+          !(yield* Ref.getAndSet(socketOpenTried, true));
+        yield* Ref.set(socketOnlyOpen, socketOnly);
 
-        if (Option.isNone(current.data) && !socketSnapshot) {
+        if (Option.isNone(current.data) && !socketOnly) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -1072,8 +1075,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             !isAuthorizationFailure(cause) &&
             (yield* Ref.get(socketOnlyOpen)) &&
             Option.isNone((yield* SubscriptionRef.get(state)).data);
-          if (retryOverHttp) yield* Ref.set(socketSnapshotFailed, true);
-          else yield* setStreamError(formatThreadError(cause));
+          if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,

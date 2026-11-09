@@ -152,13 +152,12 @@ export const make = Effect.gen(function* () {
       httpBaseUrl,
       timeoutMs: ROUTE_CHECK_TIMEOUT_MS,
     }).pipe(
-      Effect.flatMap((descriptor) =>
-        descriptor.environmentId !== environmentId
-          ? Effect.succeed<RouteCheck>("silent")
-          : (remember
-              ? remote.rememberCheckedDescriptor(httpBaseUrl, descriptor)
-              : Effect.void
-            ).pipe(Effect.as<RouteCheck>("answered")),
+      // Remembered even on a mismatch, so a reconnect never reuses an older match.
+      Effect.tap((descriptor) =>
+        remember ? remote.rememberCheckedDescriptor(httpBaseUrl, descriptor) : Effect.void,
+      ),
+      Effect.map((descriptor): RouteCheck =>
+        descriptor.environmentId === environmentId ? "answered" : "silent",
       ),
       Effect.orElseSucceed((): RouteCheck => "silent"),
       // A cached descriptor would answer for a host that cannot be reached.

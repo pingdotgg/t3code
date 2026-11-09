@@ -172,10 +172,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     [ORCHESTRATION_V2_WS_METHODS.getTurnItem]: (input: { readonly itemId: TurnItemId }) =>
       options?.getTurnItem?.(input) ?? Effect.die("Unexpected getTurnItem request"),
   } as unknown as WsRpcProtocolClient;
+  const sessionConfig = options?.socketSnapshots ? { threadSnapshotPagination: true } : {};
   const supervisorSession = yield* SubscriptionRef.make<Option.Option<RpcSession.RpcSession>>(
-    Option.some(
-      testSession(client, options?.socketSnapshots ? { threadSnapshotPagination: true } : {}),
-    ),
+    Option.some(testSession(client, sessionConfig)),
   );
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
     Option.some(PREPARED),
@@ -294,7 +293,10 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     savedThreads,
     removedThreads,
     wakeups,
-    replaceSession: SubscriptionRef.set(supervisorSession, Option.some(testSession(client))),
+    replaceSession: SubscriptionRef.set(
+      supervisorSession,
+      Option.some(testSession(client, sessionConfig)),
+    ),
   };
 });
 
@@ -839,6 +841,29 @@ describe("EnvironmentThreads", () => {
         expect(settled.status).toBe(status);
         expect(yield* Ref.get(harness.loaderCalls)).toBe(after);
       }),
+  );
+
+  it.effect("asks HTTP when a socket-only open loses its session before any data", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        socketSnapshots: true,
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      // A timed-out session never reaches onExpectedFailure.
+      yield* harness.replaceSession;
+      const settled = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted",
+      );
+      expect(settled.status).toBe("deleted");
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+    }),
   );
 
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>
