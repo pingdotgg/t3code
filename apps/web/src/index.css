@@ -1349,6 +1349,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background: var(--scrim);
 }
 
+/* Fades are read on the element that sets them. Not inherited, so toggling a
+   fade restyles the scroller alone and not every row in it. */
+@property --fade-size {
+  syntax: "*";
+  inherits: false;
+}
+@property --virtualized-scroll-fade-mask {
+  syntax: "*";
+  inherits: false;
+}
+
 /* Virtualizers own their native scroll element, so they cannot use ScrollArea's
    viewport fade. Keep the scrollbar lane opaque while sharing the same fade
    contract across those lists. */
