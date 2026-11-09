@@ -176,7 +176,10 @@ function ThreadServersList(props: ThreadServersPanelProps) {
         subtitle: ["nxtviron", instance.process, instance.branch ?? instance.id, stateLabel]
           .filter(Boolean)
           .join(" · "),
-        url: instance.state === "running" && port !== null ? `http://localhost:${port}` : null,
+        url:
+          instance.state !== "running"
+            ? null
+            : (instance.url ?? (port === null ? null : `http://localhost:${port}`)),
         actions: canActOnInstances
           ? nxtvironInstanceActions(instance.state).map((action) => {
               const copy = NXTVIRON_ACTION_COPY[action];

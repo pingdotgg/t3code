@@ -67,6 +67,7 @@ const instance = (
   state,
   ports,
   proxyHostname: null,
+  url: null,
   workingDir: "/work/repo",
   configPath: "/work/repo/nxtviron.yaml",
 });

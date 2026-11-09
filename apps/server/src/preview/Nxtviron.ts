@@ -66,6 +66,7 @@ const CliInstance = Schema.Struct({
   branch: Schema.optional(Schema.String),
   ports: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   proxy: Schema.optional(Schema.Struct({ hostname: Schema.String })),
+  url: Schema.optional(Schema.String),
   configPath: Schema.String,
   workingDir: Schema.String,
 });
@@ -91,6 +92,7 @@ const toInstance = (raw: CliInstance): Option.Option<NxtvironInstance> => {
   const id = raw.id.trim();
   if (ref === "" || process === "" || id === "") return Option.none();
   const hostname = raw.proxy?.hostname.trim() ?? "";
+  const url = raw.url?.trim() ?? "";
   return Option.some({
     ref,
     process,
@@ -100,6 +102,7 @@ const toInstance = (raw: CliInstance): Option.Option<NxtvironInstance> => {
     state: instanceState(raw.status),
     ports: Object.fromEntries(Object.entries(raw.ports ?? {}).filter(([, port]) => isPort(port))),
     proxyHostname: hostname === "" ? null : hostname,
+    url: url === "" ? null : url,
     workingDir: raw.workingDir,
     configPath: raw.configPath,
   });
