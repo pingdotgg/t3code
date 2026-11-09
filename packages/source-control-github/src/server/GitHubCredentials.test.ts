@@ -30,6 +30,7 @@ function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
+  wrapperOutput = "",
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
@@ -47,7 +48,9 @@ function harness(
       }
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
-        stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+        stdout:
+          wrapperOutput +
+          (input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n"),
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -175,6 +178,19 @@ describe("GitHubCredentials", () => {
       expect((yield* Effect.flip(credentials.get("github.com")))._tag).toBe(
         "GitHubHostDisabledError",
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("ignores lines a gh wrapper prints before the token", () => {
+    const { layer } = harness(
+      {},
+      [],
+      {},
+      "mise ~/.config/mise/config.toml tools: gh@2.103.3\n\nsecond line\n",
+    );
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe("active-token");
     }).pipe(Effect.provide(layer));
   });
 
