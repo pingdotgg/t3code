@@ -27,6 +27,7 @@ import {
   makeWindow,
   usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
+import { sortByProviderOrder } from "@t3tools/shared/providerOrder";
 import { use, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
@@ -47,7 +48,12 @@ import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
 import { UsageLimitsSection } from "./UsageLimitsPooled";
 import type { UsageChartMetric } from "./usageChartData";
-import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usageProviders";
+import {
+  PROVIDER_LABEL,
+  useProviderColors,
+  useSavedUsageProviderOrder,
+  useUsageMixColors,
+} from "./usageProviders";
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
@@ -427,6 +433,11 @@ function ChartCard(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const savedOrder = useSavedUsageProviderOrder();
+  const legendProviders =
+    savedOrder === null
+      ? merged.providers
+      : sortByProviderOrder(merged.providers, savedOrder, (provider) => provider.provider);
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
   const [fillHeight, setFillHeight] = useState(0);
   const height = props.fill ? Math.max(fillHeight, props.height) : props.height;
@@ -475,7 +486,7 @@ function ChartCard(props: {
           </Text>
         </View>
         <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
-          {merged.providers.map((provider) => (
+          {legendProviders.map((provider) => (
             <View key={provider.provider} className="flex-row items-center gap-1.5">
               <View
                 className="size-2 rounded-full"
@@ -519,12 +530,16 @@ function ProviderSection(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const savedOrder = useSavedUsageProviderOrder();
   if (merged.providers.length === 0) return null;
 
   // Hermes lacks toSorted.
-  const ordered = [...merged.providers].sort((a, b) =>
-    metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
-  );
+  const ordered =
+    savedOrder === null
+      ? [...merged.providers].sort((a, b) =>
+          metric === "cost" ? b.costUsd - a.costUsd : b.totalTokens - a.totalTokens,
+        )
+      : sortByProviderOrder(merged.providers, savedOrder, (provider) => provider.provider);
 
   return (
     <SettingsSection title="Providers">

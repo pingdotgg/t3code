@@ -680,6 +680,8 @@ interface ProviderInstanceCardProps {
   readonly mode: "list" | "editor";
   readonly selected?: boolean | undefined;
   readonly onSelect?: (() => void) | undefined;
+  /** List mode only: renders the reorder grip, given the row's display name. */
+  readonly dragHandle?: ((label: string) => ReactNode) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
   readonly onUpdate: (nextInstance: ProviderInstanceConfig) => Promise<boolean>;
@@ -754,6 +756,7 @@ export function ProviderInstanceCard({
   mode,
   selected = false,
   onSelect,
+  dragHandle,
   readOnly = false,
   canWriteSettings = true,
   onUpdate,
@@ -1146,6 +1149,7 @@ export function ProviderInstanceCard({
             aria-label={`Select ${displayName}`}
             aria-pressed={selected}
           />
+          {dragHandle?.(displayName)}
           {titleIconNode}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">

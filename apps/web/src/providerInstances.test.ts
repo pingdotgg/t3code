@@ -13,6 +13,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  providerInstanceEntriesFor,
   resolveDefaultProviderModelSelection,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
@@ -159,6 +160,33 @@ describe("applyProviderInstanceSettings", () => {
 
     expect(codex?.enabled).toBe(true);
     expect(grok?.enabled).toBe(false);
+  });
+});
+
+describe("providerInstanceEntriesFor", () => {
+  const codex = ProviderDriverKind.make("codex");
+  const entries = (providerOrder: string[]) =>
+    providerInstanceEntriesFor(
+      [
+        provider({ provider: codex, instanceId: "codex_personal" }),
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: ProviderDriverKind.make("claudeAgent"), instanceId: "claudeAgent" }),
+      ],
+      {
+        providerInstances: {},
+        projectSettingsOverrides: {},
+        providerOrder: providerOrder.map((id) => ProviderInstanceId.make(id)),
+      },
+      null,
+    ).map((entry) => entry.instanceId);
+
+  it("follows the saved order, then puts each driver's default first", () => {
+    expect(entries([])).toEqual(["codex", "codex_personal", "claudeAgent"]);
+    expect(entries(["claudeAgent", "codex_personal"])).toEqual([
+      "claudeAgent",
+      "codex_personal",
+      "codex",
+    ]);
   });
 });
 

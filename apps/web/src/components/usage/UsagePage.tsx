@@ -38,7 +38,7 @@ import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/ser
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
+import { useProviderOrderSettings, useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
@@ -100,6 +100,7 @@ import {
   PROVIDER_PRESENTATION,
   providersWithUsage,
   rankProvidersByMetric,
+  usageProviderOrder,
 } from "./usageProviders";
 import {
   readUsagePagePreferences,
@@ -615,13 +616,15 @@ function UsageOverview({
   // Copy the primitive; JSX reads of loading.partial would merge all derivations into one compiler cache
   // scope.
   const loadingPartial = loading.partial === true;
+  const providerOrderSettings = useProviderOrderSettings();
+  const providerOrder = usageProviderOrder(providerOrderSettings);
   const loadingProviders = new Set(
-    PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
+    providerOrder.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );
   const providersWithData = new Set(providersWithUsage(merged.providers));
   // Only loading.providers excludes hidden providers without data. Filter a fresh array so the compiler can
   // cache independently.
-  const activeProviders = [...PROVIDER_ORDER].filter(
+  const activeProviders = [...providerOrder].filter(
     (provider) => providersWithData.has(provider) || loading.providers.has(provider),
   );
   const chartLoadingProviders = new Set(
@@ -646,7 +649,11 @@ function UsageOverview({
     (peak, model) => Math.max(peak, metric === "tokens" ? model.totalTokens : model.costUsd),
     0,
   );
-  const rankedProviders = rankProvidersByMetric(activeProviders, merged.providers, metric);
+  // A saved order replaces the metric ranking so every surface reads the same.
+  const rankedProviders =
+    providerOrderSettings === null
+      ? rankProvidersByMetric(activeProviders, merged.providers, metric)
+      : activeProviders;
 
   return (
     <div aria-busy={loadingPartial} className="flex flex-col gap-6">
@@ -1252,6 +1259,7 @@ function UsageProviderFilter({
   readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
   readonly onChange: (hiddenProviders: readonly UsageProviderKind[]) => void;
 }) {
+  const providerOrder = usageProviderOrder(useProviderOrderSettings());
   const visible = PROVIDER_ORDER.filter((provider) => !hiddenProviders.has(provider));
   const label =
     visible.length === PROVIDER_ORDER.length
@@ -1280,7 +1288,7 @@ function UsageProviderFilter({
           All providers
         </MenuCheckboxItem>
         <MenuSeparator />
-        {PROVIDER_ORDER.map((provider) => (
+        {providerOrder.map((provider) => (
           <MenuCheckboxItem
             key={provider}
             checked={!hiddenProviders.has(provider)}
