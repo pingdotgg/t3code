@@ -928,6 +928,45 @@ describe("model selections for one account under distinct instance IDs", () => {
     expect(plan.unavailableReason).toContain("Server");
   });
 
+  it("keeps a text generator's ID only where it reaches the same API", () => {
+    const id = ProviderInstanceId.make("openrouter");
+    const openrouter: ServerSettings["textGenerators"][ProviderInstanceId] = {
+      kind: "openaiCompatible",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "",
+      enabled: true,
+    };
+    const withGenerator = (
+      target: typeof laptop,
+      config: ServerSettings["textGenerators"][ProviderInstanceId] | undefined,
+    ) =>
+      config
+        ? environment(target.label, { settings: { textGenerators: { [id]: config } } })
+        : target;
+    const selection = { instanceId: id, model: "openai/gpt-6-mini" };
+    const patch = {
+      textGenerationModelSelection: selection,
+      speechPostProcessingModelSelection: selection,
+    };
+    // Generators have no provider snapshots to match accounts through.
+    const plan = (serverGenerator?: typeof openrouter) =>
+      planScopedSettingsPatch(
+        all,
+        [withGenerator(laptop, openrouter), withGenerator(server, serverGenerator)],
+        patch,
+        fromLaptop(providers([], [])),
+      );
+    expect(plan(openrouter).serverWrites.map((write) => write.patch)).toEqual([patch, patch]);
+    for (const serverGenerator of [
+      undefined,
+      { ...openrouter, enabled: false },
+      { ...openrouter, baseUrl: "https://api.openai.com/v1" },
+    ]) {
+      expect(plan(serverGenerator).serverWrites).toEqual([]);
+      expect(plan(serverGenerator).unavailableReason).toContain("Server");
+    }
+  });
+
   it("treats the same account and model as one value in either order", () => {
     const targets = [
       {

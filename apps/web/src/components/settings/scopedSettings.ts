@@ -12,6 +12,7 @@ import {
   type ProjectSettingsOverrides,
   ServerSettings,
   type T3ProjectFile,
+  textGeneratorForSelection,
   type ServerProvider,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
@@ -246,23 +247,41 @@ function forDestination(previous: ServerSettings, patch: ServerSettingsPatch): S
 
 /**
  * A model chosen from the source environment's instances, rewritten to each destination's
- * instance for the same account. Null refuses an unresolved write.
+ * instance for the same account. A text generator keeps its ID and must reach the same API.
+ * Null refuses an unresolved write.
  */
 function forDestinationModels(
   patch: ServerSettingsPatch,
   source: ScopedModelSource,
-  destinationId: EnvironmentId,
+  sourceSettings: ServerSettings | undefined,
+  destination: ScopedSettingsEnvironment,
 ): ServerSettingsPatch | null {
   const next = { ...patch };
   for (const key of SCOPED_MODEL_SETTING_KEYS) {
     const selection = patch[key];
     if (selection?.instanceId === undefined) continue;
-    const destination = source.providersByEnvironment.get(destinationId);
-    if (!destination) return null;
+    const shownGenerator = sourceSettings
+      ? textGeneratorForSelection(sourceSettings, selection.instanceId)
+      : undefined;
+    const generator = destination.serverConfig
+      ? textGeneratorForSelection(destination.serverConfig.settings, selection.instanceId)
+      : undefined;
+    if (shownGenerator !== undefined || generator !== undefined) {
+      if (
+        !generator?.enabled ||
+        generator.kind !== shownGenerator?.kind ||
+        generator.baseUrl !== shownGenerator.baseUrl
+      ) {
+        return null;
+      }
+      continue;
+    }
+    const providers = source.providersByEnvironment.get(destination.environmentId);
+    if (!providers) return null;
     const instanceId = resolveScopedModelInstanceId(
       selection.instanceId,
       source.providersByEnvironment.get(source.sourceEnvironmentId) ?? [],
-      destination,
+      providers,
     );
     if (instanceId === null) return null;
     Object.assign(next, { [key]: { ...selection, instanceId } });
@@ -295,9 +314,12 @@ export function planScopedSettingsPatch(
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
   const unmatchedModelEnvironments = new Set<string>();
+  const sourceSettings = environments.find(
+    (environment) => environment.environmentId === modelSource?.sourceEnvironmentId,
+  )?.serverConfig?.settings;
   const serverPatchFor = (environment: ScopedSettingsEnvironment) => {
     const mapped = modelSource
-      ? forDestinationModels(rawServerPatch, modelSource, environment.environmentId)
+      ? forDestinationModels(rawServerPatch, modelSource, sourceSettings, environment)
       : rawServerPatch;
     if (mapped === null) unmatchedModelEnvironments.add(environment.label);
     return mapped ?? rawServerPatch;
@@ -394,7 +416,7 @@ export function planScopedSettingsPatch(
       clientPatch,
       hasClientWrite: false,
       serverWrites: [],
-      unavailableReason: `This account is not uniquely signed in on ${[...unmatchedModelEnvironments].join(", ")}. Select that environment to choose its model separately.`,
+      unavailableReason: `This model's account or text generator could not be matched on ${[...unmatchedModelEnvironments].join(", ")}. Select that environment to choose its model separately.`,
     };
   }
   const hasClientWrite = Object.keys(clientPatch).length > 0;
