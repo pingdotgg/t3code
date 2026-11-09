@@ -56,6 +56,7 @@ const MOBILE_NATIVE =
 // first fail in the release launch check.
 const DESKTOP_LAUNCH = [
   /^apps\/desktop\/src\/((main|boot|compileCache|serverCompileCache)\.ts$|(app|backend|window)\/)/,
+  /^apps\/desktop\/src\/electron\/(ElectronApp|ElectronProtocol|ElectronWindow)\.ts$/,
   /^apps\/web\/src\/((main|AppRoot|appInit)\.tsx|(bootstrap|router)\.ts)$/,
   /^apps\/web\/src\/.*sidebar/i,
   /^apps\/server\/src\/(bin|binMain|server|serverRuntimeStartup)\.ts$/,

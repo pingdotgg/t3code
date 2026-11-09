@@ -206,6 +206,7 @@ describe("check:changed", () => {
       "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
       "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
       "apps/desktop/src/backend/DesktopBackendManager.ts",
+      "apps/desktop/src/electron/ElectronProtocol.ts",
       "packages/contracts/src/settings.ts",
       "scripts/fixtures/desktop-launch/statev2.sqlite",
     ]) {
