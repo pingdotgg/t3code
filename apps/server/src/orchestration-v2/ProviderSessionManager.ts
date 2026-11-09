@@ -2234,10 +2234,18 @@ export const layerWithOptions = (
             if (providerThread === undefined || runningRetries.get(item.providerTurnId) !== item)
               return;
             stalledRetries.set(item.providerTurnId, item);
-            yield* entry.exposedRuntime.interruptTurn({
-              providerThread,
-              providerTurnId: item.providerTurnId,
-            });
+            yield* entry.exposedRuntime
+              .interruptTurn({ providerThread, providerTurnId: item.providerTurnId })
+              .pipe(
+                // A slow stop can still end the turn later, so that terminal keeps the retry failure.
+                Effect.catchTags({
+                  ProviderAdapterInterruptTimeoutError: (cause) =>
+                    Effect.logWarning("orchestration-v2.provider-retry-stall-stop-timed-out", {
+                      providerSessionId: entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                }),
+              );
           },
           (effect, item) =>
             effect.pipe(
