@@ -3067,8 +3067,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ), tail.ordinal)) AS ordinal
                 FROM tail LEFT JOIN tail_runs
               `;
+      // A negative or fractional limit makes SQLite's LIMIT disagree with `tailRows`; keep the old start.
       const workStart =
-        window.deferWork === true && boundary.latest !== null
+        window.deferWork === true &&
+        boundary.latest !== null &&
+        Number.isSafeInteger(window.rowLimit) &&
+        window.rowLimit >= 0
           ? Math.max(boundary.ordinal, (yield* tailWorkStart)[0]?.ordinal ?? 0)
           : boundary.ordinal;
       return sql`

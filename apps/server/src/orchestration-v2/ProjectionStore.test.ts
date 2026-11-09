@@ -3400,6 +3400,25 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         straddledOrdinals,
       );
       yield* moveFirstItemToRun(sharedRunId);
+      // A failed error below the tail still blocks folding for its run. Only the SQL columns
+      // change; the row sits below the window, so its payload is never decoded.
+      const setSecondItem = (type: string, status: string) => sql`
+        UPDATE orchestration_v2_projection_turn_items SET type = ${type}, status = ${status}
+        WHERE thread_id = ${threadId} AND ordinal = 2`;
+      yield* setSecondItem("error", "failed");
+      const blockedWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: 10,
+        deferWork: true,
+      });
+      assert.isFalse(
+        blockedWindow.projection.visibleTurnItems.some((row) => row.item.deferredWork),
+      );
+      assert.deepEqual(
+        blockedWindow.projection.turnItems.map((item) => item.ordinal),
+        Array.from({ length: sqlPageLimit }, (_, index) => 1001 - sqlPageLimit + index),
+      );
+      yield* setSecondItem("command_execution", "completed");
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution')
         WHERE thread_id = ${threadId} AND ordinal BETWEEN 300 AND 899`;
@@ -3436,15 +3455,15 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       {
         using copy = new NodeSqlite.DatabaseSync(copyPath);
         yield* sql`VACUUM INTO ${copyPath}`;
+        assert.isNotEmpty(windowStatements);
         const windowSteps = () =>
-          windowStatements
-            .filter(([query]) => /blocked_runs AS MATERIALIZED|visible_tail AS/.test(query))
-            .reduce((steps, [query, params]) => {
-              const statement = copy.prepare(query);
-              statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-              return steps + statement.stat("vmStep");
-            }, 0);
+          windowStatements.reduce((steps, [query, params]) => {
+            const statement = copy.prepare(query);
+            statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+            return steps + statement.stat("vmStep");
+          }, 0);
         const fullSteps = windowSteps();
+        assert.isAbove(fullSteps, 0);
         copy.exec(
           "DELETE FROM orchestration_v2_projection_turn_items WHERE ordinal BETWEEN 2 AND 498",
         );
