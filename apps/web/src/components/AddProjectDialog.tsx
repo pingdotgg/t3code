@@ -10,6 +10,7 @@ import {
 import {
   ensureBrowseDirectoryPath,
   getBrowseParentPath,
+  isExplicitRelativeProjectPath,
 } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
@@ -33,7 +34,11 @@ import { connectSshEnvironment as connectSshEnvironmentAtom } from "../connectio
 import { useAddProjectAtPath } from "../hooks/useAddProjectAtPath";
 import { cn } from "../lib/utils";
 import { desktopSshHostsStateAtom } from "../state/desktopSshHosts";
-import { type EnvironmentPresentation, useEnvironments } from "../state/environments";
+import {
+  type EnvironmentPresentation,
+  readEnvironment,
+  useEnvironments,
+} from "../state/environments";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../state/filesystem";
 import { useEnvironmentQuery } from "../state/query";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -57,19 +62,18 @@ import {
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
-const useAddProjectDialog = create<{ open: boolean; session: number; submitting: boolean }>(() => ({
-  open: false,
-  session: 0,
-  submitting: false,
-}));
+const useAddProjectDialog = create<{
+  open: boolean;
+  session: number;
+  /** The machine an in-flight add targets. */
+  submitting: EnvironmentId | null;
+}>(() => ({ open: false, session: 0, submitting: null }));
 
 /** Opens the dialog that adds a project: pick a machine, then a folder on it. */
 export function openAddProjectDialog() {
-  useAddProjectDialog.setState((state) => ({
-    open: true,
-    session: state.session + 1,
-    submitting: false,
-  }));
+  useAddProjectDialog.setState((state) =>
+    state.open ? state : { open: true, session: state.session + 1, submitting: null },
+  );
 }
 
 function closeAddProjectDialog() {
@@ -88,6 +92,17 @@ type Step =
   | { readonly kind: "folder"; readonly environmentId: EnvironmentId };
 
 const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
+
+// Only absolute and ~/ paths: a bare or ./ name would land in the server's working folder.
+function isHostPath(value: string, platform: string) {
+  const { isBrowsing, filterQuery } = getFilesystemBrowsePath(value, platform);
+  return (
+    isBrowsing &&
+    !isExplicitRelativeProjectPath(value) &&
+    filterQuery !== "." &&
+    filterQuery !== ".."
+  );
+}
 const EMPTY_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
 // Cloning and empty projects stay in the palette's add-project flow.
@@ -159,8 +174,16 @@ function AddProjectDialog() {
     <Dialog
       open
       onOpenChange={(open) => {
-        // An add in flight navigates when it lands, so the dialog stays until then.
-        if (!open && !useAddProjectDialog.getState().submitting) closeAddProjectDialog();
+        if (open) return;
+        // An add in flight navigates when it lands, so the dialog stays until then,
+        // unless its machine dropped and the add may never land.
+        const { submitting } = useAddProjectDialog.getState();
+        if (
+          submitting === null ||
+          !canCreateProjectInEnvironment(readEnvironment(submitting)?.connection.phase)
+        ) {
+          closeAddProjectDialog();
+        }
       }}
     >
       <DialogPopup className="sm:max-w-xl">
@@ -397,7 +420,11 @@ function FolderStep({
   const browsePath = getFilesystemBrowsePath(deferredPath.trim(), platform);
   const access = useFilesystemReadAccess(connected ? environmentId : null);
   const browse = useEnvironmentQuery(
-    connected && environmentId !== null && access.canReadFiles && browsePath.isBrowsing
+    connected &&
+      environmentId !== null &&
+      access.canReadFiles &&
+      browsePath.isBrowsing &&
+      !isExplicitRelativeProjectPath(deferredPath.trim())
       ? filesystemEnvironment.browse({
           environmentId,
           input: { partialPath: browsePath.directoryPath },
@@ -413,7 +440,10 @@ function FolderStep({
   const parentPath = getBrowseParentPath(listing?.parentPath ?? browsePath.directoryPath);
   const pathMissing =
     (isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true) ||
-    (browsePath.filterQuery.length > 0 && listing !== null && exactEntry === null);
+    (browsePath.filterQuery.length > 0 &&
+      listing !== null &&
+      exactEntry === null &&
+      isHostPath(deferredPath.trim(), platform));
   const rows = [
     ...(parentPath !== null ? [{ key: "..", name: "..", target: parentPath }] : []),
     ...visibleEntries.map((entry) => ({
@@ -424,13 +454,9 @@ function FolderStep({
   ];
   const [highlight, setHighlight] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
-  const submitting = useAddProjectDialog((state) => state.submitting);
-  // Only absolute and ~/ paths: a bare name would land in the server's working folder.
+  const submitting = useAddProjectDialog((state) => state.submitting !== null);
   const canSubmit =
-    connected &&
-    environmentId !== null &&
-    !submitting &&
-    getFilesystemBrowsePath(path.trim(), platform).isBrowsing;
+    connected && environmentId !== null && !submitting && isHostPath(path.trim(), platform);
   const addProjectAtPath = useAddProjectAtPath();
 
   const goTo = (target: string) => {
@@ -440,18 +466,19 @@ function FolderStep({
 
   const submit = async () => {
     if (!canSubmit || environmentId === null) return;
-    useAddProjectDialog.setState({ submitting: true });
+    const typed = path.trim();
+    useAddProjectDialog.setState({ submitting: environmentId });
     const added = await addProjectAtPath({
       environmentId,
-      // A loaded listing gives the folder's absolute path, with "~" expanded.
+      // A loaded listing expands "~", so an existing project at that folder matches.
       rawCwd:
-        isCurrentListing && listing
+        typed.startsWith("~") && isCurrentListing && listing
           ? `${ensureBrowseDirectoryPath(listing.parentPath)}${browsePath.filterQuery}`
-          : path.trim(),
+          : typed,
       platform,
       currentProjectCwd: null,
-    });
-    useAddProjectDialog.setState({ submitting: false });
+    }).catch(() => false);
+    useAddProjectDialog.setState({ submitting: null });
     if (added) closeAddProjectDialog();
   };
 
@@ -528,7 +555,7 @@ function FolderStep({
           }
           empty={
             pathMissing
-              ? "New folder. Add project creates it."
+              ? "Not listed. Add project creates it if it is missing."
               : listing !== null && visibleEntries.length === 0
                 ? "No folders inside."
                 : null
