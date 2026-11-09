@@ -44,8 +44,9 @@ function queryHash(query: string): string {
 }
 
 /**
- * Whether every error is a NOT_FOUND on a lookup: a root field (with its list items) or
- * `repository.pullRequest`. A NOT_FOUND deeper down is one field GitHub could not resolve.
+ * Whether every error is a NOT_FOUND on a lookup: a root field (with its list items),
+ * `repository.pullRequest` or `repository.issueOrPullRequest`. A NOT_FOUND deeper down is one
+ * field GitHub could not resolve.
  */
 export const isNotFoundOnly = (error: unknown): boolean =>
   GraphQLClientError.isGraphQLClientError(error) &&
@@ -55,7 +56,9 @@ export const isNotFoundOnly = (error: unknown): boolean =>
       type === "NOT_FOUND" &&
       (path === undefined ||
         path.slice(1).every((segment) => typeof segment === "number") ||
-        (path.length === 2 && path[0] === "repository" && path[1] === "pullRequest")),
+        (path.length === 2 &&
+          path[0] === "repository" &&
+          (path[1] === "pullRequest" || path[1] === "issueOrPullRequest"))),
   );
 
 /** GitHub's message for each error in an answer, with the field it names. */
