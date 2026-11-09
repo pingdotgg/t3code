@@ -892,6 +892,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   const handleClick = (event: ReactMouseEvent) => {
     onThreadClick(event, threadRef);
   };
+  const handleAuxClick = (event: ReactMouseEvent) => {
+    if (event.button === 1) onThreadClick(event, threadRef);
+  };
+  // Keep the browser's middle-click autoscroll from starting.
+  const handleMouseDown = (event: ReactMouseEvent) => {
+    if (event.button === 1) event.preventDefault();
+  };
   const handleAcknowledgeWokeClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1304,6 +1311,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                   inFolder && "ps-9",
                 )}
                 onClick={handleClick}
+                onAuxClick={handleAuxClick}
+                onMouseDown={handleMouseDown}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
                 onContextMenu={handleContextMenu}
@@ -1481,6 +1490,8 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
+              onAuxClick={handleAuxClick}
+              onMouseDown={handleMouseDown}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
               onContextMenu={handleContextMenu}
