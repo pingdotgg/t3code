@@ -262,6 +262,9 @@ function MachineStep({
       ({ connection: { phase } }) =>
         canCreateProjectInEnvironment(phase) || phase === "connecting" || phase === "reconnecting",
     );
+  const firstUsableEnvironmentId =
+    environments.find((environment) => canCreateProjectInEnvironment(environment.connection.phase))
+      ?.environmentId ?? null;
   const sortedEnvironments = environments.toSorted((left, right) => {
     const leftPrimary = isPrimaryEnvironment(left);
     if (leftPrimary !== isPrimaryEnvironment(right)) return leftPrimary ? -1 : 1;
@@ -314,13 +317,20 @@ function MachineStep({
             </Button>
           </div>
         ) : null}
-        <div className="flex max-h-80 flex-col overflow-y-auto rounded-md border">
+        <div
+          tabIndex={-1}
+          className="flex max-h-80 flex-col overflow-y-auto rounded-md border"
+          onKeyDown={moveFocusWithArrows}
+        >
           {sortedEnvironments.map((environment) => {
             const connected = canCreateProjectInEnvironment(environment.connection.phase);
             return (
               <PickerRow
                 key={environment.environmentId}
                 disabled={!connected}
+                // One tab stop for the list; arrow keys move within it.
+                autoFocus={environment.environmentId === firstUsableEnvironmentId}
+                inTabOrder={environment.environmentId === firstUsableEnvironmentId}
                 onClick={() => onPickEnvironment(environment.environmentId)}
                 icon={
                   <EnvironmentMachineIcon
@@ -344,9 +354,11 @@ function MachineStep({
               />
             );
           })}
-          {newSshHosts.map((host) => (
+          {newSshHosts.map((host, index) => (
             <PickerRow
               key={`ssh:${host.alias}:${formatDesktopSshTarget(host)}`}
+              autoFocus={firstUsableEnvironmentId === null && index === 0}
+              inTabOrder={firstUsableEnvironmentId === null && index === 0}
               onClick={() => onPickSshHost(host)}
               icon={<TerminalIcon className="size-4 shrink-0" />}
               title={host.alias}
@@ -378,12 +390,25 @@ function MachineStep({
   );
 }
 
+// Up and Down move focus between the enabled rows of a list.
+function moveFocusWithArrows(event: KeyboardEvent<HTMLDivElement>) {
+  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+  const rows = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:enabled")];
+  const index = rows.indexOf(document.activeElement as HTMLButtonElement);
+  const next = rows[event.key === "ArrowDown" ? index + 1 : Math.max(index - 1, 0)];
+  if (!next) return;
+  event.preventDefault();
+  next.focus();
+}
+
 function PickerRow({
   icon,
   title,
   detail,
   disabled = false,
   highlighted = false,
+  inTabOrder = true,
+  autoFocus = false,
   onClick,
 }: {
   icon: React.ReactNode;
@@ -391,12 +416,16 @@ function PickerRow({
   detail?: React.ReactNode;
   disabled?: boolean;
   highlighted?: boolean;
+  inTabOrder?: boolean;
+  autoFocus?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       disabled={disabled}
+      tabIndex={inTabOrder ? undefined : -1}
+      autoFocus={autoFocus}
       onClick={onClick}
       data-highlighted={highlighted || undefined}
       className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-sm not-last:border-b hover:bg-accent focus-visible:bg-accent focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-64 data-highlighted:bg-accent"
@@ -560,11 +589,17 @@ function FolderStep({
         autoComplete="off"
         autoFocus
       />
-      <div ref={listRef} className="flex h-72 flex-col overflow-y-auto rounded-md border">
+      <div
+        ref={listRef}
+        tabIndex={-1}
+        className="flex h-72 flex-col overflow-y-auto rounded-md border"
+      >
         {rows.map((row, index) => (
           <PickerRow
             key={row.key}
             highlighted={index === highlight}
+            // Arrow keys from the input drive this list, so Tab goes straight to the footer.
+            inTabOrder={false}
             onClick={() => goTo(row.target)}
             icon={
               row.key === ".." ? (
