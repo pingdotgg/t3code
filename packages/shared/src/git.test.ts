@@ -112,6 +112,8 @@ describe("isBareGitConfig", () => {
 
     expect(isBareGitConfig(config)).toBe(true);
     expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
+    expect(isBareGitConfig('[core]\nbare = "true\\')).toBe(false);
+    expect(isBareGitConfig('[core]\nbare = "true\\\n')).toBe(false);
   });
 });
 
