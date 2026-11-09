@@ -88,7 +88,7 @@ function DialogViewport({
       className={cn(
         "fixed inset-0 z-50 grid justify-items-center",
         variant === "app"
-          ? "grid-rows-1 items-center sm:p-6 lg:p-10"
+          ? "grid-rows-1 items-center sm:p-6 sm:pt-(--app-modal-sm-top) lg:p-10"
           : "grid-rows-[1fr_auto_1fr] p-4",
         className,
       )}

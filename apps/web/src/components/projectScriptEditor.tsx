@@ -154,6 +154,7 @@ export interface NewProjectScriptInput {
   runOnWorktreeCreate: boolean;
   waitForSetup: boolean;
   runOnSettle: boolean;
+  stopOnSettle?: boolean;
   /** Omit to preserve the current shortcut when the form did not edit it. */
   keybinding?: string | null;
   previewUrl: string | null;
@@ -169,6 +170,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   runOnWorktreeCreate: false,
   waitForSetup: false,
   runOnSettle: false,
+  stopOnSettle: false,
   keybinding: null,
   previewUrl: null,
   autoOpenPreview: false,
@@ -193,6 +195,7 @@ export function editorRequestForScript(
       runOnWorktreeCreate: script.runOnWorktreeCreate,
       waitForSetup: script.runOnWorktreeCreate && script.async === false,
       runOnSettle: script.runOnSettle ?? false,
+      stopOnSettle: script.stopOnSettle ?? false,
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
@@ -348,6 +351,7 @@ function ProjectScriptEditorForm({
   );
   const [waitForSetup, setWaitForSetup] = useState(request.initial.waitForSetup);
   const [runOnSettle, setRunOnSettle] = useState(request.initial.runOnSettle);
+  const [stopOnSettle, setStopOnSettle] = useState(request.initial.stopOnSettle ?? false);
   const [keybinding, setKeybinding] = useState(request.initial.keybinding ?? "");
   const [previewUrl, setPreviewUrl] = useState(request.initial.previewUrl ?? "");
   const [autoOpenPreview, setAutoOpenPreview] = useState(request.initial.autoOpenPreview);
@@ -432,6 +436,7 @@ function ProjectScriptEditorForm({
         runOnWorktreeCreate,
         waitForSetup: runOnWorktreeCreate && waitForSetup,
         runOnSettle,
+        stopOnSettle,
         ...((request.scriptId === null && canChangeKeybinding) || changesKeybinding
           ? { keybinding: keybindingRule?.key ?? null }
           : {}),
@@ -605,6 +610,13 @@ function ProjectScriptEditorForm({
                   onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
                 />
                 Run in the thread's worktree when the thread settles
+              </label>
+              <label className="flex items-center gap-2.5 text-body text-foreground">
+                <Checkbox
+                  checked={stopOnSettle}
+                  onCheckedChange={(checked) => setStopOnSettle(Boolean(checked))}
+                />
+                Stop this action when the thread settles
               </label>
             </div>
             {validationError && <p className="text-body text-destructive">{validationError}</p>}
