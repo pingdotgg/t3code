@@ -643,6 +643,7 @@ type MessagesTimelineRowContent =
       createdAt: string;
       quizCard: LessonCard;
       answered: boolean;
+      answer?: string | undefined;
     }
   | {
       kind: "mcp-app";
@@ -1544,7 +1545,7 @@ export function deriveMessagesTimelineRows(input: {
   expandedAttemptIds?: ReadonlySet<RunAttemptId>;
   expandedWorkGroupIds?: ReadonlySet<string>;
   isWorking: boolean;
-  answeredCardIds?: ReadonlySet<string>;
+  answeredCardAnswers?: ReadonlyMap<string, string>;
   /** Native subagent work has no app run; runless entries form the live response. */
   runlessWorkActive?: boolean;
   lesson?: boolean;
@@ -2148,13 +2149,16 @@ export function deriveMessagesTimelineRows(input: {
     }
 
     if (timelineEntry.kind === "quiz-card") {
-      const answered = input.answeredCardIds?.has(timelineEntry.id) === true;
+      const answered = input.answeredCardAnswers?.has(timelineEntry.id) === true;
       nextRows.push({
         kind: "quiz-card",
         id: timelineEntry.id,
         createdAt: timelineEntry.createdAt,
         quizCard: timelineEntry.quizCard,
         answered,
+        ...(input.answeredCardAnswers?.get(timelineEntry.id) === undefined
+          ? {}
+          : { answer: input.answeredCardAnswers.get(timelineEntry.id) }),
       });
       continue;
     }
@@ -2499,7 +2503,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds: previousExpandedAttempts,
     expandedWorkGroupIds: previousExpandedGroups,
     pendingApprovalRequestIds: previousPendingApprovalRequestIds,
-    answeredCardIds: previousAnsweredCardIds,
+    answeredCardAnswers: previousAnsweredCardAnswers,
     availableRevertTurnCounts: previousAvailableRevertTurnCounts,
     ...previousContext
   } = previous.input;
@@ -2511,7 +2515,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds,
     expandedWorkGroupIds,
     pendingApprovalRequestIds,
-    answeredCardIds,
+    answeredCardAnswers,
     availableRevertTurnCounts,
     ...context
   } = input;
@@ -2524,7 +2528,7 @@ function replaceStreamingMessageRows(
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
     !shallow(previousPendingApprovalRequestIds, pendingApprovalRequestIds) ||
-    !shallow(previousAnsweredCardIds, answeredCardIds) ||
+    !shallow(previousAnsweredCardAnswers, answeredCardAnswers) ||
     !shallow(previousAvailableRevertTurnCounts, availableRevertTurnCounts) ||
     !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {
@@ -2676,6 +2680,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return (
         a.createdAt === bq.createdAt &&
         a.answered === bq.answered &&
+        a.answer === bq.answer &&
         Equal.equals(a.quizCard, bq.quizCard)
       );
     }

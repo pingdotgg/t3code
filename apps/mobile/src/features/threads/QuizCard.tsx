@@ -1,6 +1,7 @@
 import {
   cardAnswerMessage,
   quizAnswerMessage,
+  parseCardAnswer,
   quizRevealWrongIdeas,
   shuffledQuizOptions,
   type QuizCard as QuizCardData,
@@ -19,6 +20,7 @@ export function QuizCard(props: {
   readonly quizCard: QuizCardData;
   readonly seed: string;
   readonly answered: boolean;
+  readonly answer?: string | undefined;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }) {
@@ -31,7 +33,18 @@ export function QuizCard(props: {
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
-  const sentPick = submitted ? picked : undefined;
+  const parsedAnswer = props.answer === undefined ? undefined : parseCardAnswer(props.answer);
+  const savedAnswer = parsedAnswer?.kind === "quiz" ? parsedAnswer : undefined;
+  const sentAnswer = submitted
+    ? selected === "__unknown__"
+      ? null
+      : selected
+    : savedAnswer?.answer;
+  const sentPick =
+    sentAnswer === undefined || sentAnswer === null
+      ? undefined
+      : options.find((option) => option.option === sentAnswer);
+  const sentPickCorrect = sentPick?.correct === true;
   const wrongOptions = quizRevealWrongIdeas(options);
 
   const submit = async () => {
@@ -69,7 +82,10 @@ export function QuizCard(props: {
           <Pressable
             key={option.option}
             accessibilityRole="radio"
-            accessibilityState={{ checked: selected === option.option, disabled: revealed }}
+            accessibilityState={{
+              checked: (selected ?? savedAnswer?.answer) === option.option,
+              disabled: revealed,
+            }}
             disabled={revealed || sending}
             onPress={() => setSelected(option.option)}
             className={cn(
@@ -85,7 +101,11 @@ export function QuizCard(props: {
         ))}
         <Pressable
           accessibilityRole="radio"
-          accessibilityState={{ checked: selected === "__unknown__", disabled: revealed }}
+          accessibilityState={{
+            checked:
+              (selected ?? (savedAnswer?.answer === null ? "__unknown__" : null)) === "__unknown__",
+            disabled: revealed,
+          }}
           disabled={revealed || sending}
           onPress={() => setSelected("__unknown__")}
           className={cn(
@@ -152,20 +172,22 @@ export function QuizCard(props: {
         <View className="mt-4 gap-2">
           <Text
             className={
-              picked === undefined
+              sentPick === undefined
                 ? "text-foreground"
-                : picked.correct
+                : sentPickCorrect
                   ? "text-success"
                   : "text-danger"
             }
           >
-            {sentPick === undefined
-              ? submitted
-                ? "I don't know."
-                : "Answered."
-              : sentPick.correct
-                ? "Right."
-                : "Wrong."}
+            {parsedAnswer?.kind === "skipped"
+              ? "I don't know."
+              : sentAnswer === undefined
+                ? "Answered."
+                : sentAnswer === null
+                  ? "Your answer: I don't know."
+                  : sentPickCorrect
+                    ? `Your answer: ${sentAnswer}. Right.`
+                    : `Your answer: ${sentAnswer}. Wrong.`}
           </Text>
           <Text>{props.quizCard.explanation}</Text>
           {wrongOptions.map((option) => (

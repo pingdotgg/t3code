@@ -340,6 +340,50 @@ export function quizAnswerGrade(text: string): "right" | "wrong" | "unknown" | u
   return graded === "right" || graded === "wrong" ? graded : undefined;
 }
 
+export type ParsedCardAnswer =
+  | { readonly kind: "skipped" }
+  | {
+      readonly kind: "quiz";
+      readonly answer: string | null;
+      readonly grade: "right" | "wrong" | "unknown";
+    }
+  | {
+      readonly kind: "blanks";
+      readonly answers: ReadonlyArray<{
+        readonly answer: string;
+        readonly grade: "right" | "wrong";
+      }>;
+    }
+  | {
+      readonly kind: "number";
+      readonly answer: string;
+      readonly grade: "right" | "wrong";
+    };
+
+export function parseCardAnswer(text: string): ParsedCardAnswer | undefined {
+  if (text.trim() === "I don't know.") return { kind: "skipped" };
+  if (text.startsWith("Quiz answer: I don't know.")) {
+    return { kind: "quiz", answer: null, grade: "unknown" };
+  }
+  const quiz = /^Quiz answer: "(.*?)", (right|wrong)\./s.exec(text);
+  if (quiz) return { kind: "quiz", answer: quiz[1]!, grade: quiz[2] as "right" | "wrong" };
+
+  const number = /^Number answer: "(.*?)", (right|wrong)\./s.exec(text);
+  if (number) return { kind: "number", answer: number[1]!, grade: number[2] as "right" | "wrong" };
+
+  const blanks = text.startsWith("Blanks answer: ")
+    ? text.slice("Blanks answer: ".length)
+    : undefined;
+  if (!blanks) return undefined;
+  const answers = [...blanks.matchAll(/\d+\. "(.*?)", (right|wrong)(?=; \d+\. "|\.)/g)].map(
+    (match) => ({
+      answer: match[1]!,
+      grade: match[2] as "right" | "wrong",
+    }),
+  );
+  return answers.length > 0 ? { kind: "blanks", answers } : undefined;
+}
+
 // The card's item id rides in the answer text so every client, after reloads, knows which card it answered.
 const CARD_ANSWER_TAG = /\n\n\(card (\S+)\)$/;
 
@@ -351,13 +395,15 @@ export function withoutCardAnswerTag(text: string) {
   return text.replace(CARD_ANSWER_TAG, "");
 }
 
-export function answeredCardIds(
+export function answeredCardAnswers(
   messages: Iterable<{ readonly role: string; readonly text: string }>,
-): ReadonlySet<string> {
-  const ids = new Set<string>();
+): ReadonlyMap<string, string> {
+  const answers = new Map<string, string>();
   for (const message of messages) {
-    const id = message.role === "user" ? CARD_ANSWER_TAG.exec(message.text)?.[1] : undefined;
-    if (id !== undefined) ids.add(id);
+    if (message.role !== "user") continue;
+    const match = CARD_ANSWER_TAG.exec(message.text);
+    if (match === null) continue;
+    answers.set(match[1]!, message.text.slice(0, match.index));
   }
-  return ids;
+  return answers;
 }

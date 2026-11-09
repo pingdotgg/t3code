@@ -265,7 +265,7 @@ interface MessagesTimelineProps {
 
   listRef: React.RefObject<LegendListRef | null>;
   timelineEntries: ReadonlyArray<TimelineEntry>;
-  answeredCardIds?: ReadonlySet<string> | undefined;
+  answeredCardAnswers?: ReadonlyMap<string, string> | undefined;
   latestRun: TimelineLatestRun | null;
   /** The run the screen reader announcer follows; see announcedRun. */
   announcedRun?: { readonly runId: RunId; readonly status: TimelineLatestRun["status"] } | null;
@@ -389,7 +389,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   awaitingRequestId = null,
   listRef,
   timelineEntries,
-  answeredCardIds,
+  answeredCardAnswers,
   findOpen = false,
   findExpanded = false,
   findQuery = "",
@@ -716,7 +716,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   );
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
-    ...(answeredCardIds === undefined ? {} : { answeredCardIds }),
+    ...(answeredCardAnswers === undefined ? {} : { answeredCardAnswers }),
     pendingApprovalRequestIds,
     latestRun,
     runningRunId,

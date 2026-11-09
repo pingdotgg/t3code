@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  answeredCardIds,
+  answeredCardAnswers,
   cardReplyProblem,
   foldCardReply,
   MIN_CARD_REPLY_CHARS,
   blankAnswerRight,
+  parseCardAnswer,
   blanksAnswerMessage,
   cardAnswerMessage,
   numberAnswerMessage,
@@ -42,16 +43,47 @@ describe("quiz cards", () => {
       cardReplyProblem({ reply: "Short.", purpose: "opening-check", shownBefore: 0 }),
     ).toBeUndefined();
   });
-  it("reads which cards the user's messages answered", () => {
-    const answer = cardAnswerMessage('Quiz answer: "High", right.', "item-2");
-    expect(quizAnswerGrade(answer)).toBe("right");
-    expect([
-      ...answeredCardIds([
-        { role: "user", text: answer },
-        { role: "user", text: "Quiz answer: I don't know." },
-        { role: "assistant", text: cardAnswerMessage("echo", "item-3") },
-      ]),
-    ]).toEqual(["item-2"]);
+  it.each([
+    [
+      "number",
+      cardAnswerMessage(
+        numberAnswerMessage({
+          answer: "0.85",
+          card: { question: "Q", number: { answer: 0.925, tolerance: 0.002, unit: "reward" } },
+        }),
+        "number-1",
+      ),
+      { kind: "number", answer: "0.85 reward", grade: "wrong" },
+    ],
+    [
+      "quiz",
+      cardAnswerMessage(quizAnswerMessage({ answer: 'the "best" one', correct: true }), "quiz-1"),
+      { kind: "quiz", answer: 'the "best" one', grade: "right" },
+    ],
+    [
+      "blanks",
+      cardAnswerMessage(
+        blanksAnswerMessage({
+          answers: ["x", 'say "hi"'],
+          card: { question: "___ + ___", blanks: [{ answers: ["x"] }, { answers: ['say "hi"'] }] },
+        }),
+        "blanks-1",
+      ),
+      {
+        kind: "blanks",
+        answers: [
+          { answer: "x", grade: "right" },
+          { answer: 'say "hi"', grade: "right" },
+        ],
+      },
+    ],
+    ["skipped", cardAnswerMessage("I don't know.", "skipped-1"), { kind: "skipped" }],
+  ] as const)("parses %s learner answers and keeps stable card text", (_kind, text, expected) => {
+    const [cardId] = text.match(/\(card (\S+)\)$/u)?.slice(1) ?? [];
+    expect(parseCardAnswer(text.slice(0, text.lastIndexOf("\n\n(card ")))).toEqual(expected);
+    expect(answeredCardAnswers([{ role: "user", text }]).get(cardId!)).toBe(
+      text.slice(0, text.lastIndexOf("\n\n(card ")),
+    );
   });
 
   it("reads bounded question cards", () => {

@@ -21,7 +21,7 @@ import { Atom } from "effect/reactivity";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { environmentThreadDetails } from "~/state/threads";
-import { answeredCardIds } from "@t3tools/shared/quizCard";
+import { answeredCardAnswers } from "@t3tools/shared/quizCard";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { deriveActiveWorkStartedAt, derivePhase, type PendingApproval } from "../../session-logic";
 import type { ChatMessage } from "../../types";
@@ -130,8 +130,8 @@ export function SideChatTimeline(props: {
     return follow.attachTimelineViewport(filteredViewport);
   });
   const optimisticMessageId = props.optimisticMessages.at(-1)?.id ?? null;
-  const answeredLessonCardIds =
-    projection === null ? undefined : answeredCardIds(projection.messages);
+  const answeredLessonCardAnswers =
+    projection === null ? undefined : answeredCardAnswers(projection.messages);
   const previousOptimisticMessageId = useRef(optimisticMessageId);
   const scrollToEnd = useStableCallback(() => follow.scrollToEnd(true));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls to this panel's own send after the commit that adds its optimistic row
@@ -158,7 +158,7 @@ export function SideChatTimeline(props: {
           canOperateThread={props.canOperate}
           onRespondToApproval={props.onRespondToApproval}
           threadDetailRef={props.detailRef}
-          answeredCardIds={answeredLessonCardIds}
+          answeredCardAnswers={answeredLessonCardAnswers}
           entriesInput={{
             optimisticMessages: props.optimisticMessages,
             ...(props.attachmentUrlById === undefined

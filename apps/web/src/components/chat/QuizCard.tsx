@@ -7,6 +7,7 @@ import {
   numberAnswerExpected,
   numberAnswerRight,
   parseNumberAnswer,
+  parseCardAnswer,
   quizAnswerMessage,
   quizRevealWrongIdeas,
   shuffledQuizOptions,
@@ -160,6 +161,7 @@ function OpenQuestionCard(props: {
   readonly card: QuestionCard;
   readonly seed: string;
   readonly answered: boolean;
+  readonly answer?: string | undefined;
   readonly environmentId: EnvironmentId | undefined;
   readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
@@ -179,6 +181,12 @@ function OpenQuestionCard(props: {
     props.card.blanks !== undefined
       ? answers.every((answer) => answer.trim().length > 0)
       : props.card.number !== undefined && parseNumberAnswer(numberAnswer) !== undefined;
+  const savedAnswer = props.answer === undefined ? undefined : parseCardAnswer(props.answer);
+  const savedBlanks =
+    savedAnswer?.kind === "blanks" && savedAnswer.answers.length === blankCount
+      ? savedAnswer.answers
+      : undefined;
+  const savedNumber = savedAnswer?.kind === "number" ? savedAnswer : undefined;
   const send = async (text: string, skip = false) => {
     if (sending || revealed || props.onSendMessage === undefined || text.length === 0) return;
     setSending(true);
@@ -216,19 +224,23 @@ function OpenQuestionCard(props: {
           <span key={index}>
             {part}
             {index < props.card.blanks!.length ? (
-              <Input
-                data-card-answer={index === 0 ? true : undefined}
-                aria-label={`Blank ${index + 1}`}
-                value={answers[index] ?? ""}
-                onChange={(event) =>
-                  setAnswers((current) =>
-                    current.map((answer, item) => (item === index ? event.target.value : answer)),
-                  )
-                }
-                disabled={revealed || sending}
-                size="sm"
-                className="mx-1 inline-block w-32 align-middle"
-              />
+              revealed ? (
+                (savedBlanks?.[index]?.answer ?? answers[index])
+              ) : (
+                <Input
+                  data-card-answer={index === 0 ? true : undefined}
+                  aria-label={`Blank ${index + 1}`}
+                  value={answers[index] ?? ""}
+                  onChange={(event) =>
+                    setAnswers((current) =>
+                      current.map((answer, item) => (item === index ? event.target.value : answer)),
+                    )
+                  }
+                  disabled={sending}
+                  size="sm"
+                  className="mx-1 inline-block w-32 align-middle"
+                />
+              )
             ) : null}
           </span>
         ))}
@@ -241,7 +253,7 @@ function OpenQuestionCard(props: {
       className="min-w-0 rounded-lg border border-border bg-card p-4 text-card-foreground"
     >
       {renderQuestion()}
-      {props.card.number !== undefined ? (
+      {props.card.number !== undefined && !revealed ? (
         <div className="mt-3 flex items-center gap-2">
           <Input
             data-card-answer
@@ -313,10 +325,10 @@ function OpenQuestionCard(props: {
       ) : null}
       {revealed ? (
         <div className="mt-4 space-y-2 text-sm">
-          {skipped ? (
+          {skipped || savedAnswer?.kind === "skipped" ? (
             <p>I don't know.</p>
           ) : props.card.blanks ? (
-            props.answered && !submitted ? (
+            props.answered && !submitted && savedBlanks === undefined ? (
               <>
                 <p>Answered.</p>
                 {props.card.blanks.map((blank, index) => (
@@ -328,29 +340,44 @@ function OpenQuestionCard(props: {
               </>
             ) : (
               props.card.blanks.map((blank, index) => {
-                const right = blankAnswerRight(blank, answers[index] ?? "");
+                const answer = savedBlanks?.[index]?.answer ?? answers[index] ?? "";
+                const right =
+                  savedBlanks?.[index]?.grade === "right" ||
+                  (savedBlanks === undefined && blankAnswerRight(blank, answer));
                 return (
                   <p
                     // oxlint-disable-next-line react/no-array-index-key -- blanks of an immutable card
                     key={index}
                     className={right ? "text-success" : "text-destructive"}
                   >
-                    Blank {index + 1}: {right ? "Right." : "Wrong."} Accepted:{" "}
-                    {blank.answers.join(" / ")}
+                    Blank {index + 1}: {savedBlanks ? `${answer}. ` : ""}
+                    {right ? "Right." : "Wrong."} Accepted: {blank.answers.join(" / ")}
                   </p>
                 );
               })
             )
           ) : props.card.number ? (
-            props.answered && !submitted ? (
+            props.answered && !submitted && savedNumber === undefined ? (
               <>
                 <p>Answered.</p>
                 <p>Expected {numberAnswerExpected(props.card.number)}</p>
               </>
             ) : (
-              <p className={numberRight ? "text-success" : "text-destructive"}>
-                {numberRight ? "Right." : "Wrong."} Expected{" "}
-                {numberAnswerExpected(props.card.number)}
+              <p
+                className={
+                  savedNumber?.grade === "right" || (savedNumber === undefined && numberRight)
+                    ? "text-success"
+                    : "text-destructive"
+                }
+              >
+                Your answer:{" "}
+                {savedNumber?.answer ??
+                  `${numberAnswer.trim()}${props.card.number.unit ? ` ${props.card.number.unit}` : ""}`}
+                .{" "}
+                {savedNumber?.grade === "right" || (savedNumber === undefined && numberRight)
+                  ? "Right."
+                  : "Wrong."}{" "}
+                Expected {numberAnswerExpected(props.card.number)}
               </p>
             )
           ) : (
@@ -366,6 +393,7 @@ function MultipleChoiceCard(props: {
   readonly card: QuizCardData;
   readonly seed: string;
   readonly answered: boolean;
+  readonly answer?: string | undefined;
   readonly environmentId: EnvironmentId | undefined;
   readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {
@@ -378,7 +406,18 @@ function MultipleChoiceCard(props: {
   const [error, setError] = useState<string | null>(null);
   const revealed = props.answered || submitted;
   const picked = options.find((option) => option.option === selected);
-  const sentPick = submitted ? picked : undefined;
+  const parsedAnswer = props.answer === undefined ? undefined : parseCardAnswer(props.answer);
+  const savedAnswer = parsedAnswer?.kind === "quiz" ? parsedAnswer : undefined;
+  const sentAnswer = submitted
+    ? selected === "__unknown__"
+      ? null
+      : selected
+    : savedAnswer?.answer;
+  const sentPick =
+    sentAnswer === undefined || sentAnswer === null
+      ? undefined
+      : options.find((option) => option.option === sentAnswer);
+  const sentPickCorrect = sentPick?.correct === true;
   const submit = async (text: string) => {
     if (
       sending ||
@@ -417,7 +456,9 @@ function MultipleChoiceCard(props: {
     >
       <p className="font-medium">{props.card.question}</p>
       <RadioGroup
-        value={selected ?? ""}
+        value={
+          selected ?? (savedAnswer?.answer === null ? "__unknown__" : (savedAnswer?.answer ?? ""))
+        }
         onValueChange={setSelected}
         disabled={revealed || sending}
         className="mt-3"
@@ -500,18 +541,20 @@ function MultipleChoiceCard(props: {
             className={
               sentPick === undefined
                 ? undefined
-                : sentPick.correct
+                : sentPickCorrect
                   ? "text-success"
                   : "text-destructive"
             }
           >
-            {sentPick === undefined
-              ? submitted
-                ? "I don't know."
-                : "Answered."
-              : sentPick.correct
-                ? "Right."
-                : "Wrong."}
+            {parsedAnswer?.kind === "skipped"
+              ? "I don't know."
+              : sentAnswer === undefined
+                ? "Answered."
+                : sentAnswer === null
+                  ? "Your answer: I don't know."
+                  : sentPickCorrect
+                    ? `Your answer: ${sentAnswer}. Right.`
+                    : `Your answer: ${sentAnswer}. Wrong.`}
           </p>
           <p>{props.card.explanation}</p>
           {wrongOptions.map((option) => (
@@ -529,6 +572,7 @@ export function QuizCardTimelineCard(props: {
   readonly quizCard: LessonCard;
   readonly seed: string;
   readonly answered: boolean;
+  readonly answer?: string | undefined;
   readonly environmentId?: EnvironmentId | undefined;
   readonly onSendMessage?: ((text: string) => Promise<void>) | undefined;
 }) {

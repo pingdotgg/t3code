@@ -99,7 +99,7 @@ import {
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
-import { answeredCardIds } from "@t3tools/shared/quizCard";
+import { answeredCardAnswers } from "@t3tools/shared/quizCard";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
@@ -3182,8 +3182,8 @@ export default function ChatView(props: ChatViewProps) {
   const hasThreadNow =
     attentionNow !== null || workNow !== null || goalNow !== null || shownThreadSyncPhase !== null;
   const queuedRunCount = serverProjection ? getUserQueuedThreadRuns(serverProjection).length : 0;
-  const answeredLessonCardIds =
-    serverProjection === null ? undefined : answeredCardIds(serverProjection.messages);
+  const answeredLessonCardAnswers =
+    serverProjection === null ? undefined : answeredCardAnswers(serverProjection.messages);
   // The queue control is mounted for every server thread but joins the footer only while it shows
   // something, by its own rule: an optimistic message stops counting once the server has it.
   const hasQueuedTurns =
@@ -3500,7 +3500,7 @@ export default function ChatView(props: ChatViewProps) {
                   onRespondToApproval={onRespondToApprovalStable}
                   canOperateThread={canOperateThread}
                   threadDetailRef={routeThreadDetailRef}
-                  answeredCardIds={answeredLessonCardIds}
+                  answeredCardAnswers={answeredLessonCardAnswers}
                   entriesInput={timelineEntriesInput}
                   draftEntries={isServerThread ? null : draftTimelineEntries}
                   activeThreadKey={activeThreadKey}
