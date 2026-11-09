@@ -22,7 +22,6 @@ import { constVoid } from "effect/Function";
 import * as Schema from "effect/Schema";
 import type { CDPSession, ConsoleMessage, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
-import * as NodeVM from "node:vm";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const isBrowserControlInterrupted = Schema.is(BrowserControlInterrupted);
@@ -886,14 +885,6 @@ export const scroll = async (page: Page, input: PreviewAutomationScrollInput) =>
   await locator.evaluate((element, [x, y]) => element.scrollBy(x, y), delta);
 };
 
-const compilesAsScript = (expression: string) => {
-  try {
-    return new NodeVM.Script(expression) instanceof NodeVM.Script;
-  } catch {
-    return false;
-  }
-};
-
 /** Terminate expired page scripts so a hung expression cannot block the tab's control queue. */
 export const evaluate = async (
   cdp: CDPSession,
@@ -913,13 +904,20 @@ export const evaluate = async (
       );
     }, timeoutMs);
   });
-  const evaluation = cdp.send("Runtime.evaluate", {
+  const params = {
     expression: input.expression,
     awaitPromise: input.awaitPromise ?? true,
     returnByValue: input.returnByValue ?? true,
-    // The devtools console's mode, for top-level await. It returns a promise left as the last
-    // expression unawaited, so expressions that parse as a classic script keep the classic mode.
-    replMode: input.expression.includes("await") && !compilesAsScript(input.expression),
+  };
+  // The devtools console's replMode allows top-level await but returns a trailing promise unawaited,
+  // so it only retries what the page's parser rejected. A parse error has no stack and ran nothing.
+  const evaluation = cdp.send("Runtime.evaluate", params).then((classic) => {
+    const failure = classic.exceptionDetails;
+    const unparsed =
+      failure?.exception?.className === "SyntaxError" && failure.stackTrace === undefined;
+    return unparsed && input.expression.includes("await")
+      ? cdp.send("Runtime.evaluate", { ...params, replMode: true })
+      : classic;
   });
   void evaluation.catch(constVoid);
   const result = await Promise.race([evaluation, expired]).finally(() => clearTimeout(timer));

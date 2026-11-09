@@ -289,6 +289,16 @@ describe("server browser element refs", () => {
     expect(result).toBe(1);
   });
 
+  it("does not rerun an expression whose SyntaxError is thrown at runtime", async () => {
+    const evaluation = ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "window.runs = (window.runs ?? 0) + 1; new Function('await 0')" },
+      5_000,
+    );
+    await expect(evaluation).rejects.toThrow("await is only valid");
+    expect(await page.evaluate("window.runs")).toBe(1);
+  });
+
   it("returns the result of a top-level await expression that reloads the page", async () => {
     await page.route("http://preview.test/", (route) =>
       route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
