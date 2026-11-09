@@ -124,6 +124,7 @@ export function useProjectScriptRunActions() {
       endedAt: null,
     };
 
+    const wrappedCommand = wrapProjectScriptCommand(script.command);
     const openResult = await openTerminal({
       environmentId: project.environmentId,
       input: {
@@ -133,6 +134,7 @@ export function useProjectScriptRunActions() {
         ...(worktreePath !== null ? { worktreePath } : {}),
         cols: SCRIPT_TERMINAL_COLS,
         rows: SCRIPT_TERMINAL_ROWS,
+        initialCommand: wrappedCommand,
         env: projectScriptRuntimeEnv({
           project: { cwd: project.workspaceRoot },
           worktreePath,
@@ -158,24 +160,28 @@ export function useProjectScriptRunActions() {
     }
 
     startRun(run);
-    const writeResult = await writeTerminal({
-      environmentId: project.environmentId,
-      input: {
-        threadId,
-        terminalId,
-        data: projectScriptTerminalInput(wrapProjectScriptCommand(script.command)),
-      },
-    });
-    if (writeResult._tag === "Failure") {
-      const message = isAtomCommandInterrupted(writeResult)
-        ? "The run was interrupted."
-        : commandFailureMessage(writeResult);
-      updateRun(runId, { status: "failed", errorMessage: message, endedAt: Date.now() });
-      toastManager.add({
-        type: "error",
-        title: `Could not run ${script.name}`,
-        description: message,
+    // Older remote servers ignore initialCommand, so fall back to typing into the
+    // shell when the server did not handle it.
+    if (openResult.value.initialCommandHandled !== true) {
+      const writeResult = await writeTerminal({
+        environmentId: project.environmentId,
+        input: {
+          threadId,
+          terminalId,
+          data: projectScriptTerminalInput(wrappedCommand),
+        },
       });
+      if (writeResult._tag === "Failure") {
+        const message = isAtomCommandInterrupted(writeResult)
+          ? "The run was interrupted."
+          : commandFailureMessage(writeResult);
+        updateRun(runId, { status: "failed", errorMessage: message, endedAt: Date.now() });
+        toastManager.add({
+          type: "error",
+          title: `Could not run ${script.name}`,
+          description: message,
+        });
+      }
     }
   };
 

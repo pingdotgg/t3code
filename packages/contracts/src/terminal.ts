@@ -42,6 +42,10 @@ export const TerminalOpenInput = Schema.Struct({
   env: Schema.optional(TerminalEnvSchema),
   providerInstanceId: Schema.optional(ProviderInstanceId),
   stopOnSettle: Schema.optional(Schema.Boolean),
+  /** Ask the server to run a command during shell startup when supported. */
+  initialCommand: Schema.optional(
+    Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+  ),
 });
 export type TerminalOpenInput = typeof TerminalOpenInput.Type;
 
@@ -105,6 +109,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   // The PTY grid every renderer of this terminal should draw; absent from older servers.
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
+  /** Present when terminal.open handled the requested initial command. */
+  initialCommandHandled: Schema.optional(Schema.Boolean),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 

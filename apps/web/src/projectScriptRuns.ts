@@ -118,7 +118,9 @@ function shellSingleQuote(value: string): string {
  * in the environment, so the echoed command line never contains them.
  */
 export function wrapProjectScriptCommand(command: string): string {
-  const body = command.replace(/\r?\n/g, "\r");
+  // The wrapper may be typed into a shell or passed as an initial command to a
+  // shell's -c, so every separator has to be a real line break.
+  const body = command.replace(/\r\n|\r/g, "\n");
   const script = [
     `printf "\\n%s\\n" "$${PROJECT_SCRIPT_BEGIN_ENV}"`,
     "(",
@@ -126,7 +128,7 @@ export function wrapProjectScriptCommand(command: string): string {
     ")",
     "__t3_status=$?",
     `printf "\\n%s%s\\n" "$${PROJECT_SCRIPT_SENTINEL_ENV}" "$__t3_status"`,
-  ].join("\r");
+  ].join("\n");
   return `sh -c ${shellSingleQuote(script)}`;
 }
 

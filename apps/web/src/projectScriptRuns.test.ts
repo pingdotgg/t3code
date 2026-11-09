@@ -86,7 +86,7 @@ describe("project script runs", () => {
     const wrapped = wrapProjectScriptCommand("pnpm test");
 
     expect(wrapped).toBe(
-      'sh -c \'printf "\\n%s\\n" "$__T3_SCRIPT_BEGIN"\r(\rpnpm test\r)\r__t3_status=$?\rprintf "\\n%s%s\\n" "$__T3_SCRIPT_SENTINEL" "$__t3_status"\'',
+      'sh -c \'printf "\\n%s\\n" "$__T3_SCRIPT_BEGIN"\n(\npnpm test\n)\n__t3_status=$?\nprintf "\\n%s%s\\n" "$__T3_SCRIPT_SENTINEL" "$__t3_status"\'',
     );
   });
 
@@ -94,7 +94,7 @@ describe("project script runs", () => {
     const wrapped = wrapProjectScriptCommand("echo 'hi'\npnpm build");
 
     expect(wrapped).toContain("echo '\\''hi'\\''");
-    expect(wrapped).toContain("echo '\\''hi'\\''\rpnpm build");
+    expect(wrapped).toContain("echo '\\''hi'\\''\npnpm build");
   });
 
   it("parses only the sentinel with its token", () => {
