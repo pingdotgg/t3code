@@ -486,8 +486,7 @@ const makeReaderPool = Effect.fnUntraced(function* (options: SqliteClientConfig,
   const turnOff = (slot: (typeof slots)[number], reason: string) =>
     Effect.suspend(() => {
       retire(slot);
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Undefined selects the writer fallback; void is not a connection.
-      if (unavailable) return Effect.succeed(undefined);
+      if (unavailable) return Effect.undefined;
       unavailable = true;
       return Effect.logWarning("SQLite reader workers unavailable; reads use the main connection", {
         reason,
@@ -499,8 +498,7 @@ const makeReaderPool = Effect.fnUntraced(function* (options: SqliteClientConfig,
     restore: typeof Effect.interruptible,
   ): Effect.Effect<Connection | undefined> =>
     Effect.suspend(() => {
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Undefined selects the writer fallback; void is not a connection.
-      if (unavailable) return Effect.succeed(undefined);
+      if (unavailable) return Effect.undefined;
       let reader: Reader;
       try {
         reader =
@@ -520,8 +518,7 @@ const makeReaderPool = Effect.fnUntraced(function* (options: SqliteClientConfig,
         ),
         (startup): Effect.Effect<Connection | undefined> =>
           unavailable
-            ? // @effect-diagnostics-next-line effectSucceedWithVoid:off - Undefined selects the writer fallback; void is not a connection.
-              Effect.succeed(undefined)
+            ? Effect.undefined
             : Option.isSome(startup) && startup.value.type === "ready" && slot.reader === reader
               ? Effect.succeed(reader.connection)
               : turnOff(
@@ -543,8 +540,7 @@ const makeReaderPool = Effect.fnUntraced(function* (options: SqliteClientConfig,
     background: boolean,
   ): Effect.Effect<ReaderLease | undefined> =>
     Effect.suspend(() => {
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - Undefined selects the writer fallback; void is not a connection.
-      if (unavailable) return Effect.succeed(undefined);
+      if (unavailable) return Effect.undefined;
       const enterLane = background ? restore(backgroundPermits.take(1)) : Effect.void;
       const leaveLane = background ? Effect.asVoid(backgroundPermits.release(1)) : Effect.void;
       const take = Effect.andThen(
@@ -574,7 +570,7 @@ const makeReaderPool = Effect.fnUntraced(function* (options: SqliteClientConfig,
 
 const CHECKPOINT_FRAMES = 1000;
 const CHECKPOINT_IDLE_MS = 100;
-const CHECKPOINT_BACKPRESSURE_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_BACKPRESSURE_FRAMES = 32_768;
 // Each locked attempt already waited out the worker's 5 s busy_timeout.
 const CHECKPOINT_LOCK_RETRY_MS = 250;
 
@@ -749,6 +745,8 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     yield* warn("Node SQLite lacks transaction-state or statement-authorizer support");
     return undefined;
   }
+  // These are the writer's first statements, before callers set their own wait.
+  writer.exec("PRAGMA busy_timeout = 5000;");
   const version = String(writer.prepare("SELECT sqlite_version() AS version").get()?.version);
   const [major = 0, minor = 0] = version.split(".").map(Number);
   // Older SQLite treats NOOP as PASSIVE, which would checkpoint on the writer.
@@ -758,7 +756,7 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
   }
   const frames = writer.prepare("PRAGMA wal_checkpoint(NOOP)");
   const sizeLimit = writer.prepare("PRAGMA journal_size_limit");
-  const started = yield* Effect.try(
+  const started = Result.try(
     () =>
       new NodeWorkerThreads.Worker(checkpointWorkerSource, {
         eval: true,
@@ -770,9 +768,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
           retryMs: CHECKPOINT_LOCK_RETRY_MS,
         },
       }),
-  ).pipe(Effect.result);
+  );
   if (Result.isFailure(started)) {
-    yield* warn(String(started.failure.cause));
+    yield* warn(String(started.failure));
     return undefined;
   }
   const worker = started.success;
@@ -1348,8 +1346,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       const acquire = Effect.flatMap(
         readers.lease(pending?.restore ?? restore, fiber.getRef(Background)),
         (lease) => {
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - Undefined selects the writer fallback; void is not a connection.
-          if (lease === undefined) return Effect.succeed(undefined);
+          if (lease === undefined) return Effect.undefined;
           if (pending !== undefined) {
             pending.acquired = acquired("reader", clock, start);
             pending.ownerAtWaitStart = undefined;
@@ -1367,6 +1364,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
   });
 
   const client = yield* Client.make({
+    driver: "node:sqlite",
     acquirer: transactionAcquirer,
     borrower,
     compiler,

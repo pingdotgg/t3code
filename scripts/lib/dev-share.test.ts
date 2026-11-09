@@ -240,7 +240,7 @@ describe("shareDevServer", () => {
       assert.deepEqual(
         calls.filter((args) => args.includes("off") || args.includes("--bg")),
         [
-          ["serve", "--https=5788", "off"],
+          ["serve", "--https=5788", "--set-path=/", "off"],
           ["serve", "--bg", "--https=5788", "http://localhost:5788"],
         ],
       );

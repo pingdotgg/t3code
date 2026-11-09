@@ -13,6 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../config.ts";
 import { forkParked } from "../../serverActivation.ts";
@@ -77,6 +78,11 @@ export const takeLauncherEnvironment = Effect.fn("HeadlessGatewayHost.takeLaunch
 );
 
 /** What `takeLauncherEnvironment` removed from the process environment at startup. */
+class GatewayOwnerStartError extends Schema.TaggedError<GatewayOwnerStartError>()(
+  "GatewayOwnerStartError",
+  { cause: Schema.Defect() },
+) {}
+
 export class LauncherEnvironment extends Context.Service<
   LauncherEnvironment,
   Readonly<Record<string, string>>
@@ -163,9 +169,10 @@ export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const launcherEnvironment = yield* LauncherEnvironment;
-    const homeDirectory = process.env.HOME ?? "";
+    const processEnvironment = yield* HostProcess.Environment;
+    const homeDirectory = processEnvironment.HOME ?? "";
     const settings = resolveHeadlessGatewaySettings({
-      env: { ...process.env, ...launcherEnvironment },
+      env: { ...processEnvironment, ...launcherEnvironment },
       file: homeDirectory === "" ? {} : yield* readGatewayEnvFile(homeDirectory),
       homeDirectory,
       baseDir: config.baseDir,
@@ -184,7 +191,10 @@ export const layer = Layer.effectDiscard(
     const holdOwner = Effect.gen(function* () {
       if (owner !== undefined || closed) return;
       // Undefined while another owner (a desktop app's) holds the port.
-      const started = yield* Effect.tryPromise(() => startSharedGatewayOwner(gateway)).pipe(
+      const started = yield* Effect.tryPromise({
+        try: () => startSharedGatewayOwner(gateway),
+        catch: (cause) => new GatewayOwnerStartError({ cause }),
+      }).pipe(
         Effect.tapError((error) =>
           Effect.logWarning("Headless T3 Agents gateway owner failed to start.", { error }),
         ),

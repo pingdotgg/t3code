@@ -23,6 +23,7 @@ describe("shouldHandleAppLink", () => {
     "t3code-personal://threads/env-1/thread-1",
     "t3code-personal://pair?pairingUrl=x",
     "t3code-personal-dev://settings/usage?tab=limits",
+    "https://app.t3.codes/threads/env/thread?prompt=Fix%20expo-development-client%20and%20t3code-personal://expo-sharing",
   ])("handles path-bearing URL %s", (url) => {
     expect(shouldHandleAppLink(url, true)).toBe(true);
   });

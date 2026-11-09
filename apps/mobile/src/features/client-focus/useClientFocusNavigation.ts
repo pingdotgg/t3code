@@ -5,7 +5,7 @@ import { setMobileClientFocusHandler } from "../../connection/client-focus";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { agentsBoardSelectionAtom } from "../home/agents-board-state";
 import { fileRoutePathSegments } from "../files/filePath";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
 /** Shows the Agents board, threads, and files that an agent brings on screen on this device. */
 export function useClientFocusNavigation(): void {

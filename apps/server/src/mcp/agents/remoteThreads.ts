@@ -285,11 +285,19 @@ const FIRST_POLL = Duration.seconds(1);
 const MAX_POLL = Duration.seconds(5);
 const RELAY_FAILURES_TOLERATED = 3;
 
+class RemoteThreadListError extends Schema.TaggedError<RemoteThreadListError>()(
+  "RemoteThreadListError",
+  { cause: Schema.Defect() },
+) {}
+
 const decodeSummaries = Schema.decodeUnknownEffect(McpGatewayRelayThreadList);
 
 /** Whether the environment's thread list still shows this run active: a small read per poll. */
 const stillActive = (remote: RemoteEnvironment, threadId: ThreadId, runId: RunId) =>
-  Effect.tryPromise(() => remote.gateway.context.port.listThreads(remote.environmentId)).pipe(
+  Effect.tryPromise({
+    try: () => remote.gateway.context.port.listThreads(remote.environmentId),
+    catch: (cause) => new RemoteThreadListError({ cause }),
+  }).pipe(
     Effect.flatMap(decodeSummaries),
     Effect.map(
       ({ items }) => items.find((summary) => summary.id === threadId)?.activeRunId === runId,

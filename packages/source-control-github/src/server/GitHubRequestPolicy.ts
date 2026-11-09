@@ -85,6 +85,7 @@ export class GitHubApiResponseError extends Schema.TaggedError<GitHubApiResponse
     operation: Schema.String,
     status: Schema.Int,
     githubErrors: Schema.optionalKey(Schema.Array(Schema.String)),
+    githubErrorTypes: Schema.optionalKey(Schema.Array(Schema.NullOr(Schema.String))),
   },
 ) {
   override get message(): string {

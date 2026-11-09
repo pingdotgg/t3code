@@ -1,5 +1,5 @@
 import { DeviceOperationError } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -21,9 +21,9 @@ const encodeEndpoint = Schema.encodeEffect(
 );
 
 const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
-  const crypto = yield* Crypto.Crypto;
+  const crypto = yield* Digest.Digest;
   const digest = yield* crypto
-    .digest("SHA-256", new TextEncoder().encode(value))
+    .digest(Digest.sha256, new TextEncoder().encode(value))
     .pipe(Effect.orDie);
   return Hex.encode(digest).slice(0, 24);
 });

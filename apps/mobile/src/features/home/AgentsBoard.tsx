@@ -56,7 +56,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import { useThreadListActions } from "./useThreadListActions";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { agentsBoardExpandedChildrenAtom, agentsBoardSelectionAtom } from "./agents-board-state";
@@ -75,41 +75,6 @@ const BOARD_TABS = [
   { value: "agents", label: "Agents" },
   { value: "threads", label: "Threads" },
 ] as const;
-
-/**
- * The Agents/Threads switch sized for the iOS navigation bar's title slot,
- * where it replaces the brand. Plain views only: native header subviews blank
- * native-driver and layout animations, so the selection simply swaps.
- */
-export function BoardTabSwitch() {
-  const [selection, setSelection] = useAtom(agentsBoardSelectionAtom);
-  return (
-    <View accessibilityRole="tablist" className="flex-row rounded-full bg-card p-0.5">
-      {BOARD_TABS.map((tab) => {
-        const selected = selection.tab === tab.value;
-        return (
-          <Pressable
-            key={tab.value}
-            accessibilityRole="tab"
-            accessibilityState={{ selected }}
-            onPress={() => setSelection({ ...selection, tab: tab.value })}
-            hitSlop={{ top: 6, bottom: 6 }}
-            className={cn("rounded-full px-4 py-1.5", selected && "bg-secondary")}
-          >
-            <Text
-              className={cn(
-                "text-[15px]",
-                selected ? "font-t3-bold text-foreground" : "font-t3-medium text-foreground-muted",
-              )}
-            >
-              {tab.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-}
 
 export function WorkspaceBoardTabs() {
   const [selection, setSelection] = useAtom(agentsBoardSelectionAtom);

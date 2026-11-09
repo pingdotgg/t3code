@@ -29,7 +29,7 @@
   },
   "scripts": {
     "build": "vp build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run"
   },
   "dependencies": {
@@ -45,7 +45,6 @@
     "@t3tools/contracts": "workspace:*",
     "@types/node": "catalog:",
     "@types/ws": "^8.18.1",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   }
 }

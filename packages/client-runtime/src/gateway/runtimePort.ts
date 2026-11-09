@@ -25,7 +25,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
@@ -90,11 +90,13 @@ const gatewayRunStream = <TTag extends EnvironmentStreamCommandRpcTag>(
   );
 
 export interface GatewayEffectRuntime {
-  runPromise<A, E>(effect: Effect.Effect<A, E, EnvironmentRegistry | Crypto.Crypto>): Promise<A>;
+  runPromise<A, E>(
+    effect: Effect.Effect<A, E, EnvironmentRegistry | SecureRandom.SecureRandom>,
+  ): Promise<A>;
 }
 
 export function createGatewayRuntimePortFromContext(
-  context: Context.Context<EnvironmentRegistry | Crypto.Crypto>,
+  context: Context.Context<EnvironmentRegistry | SecureRandom.SecureRandom>,
   openThread?: (environmentId: string, threadId: string) => Promise<void>,
   openAgents?: () => Promise<void>,
 ): GatewayRuntimePort {
@@ -464,7 +466,7 @@ const decodeProfile = Schema.decodeUnknownSync(McpGatewayProfile);
 const decodeProfiles = Schema.decodeUnknownEffect(Schema.Array(McpGatewayProfile));
 
 export function createGatewayRuntimeEventSourceFromContext(
-  context: Context.Context<EnvironmentRegistry | Crypto.Crypto>,
+  context: Context.Context<EnvironmentRegistry | SecureRandom.SecureRandom>,
 ): GatewayRuntimeEventSource {
   return {
     subscribe: (listener, subscription) => {
@@ -517,8 +519,9 @@ export function createGatewayRuntimePort(
   openThread?: (environmentId: string, threadId: string) => Promise<void>,
   openAgents?: () => Promise<void>,
 ): GatewayRuntimePort {
-  const run = <A, E>(effect: Effect.Effect<A, E, EnvironmentRegistry | Crypto.Crypto>) =>
-    runtime.runPromise(effect);
+  const run = <A, E>(
+    effect: Effect.Effect<A, E, EnvironmentRegistry | SecureRandom.SecureRandom>,
+  ) => runtime.runPromise(effect);
 
   // Serialize shared library read/modify/write operations issued by this host.
   let profileQueue: Promise<unknown> = Promise.resolve();
@@ -592,7 +595,7 @@ export function createGatewayRuntimePort(
     createSkill: async (environmentId, input) => {
       const skillId = await run(
         Effect.gen(function* () {
-          return yield* (yield* Crypto.Crypto).randomUUIDv4();
+          return yield* (yield* SecureRandom.SecureRandom).uuidV4();
         }),
       );
       const now = await run(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
@@ -639,13 +642,13 @@ export function createGatewayRuntimePort(
       run(
         Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           yield* registry.run(
             EnvironmentId.make(environmentId),
             unsettleThread({
               threadId: ThreadId.make(threadId),
               reason: "user",
-              commandId: CommandId.make(yield* crypto.randomUUIDv4()),
+              commandId: CommandId.make(yield* crypto.uuidV4()),
             }),
           );
           return { status: "succeeded" as const };
@@ -655,12 +658,12 @@ export function createGatewayRuntimePort(
       run(
         Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           yield* registry.run(
             EnvironmentId.make(environmentId),
             settleThread({
               threadId: ThreadId.make(threadId),
-              commandId: CommandId.make(yield* crypto.randomUUIDv4()),
+              commandId: CommandId.make(yield* crypto.uuidV4()),
             }),
           );
           return { status: "succeeded" as const };
@@ -670,7 +673,7 @@ export function createGatewayRuntimePort(
       run(
         Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry;
-          const crypto = yield* Crypto.Crypto;
+          const crypto = yield* SecureRandom.SecureRandom;
           yield* registry.run(
             EnvironmentId.make(environmentId),
             updateThreadMetadata({
@@ -681,7 +684,7 @@ export function createGatewayRuntimePort(
               parentEnvironmentId === environmentId
                 ? {}
                 : { parentEnvironmentId: EnvironmentId.make(parentEnvironmentId) }),
-              commandId: CommandId.make(yield* crypto.randomUUIDv4()),
+              commandId: CommandId.make(yield* crypto.uuidV4()),
             }),
           );
           return { status: "succeeded" as const };
@@ -734,8 +737,8 @@ export function createGatewayRuntimePort(
     createProfile: async (environmentId, input) => {
       const profileId = await run(
         Effect.gen(function* () {
-          const crypto = yield* Crypto.Crypto;
-          return yield* crypto.randomUUIDv4();
+          const crypto = yield* SecureRandom.SecureRandom;
+          return yield* crypto.uuidV4();
         }),
       );
       const now = await run(DateTime.now.pipe(Effect.map(DateTime.formatIso)));

@@ -79,7 +79,11 @@ const syncManagedInstructionFile = Effect.fn("syncManagedInstructionFile")(funct
       for (const directory of [parent, path.dirname(parent), path.dirname(path.dirname(parent))]) {
         if (!(yield* fs.exists(directory)) || (yield* fs.readDirectory(directory)).length !== 0)
           break;
-        yield* Effect.tryPromise(() => NodeFSP.rmdir(directory));
+        yield* Effect.tryPromise({
+          try: () => NodeFSP.rmdir(directory),
+          catch: (cause) =>
+            new AgentInstructionFileError({ message: `Could not remove ${directory}: ${cause}` }),
+        });
       }
     } else {
       const next = `${marker}\n\n${input.instructions.trim()}\n`;
@@ -147,13 +151,17 @@ export const syncAgentSkillFiles = Effect.fn("syncAgentSkillFiles")(function* (i
       const file = path.join(directory, segments.at(-1)!);
       const bytes = Buffer.from(resource.contentBase64, "base64");
       // lstat also detects dangling symlinks, which exists/realPath alone cannot do.
-      const stat = yield* Effect.tryPromise(async () => {
-        try {
-          return await NodeFSP.lstat(file);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-          throw error;
-        }
+      const stat = yield* Effect.tryPromise({
+        try: async () => {
+          try {
+            return await NodeFSP.lstat(file);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+            throw error;
+          }
+        },
+        catch: (cause) =>
+          new AgentInstructionFileError({ message: `Could not inspect ${file}: ${cause}` }),
       });
       if (stat && !stat.isFile())
         return yield* new AgentInstructionFileError({

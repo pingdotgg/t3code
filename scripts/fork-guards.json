@@ -171,7 +171,7 @@
     "protects": "Tailscale Serve never takes over a route another process owns",
     "test": "scripts/lib/dev-share.test.ts",
     "title": "replaces a stale mapping whose target no longer answers",
-    "sha256": "921e8952aea62262f2b942f55710c614cbbb678795a20f4f5d8f63c754093e76",
+    "sha256": "6a711455379461a12ad77d58e90235da1c47e7a6356a3096c9103b2ff07a9647",
     "sources": ["scripts/lib/dev-share.ts"]
   },
   {

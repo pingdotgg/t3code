@@ -14,7 +14,7 @@ import {
   type OrchestrationV2ThreadShell,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -555,7 +555,7 @@ const makeHarness = Effect.fn(function* (input: {
       subscribeChanges: Effect.succeed(Stream.fromQueue(settingsChanges)),
     }),
     Layer.mock(TerminalManager.TerminalManager)({
-      closeIdle: ({ threadId }) =>
+      closeOnSettle: ({ threadId }) =>
         Queue.offer(closedIdle, ThreadId.make(threadId)).pipe(Effect.asVoid),
     }),
     Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
@@ -567,11 +567,8 @@ const makeHarness = Effect.fn(function* (input: {
     }),
     Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
     Layer.succeed(
-      Crypto.Crypto,
-      Crypto.make({
-        randomBytes: (size) => new Uint8Array(size).fill(1),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      }),
+      SecureRandom.SecureRandom,
+      SecureRandom.make((size) => new Uint8Array(size).fill(1)),
     ),
   );
   return {
@@ -793,7 +790,10 @@ it.effect("an unsettled card gets a full new idle period on the sweep clock", ()
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW_MS);
       const thread = shell({ settledOverride: "active", unsettledAt: at(0) });
-      const fixture = yield* makeHarness({ threads: [thread] });
+      const fixture = yield* makeHarness({
+        settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+        threads: [thread],
+      });
       yield* Effect.gen(function* () {
         const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* fixture.start(service);
@@ -902,7 +902,11 @@ describe("finished child sweep", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(NOW_MS);
         const fixture = yield* makeHarness({
-          settings: { ...DEFAULT_SERVER_SETTINGS, autoSettleFinishedChildrenAfterHours: 0 },
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            autoSettleFinishedChildrenAfterHours: 0,
+            sidebarAutoSettleAfterDays: 3,
+          },
           threads: [child("child", { latestRunCompletedAt: at(-2 * DAY_MS) })],
         });
         yield* Effect.gen(function* () {
@@ -1042,4 +1046,36 @@ describe("auto-archive", () => {
       }),
     ),
   );
+});
+
+describe("isSnoozed", () => {
+  const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
+  it("defers existing input while new questions and approvals wake the thread", () => {
+    const request = {
+      id: RuntimeRequestId.make("question"),
+      kind: "user_input" as const,
+      createdAt: snoozed.snoozedAt,
+    };
+    expect(
+      AutoSettlement.isSnoozed(shell({ ...snoozed, pendingRuntimeRequest: request }), NOW_MS),
+    ).toBe(true);
+    expect(
+      AutoSettlement.isSnoozed(
+        shell({ ...snoozed, pendingRuntimeRequest: { ...request, createdAt: at(-DAY_MS) } }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      AutoSettlement.isSnoozed(
+        shell({ ...snoozed, pendingRuntimeRequest: { ...request, kind: "command" } }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(
+      AutoSettlement.isSnoozed(
+        shell({ ...snoozed, snoozedAt: null, pendingRuntimeRequest: request }),
+        NOW_MS,
+      ),
+    ).toBe(false);
+  });
 });

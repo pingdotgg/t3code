@@ -6,11 +6,11 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Data from "effect/Data";
 import * as Option from "effect/Option";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as HttpBody from "effect/http/HttpBody";
 import * as HttpClient from "effect/http/HttpClient";
@@ -91,7 +91,7 @@ const linkedEnvironmentsOffThere = new OrchestratorMcpFailure({
 });
 
 /** The peer answered 401: the link's token no longer works there. */
-class PeerTokenRefused extends Data.TaggedError("PeerTokenRefused") {}
+class PeerTokenRefused extends Schema.TaggedError<PeerTokenRefused>()("PeerTokenRefused", {}) {}
 
 const linkRefused = new OrchestratorMcpFailure({
   code: "capability_denied",
@@ -220,22 +220,32 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    if (body.error !== undefined || body.result === undefined) {
+    if (body.error !== undefined) {
+      return Result.fail(
+        new OrchestratorMcpFailure({ code: "invalid_request", message: body.error.message }),
+      );
+    }
+    if (body.result === undefined) {
       return yield* new OrchestratorMcpFailure({
         code: "invalid_request",
-        message: body.error?.message ?? "The linked environment returned no result.",
+        message: "The linked environment returned no result.",
       });
     }
     const text = body.result.content.map((part) => part.text ?? "").join("");
     if (body.result.isError === true) {
       // A refusal keeps the peer's own code, so the agent sees why it was refused.
       const refused = decodeFailure(text);
-      return yield* refused._tag === "Some"
-        ? new OrchestratorMcpFailure({ code: refused.value.code, message: refused.value.message })
-        : new OrchestratorMcpFailure({
-            code: "orchestration_error",
-            message: text || "The linked environment refused the call.",
-          });
+      return Result.fail(
+        refused._tag === "Some"
+          ? new OrchestratorMcpFailure({
+              code: refused.value.code,
+              message: refused.value.message,
+            })
+          : new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message: text || "The linked environment refused the call.",
+            }),
+      );
     }
     // Display text may be compacted for the model; peers consume the typed wire payload.
     const success: Schema.Decoder<(typeof input.success)["Type"]> =
@@ -245,6 +255,7 @@ const make = Effect.gen(function* () {
     const payload =
       body.result.structuredContent === undefined ? text : body.result.structuredContent;
     return yield* Schema.decodeEffect(success)(payload).pipe(
+      Effect.map(Result.succeed),
       Effect.mapError(
         () =>
           new OrchestratorMcpFailure({
@@ -282,6 +293,7 @@ const make = Effect.gen(function* () {
         Effect.tapError((error) =>
           links.recordOutcome(input.environmentId, { error: error.message }),
         ),
+        // A refusal is still an answer: the link works, so only this call fails.
         Effect.tap(() => links.recordOutcome(input.environmentId, { error: null })),
         // Recorded above with the transport's own message; the agent hears it plainly.
         Effect.catchTags({
@@ -293,6 +305,7 @@ const make = Effect.gen(function* () {
               }),
             ),
         }),
+        Effect.flatMap(Effect.fromResult),
       ),
   );
 

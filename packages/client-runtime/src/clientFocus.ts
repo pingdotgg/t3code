@@ -50,7 +50,7 @@ export function makeClientFocusLayer<R>(input: {
           Stream.mergeAll(environmentIds.map(followEnvironment), { concurrency: "unbounded" }),
         ),
         Stream.runForEach(([environmentId, request]) =>
-          Effect.tryPromise(async () => input.onRequest(environmentId, request)).pipe(
+          Effect.promise(async () => input.onRequest(environmentId, request)).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Client focus request failed.", { cause, environmentId }),
             ),

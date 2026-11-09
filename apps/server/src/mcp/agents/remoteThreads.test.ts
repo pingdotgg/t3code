@@ -36,7 +36,11 @@ import * as ThreadTaskService from "../../threadTask/ThreadTaskService.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as McpGatewayBrokerModule from "../McpGatewayBroker.ts";
 import { McpGatewayBroker } from "../McpGatewayBroker.ts";
-import { layerAgentsToolkit, toolkitRegistration } from "../McpHttpServer.ts";
+import {
+  layerAgentsToolkit,
+  layerInProcessMcpServer,
+  toolkitRegistration,
+} from "../McpHttpServer.ts";
 import * as McpInvocationContext from "../McpInvocationContext.ts";
 import * as McpToolAccess from "../McpToolAccess.ts";
 import * as OrchestratorMcpService from "../OrchestratorMcpService.ts";
@@ -221,7 +225,7 @@ const makeLayer = (macbook: ReturnType<typeof makeMacBook>, record: TestRecord) 
       );
       return broker;
     }),
-  ).pipe(Layer.provide(NodeServices.layer));
+  ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
   return Layer.mergeAll(
     broker,
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -620,7 +624,7 @@ it.effect("launch, create, delegate, send, and wait reject parameters they do no
         toolkitRegistration(ProjectToolkit, ProjectHandlers.layer),
         toolkitRegistration(OrchestratorToolkit, OrchestratorHandlers.layer),
       ).pipe(
-        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(layerInProcessMcpServer),
         Layer.provideMerge(makeLayer(makeMacBook(), record)),
       ),
     ),

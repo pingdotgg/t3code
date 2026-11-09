@@ -15,6 +15,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ScheduledTaskTestkit from "./ScheduledTaskService.testkit.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
@@ -33,6 +34,7 @@ const environmentLayer = (
   ScheduledTaskService.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        ManagedPolicy.layerTest(),
         NodeCrypto.layer,
         Scheduler.layer,
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
@@ -48,7 +50,12 @@ const environmentLayer = (
           getThreadShell: (threadId) =>
             Effect.succeed(
               threadId === hosted?.threadId
-                ? ({ id: threadId, projectId: hosted.projectId, archivedAt: null } as never)
+                ? ({
+                    id: threadId,
+                    projectId: hosted.projectId,
+                    archivedAt: null,
+                    deletedAt: null,
+                  } as never)
                 : null,
             ),
           sendToThread: (input) => onSend(input).pipe(Effect.as({} as never)),
@@ -88,7 +95,7 @@ it.effect("refuses a project or thread another environment hosts", () =>
     const foreignThread = yield* service
       .upsert(yield* nightlyInput({ threadId: "thread-elsewhere" }))
       .pipe(Effect.flip);
-    assert.include(foreignThread.message, "Thread thread-elsewhere is not in project project-mac");
+    assert.equal(foreignThread.message, "That thread no longer exists.");
     assert.deepEqual((yield* service.list()).tasks, []);
 
     // Its own project and thread keep their binding, time zone and idempotent replay.
@@ -103,12 +110,12 @@ it.effect("refuses a project or thread another environment hosts", () =>
     assert.equal((yield* service.upsert(own)).task.id, task.id);
     assert.equal((yield* service.list()).tasks.length, 1);
 
-    // Moving the task to another local project cannot keep a thread from the old one.
-    const rebound = yield* service
-      .upsert(yield* nightlyInput({ id: task.id, requireExisting: true, projectId: otherProject }))
-      .pipe(Effect.flip);
-    assert.include(rebound.message, "Thread thread-mac is not in project project-mac-other");
-    assert.equal((yield* service.list()).tasks[0]?.projectId, macProject);
+    // Moving the task to another local project leaves the old project's thread for a new one.
+    const rebound = yield* service.upsert(
+      yield* nightlyInput({ id: task.id, requireExisting: true, projectId: otherProject }),
+    );
+    assert.equal(rebound.task.projectId, otherProject);
+    assert.isNull(rebound.task.threadId);
 
     // A task stored before this check stays editable where it is; nothing migrates it.
     yield* sql`UPDATE scheduled_tasks SET project_id = 'project-elsewhere', thread_id = NULL`;

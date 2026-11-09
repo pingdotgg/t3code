@@ -63,6 +63,7 @@ export type GatewayErrorCode =
   | "thread_not_found"
   | "upstream_failure";
 
+// @effect-diagnostics-next-line extendsNativeError:off - the MCP SDK transport throws these; no Effect runtime here.
 export class GatewayError extends Error {
   readonly code: GatewayErrorCode;
   readonly retryable: boolean;

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off - fixtures build real repositories and measure disk with du, independent of the service under test.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -19,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -47,7 +49,7 @@ const TestLayer = Layer.mergeAll(
   ),
   ProcessRunner.layer,
   SqlitePersistence.layerMemory,
-).pipe(Layer.provideMerge(NodeServices.layer));
+).pipe(Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 
 /** Fixture commands ignore the developer's git config (signing, hooks, identity). */
 function git(cwd: string, ...args: Array<string>): string {
@@ -350,6 +352,7 @@ describe("WorktreeReclamation", () => {
           releaseUnlessBusy: () => Effect.succeed(true),
           otherWorkingThreads: () => Effect.succeed([]),
           detach: () => Effect.void,
+          subscribePromptSuggestion: () => Stream.empty,
         });
         const { fixture, service, updateThread } = yield* setup({
           liveSessionCwds: readLiveProviderSessionCwds().pipe(

@@ -1,5 +1,5 @@
 import { startThreadTurn } from "./commands.ts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import type { RpcSession } from "../rpc/session.ts";
 import type { PreparedConnection, SupervisorConnectionState } from "../connection/model.ts";
 import {
@@ -129,7 +129,7 @@ it.effect(
                   },
                 },
               } as ServerConfig),
-              subscribeServerConfig: (input) => client.subscribeServerConfig(input),
+              subscribeServerConfig: (input = {}) => client.subscribeServerConfig(input),
               ready: Effect.void,
               probe: Effect.void,
               closed: Effect.never,
@@ -192,11 +192,8 @@ it.effect(
         Effect.provideService(EnvironmentRegistry, registry),
         Effect.provideService(EnvironmentSupervisor, target),
         Effect.provideService(
-          Crypto.Crypto,
-          Crypto.make({
-            randomBytes: (size) => new Uint8Array(size),
-            digest: (_algorithm, bytes) => Effect.succeed(bytes),
-          }),
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size)),
         ),
       );
       expect(dispatched[0]).toMatchObject({

@@ -189,11 +189,21 @@ export const makeCommandCodeTextGeneration = Effect.fn("makeCommandCodeTextGener
   const generateReviewGuide: TextGeneration.TextGeneration["Service"]["generateReviewGuide"] = () =>
     Effect.fail(investigationUnsupported("generateReviewGuide", "Command Code"));
 
+  const generateTranscriptionPostProcessing: TextGeneration.TextGeneration["Service"]["generateTranscriptionPostProcessing"] =
+    () =>
+      Effect.fail(
+        new TextGenerationError({
+          operation: "generateTranscriptionPostProcessing",
+          detail: "Command Code does not clean up transcriptions.",
+        }),
+      );
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
     generateReviewGuide,
+    generateTranscriptionPostProcessing,
   } satisfies TextGeneration.TextGeneration["Service"];
 });

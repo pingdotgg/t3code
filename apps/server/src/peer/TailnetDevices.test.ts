@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { NodeHttpServer } from "@effect/platform-node";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -37,6 +38,7 @@ import * as ServerHttp from "../http.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DevicePolicy from "./DevicePolicy.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import { descriptorOf } from "./PeerLinks.testkit.ts";
 import * as TailnetDevices from "./TailnetDevices.ts";
@@ -132,14 +134,19 @@ const serveDeviceOn = (
     const context = yield* TailnetDevices.layer.pipe(
       Layer.provideMerge(PeerLinks.layer),
       Layer.provideMerge(EnvironmentAuth.layer),
+      Layer.provide(ManagedPolicy.layerTest()),
       Layer.provide(tailnet.identityFor(options.userId ?? OWNER)),
       Layer.provide(
-        Layer.succeed(DirectEndpoints.DirectEndpoints, {
-          resolve: () =>
-            Ref.get(url).pipe(
-              Effect.map((origin) => [{ kind: "tailnet" as const, httpBaseUrl: `${origin}/` }]),
-            ),
-        }),
+        Layer.effect(
+          DirectEndpoints.DirectEndpoints,
+          Effect.sync(() => {
+            const resolve = () =>
+              Ref.get(url).pipe(
+                Effect.map((origin) => [{ kind: "tailnet" as const, httpBaseUrl: `${origin}/` }]),
+              );
+            return { resolve, resolveAvailable: resolve };
+          }),
+        ),
       ),
       Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
       Layer.provideMerge(Sqlite.layerMemory),
@@ -153,7 +160,7 @@ const serveDeviceOn = (
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-tailnet-device-" })),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       Layer.fresh,
       Layer.build,
     );

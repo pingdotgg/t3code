@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
@@ -8,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Schema from "effect/Schema";
@@ -59,7 +61,7 @@ it.effect("runs calls on the newest app that reaches every environment in them",
         "desktop:listThreads",
       );
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
@@ -98,7 +100,7 @@ it.effect(
           summary("studio", "connecting"),
         ]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("fails calls no connected app can run, and reports app errors", () =>
@@ -115,7 +117,7 @@ it.effect("fails calls no connected app can run, and reports app errors", () =>
         "not granted",
       );
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("rejects answers from another app and fails calls when their app disconnects", () =>
@@ -141,7 +143,7 @@ it.effect("rejects answers from another app and fails calls when their app disco
       expect(yield* failureMessage(Fiber.join(call))).toContain("disconnected");
       expect(broker.available()).toBe(false);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("relays calls whose arguments hold undefined fields in a form the wire can encode", () =>
@@ -184,7 +186,7 @@ it.effect("relays calls whose arguments hold undefined fields in a form the wire
       ).toContain("cannot be relayed");
       expect(broker.available()).toBe(true);
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("checks this server's own calls against their contract both ways", () =>
@@ -208,5 +210,5 @@ it.effect("checks this server's own calls against their contract both ways", () 
         yield* failureMessage(broker.call("getThread", [remote, ThreadId.make("child")])),
       ).toContain("cannot read");
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

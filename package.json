@@ -5,6 +5,7 @@
   "scripts": {
     "prepare": "vp config --no-agent",
     "dev": "node scripts/dev-runner.ts dev",
+    "profile:startup": "node scripts/profile-startup.mjs",
     "dev:share": "node scripts/dev-runner.ts dev --share",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
@@ -23,6 +24,7 @@
     "build": "vp run --filter './apps/*' build",
     "build:marketing": "vp run --filter @t3tools/marketing build",
     "build:desktop": "vp run --filter @t3tools/desktop --filter @t3tools/mcp-gateway --filter t3 build",
+    "build:desktop:bundle": "vp run --filter @t3tools/desktop build:bundle",
     "build:resource-monitor": "cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml",
     "typecheck": "vp run -r --cache --concurrency-limit 4 typecheck",
     "tc": "vp run -r --cache --concurrency-limit 4 typecheck",
@@ -30,7 +32,9 @@
     "report:renders": "node scripts/render-metrics.ts",
     "lint": "vp lint --report-unused-disable-directives",
     "knip": "knip --preprocessor ./scripts/knip-schemas.ts",
-    "knip:check": "knip --include files,dependencies --no-config-hints && knip --workspace apps/server --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --workspace packages/provider-core --workspace packages/provider-acp --workspace packages/provider-acp-registry --workspace packages/provider-testing --workspace packages/provider-pi --workspace packages/provider-muse --workspace packages/provider-opencode --workspace packages/provider-cursor --workspace packages/provider-fx --workspace packages/provider-grok --workspace packages/secret-provider-core --workspace packages/secret-provider-definitions --workspace packages/secret-provider-onepassword --workspace packages/source-control-core --workspace packages/source-control-definitions --workspace packages/source-control-azure-devops --workspace packages/source-control-bitbucket --workspace packages/source-control-forgejo --workspace packages/source-control-gitcafe --workspace packages/source-control-github --workspace packages/source-control-gitlab --workspace packages/source-control-testing --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
+    "knip:check": "vp run knip:check:all",
+    "knip:check:files": "knip --include files,dependencies --no-config-hints",
+    "knip:check:exports": "knip --workspace apps/server --workspace apps/desktop --workspace apps/web --workspace packages/client-runtime --workspace packages/contracts --workspace packages/effect-acp --workspace packages/effect-codex-app-server --workspace packages/shared --workspace packages/ssh --workspace packages/tailscale --workspace packages/provider-core --workspace packages/provider-acp --workspace packages/provider-acp-registry --workspace packages/provider-testing --workspace packages/provider-pi --workspace packages/provider-muse --workspace packages/provider-opencode --workspace packages/provider-cursor --workspace packages/provider-fx --workspace packages/provider-grok --workspace packages/provider-kiro --workspace packages/secret-provider-core --workspace packages/secret-provider-definitions --workspace packages/secret-provider-onepassword --workspace packages/source-control-core --workspace packages/source-control-cursor-origin --workspace packages/source-control-definitions --workspace packages/source-control-azure-devops --workspace packages/source-control-bitbucket --workspace packages/source-control-forgejo --workspace packages/source-control-gitcafe --workspace packages/source-control-github --workspace packages/source-control-gitlab --workspace packages/source-control-testing --exports --preprocessor ./scripts/knip-schemas.ts --no-config-hints",
     "knip:production": "knip --production --preprocessor ./scripts/knip-schemas.ts",
     "lint:mobile": "node scripts/mobile-native-static-check.ts",
     "mobile:install": "node scripts/mobile-native-client.ts ensure",
@@ -56,11 +60,11 @@
     "sync:repos": "node scripts/sync-reference-repos.ts"
   },
   "devDependencies": {
-    "@coderabbitai/config": "1.1.0",
+    "@coderabbitai/config": "1.2.0",
+    "@effect/tsgo": "0.67.1",
     "@shadcn/lint": "0.1.5",
     "@types/node": "catalog:",
     "knip": "6.34.0",
-    "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

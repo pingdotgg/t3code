@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 // @effect-diagnostics nodeBuiltinImport:off - the cross-process proof needs a real HTTP server and real child processes.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
@@ -151,7 +152,7 @@ describe("t3 watch", () => {
           assert.strictEqual(cursor.seq, 1);
           assert.isNull(cursor.pending);
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect(
@@ -184,7 +185,7 @@ describe("t3 watch", () => {
             [`lease:${instanceId}:1`, `lease:${instanceId}:2`],
           );
         }),
-      ).pipe(Effect.provide(NodeServices.layer)),
+      ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("sends nothing for the first observation unless notifyInitial is set", () =>
@@ -212,7 +213,7 @@ describe("t3 watch", () => {
         assert.strictEqual(loud.requests.length, 1);
         assert.strictEqual(loud.requests[0]!.body.from, null);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps a failed event pending and re-sends it with the same key", () =>
@@ -244,7 +245,7 @@ describe("t3 watch", () => {
         assert.isNull(cleared.pending);
         assert.deepStrictEqual(cleared.state, { lease: "present" });
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("commits one event when a 5xx is followed by a 2xx within the retries", () =>
@@ -267,7 +268,7 @@ describe("t3 watch", () => {
         assert.isNull(cursor.pending);
         assert.strictEqual(cursor.seq, 1);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("drops a 4xx event but keeps the new state so it does not loop", () =>
@@ -286,7 +287,7 @@ describe("t3 watch", () => {
         assert.isNull(cursor.pending);
         assert.deepStrictEqual(cursor.state, { lease: "present" });
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("fires a missed deadline once and never again", () =>
@@ -321,7 +322,7 @@ describe("t3 watch", () => {
         yield* pass(config, statePath).pipe(Effect.provide(again.layer));
         assert.strictEqual(again.requests.length, 0);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("leaves no temp files behind", () =>
@@ -343,7 +344,7 @@ describe("t3 watch", () => {
         yield* pass(config, `${dir}/state.json`).pipe(Effect.provide(makeHarness().layer));
         assert.deepStrictEqual(yield* listNames(dir), ["lease", "state.json"]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("gives each state file its own identity even when config names collide", () =>
@@ -374,7 +375,7 @@ describe("t3 watch", () => {
           new Set([a.instanceId, b.instanceId]),
         );
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("keeps the instance for the cursor's life and mints a new one when recreated", () =>
@@ -408,7 +409,7 @@ describe("t3 watch", () => {
         ]);
         assert.deepStrictEqual(harness.duplicates, []);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("lets only one of two concurrent in-process passes probe and send", () =>
@@ -433,7 +434,7 @@ describe("t3 watch", () => {
         assert.isNull(cursor.pending);
         assert.deepStrictEqual(yield* listNames(dir), ["lease", "state.json"]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("re-sends the exact stored key once after a crash left a dead holder's lock", () =>
@@ -471,7 +472,7 @@ describe("t3 watch", () => {
         assert.isNull((yield* readCursor(statePath)).pending);
         assert.deepStrictEqual(yield* listNames(dir), ["lease", "state.json"]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reclaims a lock whose heartbeat is older than its staleness bound", () =>
@@ -499,7 +500,7 @@ describe("t3 watch", () => {
         assert.isTrue(Option.isSome(result));
         assert.deepStrictEqual(yield* listNames(dir), ["state.json"]);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("skips without probing or touching the cursor while a live holder owns the lock", () =>
@@ -528,7 +529,7 @@ describe("t3 watch", () => {
         assert.strictEqual(yield* fs.readFileString(statePath), before);
         assert.strictEqual(yield* fs.readFileString(`${statePath}.lock`), lock);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("stops a looping watcher from writing once another process took its lock", () =>
@@ -606,7 +607,7 @@ describe("t3 watch", () => {
         assert.strictEqual(harness.requests.length, 1);
         assert.strictEqual(yield* fs.readFileString(statePath), before);
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   // Real processes: the winner holds the lock while its POST is parked, so the
@@ -683,7 +684,7 @@ describe("t3 watch", () => {
           ["config.json", "lease", "state.json"],
         );
       }).pipe(Effect.scoped),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("turns a command's exit status into a transition without a shell", () =>
@@ -709,7 +710,7 @@ describe("t3 watch", () => {
         assert.strictEqual(harness.requests.length, 1);
         assert.strictEqual(harness.requests[0]!.body.event, "job:exit:0->exit:3");
       }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+    ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("rejects unknown config keys and bad notify values", () =>

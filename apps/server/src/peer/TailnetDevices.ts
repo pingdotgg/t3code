@@ -33,7 +33,7 @@ import {
 import type { Tailnet, TailnetWhois } from "@t3tools/tailscale";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -211,7 +211,7 @@ export class TailnetDevices extends Context.Service<
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const directEndpoints = yield* DirectEndpoints.DirectEndpoints;
@@ -375,7 +375,7 @@ const make = Effect.gen(function* () {
     return { _tag: "refused" as const, reason: refusal };
   });
 
-  const newChallenge = crypto.randomBytes(32).pipe(Effect.map(Base64Url.encode), Effect.orDie);
+  const newChallenge = random.randomBytes(32).pipe(Effect.map(Base64Url.encode), Effect.orDie);
 
   /** Asks a device to link this environment, after proving it is one of mine. */
   const requestLink = Effect.fn("TailnetDevices.requestLink")(function* (

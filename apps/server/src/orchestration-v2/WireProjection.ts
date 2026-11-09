@@ -5,6 +5,7 @@ import type {
   OrchestrationV2Checkpoint,
   OrchestrationV2DomainEvent,
   OrchestrationV2ContextHandoff,
+  OrchestrationV2StoredEvent,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
@@ -26,6 +27,8 @@ const MAX_WIRE_CHECKPOINT_FILES = 200;
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
 const MAX_ON_DEMAND_BYTES = 256 * 1024;
+const TRUNCATION_MARKER = "\n… output truncated for transport";
+const TRUNCATION_MARKER_BYTES = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
 
 function truncateDetail(
   value: string | undefined,
@@ -37,12 +40,14 @@ function truncateDetail(
   ) {
     return value;
   }
+  // The marker counts toward the cap, so projecting truncated text again leaves it unchanged.
+  const budget = maxBytes - TRUNCATION_MARKER_BYTES;
   // UTF-8 needs at least one byte per UTF-16 unit; encode only a potentially fitting prefix.
-  const prefix = Buffer.from(value.slice(0, maxBytes), "utf8")
-    .subarray(0, maxBytes)
+  const prefix = Buffer.from(value.slice(0, budget), "utf8")
+    .subarray(0, budget)
     .toString("utf8")
     .replace(/\uFFFD$/u, "");
-  return `${prefix}\n… output truncated for transport`;
+  return `${prefix}${TRUNCATION_MARKER}`;
 }
 
 /** Bound stored diffs to the client wire limit to avoid retaining invisible data in SQLite and heap. */
@@ -320,6 +325,35 @@ export function projectDomainEventForWire(
     return { ...event, payload: capCheckpointFiles(event.payload) };
   }
   return event;
+}
+
+// Keyed on the stored event PubSub hands every subscriber, so all of them share one projection
+// and LiveStreamBudget sizes it once. Consumers must not mutate the shared result.
+const projectedStoredEvents = new WeakMap<OrchestrationV2StoredEvent, OrchestrationV2StoredEvent>();
+
+export function projectStoredEventForWire(
+  stored: OrchestrationV2StoredEvent,
+): OrchestrationV2StoredEvent {
+  const cached = projectedStoredEvents.get(stored);
+  if (cached !== undefined) return cached;
+  const event = projectDomainEventForWire(stored.event);
+  if (event === stored.event) return stored;
+  const projected = { ...stored, event };
+  projectedStoredEvents.set(stored, projected);
+  return projected;
+}
+
+type ThreadStreamEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>;
+
+const threadStreamEvents = new WeakMap<OrchestrationV2StoredEvent, ThreadStreamEvent>();
+
+/** For an event already projected for the wire; subscribers share the item and its cached size. */
+export function threadStreamEventItem(stored: OrchestrationV2StoredEvent): ThreadStreamEvent {
+  const cached = threadStreamEvents.get(stored);
+  if (cached !== undefined) return cached;
+  const item = { kind: "event" as const, sequence: stored.sequence, event: stored.event };
+  threadStreamEvents.set(stored, item);
+  return item;
 }
 
 const LIVE_DEDUPE_MEMORY = 32;

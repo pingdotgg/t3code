@@ -20,6 +20,8 @@ export function parseRealtimeTimeoutHardLimit(limits: string): number | null | u
 // PipeWire without rtkit can set an inherited hard RTTIME limit of zero, causing SIGKILLs.
 // DISABLE_RTKIT prevents that; a zero limit inherited from the launcher needs session repair.
 export const protectRealtimeLimit = Effect.fn("desktop.realtimeLimit.protect")(function* () {
+  // Written, not read: Electron and the backend inherit this process environment.
+  // @effect-diagnostics-next-line processEnvInEffect:off
   process.env.DISABLE_RTKIT ??= "1";
   const fileSystem = yield* FileSystem.FileSystem;
   const limits = yield* fileSystem

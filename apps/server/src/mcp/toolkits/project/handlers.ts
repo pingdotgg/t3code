@@ -8,7 +8,7 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
@@ -17,6 +17,7 @@ import * as ThreadTaskService from "../../../threadTask/ThreadTaskService.ts";
 import { resolveMcpProfileSelection } from "../../agentProfileSelection.ts";
 import * as RemoteThreads from "../../agents/remoteThreads.ts";
 import * as Option from "effect/Option";
+import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -37,14 +38,18 @@ import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
+const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
+
 function projectFailure(error: Project.ProjectServiceError) {
   if (error._tag === "ProjectOperationError") return unavailable();
   const message =
-    error._tag === "ProjectNotFoundError"
-      ? "The project was not found."
-      : error._tag === "ProjectConflictError"
-        ? "The workspace is already registered to a project."
-        : "The project is not empty; force=true is required to delete it.";
+    error._tag === "ProjectInvalidError"
+      ? error.detail
+      : error._tag === "ProjectNotFoundError"
+        ? "The project was not found."
+        : error._tag === "ProjectConflictError"
+          ? "The workspace is already registered to a project."
+          : "The project is not empty; force=true is required to delete it.";
   return new OrchestratorMcpFailure({ code: "invalid_request", message });
 }
 
@@ -73,10 +78,10 @@ const launchCommandId = Effect.fn("mcp.launchCommandId")(function* (
   namespace: string,
   key: string,
 ) {
-  const crypto = yield* Crypto.Crypto;
-  // @effect-diagnostics-next-line preferSchemaOverJson:off - a JSON pair keeps the caller apart from the key.
+  const crypto = yield* Digest.Digest;
+  // @effect-diagnostics-next-line globalJsonInEffect:off - a JSON pair keeps the caller apart from the key.
   const bytes = new TextEncoder().encode(JSON.stringify([namespace, key]));
-  const digest = yield* crypto.digest("SHA-256", bytes).pipe(Effect.mapError(unavailable));
+  const digest = yield* crypto.digest(Digest.sha256, bytes).pipe(Effect.mapError(unavailable));
   return CommandId.make(`mcp:launch:${Hex.encode(digest)}`);
 });
 
@@ -361,6 +366,13 @@ export const layer = McpToolAccess.toLayer(
                     message: error.message,
                   });
                 }
+                // The administrator's ceiling refuses the mode; say so rather than "unavailable".
+                if (error._tag === "ThreadLaunchError" && isAboveCeilingError(error.cause)) {
+                  return new OrchestratorMcpFailure({
+                    code: "invalid_request",
+                    message: error.cause.message,
+                  });
+                }
                 const rejection = profile === undefined ? undefined : profileRejection(error.cause);
                 return rejection === undefined
                   ? unavailable()
@@ -381,7 +393,7 @@ export const layer = McpToolAccess.toLayer(
             return {
               environmentId: scope.environmentId,
               threadId: thread.id,
-              link: McpInvocationContext.threadLinkFor(scope, thread.id),
+              link: McpInvocationContext.threadLinkFor(scope, thread.id, thread.title),
               projectId: thread.projectId,
               modelSelection: thread.modelSelection,
               runId: run?.id ?? null,
