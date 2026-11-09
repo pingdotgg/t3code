@@ -645,7 +645,11 @@ it.effect.each([
             const mode = yield* Ref.get(preferredMode);
             if (observing) yield* Deferred.succeed(preferredEntered, undefined);
             if (mode === "hold") yield* Deferred.await(releasePreferred);
-            return HttpServerResponse.jsonUnsafe(mode === "wrong" ? wrong : box);
+            return HttpServerResponse.jsonUnsafe(
+              mode === "wrong"
+                ? wrong
+                : { ...box, label: observing ? "Preferred renamed" : box.label },
+            );
           }),
         );
         const first = yield* serveRaw(() =>
@@ -653,14 +657,18 @@ it.effect.each([
             const mode = yield* Ref.get(firstMode);
             if (observing) yield* Deferred.succeed(firstEntered, undefined);
             if (mode === "hold") yield* Deferred.await(releaseFirst);
-            return HttpServerResponse.jsonUnsafe(mode === "wrong" ? wrong : box);
+            return HttpServerResponse.jsonUnsafe(
+              mode === "wrong" ? wrong : { ...box, label: observing ? "First renamed" : box.label },
+            );
           }),
         );
         const third = yield* serveRaw(() =>
           Effect.gen(function* () {
             if (observing) yield* Deferred.succeed(thirdEntered, undefined);
             return HttpServerResponse.jsonUnsafe(
-              (yield* Ref.get(thirdMode)) === "wrong" ? wrong : box,
+              (yield* Ref.get(thirdMode)) === "wrong"
+                ? wrong
+                : { ...box, label: observing ? "Third renamed" : box.label },
             );
           }),
         );
@@ -712,9 +720,15 @@ it.effect.each([
             scenario === "early-failure" ||
             scenario === "all-fail"
           ) {
-            expect((yield* Fiber.join(listing)).map((link) => link.status)).toEqual([
+            const listed = yield* Fiber.join(listing);
+            expect(listed.map((link) => link.status)).toEqual([
               scenario === "all-fail" ? "unreachable" : "reachable",
             ]);
+            if (scenario !== "all-fail") {
+              const label = scenario === "fast-success" ? "Preferred renamed" : "First renamed";
+              expect(listed[0]?.label).toBe(label);
+              expect(Option.getOrThrow(yield* a.links.get(box.environmentId)).label).toBe(label);
+            }
             if (scenario === "fast-success") {
               yield* TestClock.adjust(Duration.seconds(1));
               expect([...started]).toEqual([preferred]);
@@ -752,7 +766,11 @@ it.effect.each([
               expect(completed).toBe(false);
               yield* Deferred.succeed(releasePreferred, undefined);
             }
-            expect((yield* Fiber.join(listing)).map((link) => link.status)).toEqual(["reachable"]);
+            const listed = yield* Fiber.join(listing);
+            expect(listed.map((link) => link.status)).toEqual(["reachable"]);
+            const label = scenario === "slow-success" ? "Preferred renamed" : "First renamed";
+            expect(listed[0]?.label).toBe(label);
+            expect(Option.getOrThrow(yield* a.links.get(box.environmentId)).label).toBe(label);
             if (scenario === "hedged-success") expect(aborted.has(preferred)).toBe(true);
           }
         }).pipe(

@@ -558,14 +558,17 @@ const make = Effect.gen(function* () {
           WHERE environment_id = ${link.environmentId}
         `.pipe(Effect.ignoreCause({ log: true }), Effect.as({ ...link, label }));
 
-  const findStatusRoute = (urls: ReadonlyArray<string>, environmentId: EnvironmentId) =>
-    Effect.gen(function* () {
-      for (const url of urls) {
-        const found = yield* answersAs(url, environmentId);
-        if (Option.isSome(found)) return Option.some({ url, label: found.value.label });
-      }
-      return Option.none();
-    });
+  // Called within statusOf, which already owns the status-probe span.
+  const findStatusRoute = Effect.fnUntraced(function* (
+    urls: ReadonlyArray<string>,
+    environmentId: EnvironmentId,
+  ) {
+    for (const url of urls) {
+      const found = yield* answersAs(url, environmentId);
+      if (Option.isSome(found)) return Option.some({ url, label: found.value.label });
+    }
+    return Option.none();
+  });
 
   const statusOf = Effect.fn("PeerLinks.statusOf")(function* (
     link: PeerLink,
@@ -623,11 +626,9 @@ const make = Effect.gen(function* () {
       toLink(row).pipe(Effect.map((link) => ({ link, secretName: row.secret_name }))),
     );
     const now = yield* DateTime.now;
-    return yield* Effect.forEach(
-      links,
-      ({ link, secretName }) => statusOf(link, secretName, now),
-      { concurrency: "unbounded" },
-    );
+    return yield* Effect.forEach(links, ({ link, secretName }) => statusOf(link, secretName, now), {
+      concurrency: "unbounded",
+    });
   });
 
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
