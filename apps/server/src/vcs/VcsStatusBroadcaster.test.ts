@@ -375,17 +375,19 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.await(subscribed);
 
       state.currentLocalStatus = { ...baseLocalStatus, refName: "main" };
+      state.currentRemoteStatus = baseRemoteStatus;
       const refreshed = yield* broadcaster.refreshStatus("/repo", { localOnly: true });
       assert.equal(refreshed.refName, "main");
       assert.isNull(refreshed.pr);
       assert.equal(state.localInvalidationCalls, 1);
       assert.equal(state.remoteStatusCalls, 1);
-      assert.equal(state.remoteInvalidationCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 1);
       assert.deepStrictEqual((yield* Fiber.join(events)).slice(1), [
         { _tag: "remoteUpdated", remote: null },
         { _tag: "localUpdated", local: state.currentLocalStatus },
       ]);
       assert.isNull((yield* broadcaster.getStatus({ cwd: "/repo" })).pr);
+      assert.equal(state.remoteStatusCalls, 2);
       state.currentLocalStatus = { ...state.currentLocalStatus, hasWorkingTreeChanges: true };
       yield* broadcaster.refreshLocalStatus("/repo");
       state.currentLocalStatus = { ...baseLocalStatus, refName: "union" };
@@ -555,13 +557,14 @@ describe("VcsStatusBroadcaster", () => {
       yield* Deferred.succeed(releaseRemoteRead, undefined);
       yield* Fiber.join(remoteRefresh);
       yield* Fiber.join(localRefresh);
+      state.currentRemoteStatus = baseRemoteStatus;
 
       const status = yield* broadcaster.getStatus({ cwd: "/repo" });
       assert.equal(status.refName, "main");
       assert.isNull(status.pr);
       assert.equal(status.aheadCount, 0);
       assert.equal(status.behindCount, 0);
-      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.remoteStatusCalls, 3);
     }).pipe(Effect.provide(layerTestFor(state)));
   });
 
