@@ -9,13 +9,17 @@ import {
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   AuthSettingsWriteScope,
+  CLOUD_SPEECH_LABELS,
+  CloudSpeechProvider,
   DEFAULT_SPEECH_POST_PROCESSING_PROMPT,
   type EnvironmentId,
   type EnvironmentSpeechModel,
   type EnvironmentSpeechStatus,
   type ProjectId,
+  ProviderDriverKind,
   type SpeechAcceleration,
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
@@ -23,11 +27,15 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
+import { cloudSpeechLanguages } from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
   CheckIcon,
   DownloadIcon,
   LanguagesIcon,
+  KeyRoundIcon,
+  MonitorIcon,
+  MicOffIcon,
   MicIcon,
   RefreshCwIcon,
   StarIcon,
@@ -39,6 +47,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
+import { preferredSpeechLanguages } from "../../speech/preferredSpeechLanguages";
 import {
   chooseAudioDestination,
   chooseTranscriptCleanup,
@@ -50,7 +59,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { providerInstanceEntriesFor } from "../../providerInstances";
+import { useTextGenerationTargets } from "../../textGenerators";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
@@ -60,6 +69,8 @@ import {
 } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { VoiceInputSetup } from "../chat/VoiceInputSetup";
 import { Badge } from "../ui/badge";
@@ -79,18 +90,26 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import {
+  Select,
+  SelectGroup,
+  SelectGroupLabel,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { MicrophoneTest } from "./MicrophoneTest";
+import { CloudVoiceConfiguration } from "./CloudVoiceConfiguration";
 import { LanguageRow, ModelBenchmarks, orderSpeechLanguages } from "./SpeechModelComparison";
 import { languageLabel, SpeechLanguageSelect } from "./SpeechLanguageSelect";
 import { filterSpeechModels, type SpeechModelSort } from "./speechModelBrowser";
 import { AdvancedSettings } from "./AdvancedSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
-  SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
   SettingsSearchTarget,
@@ -102,6 +121,17 @@ import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 
 const OFF = "off";
+function CloudSpeechLogo({ provider }: { provider: CloudSpeechProvider }) {
+  if (provider === "openrouter")
+    return <ProviderPackageIcon icon={openRouterIcon} aria-hidden className="size-4 shrink-0" />;
+  return (
+    <ProviderInstanceIcon
+      driverKind={ProviderDriverKind.make(provider === "openai" ? "codex" : "grok")}
+      displayName={CLOUD_SPEECH_LABELS[provider]}
+      iconClassName="size-4"
+    />
+  );
+}
 const SYSTEM_DEFAULT = "system-default";
 const formatSize = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 const SHORTCUT_MODE_LABELS: Record<VoiceShortcutMode, string> = {
@@ -430,10 +460,18 @@ function CleanupModelRow() {
     (environment?.serverConfig
       ? providersByEnvironment.get(environment.environmentId)
       : undefined) ?? EMPTY_SERVER_PROVIDERS;
-  const textGenerationProviders = providers.filter(
-    (provider) => provider.supportsTextGeneration !== false,
-  );
-  const instanceEntries = providerInstanceEntriesFor(textGenerationProviders, settings, null);
+  const targets = useTextGenerationTargets({
+    environmentId: environment?.environmentId ?? null,
+    settings,
+    providers: providers.filter((provider) => provider.supportsTextGeneration !== false),
+    projectId: null,
+    selections: [
+      settings.speechPostProcessingModelSelection,
+      settings.textGenerationModelSelection,
+    ],
+  });
+  const textGenerationProviders = targets.providers;
+  const instanceEntries = targets.entries;
   const hasProvider = instanceEntries.some((entry) => entry.enabled && entry.isAvailable);
   const dedicated = settings.speechPostProcessingModelSelection !== null;
   const selection = resolveAppModelSelectionState(
@@ -468,50 +506,60 @@ function CleanupModelRow() {
       settingKeys={["speechPostProcessingModelSelection"]}
       {...searchableSetting("speech-post-processing-model")}
       title="Cleanup model"
-      description={
-        dedicated
-          ? `Drafts on ${environment?.label ?? "this environment"} use this model for cleanup instead of the environment’s text generation model.`
-          : `Cleanup currently uses the text generation model on ${environment?.label ?? "this environment"}. Pick another model if you want a cheaper or faster one.`
-      }
-      resetAction={
-        dedicated ? (
-          <SettingResetButton
-            label="cleanup model"
-            onClick={() => updateSettings({ speechPostProcessingModelSelection: null })}
-          />
-        ) : null
-      }
+      description="Model for transcript cleanup, such as a cheaper or faster one. When disabled, use the text generation model configured for this environment."
       control={
         connectedEnvironments.length === 0 ? (
           <span className="text-sm text-muted-foreground">Connect an environment first.</span>
-        ) : !hasProvider || !instanceEntry ? (
-          <span className="text-sm text-muted-foreground">No providers available.</span>
         ) : (
-          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            <ProviderModelPicker
-              environmentId={environment?.environmentId ?? null}
-              activeInstanceId={selection.instanceId}
-              model={selection.model}
-              lockedProvider={null}
-              instanceEntries={instanceEntries}
-              modelOptionsByInstance={modelOptionsByInstance}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              getModelDisabledReason={modelDisabledReason}
-              onInstanceModelChange={(instanceId, model) =>
-                setModel(createModelSelection(instanceId, model))
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+            {dedicated && (!hasProvider || !instanceEntry) ? (
+              <span className="text-sm text-muted-foreground">
+                No text generation providers available.
+              </span>
+            ) : null}
+            {dedicated && hasProvider && instanceEntry ? (
+              <>
+                <ProviderModelPicker
+                  environmentId={environment?.environmentId ?? null}
+                  activeInstanceId={selection.instanceId}
+                  model={selection.model}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  getModelDisabledReason={modelDisabledReason}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setModel(createModelSelection(instanceId, model))
+                  }
+                />
+                <TraitsPicker
+                  provider={instanceEntry.driverKind}
+                  models={instanceEntry.models}
+                  model={selection.model}
+                  modelOptions={selection.options ?? []}
+                  allowPromptInjectedEffort={false}
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onModelOptionsChange={(options) =>
+                    setModel(createModelSelection(selection.instanceId, selection.model, options))
+                  }
+                />
+              </>
+            ) : null}
+            <Switch
+              checked={dedicated}
+              disabled={!dedicated && !hasProvider}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  speechPostProcessingModelSelection: checked
+                    ? createModelSelection(
+                        settings.textGenerationModelSelection.instanceId,
+                        settings.textGenerationModelSelection.model,
+                        settings.textGenerationModelSelection.options,
+                      )
+                    : null,
+                })
               }
-            />
-            <TraitsPicker
-              provider={instanceEntry.driverKind}
-              models={instanceEntry.models}
-              model={selection.model}
-              modelOptions={selection.options ?? []}
-              allowPromptInjectedEffort={false}
-              planModeEnabled={settings.planModeEnabled}
-              triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              onModelOptionsChange={(options) =>
-                setModel(createModelSelection(selection.instanceId, selection.model, options))
-              }
+              aria-label="Use a separate cleanup model"
             />
           </div>
         )
@@ -730,7 +778,7 @@ function SpeechModelBrowser(props: {
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
-  const preferred = navigator.languages.map((language) => language.toLowerCase().split("-")[0]!);
+  const [preferred] = useState(preferredSpeechLanguages);
   const supportedLanguages = [...new Set(models.flatMap((model) => model.languages))];
   const defaultLanguage = preferred.find((code) => supportedLanguages.includes(code));
   const selectedLanguages = selection ?? (defaultLanguage ? [defaultLanguage] : []);
@@ -1047,9 +1095,11 @@ function TranscriptionTest(props: {
         step={speech.setup.step}
         status={speech.status}
         model={speech.setup.model}
+        language={speech.setup.language}
         downloading={speech.setup.downloading}
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
+        onRetryCatalog={speech.setup.retryCatalog}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => void speech.setup.startRecording()}
@@ -1063,9 +1113,14 @@ export function VoiceSettingsPanel() {
   const settings = useClientSettings();
   const settingsScope = useOptionalSettingsScope();
   const destination = useVoiceTranscriptionDestination();
+  const canManageKey = useEnvironmentScope(destination.environmentId, AuthSettingsWriteScope);
+  const [pendingCloud, setPendingCloud] = useState<{
+    provider: CloudSpeechProvider;
+    environmentId: EnvironmentId;
+  } | null>(null);
   const { environments } = useEnvironments();
   const [microphones, setMicrophones] = useState<BrowserMicrophone[]>([]);
-  const prepared = destination.prepared;
+  const prepared = destination.cloudProvider ? null : destination.prepared;
   const catalog = useVoiceModels(prepared);
 
   const refreshMicrophones = useStableCallback(async () => {
@@ -1098,11 +1153,39 @@ export function VoiceSettingsPanel() {
     ? (microphones.find((device) => device.deviceId === selectedMicrophone)?.label ??
       "Selected microphone (unavailable)")
     : "System default";
-  const destinationValue = destination.environmentId ?? OFF;
+  const environmentChoices = environments.map((environment) => ({
+    environment,
+    value: JSON.stringify(["environment", environment.environmentId]),
+  }));
+  const cloudGroups = environments
+    .filter(
+      (environment) => environment.serverConfig?.environment.capabilities.cloudVoiceTranscription,
+    )
+    .map((environment) => ({
+      environment,
+      choices: CloudSpeechProvider.literals.map((provider) => ({
+        environment,
+        provider,
+        value: JSON.stringify(["cloud", environment.environmentId, provider]),
+      })),
+    }));
+  const cloudChoices = cloudGroups.flatMap((group) => group.choices);
+  const destinationValue = destination.cloudProvider
+    ? JSON.stringify(["cloud", destination.environmentId, destination.cloudProvider])
+    : destination.environmentId
+      ? JSON.stringify(["environment", destination.environmentId])
+      : OFF;
+  const cloudEnvironment = environments.find(
+    (env) => env.environmentId === pendingCloud?.environmentId,
+  );
+  // OpenRouter users without settings access still manage their own model choice.
+  const manageLabel =
+    destination.cloudProvider === "openrouter" ? "Manage OpenRouter" : "Manage key";
   const chosenEnvironment = environments.find(
     (environment) => environment.environmentId === destination.environmentId,
   );
   const chosenUnsupported =
+    !destination.cloudProvider &&
     chosenEnvironment?.serverConfig != null &&
     chosenEnvironment.serverConfig.environment.capabilities.voiceTranscription !== true;
   const model = prepared && modelStatus?.supported ? modelStatus : null;
@@ -1110,6 +1193,8 @@ export function VoiceSettingsPanel() {
   return (
     <SettingsPageContainer
       searchTargetFallbacks={{
+        "speech-language":
+          model || destination.cloudProvider ? undefined : "voice-transcription-destination",
         "speech-models": prepared ? undefined : "voice-transcription-destination",
         "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
         "transcription-test": !prepared
@@ -1196,68 +1281,181 @@ export function VoiceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="voice-transcription" title="Transcription">
-        <SettingsRow
+        <SettingsSearchTarget
           {...searchableSetting("voice-transcription-destination")}
-          title="Send microphone audio to"
-          description={
-            <>
-              Microphone audio is sent to this environment to transcribe, then discarded. Choose Off
-              to turn voice input off on this device. This choice is saved on this device only.
-            </>
-          }
-          control={
-            <Select
-              value={destinationValue}
-              onValueChange={(value) => {
-                if (!value) return;
-                chooseAudioDestination(
-                  value === OFF
-                    ? null
-                    : { kind: "environment", environmentId: value as EnvironmentId },
-                );
-              }}
-            >
-              <SelectTrigger size="sm" aria-label="Send microphone audio to" className="max-w-72">
-                <SelectValue>
-                  {destinationValue === OFF
-                    ? "Off"
-                    : (chosenEnvironment?.label ?? "Chosen environment (unavailable)")}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value={OFF}>Off</SelectItem>
-                {environments.map((environment) => (
-                  <SelectItem key={environment.environmentId} value={environment.environmentId}>
-                    {environment.label}
-                  </SelectItem>
-                ))}
-                {destination.environmentId && !chosenEnvironment ? (
-                  <SelectItem value={destination.environmentId}>
-                    Chosen environment (unavailable)
-                  </SelectItem>
-                ) : null}
-              </SelectPopup>
-            </Select>
-          }
+          className="@container/destination px-3 py-3 sm:px-4"
         >
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="shrink-0 text-sm font-medium">
+              <span className="@max-[18rem]/destination:hidden">Transcribe with</span>
+              <span className="@min-[18rem]/destination:hidden">Use</span>
+            </h3>
+            <div className="flex min-w-0 items-center justify-end gap-1">
+              <Select
+                value={destinationValue}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  const cloud = cloudChoices.find((choice) => choice.value === value);
+                  if (cloud) {
+                    setPendingCloud({
+                      environmentId: cloud.environment.environmentId,
+                      provider: cloud.provider,
+                    });
+                    return;
+                  }
+                  setPendingCloud(null);
+                  const chosen = environmentChoices.find((choice) => choice.value === value);
+                  if (value === OFF) chooseAudioDestination(null);
+                  else if (chosen)
+                    chooseAudioDestination({
+                      kind: "environment",
+                      environmentId: chosen.environment.environmentId,
+                    });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label="Transcribe with"
+                  className="w-auto min-w-0 max-w-72"
+                >
+                  <SelectValue>
+                    <span className="flex min-w-0 items-center gap-2">
+                      {destination.cloudProvider ? (
+                        <CloudSpeechLogo provider={destination.cloudProvider} />
+                      ) : destination.environmentId ? (
+                        <MonitorIcon aria-hidden className="size-4" />
+                      ) : (
+                        <MicOffIcon aria-hidden className="size-4" />
+                      )}
+                      <span className="truncate">
+                        {destination.cloudProvider
+                          ? CLOUD_SPEECH_LABELS[destination.cloudProvider]
+                          : destination.environmentId
+                            ? (chosenEnvironment?.label ?? "Chosen environment (unavailable)")
+                            : "Off"}
+                        {destination.cloudProvider && (
+                          <span className="text-muted-foreground">
+                            {" via "}
+                            {chosenEnvironment?.label ?? "unavailable environment"}
+                          </span>
+                        )}
+                      </span>
+                    </span>
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value={OFF}>
+                    <span className="flex items-center gap-2">
+                      <MicOffIcon aria-hidden className="size-4" />
+                      Off
+                    </span>
+                  </SelectItem>
+                  {environmentChoices.length > 0 && (
+                    <SelectGroup>
+                      <SelectGroupLabel>On an environment</SelectGroupLabel>
+                      {environmentChoices.map(({ environment, value }) => (
+                        <SelectItem key={value} value={value}>
+                          <span className="flex items-center gap-2">
+                            <MonitorIcon aria-hidden className="size-4" />
+                            {environment.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  )}
+                  {cloudGroups.map(({ environment, choices }) => (
+                    <SelectGroup key={environment.environmentId}>
+                      <SelectGroupLabel>Cloud via {environment.label}</SelectGroupLabel>
+                      {choices.map(({ value, provider }) => (
+                        <SelectItem
+                          key={value}
+                          value={value}
+                          aria-label={`${CLOUD_SPEECH_LABELS[provider]} via ${environment.label}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <CloudSpeechLogo provider={provider} />
+                            {CLOUD_SPEECH_LABELS[provider]}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  ))}
+                  {destination.environmentId &&
+                  (!chosenEnvironment ||
+                    (destination.cloudProvider &&
+                      !cloudChoices.some((option) => option.value === destinationValue))) ? (
+                    <SelectItem value={destinationValue}>
+                      Chosen environment (unavailable)
+                    </SelectItem>
+                  ) : null}
+                </SelectPopup>
+              </Select>
+              {destination.cloudProvider &&
+                chosenEnvironment &&
+                (canManageKey || destination.cloudProvider === "openrouter") && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="icon-sm"
+                          type="button"
+                          variant="ghost"
+                          aria-label={manageLabel}
+                          onClick={() => {
+                            if (destination.cloudProvider)
+                              setPendingCloud({
+                                provider: destination.cloudProvider,
+                                environmentId: chosenEnvironment.environmentId,
+                              });
+                          }}
+                        >
+                          <KeyRoundIcon aria-hidden className="size-4" />
+                        </Button>
+                      }
+                    />
+                    <TooltipPopup>{manageLabel}</TooltipPopup>
+                  </Tooltip>
+                )}
+            </div>
+          </div>
           {destination.environmentId && chosenUnsupported ? (
             <p className="mt-2 text-xs text-destructive">
-              {chosenEnvironment.label} can’t transcribe audio. Pick an environment that can to use
-              voice input.
+              {chosenEnvironment.label} can’t transcribe audio locally. Choose a different
+              destination.
             </p>
           ) : null}
-        </SettingsRow>
+        </SettingsSearchTarget>
 
-        <SettingsRow
-          {...searchableSetting("speech-language")}
-          title="Language"
-          description={
-            model
-              ? `${model.model} ${model.supportsLanguageDetection ? "detects the language automatically" : "uses one fixed language"}.`
-              : "Choose an environment above to see the languages its transcription model supports."
-          }
-          control={<SpeechLanguageSelect model={model} />}
-        />
+        {pendingCloud && cloudEnvironment && (
+          <CloudVoiceConfiguration
+            key={JSON.stringify(pendingCloud)}
+            provider={pendingCloud.provider}
+            environment={cloudEnvironment}
+            active={
+              destination.environmentId === pendingCloud.environmentId &&
+              destination.cloudProvider === pendingCloud.provider
+            }
+            close={() => setPendingCloud(null)}
+          />
+        )}
+        {(model || destination.cloudProvider) && (
+          <SettingsRow
+            {...searchableSetting("speech-language")}
+            title="Language"
+            description={
+              destination.cloudProvider
+                ? "The cloud provider can detect your language automatically."
+                : model
+                  ? `${model.model} ${model.supportsLanguageDetection ? "detects the language automatically" : "uses one fixed language"}.`
+                  : "Choose an environment above to see the languages its transcription model supports."
+            }
+            control={
+              <SpeechLanguageSelect
+                model={destination.cloudProvider ? cloudSpeechLanguages : model}
+              />
+            }
+          />
+        )}
         {model?.supportsTranslation ? (
           <SettingsRow
             title="Translate to English"
@@ -1291,10 +1489,15 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("speech-silence-filtering")}
           title="Silence filtering"
-          description="Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
+          description={
+            destination.cloudProvider === "openai"
+              ? "OpenAI handles silence automatically."
+              : "Skip silence and other non-speech audio before transcription, keeping a short buffer so words aren’t cut off."
+          }
           control={
             <Switch
               aria-label="Silence filtering"
+              disabled={destination.cloudProvider === "openai"}
               checked={settings.speechSilenceFiltering}
               onCheckedChange={(checked) =>
                 void updateClientSettings({ speechSilenceFiltering: checked })
@@ -1340,11 +1543,11 @@ export function VoiceSettingsPanel() {
 
       <SettingsSection id={searchableSetting("speech-post-processing").id} title="Cleanup">
         <SettingsRow
-          title="Clean up transcripts with a provider"
-          description="Sends each transcript and the draft text around your cursor to the draft environment’s text generation provider to fix punctuation, numbers, and spoken corrections. Your audio is never sent."
+          title="Clean up transcripts"
+          description="Fixes punctuation, numbers, and spoken corrections with the cleanup model on the draft’s environment. Sends the transcript and nearby draft text, never audio."
           control={
             <Switch
-              aria-label="Clean up transcripts with a provider"
+              aria-label="Clean up transcripts"
               checked={cleanupEnabled}
               onCheckedChange={chooseTranscriptCleanup}
             />
