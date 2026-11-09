@@ -48,7 +48,7 @@ import { V2EventTimelineRow } from "./TimelineV2EventRow";
 import { TimelineMinimap } from "./TimelineMinimap";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { MarkdownFindContext } from "./markdownFindContext";
-import { useChatCanvas } from "./ChatCanvasContext";
+import { useRegisterChatCanvasTimeline } from "./ChatCanvasContext";
 import { WorkLogBlock } from "./WorkLog";
 import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
 import {
@@ -1251,8 +1251,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </>
   );
 
-  const canvas = useChatCanvas();
-  const registerTimeline = canvas?.registerTimeline;
+  const registerTimeline = useRegisterChatCanvasTimeline();
   // Stable so the list attaches once per mount, not on every render.
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;

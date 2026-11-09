@@ -1368,17 +1368,20 @@ export default function ChatView(props: ChatViewProps) {
   const phase = derivePhase(activeRuntime);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
-  const setThreadError = makeThreadErrorSetter({
-    routeThreadRef,
-    routeThreadKey,
-    draftId,
-    serverThreadRef:
-      serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
-        ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
-        : null,
-    setLocalServerErrorsByThreadKey,
-    setLocalDraftErrorsByDraftId,
-  });
+  // Stable, so a chat view render does not re-render the composer and every hook it feeds.
+  const setThreadError = useStableCallback(
+    makeThreadErrorSetter({
+      routeThreadRef,
+      routeThreadKey,
+      draftId,
+      serverThreadRef:
+        serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
+          ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
+          : null,
+      setLocalServerErrorsByThreadKey,
+      setLocalDraftErrorsByDraftId,
+    }),
+  );
   const {
     pendingApprovals,
     pendingUserInputs,
