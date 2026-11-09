@@ -123,7 +123,8 @@ overrides:
   react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.7.1
   react-native-keyboard-controller: 1.23.0
-  react-native-pdf-jsi: 5.0.0
+  # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
+  react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
@@ -246,7 +247,6 @@ patchedDependencies:
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
   react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
-  react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
@@ -261,6 +261,8 @@ patchedDependencies:
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
   # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
   "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
+  # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
+  react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
@@ -303,3 +305,4 @@ minimumReleaseAgeExclude:
   - "@effect/tsgo-win32-arm64@0.67.1"
   - "@effect/tsgo-win32-x64@0.67.1"
   - "@effect/tsgo@0.67.1"
+  - "@anthropic-ai/claude-agent-sdk@0.3.321"
