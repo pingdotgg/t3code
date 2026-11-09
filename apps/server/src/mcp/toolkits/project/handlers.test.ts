@@ -324,7 +324,10 @@ it.effect("a launch steps an inherited mode down to the provider's, and refuses 
     expect(inherited.launched[0]?.runtimeMode).toBe("auto-accept-edits");
 
     const requested = yield* launchPi("auto");
-    expect(requested.result).toMatchObject({ code: "invalid_request" });
+    expect(requested.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("so it would run as auto-accept-edits."),
+    });
     expect(requested.launched).toHaveLength(0);
 
     const offered = yield* launchPi("approval-required");

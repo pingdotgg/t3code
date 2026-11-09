@@ -11,6 +11,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   RUNTIME_MODE_CHOICES,
+  compatibleRuntimeModeForChoices,
   resolveNewThreadRuntimeMode,
   selectableChoices,
   withManagedRuntimeModeLimits,
@@ -24,6 +25,12 @@ const policy = (organization: string, maxRuntimeMode?: RuntimeMode): ManagedPoli
 
 describe("managed runtime mode limits", () => {
   it("disables modes above the strictest target's ceiling with that target's reason", () => {
+    const piChoices = RUNTIME_MODE_CHOICES.filter((choice) => choice.mode !== "auto");
+    expect(compatibleRuntimeModeForChoices("auto", piChoices)).toBe("auto-accept-edits");
+    expect(compatibleRuntimeModeForChoices("full-access", piChoices)).toBe("full-access");
+    expect(compatibleRuntimeModeForChoices("approval-required", piChoices)).toBe(
+      "approval-required",
+    );
     const choices = withManagedRuntimeModeLimits(RUNTIME_MODE_CHOICES, [
       policy("Wide Corp", "auto"),
       undefined,
