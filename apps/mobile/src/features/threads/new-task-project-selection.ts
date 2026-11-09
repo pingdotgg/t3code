@@ -147,6 +147,26 @@ export function resolveDraftProjectSelection(
 
 type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
+/**
+ * The project a draft route names. A missing one returns to the picker once other projects load;
+ * a pending share returns even to an empty catalog, where the picker resumes or releases it.
+ */
+export function resolveRouteDraftProject(
+  route: ProjectRef,
+  projects: ReadonlyArray<EnvironmentProject>,
+  pendingShareId: string | undefined,
+):
+  | { readonly kind: "select"; readonly project: EnvironmentProject }
+  | { readonly kind: "pick" }
+  | { readonly kind: "wait" } {
+  const project = projects.find(
+    (candidate) =>
+      candidate.environmentId === route.environmentId && candidate.id === route.projectId,
+  );
+  if (project) return { kind: "select", project };
+  return projects.length > 0 || pendingShareId !== undefined ? { kind: "pick" } : { kind: "wait" };
+}
+
 export function newTaskDestination(options: {
   readonly projects: ReadonlyArray<EnvironmentProject>;
   readonly requestId: string;
