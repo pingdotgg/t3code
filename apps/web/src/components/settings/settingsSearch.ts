@@ -821,16 +821,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
-    id: "text-generators",
-    title: "Text generators",
-    to: "/settings/threads",
-    scope: "environment-defaults",
-    searchTerms: [
-      "model api key openai openrouter anthropic ollama lm studio openai-compatible base url add remove refresh models",
-    ],
-    environmentOnly: true,
-  },
-  {
     id: "thread-title-instructions",
     title: "Thread title instructions",
     to: "/settings/threads",
@@ -948,6 +938,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/providers",
     searchTerms: [
       "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+    ],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "text-generators",
+    title: "Text generators",
+    to: "/settings/providers",
+    searchTerms: [
+      "model api key openai openrouter anthropic ollama lm studio openai-compatible base url text generation titles commit messages add remove refresh models",
     ],
     providerSettingsOnly: true,
   },

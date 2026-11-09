@@ -11,8 +11,7 @@ that only writes text. It is usually faster and costs fewer tokens.
 
 ## Add a text generator
 
-In **Settings → Threads → Text generation**, choose **Add** next to **Text generators** and pick a
-service:
+In **Settings → Providers**, choose **Add API** next to **Text generators** and pick a service:
 
 - **OpenAI** or **Anthropic**, with an API key.
 - **OpenRouter**, with an OpenRouter key, to use any model it serves.

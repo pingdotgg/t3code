@@ -1,3 +1,4 @@
+import { SparklesIcon } from "lucide-react";
 import { type CSSProperties, memo } from "react";
 
 import {
@@ -22,12 +23,16 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
+  // Text generator kinds: the compatible kind also serves OpenRouter and local servers, so no brand.
+  [ProviderDriverKind.make("anthropic")]: ClaudeAI,
+  [ProviderDriverKind.make("openaiCompatible")]: SparklesIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
+  [ProviderDriverKind.make("anthropic")]: "text-[#d97757]",
 };
 
 export function providerTextColor(driverKind: ProviderDriverKind): {

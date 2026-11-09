@@ -70,7 +70,6 @@ import {
   selectsPlanAgent,
 } from "../../modelSelection";
 import { useTextGenerationTargets } from "../../textGenerators";
-import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
@@ -1782,7 +1781,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["textGenerationModelSelection"]}
           {...searchableSetting("text-generation-model")}
-          description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it."
+          description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it. Add a model API as a text generator in Providers."
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton
@@ -1878,14 +1877,6 @@ export function ThreadsSettingsPanel() {
             )
           }
         />
-        {!isProjectScope && environment ? (
-          <TextGeneratorsSettings
-            key={environment.environmentId}
-            environmentId={environment.environmentId}
-            environmentLabel={environment.label}
-            providers={serverProviders}
-          />
-        ) : null}
         <AdvancedSettings
           targetIds={[
             searchableSetting("thread-title-instructions").id,

@@ -44,7 +44,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsRow } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 const decodeTextGenerator = Schema.decodeUnknownOption(TextGeneratorConfig);
 
@@ -60,10 +60,12 @@ export function TextGeneratorsSettings({
   environmentId,
   environmentLabel,
   providers,
+  readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly providers: ReadonlyArray<ServerProvider>;
+  readonly readOnly: boolean;
 }) {
   const settings = useEnvironmentSettings(environmentId);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
@@ -76,58 +78,67 @@ export function TextGeneratorsSettings({
 
   return (
     <>
-      <SettingsRow
-        serverScoped
+      <SettingsSection
         {...searchableSetting("text-generators")}
-        description="Model APIs that can write titles, commit messages, and other text, but can't run agents."
-        control={
-          <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
-            <PlusIcon className="size-3" aria-hidden />
-            Add
-          </Button>
+        headerAction={
+          !readOnly ? (
+            <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
+              <PlusIcon className="size-3" aria-hidden />
+              Add API
+            </Button>
+          ) : null
         }
-      />
-      {generators.map(([id, config]) => {
-        const name = textGeneratorDisplayName(config);
-        return (
+      >
+        {generators.length === 0 ? (
           <SettingsRow
-            key={id}
-            serverScoped
-            title={name}
-            description={
-              <span className="break-all">
-                {KIND_LABELS[config.kind]} · {config.baseUrl}
-              </span>
-            }
-            control={
-              <div className="flex items-center gap-1.5">
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`Refresh ${name} models`}
-                  disabled={!config.enabled}
-                  onClick={() => refreshTextGeneratorModels(environmentId, id)}
-                >
-                  <RefreshCwIcon aria-hidden />
-                </Button>
-                <Button size="xs" variant="ghost" onClick={() => setEditing({ id, config })}>
-                  Edit
-                </Button>
-                <Button size="xs" variant="ghost" onClick={() => setRemoving(id)}>
-                  Remove
-                </Button>
-                <Switch
-                  checked={config.enabled}
-                  onCheckedChange={(enabled) =>
-                    updateSettings({ textGenerators: { [id]: { ...config, enabled } } })
-                  }
-                  aria-label={`Enable ${name}`}
-                />
-              </div>
-            }
+            title="No text generators configured."
+            description="Model APIs that write titles, commit messages, and other text, but can't run agents."
           />
-        );
-      })}
+        ) : null}
+        {generators.map(([id, config]) => {
+          const name = textGeneratorDisplayName(config);
+          return (
+            <SettingsRow
+              key={id}
+              title={name}
+              description={
+                <span className="break-all">
+                  {KIND_LABELS[config.kind]}
+                  {config.enabled ? "" : " · Disabled"} · {config.baseUrl}
+                </span>
+              }
+              control={
+                readOnly ? null : (
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={`Refresh ${name} models`}
+                      disabled={!config.enabled}
+                      onClick={() => refreshTextGeneratorModels(environmentId, id)}
+                    >
+                      <RefreshCwIcon aria-hidden />
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={() => setEditing({ id, config })}>
+                      Edit
+                    </Button>
+                    <Button size="xs" variant="ghost" onClick={() => setRemoving(id)}>
+                      Remove
+                    </Button>
+                    <Switch
+                      checked={config.enabled}
+                      onCheckedChange={(enabled) =>
+                        updateSettings({ textGenerators: { [id]: { ...config, enabled } } })
+                      }
+                      aria-label={`Enable ${name}`}
+                    />
+                  </div>
+                )
+              }
+            />
+          );
+        })}
+      </SettingsSection>
       {editing !== null ? (
         <TextGeneratorDialog
           environmentId={environmentId}
