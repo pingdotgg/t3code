@@ -224,11 +224,11 @@ export function ConnectAgentSurface() {
   }
 
   const { details } = loaded;
-  const canApprove =
-    pending === null && resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
+  const canDecide = resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
+  const canApprove = pending === null && canDecide;
   // A typed code or a browser session that can approve takes precedence.
   const connectSignIn =
-    pairingCode.trim().length === 0 && !canApprove ? details.connectSignIn : undefined;
+    pairingCode.trim().length === 0 && !canDecide ? details.connectSignIn : undefined;
   // A code from "Use T3 Code in another app" names its level, so the page does not ask again.
   const codeAccess = parseMcpApprovalCode(pairingCode)?.access;
   const codeField = (
@@ -337,7 +337,9 @@ export function ConnectAgentSurface() {
               onClick={() => continueWithConnect(connectSignIn)}
               type="button"
             >
-              {`Approve ${accessConfig[access].label} with T3 Connect`}
+              {pending === "approve"
+                ? "Approving…"
+                : `Approve ${accessConfig[access].label} with T3 Connect`}
             </Button>
           ) : (
             <Button disabled={!canApprove} type="submit">
