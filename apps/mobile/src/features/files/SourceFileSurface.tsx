@@ -247,17 +247,18 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
+  const usesLineList = !props.selectable;
 
   // Layout effect so a pending jump is cancelled in the commit that swaps the file.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the FlatList to the target line and cancels a pending jump when the file changes
   useLayoutEffect(() => {
-    if (targetIndex === null) {
+    if (targetIndex === null || !usesLineList) {
       return;
     }
     lineScroll.scrollToLine(listRef.current, targetIndex);
     return lineScroll.cancel;
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index scrolls the new file to it.
-  }, [lineScroll, props.path, targetIndex]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Opening another file at the same line index, or leaving selection, scrolls the remounted list to it.
+  }, [lineScroll, props.path, targetIndex, usesLineList]);
 
   const renderLine = ({ item, index }: { item: string; index: number }) => (
     <HighlightedSourceLine
@@ -353,7 +354,6 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     />
   );
 
-  const usesLineList = !props.selectable;
   const padded = (
     <ScrollView
       refreshControl={refreshControl}
