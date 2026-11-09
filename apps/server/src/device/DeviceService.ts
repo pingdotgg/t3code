@@ -84,6 +84,22 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const isSshCommandError = Schema.is(SshCommandError);
 
+// Only these lines, printed by the bootstrap script itself, are safe to expose from stderr.
+const sshProbePrerequisites = new Map([
+  [
+    "Node is missing from the non-interactive SSH PATH",
+    "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+  ],
+  [
+    "Node 22 or newer is required on the device host.",
+    "Connected over SSH, but this host's Node is older than 22. Install Node 22 or newer.",
+  ],
+  [
+    "npm is missing from the non-interactive SSH PATH.",
+    "Connected over SSH, but npm is not on this host's PATH for non-interactive SSH commands.",
+  ],
+]);
+
 const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   const windows = SshDeviceHost.isSshWindowsHostError(error.cause) ? error.cause : null;
   const cause = windows ? windows.cause : error.cause;
@@ -95,14 +111,14 @@ const sshProbeFailureMessage = (error: DeviceHost.DeviceHostError): string => {
   )
     return "Could not connect to this host over SSH.";
 
-  // Only the known bootstrap diagnostic is safe to expose as Node guidance.
-  if (
-    cause.exitCode === 1 &&
-    cause.stderr
-      .split(/\r?\n/u)
-      .some((line) => line.trim() === "Node is missing from the non-interactive SSH PATH")
-  )
-    return "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.";
+  const prerequisite =
+    cause.exitCode === 1
+      ? cause.stderr
+          .split(/\r?\n/u)
+          .map((line) => sshProbePrerequisites.get(line.trim()))
+          .find((message) => message !== undefined)
+      : undefined;
+  if (prerequisite) return prerequisite;
   if (windows) return windows.message;
 
   return `Connected over SSH, but the device host check failed (exit code ${cause.exitCode}).`;
@@ -1389,7 +1405,7 @@ export const make = Effect.gen(function* () {
         return yield* SshDeviceHost.probe(host).pipe(Effect.provide(probeContext));
       }).pipe(
         Effect.mapError((error) =>
-          error._tag === "DeviceHostError" && SshDeviceHost.isSshWindowsHostError(error.cause)
+          error._tag === "DeviceHostError" && error.step === "probe"
             ? new DeviceHostUnavailableError({
                 hostId: host.id,
                 hostLabel: host.label,

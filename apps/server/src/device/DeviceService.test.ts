@@ -611,9 +611,51 @@ const layerSecretResolver = Layer.succeed(SecretResolver.SecretResolver, {
   invalidate: () => Effect.void,
 });
 
-it.effect.each([1, 9009])(
-  "Test connection preserves Windows exit %s guidance across the wire",
-  (exitCode) =>
+const windowsHostGuidance =
+  "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.";
+
+it.effect.each([
+  { name: "a Windows host", exitCode: 1, windows: true, stderr: "", reason: windowsHostGuidance },
+  {
+    name: "a Windows host returning 9009",
+    exitCode: 9009,
+    windows: true,
+    stderr: "",
+    reason: windowsHostGuidance,
+  },
+  {
+    name: "missing Node",
+    exitCode: 1,
+    windows: false,
+    stderr: "Node is missing from the non-interactive SSH PATH",
+    reason:
+      "Connected over SSH, but Node is not on this host's PATH for non-interactive SSH commands.",
+  },
+  {
+    name: "Node older than 22",
+    exitCode: 1,
+    windows: false,
+    stderr: "Node 22 or newer is required on the device host.",
+    reason: "Connected over SSH, but this host's Node is older than 22. Install Node 22 or newer.",
+  },
+  {
+    name: "missing npm",
+    exitCode: 1,
+    windows: false,
+    stderr: "npm is missing from the non-interactive SSH PATH.",
+    reason:
+      "Connected over SSH, but npm is not on this host's PATH for non-interactive SSH commands.",
+  },
+  {
+    name: "an unreachable host",
+    exitCode: 255,
+    windows: false,
+    stderr: "",
+    reason: "Could not connect to this host over SSH.",
+  },
+])(
+  "Test connection preserves SSH probe guidance for $name across the wire",
+  ({ exitCode, windows: isWindows, stderr: diagnostic, reason }) =>
     Effect.gen(function* () {
       const { host } = yield* fixture();
       const service = yield* DeviceService.make.pipe(
@@ -630,7 +672,7 @@ it.effect.each([1, 9009])(
           ChildProcessSpawner.make((command) => {
             if (command._tag !== "StandardCommand") return Effect.die("Unexpected command");
             const config = command.args.includes("-G");
-            const windows = command.args.includes("echo %OS% $env:OS");
+            const windows = isWindows && command.args.includes("echo %OS% $env:OS");
             return Effect.succeed(
               ChildProcessSpawner.makeHandle({
                 pid: ChildProcessSpawner.ProcessId(123),
@@ -639,7 +681,9 @@ it.effect.each([1, 9009])(
                     config ? "hostname 192.0.2.1\nport 22\n" : windows ? "Windows_NT\r\n" : "",
                   ),
                 ),
-                stderr: Stream.make(new TextEncoder().encode("private SSH diagnostics")),
+                stderr: Stream.make(
+                  new TextEncoder().encode(`private SSH diagnostics\n${diagnostic}`),
+                ),
                 all: Stream.empty,
                 exitCode: Effect.succeed(
                   ChildProcessSpawner.ExitCode(config || windows ? 0 : exitCode),
@@ -656,20 +700,17 @@ it.effect.each([1, 9009])(
         ),
       );
       const error = yield* service
-        .testHost({ kind: "ssh", id: "windows", label: "Windows test", target: "windows.test" })
+        .testHost({ kind: "ssh", id: "remote", label: "Remote host", target: "remote.test" })
         .pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "DeviceHostUnavailableError",
-        hostId: "windows",
-        hostLabel: "Windows test",
-        reason:
-          "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
+        hostId: "remote",
+        hostLabel: "Remote host",
+        reason,
       });
       const codec = Schema.fromJsonString(DeviceError);
       const decoded = yield* Schema.decodeEffect(codec)(yield* Schema.encodeEffect(codec)(error));
-      expect(decoded.message).toBe(
-        "Windows test is unavailable: Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.",
-      );
+      expect(decoded.message).toBe(`Remote host is unavailable: ${reason}`);
       expect(decoded.message).not.toContain("private SSH diagnostics");
     }).pipe(
       Effect.provide(
