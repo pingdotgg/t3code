@@ -1,7 +1,7 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
 import * as DateTime from "effect/DateTime";
-import type { ComponentProps } from "react";
+import { useState, type ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
@@ -43,6 +43,8 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 import "~/index.css";
 import { render as renderUi } from "../../../test/render";
 import { QueuedRunsControl } from "./QueuedRunsControl";
+import { ExpandedImageDialog } from "./ExpandedImageDialog";
+import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
 function setup() {
   state.projection = null;
@@ -59,11 +61,78 @@ const baseProps = {
   onCancelEdit: () => undefined,
   timestampFormat: "locale",
   onOpenThread: () => undefined,
+  onImageExpand: () => undefined,
 } satisfies ComponentProps<typeof QueuedRunsControl>;
 
 async function renderQueue(props: Partial<ComponentProps<typeof QueuedRunsControl>> = {}) {
   return renderUi(<QueuedRunsControl {...baseProps} {...props} />);
 }
+
+it.each([false, true])(
+  "opens queued images in the existing gallery, pending=%s",
+  async (pending) => {
+    setup();
+    const attachments = ["first.png", "second.png"].map((name) => ({
+      type: "image" as const,
+      id: name,
+      name,
+      mimeType: "image/png",
+      sizeBytes: 128,
+    }));
+    state.projection = { projection: { messages: [] } };
+    state.workflow = {
+      activeRun: null,
+      queuedRuns: pending
+        ? []
+        : [
+            {
+              run: { id: "run:queued", userMessageId: "message:queued" },
+              text: "Later",
+              attachments,
+            },
+          ],
+    };
+    function QueueWithGallery() {
+      const [preview, setPreview] = useState<ExpandedImagePreview | null>(null);
+      return (
+        <>
+          <QueuedRunsControl
+            {...baseProps}
+            optimisticMessages={
+              pending
+                ? [
+                    {
+                      id: MessageId.make("message:pending"),
+                      inputIntent: "queued_turn",
+                      text: "Later",
+                      attachments: attachments.map((attachment) => ({
+                        ...attachment,
+                        previewUrl: `https://assets.test/${attachment.id}`,
+                      })),
+                    },
+                  ]
+                : []
+            }
+            onImageExpand={setPreview}
+          />
+          {preview ? (
+            <ExpandedImageDialog preview={preview} onClose={() => setPreview(null)} />
+          ) : null}
+        </>
+      );
+    }
+    await using _screen = await renderUi(<QueueWithGallery />);
+
+    await page.getByRole("button", { name: "Preview second.png", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    await expect.element(page.getByText("second.png (2/2)", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Previous media", exact: true }).click();
+    await expect.element(page.getByText("first.png (1/2)", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Close image preview", exact: true }).click();
+    await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Later", { exact: true })).toBeVisible();
+  },
+);
 
 it("previews assistant quotes as readable text and preserves the citation when editing", async () => {
   setup();
