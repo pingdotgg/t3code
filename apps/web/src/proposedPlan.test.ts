@@ -20,4 +20,3 @@ describe("proposed plan preview citations", () => {
     });
   });
 });
-
