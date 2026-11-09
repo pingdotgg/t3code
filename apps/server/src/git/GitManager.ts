@@ -2627,7 +2627,6 @@ export const make = Effect.gen(function* () {
               `Created ${result.subjects.length} logical commit(s).`,
               ...result.subjects.map((subject) => `- ${subject}`),
               `Backup: ${result.backupRef}`,
-              "T3 verified the final tree and preserved excluded files and their staged state. Nothing was pushed.",
             ].join("\n"),
     };
   });
