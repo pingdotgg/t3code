@@ -1602,7 +1602,7 @@ describe("deriveMessagesTimelineRows", () => {
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
   });
 
-  it("stacks back-to-back steers as one burst with a single steer label", () => {
+  it("stacks back-to-back steers under their prompt as one burst", () => {
     const runId = RunId.make("double-steer-run");
     const time = (second: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, second)).toISOString();
     const message = (
@@ -1659,15 +1659,14 @@ describe("deriveMessagesTimelineRows", () => {
     ).result;
 
     const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get("prompt")).toMatchObject({ groupedWithNext: true });
     expect(byId.get("first-steer")).toMatchObject({
       groupedWithNext: true,
       groupedWithPrevious: true,
-      continuesSteer: false,
     });
     expect(byId.get("second-steer")).toMatchObject({
       groupedWithNext: false,
       groupedWithPrevious: true,
-      continuesSteer: true,
     });
   });
 
@@ -4577,6 +4576,17 @@ describe("working window", () => {
     // Sending a steer re-keys the window, which closes an open history.
     expect(window?.key).toBe("steer");
     expect(window?.historyOpen).toBe(false);
+  });
+
+  it("groups a steer with its prompt once the bar moves below both", () => {
+    const rows = run([
+      prompt("prompt", 0),
+      work("command", 2, { label: "Running sleep", itemType: "command_execution" }),
+      prompt("steer", 3, "steer"),
+    ]);
+    expect(rows.map((row) => row.id)).toEqual(["prompt", "steer", "working-indicator-row"]);
+    expect(rows[0]).toMatchObject({ groupedWithNext: true, groupedWithPrevious: false });
+    expect(rows[1]).toMatchObject({ groupedWithNext: false, groupedWithPrevious: true });
   });
 
   it("puts the settled fold where the bar was, after the steer", () => {

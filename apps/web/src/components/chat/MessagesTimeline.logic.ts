@@ -636,8 +636,6 @@ type MessagesTimelineRowContent =
       groupedWithNext?: boolean;
       /** Another of your messages sits directly above, so the joined corners tighten. */
       groupedWithPrevious?: boolean;
-      /** Set when the message above is a steer too, so the label shows once. */
-      continuesSteer?: boolean;
       /** A prompt that opens with a provider command. A standalone one renders as a work row. */
       command?: TimelineSlashCommand | undefined;
     }
@@ -2597,23 +2595,32 @@ export function deriveMessagesTimelineRows(input: {
   const result = attachTrailingToolGroupsToAssistant(
     attachCreatedThreadSummaries(nextRows, timelineEntries, collapsedFoldMemberIds),
   );
-  return result.map((row, index) => {
-    const next = result[index + 1];
-    if (timelineRowIsWorkLog(row) && timelineRowIsWorkLog(next)) {
-      return { ...row, continuesWorkLog: true };
+  return withPromptGrouping(
+    result.map((row, index) =>
+      timelineRowIsWorkLog(row) && timelineRowIsWorkLog(result[index + 1])
+        ? { ...row, continuesWorkLog: true }
+        : row,
+    ),
+  );
+}
+
+/** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
+function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
+  return rows.map((row, index) => {
+    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
+    const next = rows[index + 1];
+    const own = timelineRowIsOwnUserMessage(row);
+    const continuesPromptStack = timelineRowIsUserPrompt(next);
+    const groupedWithPrevious = own && timelineRowIsOwnUserMessage(rows[index - 1]);
+    const groupedWithNext = own && timelineRowIsOwnUserMessage(next);
+    if (
+      (row.continuesPromptStack ?? false) === continuesPromptStack &&
+      (row.groupedWithPrevious ?? false) === groupedWithPrevious &&
+      (row.groupedWithNext ?? false) === groupedWithNext
+    ) {
+      return row;
     }
-    if (!timelineRowIsUserPrompt(row)) return row;
-    const promptRow = timelineRowIsUserPrompt(next) ? { ...row, continuesPromptStack: true } : row;
-    if (!timelineRowIsOwnUserMessage(promptRow)) return promptRow;
-    const previous = result[index - 1];
-    const groupedWithPrevious = timelineRowIsOwnUserMessage(previous);
-    const groupedWithNext = timelineRowIsOwnUserMessage(next);
-    const continuesSteer =
-      timelineRowIsOwnUserMessage(previous) &&
-      userMessageIsSteer(promptRow.message) &&
-      userMessageIsSteer(previous.message);
-    if (!groupedWithNext && !groupedWithPrevious && !continuesSteer) return promptRow;
-    return { ...promptRow, groupedWithNext, groupedWithPrevious, continuesSteer };
+    return { ...row, continuesPromptStack, groupedWithNext, groupedWithPrevious };
   });
 }
 
@@ -2994,12 +3001,13 @@ export function applyWorkingWindow(
     answering: answer?.kind === "text" && answer.message.streaming,
     historyOpen: historyOpenKey === key,
   };
-  return [
+  // Steers move above the bar, next to the prompt they continue.
+  return withPromptGrouping([
     ...rows.slice(0, workingIndex),
     ...before,
     { ...workingRow, window },
     ...after.map((row) => (row.continuesWorkLog ? { ...row, continuesWorkLog: false } : row)),
-  ];
+  ]);
 }
 
 /** `expanded` with every "Handled N updates" group that holds the run open. */
@@ -3533,7 +3541,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.revertTurnCount === bm.revertTurnCount &&
         a.groupedWithNext === bm.groupedWithNext &&
         a.groupedWithPrevious === bm.groupedWithPrevious &&
-        a.continuesSteer === bm.continuesSteer &&
         shallow(a.command, bm.command)
       );
     }
