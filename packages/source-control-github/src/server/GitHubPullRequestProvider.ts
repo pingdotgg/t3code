@@ -24,6 +24,7 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import type {
   GitHubRepositoryAccess,
   GitHubViewerAccess,
@@ -40,6 +41,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -48,7 +51,7 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
@@ -110,6 +113,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":
@@ -119,12 +123,31 @@ function gitHubProviderFailure(
       };
     case "SourceControlRateLimitPausedError":
       return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiResponseError":
+      return {
+        reason:
+          error.status === 403 ||
+          (error.githubErrorTypes?.includes("FORBIDDEN") &&
+            error.githubErrorTypes.every((type) => type === "FORBIDDEN" || type === "NOT_FOUND"))
+            ? "forbidden"
+            : "failed",
+      };
     case "GitHubApiNotFoundError":
-      return { reason: "not-found" };
+      return error.credential === undefined || error.credential === "app"
+        ? { reason: "not-found" }
+        : { reason: "not-found", accessHint: REPOSITORY_ACCESS_HINTS[error.credential] };
     default:
       return { reason: "failed" };
   }
 }
+
+const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
+  settings:
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+  env: "The server's environment token can't see it. Give it access, or unset it.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+  git: "Your Git credential can't see it. Give it access, or update the server's Git credential helper.",
+};
 
 function withAvatar(
   actor: PullRequestActor | null,
@@ -639,6 +662,11 @@ export const make = Effect.gen(function* () {
 
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
+
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
 
     setLabels: (input) =>
       cli

@@ -150,43 +150,62 @@ function harness(
 }
 
 describe("native GitHub repository routing", () => {
-  it.effect("pins new label and author option APIs without extra identity probes", () => {
-    const { layer, requests, pins, helperPaths } = harness();
-    return Effect.gen(function* () {
-      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      for (const kind of ["labels", "authors"]) {
-        for (const repository of ["OwnerA/Repo", "OwnerB/Repo"]) {
-          const input = { cwd: "/w", host: "github.com", repository, query: "needle" };
-          const read =
-            kind === "labels"
-              ? api.listRepositoryLabels(input).pipe(Effect.asVoid)
-              : api.searchRepositoryAuthors(input).pipe(Effect.asVoid);
-          const error = yield* read.pipe(Effect.flip);
-          expect(error._tag).toBe("GitHubApiNotFoundError");
+  it.effect(
+    "pins repository list and filter option credentials without extra identity probes",
+    () => {
+      const { layer, requests, pins, helperPaths } = harness();
+      return Effect.gen(function* () {
+        const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        for (const kind of ["labels", "authors", "references", "pullRequests"]) {
+          for (const repository of ["OwnerA/Repo", "OwnerB/Repo"]) {
+            const input = { cwd: "/w", host: "github.com", repository, query: "needle" };
+            const read =
+              kind === "labels"
+                ? api.listRepositoryLabels(input).pipe(Effect.asVoid)
+                : kind === "authors"
+                  ? api.searchRepositoryAuthors(input).pipe(Effect.asVoid)
+                  : kind === "references"
+                    ? api.searchRepositoryReferences(input).pipe(Effect.asVoid)
+                    : api
+                        .listPullRequests({
+                          ...input,
+                          state: "open",
+                          involvement: "all",
+                          viewer: "Chinoman10",
+                          limit: 10,
+                        })
+                        .pipe(Effect.asVoid);
+            const error = yield* read.pipe(Effect.flip);
+            expect(error).toMatchObject({ _tag: "GitHubApiNotFoundError", credential: "git" });
+          }
         }
-      }
-      expect(pins).toEqual(["ownera/repo", "ownerb/repo", "ownera/repo", "ownerb/repo"]);
-      expect(helperPaths).toEqual(["OwnerA/Repo.git", "OwnerB/Repo.git"]);
-      expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
-        Array(4).fill("/graphql"),
-      );
-      expect(requests.map((request) => request.headers.authorization)).toEqual([
-        "Bearer fake-OwnerA-1",
-        "Bearer fake-OwnerB-1",
-        "Bearer fake-OwnerA-1",
-        "Bearer fake-OwnerB-1",
-      ]);
-      for (const [index, request] of requests.entries()) {
-        expect(request.body._tag).toBe("Uint8Array");
-        if (request.body._tag !== "Uint8Array") return yield* Effect.die("Missing query");
-        expect(JSON.parse(new TextDecoder().decode(request.body.body)).variables).toEqual({
-          owner: index % 2 === 0 ? "OwnerA" : "OwnerB",
-          name: "Repo",
-          query: "needle",
-        });
-      }
-    }).pipe(Effect.provide(layer));
-  });
+        expect(pins).toEqual(
+          Array.from({ length: 8 }, (_, index) =>
+            index % 2 === 0 ? "ownera/repo" : "ownerb/repo",
+          ),
+        );
+        expect(helperPaths).toEqual(["OwnerA/Repo.git", "OwnerB/Repo.git"]);
+        expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
+          Array(8).fill("/graphql"),
+        );
+        expect(requests.map((request) => request.headers.authorization)).toEqual(
+          Array.from({ length: 8 }, (_, index) =>
+            index % 2 === 0 ? "Bearer fake-OwnerA-1" : "Bearer fake-OwnerB-1",
+          ),
+        );
+        for (const [index, request] of requests.entries()) {
+          expect(request.body._tag).toBe("Uint8Array");
+          if (request.body._tag !== "Uint8Array") return yield* Effect.die("Missing query");
+          if (index >= 6) continue;
+          expect(JSON.parse(new TextDecoder().decode(request.body.body)).variables).toMatchObject({
+            owner: index % 2 === 0 ? "OwnerA" : "OwnerB",
+            name: "Repo",
+            ...(index < 4 ? { query: "needle" } : {}),
+          });
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("forwards the repository to every conditional checks endpoint", () =>
     Effect.gen(function* () {

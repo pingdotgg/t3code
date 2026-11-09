@@ -1,8 +1,10 @@
 import { expect, it } from "@effect/vitest";
 import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { sourceControlMediaResponse } from "./sourceControlMediaResponse.ts";
 
@@ -22,6 +24,14 @@ it.effect.each(["image/svg+xml", "text/html"])(
       if (contentType === "image/svg+xml")
         expect(response.headers["content-security-policy"]).toContain("sandbox");
     }).pipe(
+      Effect.provide(
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+          resolve: (cwd) => {
+            expect(cwd).toBe("/untrusted-checkout");
+            return Effect.succeed(null);
+          },
+        }),
+      ),
       Effect.provideService(BuiltInDrivers.SourceControlDrivers, [
         {
           driver: { kind: media.definition.kind, definition: media.definition },

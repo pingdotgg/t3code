@@ -103,6 +103,7 @@ export const make = Effect.gen(function* () {
         host,
         token: app.value.token,
         credentialFingerprint: app.value.fingerprint,
+        source: "app",
         fromApp: true,
       }),
     );
