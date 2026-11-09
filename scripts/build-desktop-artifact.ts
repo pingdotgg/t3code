@@ -1045,6 +1045,9 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
   "**/*.map",
+  // node-pty's postinstall copies conpty here on Windows hosts; it loads the prebuild's copy.
+  "**/node_modules/node-pty/build/Release/conpty",
+  "**/node_modules/node-pty/build/Release/conpty/**",
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {

@@ -58,6 +58,7 @@ import {
   stageCursorSdkPlatformPackages,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
+  resolveWindowsServerAsarIgnoreGlobs,
   WINDOWS_SERVER_ASAR_RESOURCE,
   WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE,
   WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE,
@@ -664,6 +665,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       }),
     ),
   );
+
+  it("keeps only the loaded node-pty conpty copy in the Windows server sidecar", () => {
+    const ignored = (file: string) =>
+      resolveWindowsServerAsarIgnoreGlobs("x64").some((glob) => NodePath.matchesGlob(file, glob));
+    assert.isTrue(ignored("node_modules/node-pty/build/Release/conpty/conpty.dll"));
+    assert.isTrue(ignored("node_modules/node-pty/prebuilds/win32-arm64/conpty.node"));
+    assert.isFalse(ignored("node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll"));
+  });
 
   it("drops the other architecture's Darwin prebuilds from single-architecture Mac builds", () => {
     const excludes = (arch: "arm64" | "x64" | "universal", file: string) =>
