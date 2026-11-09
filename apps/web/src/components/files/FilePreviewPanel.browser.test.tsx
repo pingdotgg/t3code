@@ -2,6 +2,8 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../../test/render";
+import { useComposerDraftStore } from "~/composerDraftStore";
+import { buildFileReviewComment } from "~/reviewCommentContext";
 
 const state = vi.hoisted(() => ({
   file: null as ProjectReadFileResult | null,
@@ -102,12 +104,16 @@ function markdownPreview(truncated: boolean) {
     byteLength: truncated ? 1_200_000 : 32,
     truncated,
   };
+  return filePreview("tasks.md");
+}
+
+function filePreview(relativePath: string) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
-      relativePath="tasks.md"
+      relativePath={relativePath}
       threadRef={threadRef}
       composerDraftTarget={threadRef}
       keybindings={[]}
@@ -158,5 +164,44 @@ describe("rendered Markdown task saves", () => {
         contents: "- [x] Keep the rest of this file\n",
       },
     });
+  });
+});
+
+describe("file view comments", () => {
+  it("shows a comment already in the composer draft when the file view mounts", async () => {
+    using _settings = setup();
+    const contents = "export const one = 1;\nexport const two = 2;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const comment = buildFileReviewComment({
+      id: "file-comment-1",
+      filePath: "config.ts",
+      startLine: 2,
+      endLine: 2,
+      text: "Repro note on line two",
+      contents,
+    });
+    const store = useComposerDraftStore.getState();
+    store.addReviewComment(threadRef, comment);
+    using _comment = { [Symbol.dispose]: () => store.removeReviewComment(threadRef, comment.id) };
+
+    await using screen = await render(filePreview("config.ts"));
+
+    const fileView = await vi.waitFor(() => {
+      const element = screen.container.querySelector("diffs-container");
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const inlineAnnotations = Array.from(
+      fileView.querySelectorAll<HTMLElement>('[slot^="annotation-"]'),
+      (slot) => [slot.slot, slot.textContent],
+    );
+    expect(inlineAnnotations).toEqual([
+      ["annotation-2", expect.stringContaining("Repro note on line two")],
+    ]);
   });
 });
