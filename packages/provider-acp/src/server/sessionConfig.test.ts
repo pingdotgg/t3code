@@ -92,6 +92,39 @@ describe("acpProviderOptionDescriptors", () => {
     ]);
   });
 
+  it("does not badge High as the default for other thought levels", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "thinking_level",
+          name: "Thinking Level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: [
+            { value: "high", name: "High" },
+            { value: "low", name: "Low" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "thinking_level",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+        currentValue: "low",
+        role: "reasoning",
+      },
+    ]);
+  });
+
   it("keeps Max distinct when the model also offers Extra High", () => {
     const descriptors = acpProviderOptionDescriptors({
       configOptions: [

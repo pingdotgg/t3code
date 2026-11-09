@@ -104,6 +104,7 @@ function capabilitiesFromDescriptors(
 /**
  * `reasoning_effort` belongs to the model that advertised it. Other options, such as session
  * mode, stay shared. A later selection keeps a model's levels after the session moves on.
+ * Custom models were not in that advertisement, so they receive the shared options only.
  */
 function descriptorsForDiscoveredModel(
   modelId: string,
@@ -131,7 +132,11 @@ function modelsFromDiscovery(
   previousModels?: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
-  const sharedCapabilities = capabilitiesFromDescriptors(discovery?.configOptions ?? []);
+  const customModelCapabilities = capabilitiesFromDescriptors(
+    (discovery?.configOptions ?? []).filter(
+      (descriptor) => !isPerModelReasoningDescriptor(descriptor),
+    ),
+  );
   const capabilitiesFor = (modelId: string) =>
     discovery === undefined
       ? EMPTY_CAPABILITIES
@@ -156,7 +161,7 @@ function modelsFromDiscovery(
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
           capabilities: capabilitiesFor(model.id),
         }));
-  return providerModelsFromSettings(builtInModels, customModels, sharedCapabilities);
+  return providerModelsFromSettings(builtInModels, customModels, customModelCapabilities);
 }
 
 function acpRegistrySnapshotReadiness(

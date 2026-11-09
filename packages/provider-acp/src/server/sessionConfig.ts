@@ -97,11 +97,13 @@ function thoughtLevelLabel(id: string, fallback: string, separateMax: boolean): 
 }
 
 /**
- * Agents omit a default flag. High is the column's Default badge when the model offers it;
- * the check mark stays on `currentValue`, which may be a higher level.
+ * Agents omit a default flag. Qoder's `reasoning_effort` column badges High as Default
+ * while the check mark stays on `currentValue`. Other thought levels must not get that
+ * flag: `isDefault` is also the value used when `currentValue` is absent.
  */
 function presentThoughtLevelChoices(
   choices: ReadonlyArray<ProviderOptionChoice>,
+  badgeHighAsDefault: boolean,
 ): ReadonlyArray<ProviderOptionChoice> {
   const ids = new Set(choices.map((choice) => choice.id));
   const separateMax = ids.has("xhigh") || ids.has("extra-high") || ids.has("extra_high");
@@ -114,7 +116,7 @@ function presentThoughtLevelChoices(
     .map((choice) => ({
       ...choice,
       label: thoughtLevelLabel(choice.id, choice.label, separateMax),
-      ...(choice.id === "high" ? { isDefault: true } : {}),
+      ...(badgeHighAsDefault && choice.id === "high" ? { isDefault: true } : {}),
     }));
 }
 
@@ -161,7 +163,9 @@ export function acpProviderOptionDescriptors(input: {
     if (isThoughtLevel) {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
-    const presentedChoices = isThoughtLevel ? presentThoughtLevelChoices(choices) : choices;
+    const presentedChoices = isThoughtLevel
+      ? presentThoughtLevelChoices(choices, id === "reasoning_effort")
+      : choices;
     const currentValue = choiceId(option.currentValue);
     descriptors.push({
       ...base,
