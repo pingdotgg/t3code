@@ -21,6 +21,7 @@ import { MorphIcon } from "~/components/MorphIcon";
 import { linkedPullRequestSnapshotStatus, prStatusIndicator } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import { visibleRowCount } from "./visibleRowCount";
 
 function ThreadDetailsPrLinkRow({
   environmentId,
@@ -110,8 +111,7 @@ export function ThreadDetailsPrRows({
       onStopWatching={stopWatching(link)}
     />
   ));
-  // A lone extra PR takes the same space as the "Show 1 more" row, so show it directly.
-  if (rest.length === 1) {
+  if (visibleRowCount(rest.length, 0) === rest.length) {
     return (
       <>
         {currentRow}

@@ -398,3 +398,34 @@ it("hides a deleted fork and keeps unloaded and archived forks with their curren
   await expect.element(screen.getByText("Archived fork", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("deleted-fork", { exact: true })).not.toBeInTheDocument();
 });
+
+it.each([
+  [7, 7, null],
+  [19, 6, "Show 13 more"],
+])("with %i related threads shows %i rows and %s as the toggle", async (total, rows, toggle) => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  const ids = Array.from({ length: total }, (_, index) => `related-${index}`);
+  state.threadTitles = Object.fromEntries(ids.map((id) => [id, `Title ${id}`]));
+  state.projection = {
+    ...projection,
+    contextTransfers: ids.map((id) => ({
+      sourceThreadId: projection.thread.id,
+      targetThreadId: ThreadId.make(id),
+      status: "pending",
+    })),
+  };
+  await using screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={projection.thread.id}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(screen.getByText("Title related-0", { exact: true })).toBeVisible();
+  expect(screen.container.querySelectorAll('ul[aria-label="Related threads"] > li').length).toBe(
+    rows,
+  );
+  expect(screen.container.textContent?.match(/Show \d+ more/)?.[0] ?? null).toBe(toggle);
+});
