@@ -29,10 +29,12 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -3978,15 +3980,21 @@ it.effect("keeps a failed root's still-running native children live while the ru
   }),
 );
 
-it.effect("delivers a held paragraph after the provider goes idle with its prompt still open", () =>
+it.effect.each([
+  { name: "on time", wakesEarly: false },
+  // Timers run on the monotonic clock, so one can fire while the wall clock still reads a
+  // millisecond before its deadline.
+  { name: "before the wall clock reaches the deadline", wakesEarly: true },
+])("delivers held text while an open-prompt provider idles, waking $name", ({ wakesEarly }) =>
   Effect.gen(function* () {
-    const key = "idle-paragraph";
+    const key = `idle-paragraph-${wakesEarly}`;
     const ids = backgroundScenarioIds(key);
     const now = yield* DateTime.now;
     const providerEvents = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
     const delivered = yield* Ref.make<ReadonlyArray<string>>([]);
     const paragraphDelivered = yield* Deferred.make<void>();
-    const idleDelivered = yield* Deferred.make<void>();
+    const nextParagraphDelivered = yield* Deferred.make<void>();
+    const clock = yield* Clock.Clock;
     const assistantText = (text: string, streaming: boolean) =>
       [
         {
@@ -4053,22 +4061,45 @@ it.effect("delivers a held paragraph after the provider goes idle with its promp
                 ]);
                 if (event.type === "turn_item.updated") {
                   yield* Deferred.succeed(paragraphDelivered, undefined);
-                  if (streaming && text === "First.\n\nWaiting on the build")
-                    yield* Deferred.succeed(idleDelivered, undefined);
+                  if (text === "First.\n\nWaiting on the build.\n\n")
+                    yield* Deferred.succeed(nextParagraphDelivered, undefined);
                 }
               })
             : Effect.void,
-    }).pipe(Effect.forkChild);
+    }).pipe(
+      Effect.provideService(Clock.Clock, {
+        ...clock,
+        sleep: (duration) =>
+          clock.sleep(wakesEarly ? Duration.subtract(duration, Duration.millis(1)) : duration),
+      }),
+      Effect.forkChild,
+    );
+    // Waking a sleep runs ingestion until it suspends, so an idle write has landed by now.
+    const lastShown = Ref.get(delivered).pipe(Effect.map((shown) => shown.at(-1)));
 
     yield* Queue.offerAll(providerEvents, assistantText("First.\n\nWaiting on the build", true));
     yield* Deferred.await(paragraphDelivered);
     // The provider keeps its prompt open while a backgrounded command runs.
+    yield* TestClock.adjust("2 seconds");
+    assert.strictEqual(
+      yield* lastShown,
+      'turn_item.updated:streaming:"First.\\n\\nWaiting on the build"',
+    );
+    // The next paragraph's tail still flushes on a later pause.
+    yield* Queue.offerAll(
+      providerEvents,
+      assistantText("First.\n\nWaiting on the build.\n\nRunning", true),
+    );
+    yield* Deferred.await(nextParagraphDelivered);
     yield* TestClock.adjust("1 second");
-    yield* Deferred.await(idleDelivered);
+    assert.strictEqual(
+      yield* lastShown,
+      'turn_item.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\nRunning"',
+    );
     yield* Queue.offerAll(providerEvents, [
-      ...assistantText("First.\n\nWaiting on the build to", true),
+      ...assistantText("First.\n\nWaiting on the build.\n\nRunning tests", true),
       blocker,
-      ...assistantText("First.\n\nWaiting on the build to finish.", false),
+      ...assistantText("First.\n\nWaiting on the build.\n\nRunning tests passed.", false),
     ]);
     yield* Deferred.await(blockerStarted);
     // The appended text comes due while its final snapshots wait behind the blocked write.
@@ -4084,8 +4115,12 @@ it.effect("delivers a held paragraph after the provider goes idle with its promp
       `turn_item.updated:streaming:"First.\\n\\n" in commit`,
       'message.updated:streaming:"First.\\n\\nWaiting on the build"',
       'turn_item.updated:streaming:"First.\\n\\nWaiting on the build"',
-      `message.updated:final:"First.\\n\\nWaiting on the build to finish." in commit`,
-      `turn_item.updated:final:"First.\\n\\nWaiting on the build to finish." in commit`,
+      `message.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\n" in commit`,
+      `turn_item.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\n" in commit`,
+      'message.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\nRunning"',
+      'turn_item.updated:streaming:"First.\\n\\nWaiting on the build.\\n\\nRunning"',
+      `message.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
+      `turn_item.updated:final:"First.\\n\\nWaiting on the build.\\n\\nRunning tests passed." in commit`,
     ]);
   }),
 );

@@ -1479,8 +1479,10 @@ export const layer: Layer.Layer<
         // The timer only wakes ingestion. The flush runs as an ingestion step outside any provider
         // batch, so it stays ordered with routing and snapshots, and a write has committed when
         // it returns.
-        const idleFlushTick = { type: "idle_flush" } as const;
-        const idleFlushTicks = yield* Queue.dropping<typeof idleFlushTick>(1);
+        const idleFlushTicks = yield* Queue.dropping<{
+          readonly type: "idle_flush";
+          readonly at: number;
+        }>(1);
         let idleFlushWake: { readonly at: number; readonly fiber: Fiber.Fiber<void> } | undefined;
         const scheduleIdleFlush = Effect.suspend(() => {
           const at = assistantStreaming.nextIdleFlushAt();
@@ -1495,7 +1497,7 @@ export const layer: Layer.Layer<
             if (previous !== undefined) yield* Fiber.interrupt(previous);
             const now = DateTime.toEpochMillis(yield* DateTime.now);
             const fiber = yield* Effect.sleep(Duration.millis(Math.max(0, at - now))).pipe(
-              Effect.andThen(Queue.offer(idleFlushTicks, idleFlushTick)),
+              Effect.andThen(Queue.offer(idleFlushTicks, { type: "idle_flush", at })),
               Effect.asVoid,
               Effect.forkDetach,
             );
@@ -1508,8 +1510,10 @@ export const layer: Layer.Layer<
           idleFlushWake = undefined;
           return wake === undefined ? Effect.void : Fiber.interrupt(wake.fiber);
         });
-        const flushIdleAssistantText = Effect.gen(function* () {
-          const now = DateTime.toEpochMillis(yield* DateTime.now);
+        const flushIdleAssistantText = Effect.fnUntraced(function* (wokeAt: number) {
+          // A tick means its timer slept until `wokeAt`, but the wall clock can still read up
+          // to a millisecond earlier; trusting it would keep the finished wake and never re-arm.
+          const now = Math.max(DateTime.toEpochMillis(yield* DateTime.now), wokeAt);
           // A wake due by now has fired; a later deadline needs a new one.
           if (idleFlushWake !== undefined && idleFlushWake.at <= now) idleFlushWake = undefined;
           if (idleFlushClosed) return;
@@ -1597,7 +1601,7 @@ export const layer: Layer.Layer<
             ),
             (event) =>
               event.type === "idle_flush"
-                ? flushIdleAssistantText
+                ? flushIdleAssistantText(event.at)
                 : Effect.gen(function* () {
                     yield* ingestEvent(yield* routeEvent(event));
                   }),
