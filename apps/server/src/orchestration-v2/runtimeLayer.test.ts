@@ -3458,7 +3458,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       let headSha = "ad70160aaa";
       const host = Layer.mergeAll(
-        ServerSettings.layerTest(),
+        ServerSettings.layerTest({
+          pullRequestWatchInstructions: "Global instructions.",
+          projectSettingsOverrides: {
+            [projectId]: { pullRequestWatchInstructions: "Project instructions." },
+          },
+        }),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3498,6 +3503,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("10 minutes");
       yield* reactor.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);
+      // The project's override wins over the global instructions.
+      const wakeText = yield* orchestrator
+        .getThreadRecords(threadId, ["messages"])
+        .pipe(Effect.map(({ messages }) => messages.map((message) => message.text).join("\n")));
+      assert.include(
+        wakeText,
+        "The user's instructions for pull request updates:\nProject instructions.",
+      );
+      assert.notInclude(wakeText, "Global instructions.");
 
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
