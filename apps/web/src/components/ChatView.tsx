@@ -212,7 +212,7 @@ import {
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
 import {
-  isSameSidebarThreadRef,
+  isSameSidebarFileDropTarget,
   useSidebarPendingFileDropStore,
 } from "../sidebarPendingFileDropStore";
 import {
@@ -3118,9 +3118,8 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (pendingSidebarFileDrops.length === 0) return;
     if (
-      typeof composerDraftTarget === "string" ||
       !pendingSidebarFileDrops.some((drop) =>
-        isSameSidebarThreadRef(composerDraftTarget, drop.threadRef),
+        isSameSidebarFileDropTarget(composerDraftTarget, drop.target),
       )
     ) {
       return;
@@ -3128,7 +3127,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThread) return;
     if (!composerRef.current) {
       const raf = window.requestAnimationFrame(() => {
-        if (!composerRef.current || typeof composerDraftTarget === "string") return;
+        if (!composerRef.current) return;
         const files = consumePendingFileDrop(composerDraftTarget);
         if (files !== null) composerRef.current?.addDroppedFiles(files);
       });

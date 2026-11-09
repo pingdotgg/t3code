@@ -1,12 +1,17 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { ChevronDownIcon, SquarePenIcon } from "lucide-react";
-import { memo } from "react";
+import { memo, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useUiStateStore } from "../../uiStateStore";
-import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
+import {
+  resolveSidebarFolderDot,
+  resolveThreadLastVisitedAt,
+  setFileDragActive,
+} from "../Sidebar.logic";
+import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -41,10 +46,17 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
+  onFileDrop: (group: SidebarProjectSnapshot, files: File[]) => void;
   onContextMenu: (group: SidebarProjectSnapshot, position: { x: number; y: number }) => void;
 }) {
   const { group, collapsed, hiddenThreads } = props;
   const rowId = sidebarFolderRowId(group.projectKey);
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const fileDropHandlers = makeWorkspaceFileDropHandlers({
+    setDragActive: (active) => setFileDragActive(setIsFileDragOver, active),
+    addFiles: (files) => props.onFileDrop(group, files),
+    addFolders: () => {},
+  });
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
     ? resolveSidebarFolderDot(
@@ -62,7 +74,11 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   return (
     <li
       data-testid="sidebar-project-folder"
-      className="group/project-folder relative mt-2 list-none first:mt-0"
+      className={cn(
+        "group/project-folder relative mt-2 list-none rounded-(--control-radius) first:mt-0",
+        isFileDragOver && "bg-sidebar-row-hover ring-1 ring-inset ring-primary/70",
+      )}
+      {...fileDropHandlers}
     >
       <button
         type="button"
