@@ -8,6 +8,7 @@ import {
   isProjectScriptRunActive,
   projectScriptOutputTail,
   projectScriptRunStatusLabel,
+  projectScriptVisibleOutput,
   type ProjectScriptRun,
   type ProjectScriptRunStatus,
 } from "../../projectScriptRuns";
@@ -63,7 +64,10 @@ export function ProjectScriptRunDetail({
     }),
   );
   const buffer = AsyncResult.getOrElse(observe, () => null);
-  const liveText = buffer === null ? "" : terminalOutputText(buffer.output);
+  const liveText =
+    buffer === null
+      ? ""
+      : projectScriptVisibleOutput(terminalOutputText(buffer.output), run.sentinel);
   const output = liveText.length > 0 ? projectScriptOutputTail(liveText) : run.outputTail;
   const canRead = useEnvironmentScope(run.environmentId, AuthTerminalReadScope);
   const active = isProjectScriptRunActive(run);

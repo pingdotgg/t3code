@@ -19,7 +19,7 @@ export function ProjectScriptRunStatusIcon({
   const iconClassName = className ?? "size-3.5";
   if (status === "failed") return <CircleAlertIcon className={iconClassName} aria-label="Failed" />;
   if (status === "running" || status === "starting")
-    return <SquareIcon className={iconClassName} aria-label="Stop" />;
+    return <SquareIcon className={iconClassName} aria-label="Running" />;
   if (status === "succeeded")
     return <CircleCheckIcon className={iconClassName} aria-label="Succeeded" />;
   if (status === "stopped")
