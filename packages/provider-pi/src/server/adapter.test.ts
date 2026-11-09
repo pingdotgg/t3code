@@ -3217,8 +3217,11 @@ describe("PiAdapterV2", () => {
           },
         },
       });
-      const running = yield* takeEvent(isSubagentTurnItem);
-      if (!isSubagentTurnItem(running)) return assert.fail("expected a subagent row");
+      const running = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+      );
+      assert.isTrue(running.type === "turn_item.updated" && running.turnItem.type === "subagent");
+      if (running.type !== "turn_item.updated" || running.turnItem.type !== "subagent") return;
       assert.deepInclude(running.turnItem, {
         status: "running",
         title: "scout",
@@ -3232,18 +3235,25 @@ describe("PiAdapterV2", () => {
       yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit(
-        piCustomMessage("subagent-notify", {
-          runs: [
-            {
-              agent: "scout",
-              status: "completed",
-              runId: "run-1",
-              childRuns: [{ runId: "child-1", agent: "scout", status: "completed" }],
-            },
-          ],
-        }),
-      );
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "subagent-notify",
+          content: "Background task completed: **scout**",
+          display: false,
+          details: {
+            runs: [
+              {
+                agent: "scout",
+                status: "completed",
+                runId: "run-1",
+                childRuns: [{ runId: "child-1", agent: "scout", status: "completed" }],
+              },
+            ],
+          },
+        },
+      });
       const settled = yield* takeEvent(
         (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
       );
@@ -3254,8 +3264,10 @@ describe("PiAdapterV2", () => {
         status: "completed",
         runId: RunId.make(`run:${THREAD_ID}:1`),
       });
-      const settledItem = yield* takeEvent(isSubagentTurnItem);
-      assert.deepInclude(isSubagentTurnItem(settledItem) ? settledItem.turnItem : {}, {
+      const settledItem = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+      );
+      assert.deepInclude(settledItem.type === "turn_item.updated" ? settledItem.turnItem : {}, {
         id: running.turnItem.id,
         status: "completed",
         runId: running.turnItem.runId,
@@ -3365,7 +3377,7 @@ describe("PiAdapterV2", () => {
             childKey: "alpha",
             outcome: "completed",
           }),
-          // A late snapshot cannot reopen a settled step.
+          // A snapshot generated before the one already applied is stale.
           asyncStatusWidget(3, [
             workflow("running", [step("alpha", "running"), step("beta", "running")]),
           ]),
@@ -3423,6 +3435,84 @@ describe("PiAdapterV2", () => {
           },
         ]);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("leaves a child notice shared by two workflows to their structured ids", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const launch = (asyncId: string) => ({
+        type: "tool_execution_end",
+        toolCallId: `call_${asyncId}`,
+        toolName: "subagent",
+        isError: false,
+        result: { content: [], details: { mode: "workflow", asyncId, results: [] } },
+      });
+      // Steps may carry agent and model, or only their workflow key.
+      const workflow = (id: string, state: string, step: Record<string, string>) => ({
+        id,
+        kind: "workflow",
+        label: "workflow",
+        state: "running",
+        children: [{ id: "alpha", kind: "step", label: "alpha", state, ...step }],
+      });
+      const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
+        launch("wf-1"),
+        launch("wf-2"),
+        asyncStatusWidget(1, [
+          workflow("wf-1", "running", { agent: "scout", model: "claude-bridge/claude-opus-5-5" }),
+          workflow("wf-2", "running", {}),
+        ]),
+      ]);
+      assert.deepEqual(
+        launched.map(({ title, status, nativeId }) => [title, status, nativeId]),
+        [
+          ["scout", "running", "wf-1:subagent:alpha"],
+          ["alpha", "running", "wf-2:subagent:alpha"],
+        ],
+      );
+      const ambiguous = yield* subagentRowsBefore(fake, takeEvent, "ambiguous", [
+        piCustomMessage("subagent-incremental-child-notify", {
+          childKey: "alpha",
+          outcome: "failed",
+        }),
+      ]);
+      assert.deepEqual(ambiguous, []);
+      const resolved = yield* subagentRowsBefore(fake, takeEvent, "resolved", [
+        asyncStatusWidget(2, [
+          workflow("wf-1", "running", { agent: "scout" }),
+          workflow("wf-2", "failed", {}),
+        ]),
+        piCustomMessage("subagent-notify", {
+          runs: [
+            {
+              agent: "workflow",
+              status: "completed",
+              runId: "wf-1",
+              workflowRunId: "wf-1",
+              childRuns: [
+                { runId: "child-1", workflowKey: "alpha", agent: "scout", status: "completed" },
+              ],
+            },
+          ],
+        }),
+      ]);
+      assert.deepEqual(
+        resolved.map(({ title, status, nativeId }) => [title, status, nativeId]),
+        [
+          ["alpha", "failed", "wf-2:subagent:alpha"],
+          ["scout", "completed", "wf-1:subagent:alpha"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("settles async parallel children by run id and ignores other extensions' frames", () =>

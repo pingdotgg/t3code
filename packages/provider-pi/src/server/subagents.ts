@@ -55,6 +55,7 @@ const decodeAsyncStatusSnapshot = Schema.decodeUnknownOption(
     Schema.Struct({
       kind: Schema.Literal("pi-subagents.async-status-snapshot"),
       version: Schema.Literal(1),
+      generatedAt: Schema.Number,
       runs: Schema.Array(
         Schema.Struct({
           ...SnapshotNode.fields,
@@ -66,6 +67,9 @@ const decodeAsyncStatusSnapshot = Schema.decodeUnknownOption(
 );
 type AsyncStatusSnapshot = Option.Option.Value<ReturnType<typeof decodeAsyncStatusSnapshot>>;
 
+const decodeChildNotice = Schema.decodeUnknownOption(
+  Schema.Struct({ childKey: Schema.String, outcome: Schema.String }),
+);
 const decodeCompletionNotice = Schema.decodeUnknownOption(
   Schema.Struct({
     runs: Schema.Array(
@@ -145,6 +149,8 @@ function recordArray(input: unknown, key: string): ReadonlyArray<unknown> {
 export function makePiSubagentLifecycle<Owner>() {
   const foreground = new Map<string, Map<string, PiSubagentMember<Owner>>>();
   const background = new Map<string, BackgroundRun<Owner>>();
+  // A snapshot can list a run before the tool call that launched it has returned its receipt.
+  let latestSnapshot: AsyncStatusSnapshot | null = null;
 
   /** Returns the member when the frame changed it; settled members ignore stale frames. */
   const updateMember = (
@@ -214,10 +220,28 @@ export function makePiSubagentLifecycle<Owner>() {
       decodeAsyncStatusSnapshot(line.slice(ASYNC_WIDGET_PREFIX.length)),
     );
     if (snapshot === undefined) return [];
+    if (latestSnapshot !== null && snapshot.generatedAt < latestSnapshot.generatedAt) return [];
+    latestSnapshot = snapshot;
     return snapshot.runs.flatMap((node) => {
       const run = background.get(node.id);
       return run === undefined ? [] : applySnapshotRun(run, node);
     });
+  };
+
+  const observeChildNotice = (details: unknown): Array<PiSubagentMember<Owner>> => {
+    const notice = Option.getOrUndefined(decodeChildNotice(details));
+    if (notice === undefined) return [];
+    // The notice names its workflow only in prose; settle the child only when its key is unambiguous.
+    const owners = [...background.values()].filter((run) => {
+      const member = run.shape === "workflow" ? run.members.get(notice.childKey) : undefined;
+      return member !== undefined && !isPiSubagentSettled(member.status);
+    });
+    const run = owners.length === 1 ? owners[0] : undefined;
+    const changed =
+      run === undefined
+        ? undefined
+        : updateMember(run, notice.childKey, memberStatus(notice.outcome), {});
+    return changed === undefined ? [] : [changed];
   };
 
   const observeCompletionNotice = (details: unknown): Array<PiSubagentMember<Owner>> => {
@@ -356,21 +380,25 @@ export function makePiSubagentLifecycle<Owner>() {
       stepIds: new Map(),
     };
     background.set(asyncId, run);
+    const changed: Array<PiSubagentMember<Owner>> = [];
     const agent = recordString(args, "agent");
-    // Workflow and step members appear with the next status snapshot, about once a second.
-    if (run.shape !== "single" || agent === undefined) return [];
-    const member: PiSubagentMember<Owner> = {
-      owner,
-      toolCallId,
-      nativeTaskId: `${asyncId}:subagent:0`,
-      title: agent,
-      prompt: recordString(args, "task") ?? "",
-      model: recordString(args, "model") ?? null,
-      status: "running",
-      result: null,
-    };
-    run.members.set("0", member);
-    return [member];
+    if (run.shape === "single" && agent !== undefined) {
+      const member: PiSubagentMember<Owner> = {
+        owner,
+        toolCallId,
+        nativeTaskId: `${asyncId}:subagent:0`,
+        title: agent,
+        prompt: recordString(args, "task") ?? "",
+        model: recordString(args, "model") ?? null,
+        status: "running",
+        result: null,
+      };
+      run.members.set("0", member);
+      changed.push(member);
+    }
+    const node = latestSnapshot?.runs.find((candidate) => candidate.id === asyncId);
+    if (node !== undefined) changed.push(...applySnapshotRun(run, node));
+    return changed;
   };
 
   return {
@@ -406,9 +434,8 @@ export function makePiSubagentLifecycle<Owner>() {
       const message = frame["message"];
       if (recordString(message, "role") !== "custom") return undefined;
       switch (recordString(message, "customType")) {
-        // Names its child only by workflow key; the status snapshot already settles that step.
         case "subagent-incremental-child-notify":
-          return [];
+          return observeChildNotice(recordField(message, "details"));
         case "subagent-notify":
           return observeCompletionNotice(recordField(message, "details"));
         default:
@@ -423,6 +450,7 @@ export function makePiSubagentLifecycle<Owner>() {
       ].filter((member) => !isPiSubagentSettled(member.status));
       foreground.clear();
       background.clear();
+      latestSnapshot = null;
       return running.map((member) => ({ ...member, status: "interrupted" as const }));
     },
   };
