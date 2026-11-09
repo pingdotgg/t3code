@@ -737,7 +737,10 @@ export function BackgroundActivityTimelineRow({
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-label">{label}</span>
-          <span className="min-w-0 flex-1 truncate text-body text-dim-foreground">{summary}</span>
+          {/* Open, the rows below say it; the bare count is what reads as unfolded. */}
+          {row.expanded ? null : (
+            <span className="min-w-0 flex-1 truncate text-body text-dim-foreground">{summary}</span>
+          )}
         </span>
       }
       trailing={
