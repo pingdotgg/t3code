@@ -138,6 +138,7 @@ import IconWifiOff from "@tabler/icons-react-native/IconWifiOff";
 import IconWorld from "@tabler/icons-react-native/IconWorld";
 import IconX from "@tabler/icons-react-native/IconX";
 import type { AndroidSymbol, SFSymbol, SymbolViewProps } from "expo-symbols";
+import { StyleSheet, View } from "react-native";
 import { withUniwind } from "uniwind";
 
 const ANDROID_ICON_BY_SF_SYMBOL = {
@@ -357,16 +358,20 @@ function AppSymbolView(props: AppSymbolViewProps) {
     return props.fallback ?? null;
   }
 
-  return (
+  // react-native-svg applies style.transform to its inner path around (0,0), so a
+  // rotated icon draws outside its box. Transform a wrapping View instead.
+  const transformed = StyleSheet.flatten(props.style)?.transform !== undefined;
+  const icon = (
     <AndroidIcon
       accessibilityLabel={props.accessibilityLabel}
       color={props.tintColor}
       size={props.size}
       strokeWidth={2}
-      style={props.style}
+      style={transformed ? undefined : props.style}
       testID={props.testID}
     />
   );
+  return transformed ? <View style={props.style}>{icon}</View> : icon;
 }
 
 export const SymbolView = withUniwind(AppSymbolView);
