@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import { VcsProcessExitError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1260,6 +1260,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
                         old_path: "src/a.ts",
                         new_line: 12,
                         old_line: null,
+                        base_sha: "base",
+                        start_sha: "start",
+                        head_sha: "head",
                       },
                     },
                     {
@@ -1342,7 +1345,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
         );
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-        const { threads, overviewFindingIds } = yield* cli.listDiscussions({
+        const { threads, diffRefsByThreadId, overviewFindingIds } = yield* cli.listDiscussions({
           cwd: "/w",
           repository: "acme/web",
           number: 7,
@@ -1353,6 +1356,9 @@ layer("GitLabPullRequestCli.layer", (it) => {
           { id: "abc123", path: "src/a.ts", line: 12, side: "right" },
           { id: "file789", path: "src/b.ts", line: null, side: "right" },
           { id: "img012", path: "logo.png", line: null, side: "right" },
+        ]);
+        expect([...diffRefsByThreadId]).toEqual([
+          ["abc123", { baseSha: "base", startSha: "start", headSha: "head" }],
         ]);
         expect(threads[0]).toMatchObject({ isResolved: true });
         assert.strictEqual(threads[0]?.comments.length, 2);
@@ -1412,6 +1418,50 @@ layer("GitLabPullRequestCli.layer", (it) => {
       });
       expect(argsOfCall(2)[1]).toContain("/notes");
       expect(argsOfCall(3)[1]).toContain("/approve");
+    }),
+  );
+
+  it.effect("requests changes as a reviewer and reports what GitLab refused", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify({ username: "bilal" }))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(JSON.stringify({ data: { mergeRequestSetReviewers: { errors: [] } } })),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                data: { mergeRequestRequestChanges: { errors: ["Merge request is locked"] } },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.submitReview({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          verdict: "request-changes",
+          body: "Needs work",
+          comments: [{ path: "src/a.ts", position: { kind: "added", newLine: 4 }, body: "nit" }],
+        }),
+      );
+
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      const target = { projectPath: "acme/web", iid: "7" };
+      const setReviewers = JSON.parse(callAt(1).stdin ?? "");
+      expect(setReviewers.query).toContain("operationMode: APPEND");
+      expect(setReviewers.variables).toEqual({ ...target, reviewers: ["bilal"] });
+      const requestChanges = JSON.parse(callAt(2).stdin ?? "");
+      expect(requestChanges.query).toContain("mergeRequestRequestChanges");
+      expect(requestChanges.variables).toEqual(target);
+      assert.strictEqual(error._tag, "GitLabMutationRefusedError");
+      expect(error.detail).toBe("GitLab refused it: Merge request is locked");
     }),
   );
 
@@ -1488,40 +1538,42 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
   it.effect("shows a failed child pipeline that left the head pipeline green", () =>
     Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              mergeRequestJson({
-                // A fork's pipeline runs in the source project, so its id is not the target's.
-                head_pipeline: {
-                  id: 31,
-                  project_id: 12,
-                  status: "success",
-                  web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
-                },
-              }),
-            ),
-          ),
-        )
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
-        .mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              JSON.stringify([
-                {
-                  name: "deploy",
-                  status: "success",
-                  downstream_pipeline: {
-                    status: "failed",
-                    web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+      mockedExecute.mockImplementation((request) => {
+        switch (request.args[1]) {
+          case "graphql":
+            return Effect.succeed(output("{}"));
+          case "projects/12/pipelines/31/bridges?per_page=100":
+            return Effect.succeed(
+              output(
+                JSON.stringify([
+                  {
+                    name: "deploy",
+                    status: "success",
+                    downstream_pipeline: {
+                      status: "failed",
+                      web_url: "https://gitlab.com/bilal/web/-/pipelines/32",
+                    },
                   },
-                },
-                { name: "docs", status: "created", downstream_pipeline: null },
-              ]),
-            ),
-          ),
-        );
+                  { name: "docs", status: "created", downstream_pipeline: null },
+                ]),
+              ),
+            );
+          default:
+            return Effect.succeed(
+              output(
+                mergeRequestJson({
+                  // A fork's pipeline runs in the source project, so its id is not the target's.
+                  head_pipeline: {
+                    id: 31,
+                    project_id: 12,
+                    status: "success",
+                    web_url: "https://gitlab.com/bilal/web/-/pipelines/31",
+                  },
+                }),
+              ),
+            );
+        }
+      });
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
       const detail = yield* cli.getMergeRequestDetail({
@@ -1534,7 +1586,6 @@ layer("GitLabPullRequestCli.layer", (it) => {
         ["Pipeline", "success", "https://gitlab.com/bilal/web/-/pipelines/31"],
         ["deploy", "failure", "https://gitlab.com/bilal/web/-/pipelines/32"],
       ]);
-      expect(argsOfCall(2)[1]).toBe("projects/12/pipelines/31/bridges?per_page=100");
     }),
   );
 
@@ -1544,10 +1595,11 @@ layer("GitLabPullRequestCli.layer", (it) => {
         mergeRequestJson({ head_pipeline: { id: 31, project_id: 12, status: "success" } }),
       );
       const failedChild = { name: "deploy", downstream_pipeline: { status: "failed" } };
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
-        .mockReturnValueOnce(
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      for (const [scenario, bridges] of [
+        [
+          "read fails",
           Effect.fail(
             new GitLabCli.GitLabCliCommandError({
               operation: "execute",
@@ -1556,16 +1608,20 @@ layer("GitLabPullRequestCli.layer", (it) => {
               cause: new Error("403 Forbidden"),
             }),
           ),
-        )
-        .mockReturnValueOnce(Effect.succeed(detailOutput))
-        .mockReturnValueOnce(Effect.succeed(labelPermission))
+        ],
         // A full page may have left out the trigger job whose pipeline failed.
-        .mockReturnValueOnce(
+        [
+          "page is full",
           Effect.succeed(output(JSON.stringify(Array.from({ length: 100 }, () => failedChild)))),
+        ],
+      ] as const) {
+        mockedExecute.mockImplementation((request) =>
+          request.args[1] === "graphql"
+            ? Effect.succeed(output("{}"))
+            : request.args[1]?.includes("/bridges")
+              ? bridges
+              : Effect.succeed(detailOutput),
         );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      for (const scenario of ["read fails", "page is full"]) {
         const detail = yield* cli.getMergeRequestDetail({
           cwd: "/w",
           repository: "acme/web",
@@ -1587,33 +1643,39 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expected: true,
     },
     { answer: JSON.stringify({ errors: [{ message: "Field unknown" }] }), expected: false },
-  ])("reads merge and label permissions without reading the trigger jobs", ({ answer, expected }) =>
-    Effect.gen(function* () {
-      mockedExecute.mockImplementation(({ args }) =>
-        Effect.succeed(
-          output(
-            args[1] === "graphql"
-              ? answer
-              : mergeRequestJson({
-                  head_pipeline: { id: 31, project_id: 12, status: "success" },
-                  user: { can_merge: false },
-                }),
+  ])(
+    "reads merge and label permissions without reading the trigger jobs or fork settings",
+    ({ answer, expected }) =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation(({ args }) =>
+          Effect.succeed(
+            output(
+              args[1] === "graphql"
+                ? answer
+                : mergeRequestJson({
+                    head_pipeline: { id: 31, project_id: 12, status: "success" },
+                    user: { can_merge: false },
+                    source_project_id: 12,
+                    target_project_id: 12,
+                    allow_collaboration: null,
+                  }),
+            ),
           ),
-        ),
-      );
-      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        );
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-      const detail = yield* cli.getMergeRequestDetail({
-        cwd: "/w",
-        repository: "acme/web",
-        number: 7,
-        downstreamChecks: false,
-      });
+        const detail = yield* cli.getMergeRequestDetail({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+          downstreamChecks: false,
+        });
 
-      expect(detail.viewerCanMerge).toBe(false);
-      expect(detail.viewerCanEditLabels).toBe(expected);
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-    }),
+        expect(detail.viewerCanMerge).toBe(false);
+        expect(detail.maintainerCanModify).toBeUndefined();
+        expect(detail.viewerCanEditLabels).toBe(expected);
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+      }),
   );
 
   it.effect(
@@ -1832,6 +1894,157 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect.each([
+    { viewer: "the author who can push to the fork", username: "bilal", allowed: true },
+    {
+      viewer: "the author who turned them off",
+      username: "bilal",
+      allowCollaboration: false,
+      allowed: true,
+    },
+    { viewer: "a target maintainer the fork lets push", username: "octocat", allowed: false },
+    {
+      viewer: "the author without push access",
+      username: "bilal",
+      pushToSourceBranch: false,
+      allowed: false,
+    },
+    {
+      viewer: "a viewer on a host that rejects the permission read",
+      username: "bilal",
+      rejected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a protected source branch",
+      username: "bilal",
+      sourceBranchProtected: true,
+      allowed: false,
+    },
+    {
+      viewer: "the author of a private fork",
+      username: "bilal",
+      sourceVisibility: "private",
+      allowed: false,
+    },
+    {
+      viewer: "the author targeting a private project",
+      username: "bilal",
+      targetVisibility: "private",
+      allowed: false,
+    },
+  ])("reads a fork's maintainer edits and lets $viewer change them", (row) =>
+    Effect.gen(function* () {
+      const allowCollaboration = row.allowCollaboration ?? true;
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify(
+                  row.rejected === true
+                    ? { errors: [{ message: "Field 'pushToSourceBranch' doesn't exist" }] }
+                    : {
+                        data: {
+                          currentUser: { username: row.username },
+                          project: {
+                            visibility: row.targetVisibility ?? "public",
+                            mergeRequest: {
+                              author: { username: "bilal" },
+                              userPermissions: {
+                                pushToSourceBranch: row.pushToSourceBranch ?? true,
+                              },
+                              sourceBranchProtected: row.sourceBranchProtected ?? false,
+                              sourceProject: { visibility: row.sourceVisibility ?? "public" },
+                            },
+                          },
+                        },
+                      },
+                )
+              : mergeRequestJson({
+                  author,
+                  source_project_id: 40,
+                  target_project_id: 12,
+                  allow_collaboration: allowCollaboration,
+                }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+      });
+
+      expect(detail.maintainerCanModify).toBe(allowCollaboration);
+      expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("skips a fork's maintainer edits permission read when the caller opts out", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              mergeRequestJson({
+                source_project_id: 40,
+                target_project_id: 12,
+                allow_collaboration: true,
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(labelPermission));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      expect(detail.maintainerCanModify).toBe(true);
+      expect(detail.viewerCanEditMaintainerEdits).toBeUndefined();
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+    }),
+  );
+
+  it.effect("sends maintainer edits as allow_collaboration", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.updateMergeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        allowCollaboration: false,
+      });
+
+      expect(argsOfCall(0)).toContain("PUT");
+      expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ allow_collaboration: false });
+    }),
+  );
+
+  it.effect.each([
+    ["th", "projects/acme%2Fweb/users?per_page=100"],
+    ["tho", "projects/acme%2Fweb/users?per_page=100&search=tho"],
+  ] as const)("searches project users only from three characters (%s)", ([search, path]) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.listProjectUsers({ cwd: "/w", repository: "acme/web", search });
+
+      expect(argsOfCall(0)[1]).toBe(path);
+    }),
+  );
+
   it.effect("reads who has access to the project and who is already on the merge request", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1856,6 +2069,82 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "lists the requested reviewers first, even when the users page does not reach them",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(
+            Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 42, username: "late" }] }))),
+          )
+          .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const list = yield* cli.listReviewerCandidates({
+          cwd: "/w",
+          repository: "acme/web",
+          number: 7,
+        });
+
+        expect(
+          list.candidates.map((candidate) => [
+            candidate.login,
+            candidate.id,
+            candidate.isRequested,
+          ]),
+        ).toEqual([
+          ["late", "42", true],
+          [reviewer.username, "5", false],
+        ]);
+      }),
+  );
+
+  it.effect("marks a reviewer GitLab sent without a username as requested on the users page", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 5, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([author, reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.id, candidate.isRequested])).toEqual([
+        ["5", true],
+      ]);
+    }),
+  );
+
+  it.effect("asks GitLab to search the project's users when the menu has a query", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(mergeRequestJson({ reviewers: [reviewer, { id: 42, username: "unrelated" }] })),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify([reviewer]))));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const list = yield* cli.listReviewerCandidates({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        query: "octo cat",
+      });
+
+      expect(list.candidates.map((candidate) => [candidate.login, candidate.isRequested])).toEqual([
+        [reviewer.username, true],
+      ]);
+      expect(argsOfCall(1)[1]).toBe("projects/acme%2Fweb/users?per_page=100&search=octo%20cat");
+    }),
+  );
+
   it.effect("writes the reviewer set back with the one being asked added to it", () =>
     Effect.gen(function* () {
       mockedExecute
@@ -1873,6 +2162,27 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(argsOfCall(1)).toContain("PUT");
       expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
+    }),
+  );
+
+  it.effect("keeps a reviewer it cannot show when writing the set back", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ reviewers: [{ id: 3, username: "" }] }))),
+        )
+        .mockReturnValueOnce(Effect.succeed(output("{}")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      yield* cli.setReviewerRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        reviewers: [{ id: "9" }],
+        requested: true,
+      });
+
+      expect(JSON.parse(callAt(1).stdin ?? "")).toEqual({ reviewer_ids: [3, 9] });
     }),
   );
 
@@ -2141,4 +2451,220 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(result).toMatchObject({ _tag: "Failure", failure: error });
     }),
   );
+
+  it.effect("keeps merge request references when the issue search fails", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((input) =>
+        JSON.stringify(input).includes("/issues?")
+          ? Effect.fail(
+              new GitLabCli.GitLabCliCommandError({
+                operation: "execute",
+                command: "glab",
+                cwd: "/w",
+                cause: null,
+              }),
+            )
+          : Effect.succeed(output(JSON.stringify([{ iid: 5, title: "Ship it", state: "opened" }]))),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const page = yield* cli.searchProjectReferences({ cwd: "/w", repository: "acme/web" });
+      expect(page.items.map((item) => item.reference)).toEqual(["!5"]);
+    }),
+  );
+
+  describe("the head pipeline's stages", () => {
+    const pipeline = {
+      id: 9,
+      project_id: 12,
+      status: "failed",
+      web_url: "https://gitlab.com/acme/web/-/pipelines/9",
+      source: "merge_request_event",
+    };
+    const stages = JSON.stringify({
+      data: {
+        project: {
+          mergeRequest: {
+            headPipeline: {
+              path: "/acme/web/-/pipelines/9",
+              stages: {
+                nodes: [
+                  { name: "build", status: "success", detailedStatus: { label: "passed" } },
+                  {
+                    name: "test",
+                    status: "failed",
+                    jobs: {
+                      nodes: [{ name: "unit", status: "FAILED", webPath: "/acme/web/-/jobs/3" }],
+                    },
+                  },
+                  {
+                    name: "deploy",
+                    status: "success",
+                    jobs: {
+                      nodes: [
+                        // A trigger job without `strategy: depend` succeeds whatever its child does.
+                        {
+                          name: "child-pipeline",
+                          status: "SUCCESS",
+                          webPath: null,
+                          downstreamPipeline: {
+                            status: "FAILED",
+                            path: "/acme/child/-/pipelines/10",
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+
+    function answer(graphql: Effect.Effect<ReturnType<typeof output>, GitLabCli.GitLabCliError>) {
+      mockedExecute.mockImplementation((request) =>
+        request.args[1] === "graphql"
+          ? request.stdin?.includes("adminMergeRequest")
+            ? Effect.succeed(labelPermission)
+            : graphql
+          : request.args[1]?.includes("/bridges")
+            ? Effect.succeed(
+                output(
+                  JSON.stringify([
+                    {
+                      name: "child-pipeline",
+                      status: "success",
+                      downstream_pipeline: {
+                        status: "failed",
+                        web_url: "https://gitlab.com/acme/child/-/pipelines/10",
+                      },
+                    },
+                  ]),
+                ),
+              )
+            : Effect.succeed(output(mergeRequestJson({ head_pipeline: pipeline }))),
+      );
+    }
+
+    const read = (downstreamChecks: boolean) =>
+      GitLabPullRequestCli.GitLabPullRequestCli.pipe(
+        Effect.flatMap((cli) =>
+          cli.getMergeRequestDetail({
+            cwd: "/w",
+            repository: "group/acme/web",
+            number: 7,
+            downstreamChecks,
+          }),
+        ),
+      );
+
+    it.effect("shows the stage jobs, and a stage GitLab listed no jobs for", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(true);
+
+        const graphql = mockedExecute.mock.calls.find(([call]) => call.stdin?.includes("stages"));
+        assert.isDefined(graphql);
+        expect(JSON.parse(graphql[0].stdin ?? "").variables).toEqual({
+          fullPath: "group/acme/web",
+          iid: "7",
+        });
+        expect(detail.checks).toEqual([
+          {
+            name: "build",
+            status: "success",
+            description: "passed",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "test / unit",
+            status: "failure",
+            description: null,
+            url: "https://gitlab.com/acme/web/-/jobs/3",
+          },
+          {
+            name: "deploy / child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("keeps the pipeline check where the stages cannot be read", () =>
+      Effect.gen(function* () {
+        answer(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("graphql unavailable"),
+            }),
+          ),
+        );
+
+        const detail = yield* read(true);
+
+        expect(detail.checks).toEqual([
+          {
+            name: "Pipeline",
+            status: "failure",
+            description: "merge_request_event",
+            url: "https://gitlab.com/acme/web/-/pipelines/9",
+          },
+          {
+            name: "child-pipeline",
+            status: "failure",
+            description: "Downstream pipeline",
+            url: "https://gitlab.com/acme/child/-/pipelines/10",
+          },
+        ]);
+      }),
+    );
+
+    it.effect("asks for no stages when the caller only needs the merge request", () =>
+      Effect.gen(function* () {
+        answer(Effect.succeed(output(stages)));
+
+        const detail = yield* read(false);
+
+        expect(
+          mockedExecute.mock.calls.filter(([call]) => call.stdin?.includes("stages")),
+        ).toHaveLength(0);
+        expect(detail.checks.map((check) => check.name)).toEqual(["Pipeline"]);
+      }),
+    );
+  });
+});
+
+it("asks for a numeric reference's iid besides the recent issues and merge requests", () => {
+  const recent = [
+    ["order_by", "updated_at"],
+    ["sort", "desc"],
+  ];
+  expect(GitLabPullRequestCli.referenceSearches("12")).toEqual([
+    { kind: "issue", params: [["iids[]", "12"]] },
+    { kind: "change-request", params: [["iids[]", "12"]] },
+    { kind: "issue", params: recent },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("crash")).toEqual([
+    { kind: "issue", params: [...recent, ["search", "crash"], ["in", "title"]] },
+    { kind: "change-request", params: [...recent, ["search", "crash"], ["in", "title"]] },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("cr")).toEqual([
+    { kind: "issue", params: recent },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches("12", "!")).toEqual([
+    { kind: "change-request", params: [["iids[]", "12"]] },
+    { kind: "change-request", params: recent },
+  ]);
+  expect(GitLabPullRequestCli.referenceSearches(undefined, "#")).toEqual([
+    { kind: "issue", params: recent },
+  ]);
 });
