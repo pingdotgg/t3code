@@ -1,6 +1,7 @@
 import type { SideChatParentPanel } from "~/lib/sideChatPane";
 import { useSideChat } from "./chat/useSideChat";
 import { threadEnvironment } from "../state/threads";
+import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
@@ -220,6 +221,11 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
       context.serverConfig?.environment.capabilities.sideChats === true
         ? threadRef
         : null,
+    // No composer here, so the side chat takes the parent's saved mode and model.
+    readSettings: () => ({
+      runtimeMode: context.serverThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+      modelSelection: context.serverThread?.modelSelection,
+    }),
     onError: (description) =>
       toastManager.add({ type: "error", title: "Could not open side chat", description }),
   });
