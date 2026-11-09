@@ -1,5 +1,6 @@
 import type { EnvironmentSpeechModel } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
+import { recommendSpeechModels } from "@t3tools/shared/speech";
 
 import { filterSpeechModels } from "./speechModelBrowser";
 
@@ -31,7 +32,7 @@ const models: readonly EnvironmentSpeechModel[] = [
     benchmark: {
       accuracy: {
         en: { grade: "A", errorPercent: 3.8 },
-        fr: { grade: "B", errorPercent: 8 },
+        fr: { grade: "B", errorPercent: 7 },
       },
       secondsPer30s: 2,
     },
@@ -97,4 +98,51 @@ it("combines text, all selected languages, and completed downloads without retai
     filterSpeechModels(models, { ...options, search: "fast" }).map((entry) => entry.id),
   ).toEqual(["fast"]);
   expect(filterSpeechModels(models, { ...options, search: "small" })).toEqual([]);
+});
+
+it("ranks language recommendations before the rest without changing explicit sorts or search badges", () => {
+  const catalog = models.map((model) => ({
+    ...model,
+    active: false,
+    state: "downloadable" as const,
+  }));
+  const options = {
+    search: "",
+    languages: ["en"],
+    downloadedOnly: false,
+    sort: "recommended",
+    accuracyLanguage: "en",
+  } as const;
+  expect(filterSpeechModels(catalog, options).map(({ id }) => id)).toEqual([
+    "fast",
+    "active",
+    "small",
+    "pending",
+  ]);
+  expect(
+    filterSpeechModels(catalog, { ...options, languages: ["en", "fr"] }).map(({ id }) => id),
+  ).toEqual(["small", "active", "fast"]);
+  expect(filterSpeechModels(catalog, { ...options, languages: [] }).map(({ id }) => id)).toEqual(
+    catalog.map(({ id }) => id),
+  );
+  expect(filterSpeechModels(catalog, { ...options, sort: "size" }).map(({ id }) => id)).toEqual([
+    "small",
+    "fast",
+    "active",
+    "pending",
+  ]);
+  expect(
+    filterSpeechModels(catalog, { ...options, sort: "accuracy", languages: ["en", "fr"] }).map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["fast", "small", "active"]);
+  expect(
+    filterSpeechModels(catalog, { ...options, sort: "speed", languages: ["en", "fr"] }).map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["fast", "small", "active"]);
+  expect(filterSpeechModels(catalog, { ...options, search: "small" }).map(({ id }) => id)).toEqual([
+    "small",
+  ]);
+  expect(recommendSpeechModels(catalog, options.languages).has("small")).toBe(false);
 });

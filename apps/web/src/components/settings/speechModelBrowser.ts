@@ -1,4 +1,5 @@
 import type { EnvironmentSpeechModel } from "@t3tools/contracts";
+import { recommendSpeechModels } from "@t3tools/shared/speech";
 
 export type SpeechModelSort = "recommended" | "size" | "accuracy" | "speed";
 
@@ -6,7 +7,7 @@ const modelSortOrder = (model: EnvironmentSpeechModel) => {
   if (model.active) return 0;
   if (model.state === "installed") return 1;
   if (model.state === "downloading" || model.state === "verifying") return 2;
-  return model.recommended ? 3 : 4;
+  return 3;
 };
 
 export function filterSpeechModels(
@@ -18,8 +19,10 @@ export function filterSpeechModels(
     readonly sort: SpeechModelSort;
     readonly accuracyLanguage: string;
   },
+  recommendations = recommendSpeechModels(models, options.languages),
 ) {
   const query = options.search.trim().toLocaleLowerCase();
+  const ranks = new Map([...recommendations.keys()].map((id, index) => [id, index]));
   const score = (model: EnvironmentSpeechModel) => {
     switch (options.sort) {
       case "size":
@@ -29,7 +32,7 @@ export function filterSpeechModels(
       case "speed":
         return model.benchmark?.secondsPer30s ?? Infinity;
       case "recommended":
-        return modelSortOrder(model);
+        return modelSortOrder(model) * 4 + (ranks.get(model.id) ?? 3);
     }
   };
   return models

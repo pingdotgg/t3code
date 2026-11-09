@@ -31,15 +31,6 @@ const ASR_FAMILIES = new Set([
   "medasr",
 ]);
 
-// Preserve Handy's onboarding badges; curation alone also includes specialist models.
-const RECOMMENDED = new Set([
-  "parakeet-unified-en-0.6b",
-  "nemotron-3.5-asr-streaming-0.6b",
-  "canary-180m-flash",
-  "cohere-transcribe-03-2026",
-  "whisper-medium",
-]);
-
 // Handy labels these weights MIT; Moonshine lists them under its Community License at https://huggingface.co/moonshine-ai/moonshine-models.
 const COMMUNITY_LICENSED_MOONSHINE = /^moonshine-(?:(?:base|tiny)-(?:ar|ja|ko|uk|vi|zh)|base-es)$/;
 
@@ -82,6 +73,7 @@ export function generateSpeechCatalog(
     filenames.add(file.filename);
     const languages = [...new Set(model.languages.map(canonicalLanguage))];
     const realtimeFactor = data.results[model.id]?.performance.accelerated;
+    const cpuFactor = data.results[model.id]?.performance.cpu;
     const accuracy = Object.fromEntries(
       languages.flatMap((language) => {
         const cell = data.results[model.id]?.accuracy[languageIdentity(language)];
@@ -109,11 +101,10 @@ export function generateSpeechCatalog(
         languages,
         benchmark: {
           accuracy,
-          secondsPer30s: realtimeFactor
-            ? Number((BENCHMARK_DICTATION_SECONDS / realtimeFactor).toFixed(2))
-            : null,
+          secondsPer30s: realtimeFactor ? BENCHMARK_DICTATION_SECONDS / realtimeFactor : null,
+          cpuSecondsPer30s: cpuFactor ? BENCHMARK_DICTATION_SECONDS / cpuFactor : null,
         },
-        recommended: RECOMMENDED.has(model.id),
+        recommended: false,
         supportsStreaming: model.capabilities.streaming,
         supportsLanguageDetection: model.capabilities.languageDetection,
         supportsTranslation: model.capabilities.translate,

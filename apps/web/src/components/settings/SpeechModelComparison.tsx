@@ -113,7 +113,10 @@ export function ModelBenchmarks({
             "not benchmarked"
           ) : (
             <>
-              <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
+              <strong className="font-medium text-foreground">
+                {Number(data.secondsPer30s.toFixed(2))} s
+              </strong>{" "}
+              / 30 s
             </>
           )}
         </span>

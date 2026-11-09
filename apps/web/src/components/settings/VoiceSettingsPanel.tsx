@@ -27,7 +27,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveSpeechPostProcessingModelSelection } from "@t3tools/shared/serverSettings";
-import { cloudSpeechLanguages } from "@t3tools/shared/speech";
+import {
+  cloudSpeechLanguages,
+  recommendSpeechModels,
+  type SpeechRecommendationRole,
+} from "@t3tools/shared/speech";
 import {
   AudioLinesIcon,
   CheckIcon,
@@ -159,6 +163,7 @@ const spellingsOf = (words: SpeechCustomWords) =>
 type ModelCardProps = {
   readonly model: EnvironmentSpeechModel;
   readonly comparisonLanguages: readonly string[];
+  readonly recommendation: SpeechRecommendationRole | undefined;
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly onDownload: () => void;
@@ -190,11 +195,23 @@ function ModelCard(props: ModelCardProps) {
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-sm font-medium leading-5">{model.name}</span>
-          {model.recommended ? (
+          {props.recommendation ? (
             <ModelBadge
               icon={<StarIcon className="mr-1 size-3" />}
-              label="Recommended"
-              tooltip="A good default pick for the languages it covers."
+              label={
+                props.recommendation === "recommended"
+                  ? "Recommended"
+                  : props.recommendation === "faster"
+                    ? "Faster"
+                    : "More accurate"
+              }
+              tooltip={
+                props.recommendation === "recommended"
+                  ? "Balanced accuracy and speed for your selected languages on Handy’s reference benchmarks."
+                  : props.recommendation === "faster"
+                    ? "Useful accuracy within the reference CPU speed target, or the quickest useful measured option."
+                    : "Higher accuracy with a longer reference processing budget for your selected languages."
+              }
             />
           ) : null}
           {model.supportsStreaming ? (
@@ -795,13 +812,18 @@ function SpeechModelBrowser(props: {
     accuracy: `Best ${languageLabel(accuracyLanguage)} accuracy`,
     speed: "Fastest transcription",
   };
-  const sortedModels = filterSpeechModels(models, {
-    search,
-    languages: selectedLanguages,
-    downloadedOnly,
-    sort,
-    accuracyLanguage,
-  });
+  const recommendations = recommendSpeechModels(models, selectedLanguages);
+  const sortedModels = filterSpeechModels(
+    models,
+    {
+      search,
+      languages: selectedLanguages,
+      downloadedOnly,
+      sort,
+      accuracyLanguage,
+    },
+    recommendations,
+  );
   const activeModel = models.find((model) => model.active);
   const renderedModels =
     activeModel && !sortedModels.includes(activeModel)
@@ -824,6 +846,9 @@ function SpeechModelBrowser(props: {
             Pick languages to see models that support all of them. Accuracy is word or character
             error rate: lower is better. Speed is the time to transcribe 30 seconds of audio on
             Handy’s benchmark GPU.
+            {selectedLanguages.length > 0
+              ? " Recommendations balance accuracy across every selected language using reference CPU and GPU measurements, not timings on your hardware."
+              : " Select a language for recommendations."}
           </p>
           <div className="@min-[32rem]/voice-models:grid @min-[32rem]/voice-models:grid-cols-[11rem_minmax(0,1fr)]">
             <div className="flex min-h-0 flex-col border-b border-border/60 bg-muted/10 @min-[32rem]/voice-models:border-r @min-[32rem]/voice-models:border-b-0">
@@ -933,6 +958,7 @@ function SpeechModelBrowser(props: {
                 )}
                 {renderedModels.map((model) => {
                   const card: ModelCardProps = {
+                    recommendation: recommendations.get(model.id),
                     model:
                       model.id === requestedDownload && model.state === "downloadable"
                         ? { ...model, state: "downloading" }

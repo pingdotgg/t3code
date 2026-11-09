@@ -405,7 +405,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         .then((result) => {
           if (disposed) return;
           const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
-          if (model) setSetup((current) => ({ ...current, model }));
+          if (model)
+            setSetup((current) => ({
+              ...current,
+              model: { ...model, recommended: current.model?.recommended ?? false },
+            }));
         })
         .catch(() => undefined)
         .finally(() => {
@@ -452,9 +456,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const loadSetupCatalog = useStableCallback(
     async (connection: PreparedConnection, selectedModelId: string, request: number) => {
       setSetup({ ...INITIAL_SETUP, open: true });
-      const catalog = await runEnvironmentSpeech(getEnvironmentSpeechModels(connection)).catch(
-        () => null,
-      );
+      const catalog = await runEnvironmentSpeech(
+        getEnvironmentSpeechModels(connection, true),
+      ).catch(() => null);
       if (request !== startRequestRef.current) return;
       const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId,
@@ -463,7 +467,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       setSetup((current) => ({
         ...current,
-        model: choice?.model ?? null,
+        model: choice ? { ...choice.model, recommended: choice.recommended } : null,
         language: choice?.language ?? null,
         catalogFailed: catalog === null,
         error: choice

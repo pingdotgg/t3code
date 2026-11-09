@@ -142,10 +142,14 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       mocks.statusModelId = modelId;
       return { models: mocks.models };
     }),
-  getEnvironmentSpeechModels: vi.fn(() =>
+  getEnvironmentSpeechModels: vi.fn((_prepared: PreparedConnection, includeBenchmarks = false) =>
     Effect.sync(() => {
       if (mocks.catalogOffline) throw new Error("Catalog offline");
-      return { models: mocks.models };
+      return {
+        models: mocks.models.map(({ benchmark, ...model }) =>
+          includeBenchmarks ? { ...model, ...(benchmark ? { benchmark } : {}) } : model,
+        ),
+      };
     }),
   ),
   postProcessEnvironmentTranscript: (
@@ -410,6 +414,7 @@ function catalogModel(
   id: string,
   languages: readonly string[],
   recommended: boolean,
+  errorPercent = 4,
 ): EnvironmentSpeechModel {
   return {
     id,
@@ -420,6 +425,13 @@ function catalogModel(
     accuracy: 0,
     speed: 0,
     recommended,
+    benchmark: {
+      accuracy: Object.fromEntries(
+        languages.map((language) => [language, { grade: "A", errorPercent }]),
+      ),
+      secondsPer30s: 2,
+      cpuSecondsPer30s: 3,
+    },
     supportsStreaming: false,
     supportsLanguageDetection: languages.length > 1,
     supportsTranslation: false,
@@ -457,8 +469,8 @@ it.each([
     mocks.statusModelId = englishDefault;
     mocks.models = [
       { ...catalogModel(englishDefault, ["en"], true), active: true },
-      catalogModel(german, ["en", "de", "fr"], true),
       catalogModel("handy-computer/canary-180m-flash-gguf", ["en", "de", "es", "fr"], true),
+      catalogModel(german, ["en", "de", "fr"], false, 2),
     ];
     mocks.download.mockResolvedValue(undefined);
     await using _screen = await render(<Probe />);

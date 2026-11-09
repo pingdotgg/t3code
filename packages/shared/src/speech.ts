@@ -6,9 +6,99 @@ import {
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import recommendationPolicy from "./speechRecommendationPolicy.json" with { type: "json" };
 
 const decodeOptions = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechTranscriptionOptions));
 const encodeOptions = Schema.encodeSync(Schema.fromJsonString(SpeechTranscriptionOptions));
+
+export type SpeechRecommendationRole = "recommended" | "faster" | "accurate";
+type RecommendationModel = {
+  readonly id: string;
+  readonly languages: readonly string[];
+  readonly benchmark?: {
+    readonly accuracy: Readonly<Record<string, { readonly errorPercent: number }>>;
+    readonly secondsPer30s: number | null;
+    readonly cpuSecondsPer30s?: number | null;
+  };
+};
+
+/** Reference accuracy/speed picks; no preference or incomplete measurements get no badge. */
+export function recommendSpeechModels(
+  models: readonly RecommendationModel[],
+  languages: readonly string[],
+) {
+  const wanted = [...new Set(languages)];
+  const roles = new Map<string, SpeechRecommendationRole>();
+  if (wanted.length === 0) return roles;
+  const policy = recommendationPolicy;
+  const scored = models.flatMap((model) => {
+    if (!wanted.every((language) => model.languages.includes(language))) return [];
+    const errors = wanted.map((language) => model.benchmark?.accuracy[language]?.errorPercent);
+    const wait = model.benchmark?.secondsPer30s;
+    if (
+      wait == null ||
+      !Number.isFinite(wait) ||
+      wait < 0 ||
+      errors.some((error) => error === undefined || !Number.isFinite(error) || error < 0)
+    )
+      return [];
+    const measured = errors as number[];
+    const error = Math.exp(
+      measured.reduce((sum, value) => sum + Math.log(value), 0) / measured.length,
+    );
+    return [
+      {
+        id: model.id,
+        error,
+        worst: Math.max(...measured),
+        wait,
+        cpu: model.benchmark?.cpuSecondsPer30s,
+        cost: error + policy.waitWeight * Math.max(0, wait - policy.freeWaitSeconds),
+      },
+    ];
+  });
+  if (scored.length === 0) return roles;
+  const useful = scored.filter((model) => model.worst < policy.maxLanguageErrorPercent);
+  const pool = useful.length ? useful : scored;
+  const lowest = (items: typeof scored, score: (item: (typeof scored)[number]) => number) =>
+    items.reduce<(typeof scored)[number] | undefined>(
+      (best, item) => (best === undefined || score(item) < score(best) ? item : best),
+      undefined,
+    );
+  const withinBudget = pool.filter((model) => model.wait <= policy.overallMaxWaitSeconds);
+  const best = (
+    useful.length
+      ? lowest(withinBudget.length ? withinBudget : pool, (model) => model.cost)
+      : lowest(pool, (model) => model.worst + model.error / 1000)
+  )!;
+  const onCpu = pool.filter(
+    (model) => model.cpu != null && Number.isFinite(model.cpu) && model.cpu >= 0,
+  );
+  const fast = useful.length
+    ? (lowest(
+        onCpu.filter((model) => model.cpu! <= policy.fastCpuMaxWaitSeconds),
+        (model) => model.error,
+      ) ??
+      lowest(onCpu, (model) => model.cpu! + model.error / 1000) ??
+      best)
+    : best;
+  const accurate = useful.length
+    ? (lowest(
+        pool.filter((model) => model.wait <= policy.accurateMaxWaitSeconds),
+        (model) => model.error,
+      ) ??
+      lowest(pool, (model) => model.error) ??
+      best)
+    : best;
+  for (const [model, role] of [
+    [best, "recommended"],
+    [fast, "faster"],
+    [accurate, "accurate"],
+  ] as const) {
+    if (!roles.has(model.id)) roles.set(model.id, role);
+  }
+  return roles;
+}
 
 export function cloudSpeechDisclosure(provider: CloudSpeechProvider, environment: string) {
   return provider === "openrouter"
@@ -37,16 +127,13 @@ export function effectiveSpeechLanguage(
 }
 
 /**
- * The model first-run setup offers: the selected one, else a recommended one, else any that the
+ * The model first-run setup offers: the selected one, else the benchmark pick, else any that the
  * server would really transcribe the person's language with. Without a language hint,
  * offer only the selected model, without a recommendation.
  */
 export function chooseSetupSpeechModel<
-  Model extends {
-    readonly id: string;
-    readonly languages: readonly string[];
+  Model extends RecommendationModel & {
     readonly supportsLanguageDetection: boolean;
-    readonly recommended: boolean;
   },
 >(
   models: readonly Model[],
@@ -58,18 +145,19 @@ export function chooseSetupSpeechModel<
 ) {
   if (input.intent === "auto" && input.preferred.length === 0) {
     const model = models.find(({ id }) => id === input.selectedModelId);
-    return model && { model, language: null };
+    return model && { model, language: null, recommended: false };
   }
   for (const language of input.intent === "auto" ? input.preferred : [input.intent]) {
     const capable = models.filter((model) => {
       const effective = effectiveSpeechLanguage(model, input.intent);
       return effective === language || (effective === "auto" && model.languages.includes(language));
     });
+    const recommendedId = recommendSpeechModels(capable, [language]).keys().next().value;
     const model =
       capable.find(({ id }) => id === input.selectedModelId) ??
-      capable.find(({ recommended }) => recommended) ??
+      capable.find(({ id }) => id === recommendedId) ??
       capable[0];
-    if (model) return { model, language };
+    if (model) return { model, language, recommended: model.id === recommendedId };
   }
   return undefined;
 }

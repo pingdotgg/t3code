@@ -58,7 +58,11 @@ const modelDefinitions = vi.hoisted(() => [
     size: 4,
     languages: ["en", "fr"],
     accuracy: 1,
-    benchmark: { accuracy: { en: { grade: "A-", errorPercent: 4 } }, secondsPer30s: 1.2 },
+    benchmark: {
+      accuracy: { en: { grade: "A-", errorPercent: 4 } },
+      secondsPer30s: 1.2,
+      cpuSecondsPer30s: 3,
+    },
     speed: 1,
     recommended: true,
     supportsStreaming: true,
@@ -288,9 +292,9 @@ it.effect("rejects model mutations outside the offered registry", () =>
     const current = (yield* speech.models(false)).models.find((model) => model.active);
     expect(current?.id).toBe("test-model");
     expect(current).not.toHaveProperty("benchmark");
-    expect(
-      (yield* speech.models(true)).models.find((model) => model.active)?.benchmark?.secondsPer30s,
-    ).toBe(1.2);
+    expect((yield* speech.models(true)).models.find((model) => model.active)?.benchmark).toEqual(
+      modelDefinitions[0]!.benchmark,
+    );
   }).pipe(Effect.provide(layer)),
 );
 

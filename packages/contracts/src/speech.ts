@@ -143,6 +143,7 @@ export const EnvironmentSpeechModel = Schema.Struct({
         Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
       ),
       secondsPer30s: Schema.NullOr(Schema.Finite),
+      cpuSecondsPer30s: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
     }),
   ),
   recommended: Schema.Boolean,

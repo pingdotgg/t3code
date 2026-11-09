@@ -2,6 +2,8 @@
 import * as NodeFS from "node:fs";
 
 import { catalog } from "@handy-computer/models";
+import { recommendSpeechModels } from "@t3tools/shared/speech";
+import policy from "../../../packages/shared/src/speechRecommendationPolicy.json" with { type: "json" };
 import { expect, it } from "vite-plus/test";
 
 import manifest from "../package.json" with { type: "json" };
@@ -15,6 +17,7 @@ const generate = (models = catalog.models) =>
   );
 
 it("reproduces the bundled registry byte for byte without upstream requests", async () => {
+  expect(policy).toEqual(catalog.methodology);
   expect(NodeFS.readFileSync(new URL("../src/speech/catalog.json", import.meta.url), "utf8")).toBe(
     await renderSpeechCatalog(
       catalog.data,
@@ -46,8 +49,34 @@ it("reproduces the bundled registry byte for byte without upstream requests", as
   expect(withoutFrenchOrSpeed.models[0]?.benchmark).toEqual({
     accuracy: { en: { grade: "A-", errorPercent: 3.99 } },
     secondsPer30s: null,
+    cpuSecondsPer30s: null,
   });
   expect(generate().models[0]?.benchmark.secondsPer30s).toBeCloseTo(1.19, 2);
+});
+
+it("uses Handy's reference scoring on offered models before selecting recommendations", () => {
+  const offered = generate().models;
+  const sources = catalog.models.filter((model) =>
+    offered.some(({ id }) => id === model.repository),
+  );
+  for (const languages of [["en"], ["de"], ["ja"], ["en", "de"], ["en", "fr"], ["hi", "mr"]]) {
+    const expected = catalog
+      .recommendModels(sources, languages)
+      .filter((pick) => pick.status !== "unbenchmarked")
+      .map((pick) => [
+        pick.model.repository,
+        pick.roles.includes("best")
+          ? "recommended"
+          : pick.roles.includes("fast")
+            ? "faster"
+            : "accurate",
+      ]);
+    expect([...recommendSpeechModels(offered, languages)], languages.join(",")).toEqual(expected);
+  }
+  const excluded = { ...catalog.models[0]!, license: "cc-by-nc-4.0" };
+  const allowed = { ...catalog.models[1]!, languages: ["en"] };
+  const filtered = generate([excluded, allowed]).models;
+  expect([...recommendSpeechModels(filtered, ["en"]).keys()]).toEqual([allowed.repository]);
 });
 
 it("filters restricted licenses, unsupported roles, engines, architectures and files", () => {
