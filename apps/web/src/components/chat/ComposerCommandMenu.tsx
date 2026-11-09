@@ -19,10 +19,8 @@ import {
   BoxIcon,
   CornerDownLeftIcon,
   EraserIcon,
-  HammerIcon,
   MessageCircleQuestionIcon,
   MessagesSquareIcon,
-  PencilRulerIcon,
   SearchXIcon,
   TerminalIcon,
   type LucideIcon,
@@ -187,8 +185,6 @@ export function groupComposerCommandItems(
 const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
   model: BoxIcon,
   clear: EraserIcon,
-  plan: PencilRulerIcon,
-  default: HammerIcon,
   side: MessageCircleQuestionIcon,
   btw: MessageCircleQuestionIcon,
 };
