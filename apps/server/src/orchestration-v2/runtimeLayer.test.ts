@@ -3603,6 +3603,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         ["test"],
       );
       // The fresh reactor reloads the nonempty obligation from the persisted watch.
+      assert.isTrue(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.checksPending,
+      );
       const restarted = yield* PullRequestWatchReactor.make.pipe(Effect.provide(host));
       yield* restarted.sweep;
       yield* worker.drain();
@@ -3611,6 +3614,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       // A new watch on the same pull request knows what the last one told.
       yield* watch(false, "stop");
       yield* watch(true, "again");
+      assert.isTrue(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.checksPending,
+      );
       yield* restarted.sweep;
       yield* worker.drain();
       assert.deepEqual(yield* summaries, ["#12: checks passed"]);

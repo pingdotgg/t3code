@@ -100,6 +100,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  checksPending: Schema.optional(Schema.Boolean),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

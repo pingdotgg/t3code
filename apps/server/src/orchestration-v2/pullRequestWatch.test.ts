@@ -97,6 +97,17 @@ describe("evaluatePullRequestWatch", () => {
     assert.equal(evaluatePullRequestWatch(test.next, pushed, noRemarks).changes.length, 1);
   });
 
+  it("reports completion after a known failure when the remaining checks finish", () => {
+    const optional = check("windows-arm-optional", "failure");
+    const pending = detail({ checks: [optional, check("gate", "pending")] });
+    const first = evaluatePullRequestWatch(watch(), pending, noRemarks);
+    const done = detail({ checks: [optional, check("gate", "success")] });
+    const final = evaluatePullRequestWatch(first.next, done, noRemarks);
+    assert.deepEqual(final.changes, [{ kind: "checks-settled", count: 2, failed: 1 }]);
+    assert.isFalse(final.next.passed);
+    assert.deepEqual(evaluatePullRequestWatch(final.next, done, noRemarks).changes, []);
+  });
+
   it("reports passed once the required checks pass, whatever the others do", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),

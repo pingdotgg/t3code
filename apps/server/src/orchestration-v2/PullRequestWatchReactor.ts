@@ -182,6 +182,7 @@ function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatc
     left.remarkIds.join("\n") === right.remarkIds.join("\n") &&
     left.conflicting === right.conflicting &&
     left.wakes === right.wakes &&
+    left.checksPending === right.checksPending &&
     left.checksAwaitedSince === right.checksAwaitedSince
   );
 }

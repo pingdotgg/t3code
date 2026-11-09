@@ -17,6 +17,7 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
+  | { readonly kind: "checks-settled"; readonly count: number; readonly failed: number }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
   | { readonly kind: "conflicting" };
@@ -50,6 +51,7 @@ export function evaluatePullRequestWatch(
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
+  let checksPending = headMoved ? false : (watch.checksPending ?? false);
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
@@ -86,6 +88,17 @@ export function evaluatePullRequestWatch(
       changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
       owedChecks = [];
     }
+    const pendingNow = detail.checks.some((check) => check.status === "pending");
+    if (
+      checksPending &&
+      !pendingNow &&
+      failed.length > 0 &&
+      newlyFailed.length === 0 &&
+      !changes.some((change) => change.kind === "checks-passed")
+    ) {
+      changes.push({ kind: "checks-settled", count: detail.checks.length, failed: failed.length });
+    }
+    checksPending = pendingNow;
     passed = passedNow;
     passedChecks = passedNow ? gateNames : [];
   }
@@ -153,6 +166,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      checksPending,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
@@ -194,6 +208,10 @@ function changeLines(
       return [
         `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
       ];
+    case "checks-settled":
+      return [
+        `- All ${change.count} checks have finished${context.commit}; ${change.failed} remain failed or need attention. Inspect the results before merging.`,
+      ];
     case "remarks":
       return [
         `- ${change.remarks.length} new ${change.remarks.length === 1 ? "comment" : "comments"}:`,
@@ -216,6 +234,7 @@ function changeLines(
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-settled": "checks finished",
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
