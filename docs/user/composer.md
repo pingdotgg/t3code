@@ -360,6 +360,10 @@ saved text context at the time of the drop; later messages and the contents of a
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
 file attachment limits apply.
 
+Type `@` and part of a model or provider name, such as `@opus`, to name that model for the
+agent, for example when delegating. It does not change the thread's model. Join words with
+`:`, `/` or `-`, as in `@opus:opencode`.
+
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
 the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
