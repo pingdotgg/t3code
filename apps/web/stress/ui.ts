@@ -5,12 +5,12 @@ import type { Page } from "playwright";
 export async function openThread(page: Page, title: string) {
   const item = page
     // Exact title text: badges such as a linked pull request number follow it without a space.
-    .locator('[role="treeitem"]', { has: page.getByText(title, { exact: true }) })
+    .locator("[data-sidebar-row]", { has: page.getByText(title, { exact: true }) })
     .first();
-  // Expanding one group re-renders the tree, so look for the next collapsed group each time.
+  // Expanding one group re-renders the list, so look for the next collapsed group each time.
   for (let attempt = 0; attempt < 5 && !(await item.isVisible()); attempt++) {
     const group = page
-      .locator('[role="treeitem"][aria-expanded="false"]')
+      .locator('[data-sidebar-row][aria-expanded="false"]')
       .filter({ visible: true })
       .first();
     if ((await group.count()) === 0) break;
