@@ -123,7 +123,16 @@ export const makeDiscovery = Effect.gen(function* () {
                   login && result.stderr.includes("error sending request for url")
                   ? providerAuth({
                       status: "unknown",
-                      detail: `Could not reach ${login.url} to verify the fj login.`,
+                      detail:
+                        login.url.startsWith("https://") &&
+                        result.stderr.includes(
+                          `error sending request for url (${login.url}/api/v1/user?)`,
+                        ) &&
+                        /(?:^|\n)\s*(?:\d+: )?received corrupt message of type InvalidContentType\s*(?:\n|$)/.test(
+                          result.stderr,
+                        )
+                          ? "fj has credentials for this host, but it did not answer over HTTPS. fj stores no scheme; HTTP-only servers are used through a project with an explicit http:// remote."
+                          : `Could not reach ${login.url} to verify the fj login.`,
                       host: ForgejoCli.parseForgejoRemote(login.url)?.host,
                     })
                   : providerAuth({
