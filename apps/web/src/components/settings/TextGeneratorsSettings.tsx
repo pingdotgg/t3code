@@ -444,15 +444,18 @@ function TextGeneratorWizard({
                 {name} is connected and lists {modelCount} {modelCount === 1 ? "model" : "models"}.
                 Switch any of these to it, or keep what they use now.
               </p>
-              {TASKS.map((task) => (
-                <TextGenerationTaskPicker
-                  key={task.key}
-                  environmentId={environmentId}
-                  providers={providers}
-                  settingKey={task.key}
-                  label={task.label}
-                />
-              ))}
+              {/* One grid for all rows, so pickers and Test buttons line up in columns. */}
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-4">
+                {TASKS.map((task) => (
+                  <TextGenerationTaskPicker
+                    key={task.key}
+                    environmentId={environmentId}
+                    providers={providers}
+                    settingKey={task.key}
+                    label={task.label}
+                  />
+                ))}
+              </div>
             </div>
           )}
         </WizardPanel>
@@ -531,8 +534,8 @@ function TextGenerationTaskPicker({
     setResult({ key: testKey, error });
   };
   return (
-    <div className="flex items-center justify-between gap-3">
-      <div className="grid min-w-0 flex-1 gap-0.5">
+    <>
+      <div className="grid min-w-0 gap-0.5 pe-2">
         <span className="text-sm">{label}</span>
         {shown?.error ? (
           <span role="alert" className="text-xs text-destructive">
@@ -546,19 +549,7 @@ function TextGenerationTaskPicker({
           <span className="text-xs text-muted-foreground">Follows the text generation model</span>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
-        {testable ? (
-          <Button
-            size="xs"
-            variant="outline"
-            aria-busy={testing}
-            disabled={testing}
-            onClick={() => void test()}
-          >
-            {testing ? <Spinner /> : null}
-            {testing ? "Testing" : "Test"}
-          </Button>
-        ) : null}
+      <div className="justify-self-end">
         <ProviderModelPicker
           environmentId={environmentId}
           activeInstanceId={selection.instanceId}
@@ -577,7 +568,21 @@ function TextGenerationTaskPicker({
           }
         />
       </div>
-    </div>
+      <div className="justify-self-end">
+        {testable ? (
+          <Button
+            size="xs"
+            variant="outline"
+            aria-busy={testing}
+            disabled={testing}
+            onClick={() => void test()}
+          >
+            {testing ? <Spinner /> : null}
+            {testing ? "Testing" : "Test"}
+          </Button>
+        ) : null}
+      </div>
+    </>
   );
 }
 
