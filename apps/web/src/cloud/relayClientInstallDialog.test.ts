@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   RelayClientInstallConfirmationConflictError,
+  cancelRelayClientInstall,
+  onRelayClientInstallCancel,
   reportRelayClientInstallProgress,
   requestRelayClientInstallConfirmation,
   resetRelayClientInstallDialogForTests,
@@ -35,5 +37,18 @@ describe("relay client install dialog coordinator", () => {
     expect((error as Error).message).toBe(
       "Cannot confirm relay client installation 2026.11.0; installation 2026.10.0 has dialog status installing.",
     );
+  });
+
+  it.each(["before", "after"])("delivers cancellation %s the install subscribes", async (when) => {
+    const confirmation = requestRelayClientInstallConfirmation("2026.10.0");
+    respondToRelayClientInstallConfirmation(true);
+    await expect(confirmation).resolves.toBe(true);
+    if (when === "before") cancelRelayClientInstall();
+    const cancelled = vi.fn();
+    const unsubscribe = onRelayClientInstallCancel(cancelled);
+    if (when === "after") cancelRelayClientInstall();
+    cancelRelayClientInstall();
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    unsubscribe();
   });
 });
