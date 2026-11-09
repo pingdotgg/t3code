@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -81,7 +82,12 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
         ...(cwd ? { cwd } : {}),
       }),
     );
-  }).pipe(Effect.timeoutOption(DEFAULT_TIMEOUT_MS), Effect.result);
+  }).pipe(
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("muse", DEFAULT_TIMEOUT_MS, museEnvironment),
+    ),
+    Effect.result,
+  );
 
   if (Result.isFailure(versionResult)) {
     const missing = isCommandMissingCause(versionResult.failure);
@@ -118,7 +124,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 
   const catalog = yield* discoverMuseModels(settings, museEnvironment, cwd, createHost).pipe(
     Effect.scoped,
-    Effect.timeoutOption(12_000),
+    Effect.timeoutOption(resolveProviderProbeTimeoutMs("muse", 12_000, museEnvironment)),
     Effect.result,
   );
   if (Result.isFailure(catalog) || Option.isNone(catalog.success)) {

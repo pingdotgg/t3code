@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 // One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Context from "effect/Context";
@@ -12,7 +13,7 @@ import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 
-const INFO_TIMEOUT = "5 seconds";
+const INFO_TIMEOUT_MS = 5_000;
 
 export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
@@ -75,10 +76,10 @@ const describeInfoFailure = (cause: unknown) => {
 };
 
 /** Only server info proves readiness; keep credential-bearing failure details out of client text. */
-export const verifyServer = (client: OpenCodeClient) =>
+export const verifyServer = (client: OpenCodeClient, environment?: NodeJS.ProcessEnv) =>
   client.server.info().pipe(
     Effect.timeoutOrElse({
-      duration: INFO_TIMEOUT,
+      duration: resolveProviderProbeTimeoutMs("opencode", INFO_TIMEOUT_MS, environment),
       orElse: () =>
         Effect.fail(
           new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -123,7 +124,7 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
     external: boolean,
   ) {
     const api = yield* opencode.connect({ baseUrl: url, password });
-    const version = yield* verifyServer(api.client);
+    const version = yield* verifyServer(api.client, input.environment);
     return { ...api, url, version, external } satisfies OpenCode2Connection;
   });
   let latest: OpenCode2Connection | undefined;

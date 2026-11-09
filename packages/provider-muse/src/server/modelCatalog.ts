@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import type { SendUserTurnOptions } from "@muse-code/sdk";
 import { ModelCapabilities, ServerProviderModel } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
@@ -111,7 +112,7 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
         ...(environment ? { environment } : {}),
         ...(cwd ? { cwd } : {}),
         readOnly: true,
-        startupTimeoutMs: 8_000,
+        startupTimeoutMs: resolveProviderProbeTimeoutMs("muse", 8_000, environment),
       },
       createHost,
     ),

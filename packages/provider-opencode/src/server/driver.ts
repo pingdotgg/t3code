@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
@@ -303,6 +304,7 @@ export const OpenCodeDriver: ProviderDriver<
     });
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
       openCode2Server.withConnection(({ client }) => loadOpenCode2Catalog(client, host.paths.cwd)),
+      processEnv,
     );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
@@ -334,6 +336,7 @@ export const OpenCodeDriver: ProviderDriver<
               { concurrency: "unbounded" },
             ),
             Deferred.await(scanned),
+            processEnv,
           );
         }).pipe(Effect.scoped),
       );
@@ -394,7 +397,7 @@ export const OpenCodeDriver: ProviderDriver<
         {
           skills: openCodeRuntime.loadOpenCodeSkills(client),
           commandInventory: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
-            Effect.timeoutOption("10 seconds"),
+            Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv)),
             Effect.map((commands) => ({
               commands: Option.getOrElse(commands, () => []),
               slashCommandsPending: Option.isNone(commands),
@@ -504,7 +507,7 @@ export const OpenCodeDriver: ProviderDriver<
               v2: Effect.all([
                 snapshot.getSnapshot,
                 listOpenCode2Workspace(cwd).pipe(
-                  Effect.timeout("20 seconds"),
+                  Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 20_000, processEnv)),
                   Effect.mapError(
                     (cause) =>
                       new ProviderDriverError({
@@ -527,7 +530,9 @@ export const OpenCodeDriver: ProviderDriver<
               ),
               v1: Effect.all([
                 snapshot.getSnapshot,
-                loadWorkspaceForCwd(cwd).pipe(Effect.timeout("20 seconds")),
+                loadWorkspaceForCwd(cwd).pipe(
+                  Effect.timeout(resolveProviderProbeTimeoutMs("opencode", 20_000, processEnv)),
+                ),
               ]).pipe(
                 Effect.map(([machineSnapshot, { skills, commands, slashCommandsPending }]) => ({
                   ...machineSnapshot,

@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import { pipe } from "effect/Function";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -78,13 +79,6 @@ const CODEX_CLIENT_NAME = "T3 Code";
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 
-const resolveCodexProbeTimeoutMs = (environment: NodeJS.ProcessEnv): number => {
-  const timeoutMs = Number(environment.T3CODE_CODEX_PROBE_TIMEOUT_MS);
-  // Node timers overflow above a signed 32-bit delay and can fire immediately.
-  return Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 2_147_483_647
-    ? timeoutMs
-    : CODEX_AUTH_PROBE_TIMEOUT_MS;
-};
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
@@ -645,7 +639,12 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
     if (result.code !== 0) return null;
     return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
   },
-  Effect.timeoutOption(Duration.millis(DEFAULT_TIMEOUT_MS)),
+  (effect, input) =>
+    effect.pipe(
+      Effect.timeoutOption(
+        resolveProviderProbeTimeoutMs("codex", DEFAULT_TIMEOUT_MS, input.environment),
+      ),
+    ),
   Effect.map(Option.getOrNull),
   Effect.catch((cause) =>
     Effect.logDebug("Codex --version fallback failed.", { cause }).pipe(Effect.as(null)),
@@ -784,7 +783,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
-  const probeTimeoutMs = resolveCodexProbeTimeoutMs(resolvedEnvironment);
+  const probeTimeoutMs = resolveProviderProbeTimeoutMs(
+    "codex",
+    CODEX_AUTH_PROBE_TIMEOUT_MS,
+    resolvedEnvironment,
+  );
   const probeResult = yield* probe({
     probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,

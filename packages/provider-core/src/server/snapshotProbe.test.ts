@@ -10,6 +10,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
   isCommandMissingCause,
+  resolveProviderProbeTimeoutMs,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -157,4 +158,38 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error.message).not.toContain("secret-token-value");
     });
   });
+});
+
+describe("resolveProviderProbeTimeoutMs", () => {
+  it.each([
+    "codex",
+    "claude",
+    "cursor",
+    "antigravity",
+    "grok",
+    "kiro",
+    "fx",
+    "pi",
+    "muse",
+    "opencode",
+    "acp_registry",
+  ])("uses only %s's readiness override", (provider) => {
+    const key = `T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`;
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "60000" })).toBe(60000);
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "1000" })).toBe(1000);
+    expect(
+      resolveProviderProbeTimeoutMs(provider, 25000, { T3CODE_OTHER_PROBE_TIMEOUT_MS: "60000" }),
+    ).toBe(25000);
+  });
+  it.each([undefined, "", " ", "bad", "0", "-1", "1.5", "Infinity", "2147483648"])(
+    "retains the phase default for invalid value %s",
+    (value) => {
+      expect(
+        resolveProviderProbeTimeoutMs("claude", 25000, { T3CODE_CLAUDE_PROBE_TIMEOUT_MS: value }),
+      ).toBe(25000);
+      expect(
+        resolveProviderProbeTimeoutMs("claude", 20000, { T3CODE_CLAUDE_PROBE_TIMEOUT_MS: value }),
+      ).toBe(20000);
+    },
+  );
 });

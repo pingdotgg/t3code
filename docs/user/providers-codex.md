@@ -36,23 +36,9 @@ picker. See [Use multiple accounts](#use-multiple-accounts).
 ## Allow more time for provider checks
 
 If an authenticated Codex installation reports “Timed out while checking Codex
-app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS` in the T3 server's
-environment and restart the server. For example, allow 60 seconds:
-
-```bash
-T3CODE_CODEX_PROBE_TIMEOUT_MS=60000 t3 serve
-```
-
-For a remote environment, set this on the remote machine that runs T3 Code.
-Keep it in your launcher or service configuration so it survives application
-updates. For systemd, add `Environment=T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` under
-`[Service]` in a service override, reload systemd, and restart the service.
-
-The default is 20000 milliseconds. Values must be positive whole milliseconds
-no greater than 2147483647; invalid values use the default. This controls the
-overall Codex provider status check, including its skills and model discovery
-budget. Usage and config requests keep their shorter individual limits. Longer
-budgets also take longer to report a stalled probe.
+app-server provider status,” set `T3CODE_CODEX_PROBE_TIMEOUT_MS=60000` in the
+T3 server's environment and restart it. See [Provider check timeouts](./install.md#provider-check-timeouts)
+for configuration and other providers.
 
 ## Use multiple accounts
 
