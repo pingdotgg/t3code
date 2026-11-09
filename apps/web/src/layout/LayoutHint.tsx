@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useLayoutEffect, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 import { Kbd } from "../components/ui/kbd";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
@@ -11,6 +12,7 @@ import { useThreadShell } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { countedLayoutWorkspaces } from "./layoutCommands";
 import {
+  selectFocusedTab,
   selectFocusedWorkspace,
   selectLayoutWorkspaceLeadTab,
   type LayoutWorkspace,
@@ -27,12 +29,15 @@ const HINT_GAP_PX = 12;
 const HINT_EDGE_PX = 16;
 const HINT_BOTTOM_PX = 108;
 
+const FOCUSED_PANE = "[data-layout-pane-focused='true'][data-layout-pane-id]";
+
 /** Fades the hint after a beat, then clears it. */
-function useHintLifetime(id: number): boolean {
-  const [leaving, setLeaving] = useState(false);
+function useHintLifetime(id: number | null): boolean {
+  const [leavingId, setLeavingId] = useState<number | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own and cancel the visible hint dismissal timers.
   useEffect(() => {
-    const fade = window.setTimeout(() => setLeaving(true), HINT_VISIBLE_MS);
+    if (id === null) return;
+    const fade = window.setTimeout(() => setLeavingId(id), HINT_VISIBLE_MS);
     const clear = window.setTimeout(
       () => useLayoutStore.getState().clearHint(id),
       HINT_VISIBLE_MS + HINT_FADE_MS,
@@ -42,7 +47,50 @@ function useHintLifetime(id: number): boolean {
       window.clearTimeout(clear);
     };
   }, [id]);
-  return leaving;
+  return id !== null && leavingId === id;
+}
+
+/**
+ * Draws the terminal hint inside the focused pane, which slides in on top, so the
+ * pane's own transform carries it with no per-frame measuring. Column and
+ * workspace hints stay in the host: their pane can pass behind the panes it crosses.
+ */
+function InFocusedPane({ children }: { children: ReactNode }) {
+  const [pane, setPane] = useState<{ element: HTMLElement | null } | null>(null);
+  const focusedTabId = useLayoutStore((state) => selectFocusedTab(state.layout)?.id ?? null);
+  const findPane = (anchor: HTMLSpanElement | null) => {
+    if (!anchor) return;
+    const element = anchor.parentElement?.querySelector<HTMLElement>(FOCUSED_PANE) ?? null;
+    setPane((current) => (current?.element === element ? current : { element }));
+  };
+  return (
+    <>
+      {/* Keyed by the focused tab: it remounts, and looks again, when focus moves. */}
+      <span hidden key={focusedTabId} ref={findPane} />
+      {pane === null ? null : pane.element ? createPortal(children, pane.element) : children}
+    </>
+  );
+}
+
+/**
+ * Lifts a hint drawn in its pane a gap above the pane's composer stack when that
+ * grows taller than the resting height.
+ */
+function liftAboveComposer(hint: HTMLDivElement | null) {
+  const pane = hint?.parentElement;
+  if (!hint || !pane?.hasAttribute("data-layout-pane-id")) return;
+  const composer = pane.querySelector('[data-chat-composer-stack="true"]');
+  if (!composer) return;
+  const lift = () => {
+    const paneRect = pane.getBoundingClientRect();
+    // Pane pixels: the overview scales panes.
+    const scale = pane.offsetHeight > 0 ? paneRect.height / pane.offsetHeight : 1;
+    const bottom = (paneRect.bottom - composer.getBoundingClientRect().top) / scale + HINT_GAP_PX;
+    hint.style.bottom = bottom > HINT_BOTTOM_PX ? `${bottom}px` : "";
+  };
+  // Placed before its first paint; the observer only follows later resizes.
+  lift();
+  return observeResize([pane, composer], lift);
 }
 
 /**
@@ -111,6 +159,8 @@ function useHintPlacement() {
 export function LayoutStripHint() {
   const hint = useLayoutStore((state) => state.hint);
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
+  // Owned here: the terminal pill remounts when focus moves it to another pane.
+  const terminalLeaving = useHintLifetime(hint?.kind === "terminal" ? hint.id : null);
 
   // Any workspace switch (keys, sidebar, overview, wheel) names the workspace
   // it landed on for a second (pen qnrAZ), unless a move hint already says so.
@@ -138,23 +188,32 @@ export function LayoutStripHint() {
   );
 
   if (!hint) return null;
-  if (hint.kind === "terminal") return <TerminalHintPill key={hint.id} hint={hint} />;
+  if (hint.kind === "terminal") {
+    return (
+      <InFocusedPane>
+        <TerminalHintPill key={hint.id} hint={hint} leaving={terminalLeaving} />
+      </InFocusedPane>
+    );
+  }
   // Column and workspace hints coach the scrolling strip.
   if (!scrollingWorkspaces) return null;
   if (hint.kind === "column") return <ColumnHintPill key={hint.id} hint={hint} />;
   return <WorkspaceHintPill key={hint.id} hint={hint} />;
 }
 
-function TerminalHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "terminal" }> }) {
-  const leaving = useHintLifetime(hint.id);
+function TerminalHintPill({
+  hint,
+  leaving,
+}: {
+  hint: Extract<LayoutHintState, { kind: "terminal" }>;
+  leaving: boolean;
+}) {
   const thread = useThreadShell(hint.threadRef);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "terminal.toggle");
-  const [placementRef, placement] = useHintPlacement();
   return (
     <div
-      ref={placementRef}
-      style={placement}
+      ref={liftAboveComposer}
       role="status"
       aria-live="polite"
       data-layout-hint="terminal"
