@@ -54,22 +54,25 @@ export function ProjectOrderList() {
   const shown = pickableProjectGroups(groups);
 
   // dnd-kit announces raw ids by default, and these ids are internal project keys.
-  const nameOf = (id: UniqueIdentifier) =>
-    shown.find((group) => group.projectKey === id)?.displayName ?? String(id);
+  const findGroup = (id: UniqueIdentifier | undefined) =>
+    shown.find((group) => group.projectKey === id);
+  const nameOf = (id: UniqueIdentifier) => findGroup(id)?.displayName ?? String(id);
   const announcements: Announcements = {
     onDragStart: ({ active }) => `Picked up ${nameOf(active.id)}.`,
     onDragOver: ({ active, over }) =>
       over ? `${nameOf(active.id)} is over ${nameOf(over.id)}.` : undefined,
-    onDragEnd: ({ active, over }) =>
-      over
+    onDragEnd: ({ active, over }) => {
+      if (!over) return `${nameOf(active.id)} was dropped.`;
+      return findGroup(active.id)?.pinned === findGroup(over.id)?.pinned
         ? `${nameOf(active.id)} was dropped on ${nameOf(over.id)}.`
-        : `${nameOf(active.id)} was dropped.`,
+        : `${nameOf(active.id)} did not move. Pinned projects stay above unpinned projects.`;
+    },
     onDragCancel: ({ active }) => `Moving ${nameOf(active.id)} was cancelled.`,
   };
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    const dragged = shown.find((group) => group.projectKey === active.id);
-    const target = shown.find((group) => group.projectKey === over?.id);
+    const dragged = findGroup(active.id);
+    const target = findGroup(over?.id);
     // Pinned projects always sort first, so a drop across that line could not stick.
     if (!dragged || !target || dragged === target || dragged.pinned !== target.pinned) return;
     reorderProjects(groups.flatMap(memberKeys), memberKeys(dragged), memberKeys(target));
