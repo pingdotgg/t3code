@@ -685,12 +685,19 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
-  const [lineAnnotations, setLineAnnotations] = useState(() =>
+  const storedLineAnnotations = () =>
     fileCommentAnnotationsFromReviewComments(
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments ?? [],
       relativePath,
-    ),
-  );
+    );
+  const [lineAnnotations, setLineAnnotations] = useState(storedLineAnnotations);
+  // Thread switches can keep this editor mounted; swap comments without discarding edit history.
+  const targetKey = composerTargetKey(composerDraftTarget);
+  const [annotationsTargetKey, setAnnotationsTargetKey] = useState(targetKey);
+  if (annotationsTargetKey !== targetKey) {
+    setAnnotationsTargetKey(targetKey);
+    setLineAnnotations(storedLineAnnotations());
+  }
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
@@ -1509,7 +1516,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${composerTargetKey(composerDraftTarget)}:${relativePath}:${resolvedTheme}`}
+                  key={`${relativePath}:${resolvedTheme}`}
                   environmentId={environmentId}
                   projectId={projectId}
                   cwd={cwd}
