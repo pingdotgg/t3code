@@ -120,6 +120,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   usageModelAliases: Schema.optionalKey(Schema.Boolean),
   threadPinning: Schema.optionalKey(Schema.Boolean),
   threadPinReorder: Schema.optionalKey(Schema.Boolean),
+  /** Hide provider reordering when absent; older servers silently drop `providerOrder`. */
+  providerOrder: Schema.optionalKey(Schema.Boolean),
   threadActiveReorder: Schema.optionalKey(Schema.Boolean),
   threadAutoSettleOptOut: Schema.optionalKey(Schema.Boolean),
   threadProjectFromScratch: Schema.optionalKey(Schema.Boolean),
