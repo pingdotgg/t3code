@@ -1792,7 +1792,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentId,
     projectId: activeProjectId,
     projectName,
-    ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
+    ownerKey:
+      questionAttachmentTarget ??
+      (isEditingQueuedMessage ? composerDraftTargetKey : composerTargetKey(routeThreadRef)),
     draftText: prompt,
     disabled: dictationDisabled,
     captureSubmissionDraft:

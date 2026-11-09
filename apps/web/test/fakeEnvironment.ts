@@ -59,7 +59,11 @@ const descriptor = {
   // A matching version, since a mismatch adds an update banner a typical user never sees.
   serverVersion: APP_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: true, voiceTranscription: true },
+  capabilities: {
+    repositoryIdentity: true,
+    voiceTranscription: true,
+    fileAttachments: { maxUploadBytes: 1000000 },
+  },
 };
 const auth = {
   policy: "loopback-browser",
@@ -341,6 +345,8 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
+  [WS_METHODS.assetsCreateUrl]: () =>
+    Effect.succeed({ relativeUrl: "/fixtures/report.txt", expiresAt: 4102444800000 }),
   // Recorded, and accepted only when the scenario asks, since a pending command holds every
   // later command on its thread. Accepted commands' events never arrive.
   [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
