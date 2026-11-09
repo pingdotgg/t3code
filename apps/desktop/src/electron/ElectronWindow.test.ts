@@ -53,7 +53,15 @@ vi.mock("electron", () => ({
     getAllWindows: getAllWindowsMock,
     getFocusedWindow: getFocusedWindowMock,
   }),
-  screen: { dipToScreenRect: (_window: unknown, rect: unknown) => rect },
+  screen: {
+    // A 200% display, so the focus target must carry converted bounds.
+    dipToScreenRect: (_window: unknown, rect: Electron.Rectangle) => ({
+      x: rect.x * 2,
+      y: rect.y * 2,
+      width: rect.width * 2,
+      height: rect.height * 2,
+    }),
+  },
 }));
 
 import * as ElectronWindow from "./ElectronWindow.ts";
@@ -117,6 +125,13 @@ describe("ElectronWindow", () => {
       });
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       yield* electronWindow.prepareReveal(window as unknown as Electron.BrowserWindow);
+      assert.deepEqual(windowsForegroundPrepareMock.mock.calls[0]?.[0], {
+        windowId: 41,
+        processId: process.pid,
+        title: "T3 Code (Dev)",
+        bounds: { x: 200, y: 100, width: 2_400, height: 1_600 },
+        contentBounds: { x: 216, y: 100, width: 2_368, height: 1_584 },
+      });
       window.getTitle.mockClear();
 
       const revealFiber = yield* electronWindow
