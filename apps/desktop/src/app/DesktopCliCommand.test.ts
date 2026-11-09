@@ -26,7 +26,6 @@ const environmentFor = (
     stateDir: path.join(input.baseDir, "userdata"),
     desktopSettingsPath: path.join(input.baseDir, "userdata", "desktop-settings.json"),
     serverRoot: "/opt/T3 Code/resources/app.asar",
-    appVersion: "1.2.3",
     appImagePath: Option.none(),
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
@@ -182,6 +181,13 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* command.uninstall;
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
+
+      // A fresh install beside someone else's t3, even off PATH, adds no second t3 in ~/bin.
+      const besideHome = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(besideHome, ".local", "bin"), { recursive: true });
+      yield* fs.writeFileString(path.join(besideHome, ".local", "bin", "t3"), "npm's t3\n");
+      yield* (yield* commandIn({ home: besideHome })).installOnFirstLaunch;
+      expect(yield* fs.exists(path.join(besideHome, "bin", "t3"))).toBe(false);
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");
@@ -365,12 +371,11 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
   it.effect("leaves the Windows PATH alone when it cannot be read", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { PATH: "", SHELL: "/bin/zsh" };
       const fs = yield* FileSystem.FileSystem;
       const home = yield* fs.makeTempDirectoryScoped();
       const userPath = "C:\\Users\\Me\\npm;%USERPROFILE%\\tools";
       const { registry, spawner } = fakePowerShell(userPath);
-      const command = yield* commandIn({ home, platform: "win32", env }, spawner);
+      const command = yield* commandIn({ home, platform: "win32" }, spawner);
 
       registry.failReads = true;
       const error = yield* Effect.flip(command.install);
@@ -397,7 +402,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
       // An inherited T3_SET=1 never turns a read into a write of the whole PATH.
       const inherited = fakePowerShell(userPath, { T3_SET: "1", T3_PATH: "C:\\other" });
-      const reader = yield* commandIn({ home, platform: "win32", env }, inherited.spawner);
+      const reader = yield* commandIn({ home, platform: "win32" }, inherited.spawner);
       yield* reader.install;
       expect(inherited.registry).toMatchObject({ path: `${userPath};${launcherDir}`, writes: 1 });
     }).pipe(Effect.scoped),
@@ -405,7 +410,6 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
 
   it.effect("does not claim or remove a Windows PATH entry the user added", () =>
     Effect.gen(function* () {
-      const env: NodeJS.ProcessEnv = { PATH: "", SHELL: "/bin/zsh" };
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const home = yield* fs.makeTempDirectoryScoped();
@@ -416,7 +420,7 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       );
       const userPath = `C:\\Tools;${launcherDir}`;
       const { registry, spawner } = fakePowerShell(userPath);
-      const command = yield* commandIn({ home, platform: "win32", env }, spawner);
+      const command = yield* commandIn({ home, platform: "win32" }, spawner);
 
       expect((yield* command.state).installedPath).toBeNull();
       yield* command.uninstall;
