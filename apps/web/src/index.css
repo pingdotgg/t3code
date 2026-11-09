@@ -4479,21 +4479,21 @@ body {
   -webkit-app-region: no-drag;
 }
 
-/* Scrollbar styling */
-::-webkit-scrollbar {
+/* Keep parent scrollbar styles off iframe owners to avoid WebKit resize loops: https://webkit.org/b/324485 */
+:where(:not(iframe))::-webkit-scrollbar {
   width: var(--app-scrollbar-width);
 }
 
-::-webkit-scrollbar-track {
+:where(:not(iframe))::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
+:where(:not(iframe))::-webkit-scrollbar-thumb {
   background: var(--app-scrollbar-thumb);
   border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
+:where(:not(iframe))::-webkit-scrollbar-thumb:hover {
   background: var(--app-scrollbar-thumb-hover);
 }
 
@@ -4773,7 +4773,7 @@ body {
 }
 
 .chat-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chat-markdown pre {

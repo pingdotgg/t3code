@@ -75,9 +75,28 @@ or use a package manager:
 | Arch Linux nightly | `yay -S t3code-nightly-bin`                                  |
 | Nix                | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code` |
 
+### Linux
+
+AppImage and `.deb` downloads are available for x86_64 and ARM64. Check your
+architecture with `uname -m`: for `x86_64`, choose a file ending in
+`x86_64.AppImage` or `amd64.deb`; for `aarch64`, choose `arm64.AppImage` or
+`arm64.deb`.
+
+To launch an AppImage, open a terminal in its download folder. Replace
+`T3-Code.AppImage` below with the exact filename you downloaded:
+
+```bash
+chmod +x ./T3-Code.AppImage
+./T3-Code.AppImage
+```
+
 The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
+
+The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
+in-app updater.
 
 ### Nix (nixpkgs)
 
@@ -185,12 +204,14 @@ on the environment's machine. An unlisted version is unverified.
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** runs the installer that owns the CLI
-(Homebrew, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or the
-CLI's own update command when T3 Code cannot tell. Update a CLI installed with
-mise through mise. Cursor and Antigravity update with T3 Code. Homebrew and
-Chocolatey installs compare against the version their package manager offers,
-which can trail the npm release; update Claude installed with Chocolatey
-through Chocolatey.
+(Homebrew, mise, or a global npm, pnpm, Yarn, Bun, Volta, or Vite+ install), or
+the CLI's own update command when T3 Code cannot tell. T3 Code runs `mise upgrade`
+only for a tool your mise config requests as `latest` when the provider's binary
+path is a mise shim or under the tool's `installs/<tool>/latest` link; update a
+pinned version, or a path into one version's directory, through mise yourself.
+Cursor and Antigravity update with T3 Code. Homebrew and Chocolatey installs
+compare against the version their package manager offers, which can trail the
+npm release; update Claude installed with Chocolatey through Chocolatey.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom

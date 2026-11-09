@@ -54,6 +54,8 @@ interface FakeCodexInput {
   stdinMustContain?: string;
   stdinMustNotContain?: string;
   mcpServers?: ReadonlyArray<{ name: string; enabled: boolean }> | number;
+  requiredCwd?: string;
+  requireInstructions?: string;
 }
 
 function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
@@ -67,6 +69,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     mcpServers: input.mcpServers ?? [],
+    requiredCwd: input.requiredCwd ?? null,
+    requireInstructions: input.requireInstructions ?? null,
     stderr: input.stderr ?? null,
     output: input.output,
     exitCode: input.exitCode ?? 0,
@@ -100,6 +104,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "let seenImage = false;",
         'let seenServiceTier = "";',
         'let seenReasoningEffort = "";',
+        'let instructions = "";',
         "for (let index = 0; index < args.length; index += 1) {",
         '  if (args[index] === "--image") {',
         "    index += 1;",
@@ -107,6 +112,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  } else if (args[index] === "--config") {',
         "    index += 1;",
         '    const value = args[index] ?? "";',
+        '    if (value.startsWith("developer_instructions=")) instructions = JSON.parse(value.slice("developer_instructions=".length));',
         '    if (value.startsWith("service_tier=")) seenServiceTier = value;',
         '    if (value.startsWith("model_reasoning_effort=")) seenReasoningEffort = value;',
         '  } else if (args[index] === "--output-last-message") {',
@@ -121,6 +127,8 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         '  process.stderr.write(message + "\\n");',
         "  process.exit(code);",
         "}",
+        'if (check.requiredCwd !== null && process.cwd() !== check.requiredCwd) fail("cannot inspect checkout", 10);',
+        'if (check.requireInstructions !== null && !instructions.includes(check.requireInstructions)) fail("missing writer task", 11);',
         "if (check.requireArg !== null && !originalArgs.includes(` ${check.requireArg} `)) {",
         '  fail("missing arg: " + check.requireArg, 8);',
         "}",
@@ -341,10 +349,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("generates titles with the user's MCP servers and plugins off", () =>
+  it.effect("preserves custom PR instructions while allowing checkout inspection", () =>
     withFakeCodexEnv(
       {
-        output: JSON.stringify({ title: "Remove default shapes" }),
+        output: JSON.stringify({ title: "Remove default shapes", body: "Removes default shapes." }),
+        launchArgs: "--config 'developer_instructions=\"Use TEAM: as the PR title prefix\"'",
+        requiredCwd: process.cwd(),
+        requireInstructions: "Use TEAM: as the PR title prefix",
+        forbidArg: "--config features.shell_tool=false",
         mcpServers: [
           { name: "augmenter", enabled: true },
           { name: "my.server", enabled: true },
@@ -355,9 +367,14 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
       },
       (textGeneration) =>
         Effect.gen(function* () {
-          const result = yield* textGeneration.generateThreadTitle({
+          const result = yield* textGeneration.generatePrContent({
             cwd: process.cwd(),
-            message: "Augmenter task 1. Use the Augmenter MCP: link_thread when you start.",
+            baseBranch: "main",
+            headBranch: "remove-default-shapes",
+            commitSummary: "Remove default shapes",
+            diffSummary: "shapes.ts | 2 --",
+            diffPatch: "-addDefaultShapes();",
+            threadContext: "user: in a few minutes PR will be up then $babysit-pr",
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
           });
           expect(result.title).toBe("Remove default shapes");
@@ -519,7 +536,16 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
   );
 });
 
-it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhausted) =>
+const PREFLIGHT_PRIMARY_STATES = [
+  "ready",
+  "pending",
+  "exhausted",
+  "not installed",
+  "signed out",
+  "signed out, fallback failed",
+] as const;
+
+it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
   Effect.gen(function* () {
     const primary = ProviderInstanceId.make("codex");
     const fallback = ProviderInstanceId.make("claude_work");
@@ -543,7 +569,19 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
         models: [],
         slashCommands: [],
         skills: [],
-        ...(exhausted && instanceId === primary
+        ...(primaryState === "pending" && instanceId === primary
+          ? { installed: false, status: "warning", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "not installed" && instanceId === primary
+          ? { installed: false, status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState.startsWith("signed out") && instanceId === primary
+          ? { status: "error", auth: { status: "unauthenticated" } }
+          : {}),
+        ...(primaryState === "signed out, fallback failed" && instanceId === fallback
+          ? { status: "error", auth: { status: "unknown" } }
+          : {}),
+        ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
                 checkedAt: "1970-01-01T00:00:00Z",
@@ -602,13 +640,15 @@ it.effect.each([false, true])("text generation preflight: exhausted=%s", (exhaus
       }),
     ).toEqual({ title: "Generated title" });
     expect(calls).toEqual([
-      exhausted
-        ? {
+      primaryState === "ready" ||
+      primaryState === "pending" ||
+      primaryState === "signed out, fallback failed"
+        ? selection
+        : {
             instanceId: fallback,
             model:
               DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[ProviderDriverKind.make("claudeAgent")],
-          }
-        : selection,
+          },
     ]);
   }),
 );

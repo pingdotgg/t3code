@@ -113,7 +113,15 @@ export function AssistantCitationCommentEditor({
         </p>
       ) : null}
       <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} />
+        <div
+          className={
+            speech.state.phase === "idle"
+              ? "contents"
+              : "flex basis-full flex-wrap gap-2 *:min-w-0 *:grow **:data-[slot=voice-input-pill]:w-full"
+          }
+        >
+          <TextFieldSpeechControls speech={speech} />
+        </div>
         <Button
           variant="secondary"
           size="xs"
