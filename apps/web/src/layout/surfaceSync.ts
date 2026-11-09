@@ -30,6 +30,7 @@ import {
   type LayoutCompanionKind,
   type LayoutState,
   type LayoutTab,
+  type LayoutTabDestination,
   type LayoutTabLocation,
   type LayoutTabPlacement,
 } from "./layoutModel";
@@ -63,6 +64,40 @@ export function requestLayoutSurfacePlacement(
       pendingPlacements.delete(scopedThreadKey(threadRef));
     }
   }, 5000);
+}
+
+/** Where Settings › Layout puts a thread's terminal or side pane, relative to its chat. */
+export function layoutSurfaceDestination(
+  chat: LayoutTabLocation,
+  terminal: boolean,
+): LayoutTabDestination {
+  const behavior = getLayoutBehavior();
+  const placement = terminal ? behavior.terminalPlacement : behavior.sidePanePlacement;
+  if (placement === "new-tab") {
+    return {
+      kind: "pane",
+      paneId: chat.pane.id,
+      index: behavior.newTabPosition === "end" ? chat.pane.tabs.length : chat.tabIndex + 1,
+    };
+  }
+  if (placement === "new-column") {
+    return {
+      kind: "column",
+      workspaceId: chat.workspace.id,
+      index: terminal
+        ? chat.workspace.columns.findIndex((column) => column.id === chat.column.id) + 1
+        : chat.workspace.columns.length,
+    };
+  }
+  return { kind: "split", paneId: chat.pane.id, side: terminal ? "down" : "right" };
+}
+
+export function layoutSurfacePlacement(
+  chat: LayoutTabLocation,
+  terminal: boolean,
+): LayoutSurfacePlacement {
+  const destination = layoutSurfaceDestination(chat, terminal);
+  return destination.kind === "split" ? { kind: terminal ? "below" : "beside" } : destination;
 }
 
 function isTerminalTab(tab: LayoutTab): boolean {
@@ -312,9 +347,9 @@ function syncThreadSurfaces(
   if (missing.length > 0) {
     // Shown again after hiding: back together beside the chat, as alt+cmd+B does.
     if (!before.isOpen && tabs.length === 0 && !pendingPlacements.has(scopedThreadKey(threadRef))) {
-      if (findThreadChat(layout, threadRef)) {
-        pendingPlacements.set(scopedThreadKey(threadRef), { kind: "beside" });
-      }
+      const chat = findThreadChat(layout, threadRef);
+      if (chat)
+        pendingPlacements.set(scopedThreadKey(threadRef), layoutSurfacePlacement(chat, false));
     }
     const newTabs = missing.map((surface) =>
       createLayoutTab({ kind: "surface", threadRef, surfaceId: surface.id }),
