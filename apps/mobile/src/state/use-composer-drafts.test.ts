@@ -127,10 +127,13 @@ const composerAttachmentCleanupMocks = vi.hoisted(() => ({
 
 const modelCommandMocks = vi.hoisted(() => ({
   setModelSelection: Symbol("set-model-selection"),
+  alert: vi.fn(),
   canOperate: true,
   thread: null as unknown,
   runs: [] as Array<unknown>,
-  replies: [] as Array<ReturnType<typeof Promise.withResolvers<{ _tag: "Success" | "Failure" }>>>,
+  replies: [] as Array<
+    ReturnType<typeof Promise.withResolvers<{ _tag: "Success" | "Failure"; error?: Error }>>
+  >,
 }));
 
 const incomingShareStorageMocks = vi.hoisted(() => ({
@@ -153,6 +156,7 @@ vi.mock("../lib/composerImages", async (importOriginal) => ({
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
+vi.mock("../components/ui/Dialog", () => ({ alert: modelCommandMocks.alert }));
 vi.mock("./session", () => ({
   environmentSession: {},
   readEnvironmentScope: () => modelCommandMocks.canOperate,
@@ -174,7 +178,7 @@ vi.mock("@t3tools/client-runtime/state/runtime", () => ({
       throw new Error("Unexpected network command in the inline read test");
     }
     modelCommandMocks.runs.push(value);
-    const reply = Promise.withResolvers<{ _tag: "Success" | "Failure" }>();
+    const reply = Promise.withResolvers<{ _tag: "Success" | "Failure"; error?: Error }>();
     modelCommandMocks.replies.push(reply);
     return reply.promise;
   },
@@ -533,6 +537,7 @@ describe("mobile composer drafts", () => {
     const codex = ProviderInstanceId.make("codex");
     modelCommandMocks.runs.length = 0;
     modelCommandMocks.replies.length = 0;
+    modelCommandMocks.alert.mockClear();
     modelCommandMocks.canOperate = true;
     modelCommandMocks.thread = {
       ...v2ThreadShell,
@@ -564,9 +569,18 @@ describe("mobile composer drafts", () => {
     modelCommandMocks.replies[1]!.resolve({ _tag: "Success" });
     await modelCommandMocks.replies[1]!.promise;
     expect(getComposerDraftSnapshot(key).modelSelection).toBe(latest);
-    modelCommandMocks.replies[2]!.resolve({ _tag: "Failure" });
+    expect(modelCommandMocks.alert).not.toHaveBeenCalled();
+    modelCommandMocks.replies[2]!.resolve({
+      _tag: "Failure",
+      error: new Error("The connection was lost."),
+    });
     await modelCommandMocks.replies[2]!.promise;
     expect(getComposerDraftSnapshot(key).modelSelection).toBe(latest);
+    expect(getComposerDraftSnapshot(key).text).toBe("keep this prompt");
+    expect(modelCommandMocks.alert).toHaveBeenCalledExactlyOnceWith(
+      "Could not apply model selection",
+      "This model pick was not saved. The connection was lost.",
+    );
 
     // Another instance would replace the live session, and a read-only connection cannot
     // change the thread: both picks wait for a sent message.

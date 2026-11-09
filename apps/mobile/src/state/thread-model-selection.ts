@@ -1,4 +1,4 @@
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
+import * as Dialog from "../components/ui/Dialog";
 import { appAtomRegistry } from "./atom-registry";
 import { readEnvironmentScope } from "./session";
 import { environmentThreadShells, threadEnvironment } from "./threads";
@@ -40,6 +41,14 @@ export function selectThreadModel(
     { label: "change model", reportFailure: true, reportDefect: true },
   ).then((result) => {
     // Released on the reply, so a later change from another client shows.
-    if (result._tag === "Success") releaseComposerDraftModelSelection(threadKey, modelSelection);
+    if (result._tag === "Success") {
+      releaseComposerDraftModelSelection(threadKey, modelSelection);
+    } else {
+      const error = squashAtomCommandFailure(result);
+      Dialog.alert(
+        "Could not apply model selection",
+        `This model pick was not saved. ${error instanceof Error ? error.message : "Try again."}`,
+      );
+    }
   });
 }
