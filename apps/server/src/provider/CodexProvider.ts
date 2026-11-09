@@ -77,6 +77,14 @@ const CODEX_CLIENT_NAME = "T3 Code";
 // Handshake plus account/models/skills requests can exceed the shared 10s probe budget.
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
+
+const resolveCodexProbeTimeoutMs = (environment: NodeJS.ProcessEnv): number => {
+  const timeoutMs = Number(environment.T3CODE_CODEX_PROBE_TIMEOUT_MS);
+  // Node timers overflow above a signed 32-bit delay and can fire immediately.
+  return Number.isInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= 2_147_483_647
+    ? timeoutMs
+    : CODEX_AUTH_PROBE_TIMEOUT_MS;
+};
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
 const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
@@ -526,6 +534,7 @@ export const withCodexAppServerClient = Effect.fn("withCodexAppServerClient")(fu
 });
 
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
+  readonly probeTimeoutMs: number;
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly launchArgs?: string;
@@ -550,7 +559,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   }
 
   // Optional discovery must finish before the outer timeout can discard the account result.
-  const deadlineMs = spawnedAtMs + CODEX_AUTH_PROBE_TIMEOUT_MS - CODEX_DISCOVERY_MARGIN_MS;
+  const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
   const [skillsResponse, models, serviceTier, rateLimits] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
@@ -735,6 +744,7 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
+    readonly probeTimeoutMs: number;
     readonly binaryPath: string;
     readonly homePath?: string;
     readonly launchArgs?: string;
@@ -774,7 +784,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     });
   }
 
+  const probeTimeoutMs = resolveCodexProbeTimeoutMs(resolvedEnvironment);
   const probeResult = yield* probe({
+    probeTimeoutMs,
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
     launchArgs: resolveCodexLaunchArgs(codexSettings.launchArgs, resolvedEnvironment),
@@ -783,7 +795,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ...(managedAuth ? { skipNativeUsage: true } : {}),
   }).pipe(
     // Process teardown can outlast the work budget without discarding a completed snapshot.
-    Effect.timeoutOption(Duration.millis(CODEX_AUTH_PROBE_TIMEOUT_MS)),
+    Effect.timeoutOption(Duration.millis(probeTimeoutMs)),
     Effect.scoped,
     Effect.result,
   );

@@ -1,3 +1,4 @@
+import * as Duration from "effect/Duration";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import { vi } from "vite-plus/test";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -412,6 +413,56 @@ it.layer(
             input: { hint: "Describe the issue (optional)" },
           },
         ]);
+      }),
+    );
+
+    it.effect("allows a slow successful Codex probe with a configured budget", () =>
+      Effect.gen(function* () {
+        const fiber = yield* checkCodexProviderStatus(
+          defaultCodexSettings,
+          () => Effect.sleep("22 seconds").pipe(Effect.as(makeCodexProbeSnapshot())),
+          { T3CODE_CODEX_PROBE_TIMEOUT_MS: "60000" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("22 seconds");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+      }),
+    );
+
+    it.effect.each([
+      ["60000", 60000],
+      ["1000", 1000],
+      [undefined, 20000],
+      ["", 20000],
+      ["invalid", 20000],
+      ["0", 20000],
+      ["-1", 20000],
+      ["1.5", 20000],
+      ["Infinity", 20000],
+      ["2147483648", 20000],
+    ] as const)("bounds a stalled probe with timeout setting %s", ([value, timeoutMs]) =>
+      Effect.gen(function* () {
+        const released = yield* Deferred.make<void>();
+        const fiber = yield* checkCodexProviderStatus(
+          defaultCodexSettings,
+          () =>
+            Effect.addFinalizer(() => Deferred.succeed(released, undefined)).pipe(
+              Effect.andThen(Effect.never),
+            ),
+          { T3CODE_CODEX_PROBE_TIMEOUT_MS: value },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust(Duration.millis(timeoutMs - 1));
+        assert.isFalse(yield* Deferred.isDone(released));
+        yield* TestClock.adjust("1 millis");
+        const status = yield* Fiber.join(fiber);
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unknown");
+        assert.strictEqual(
+          status.message,
+          "Timed out while checking Codex app-server provider status.",
+        );
+        assert.isTrue(yield* Deferred.isDone(released));
       }),
     );
 
