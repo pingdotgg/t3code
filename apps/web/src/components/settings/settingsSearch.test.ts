@@ -75,6 +75,26 @@ describe("searchSettings", () => {
         scope: "environment-defaults",
       });
     }
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        for (const query of ["pull requests", ...(enabled ? ["merge requests"] : [])]) {
+          expect(
+            searchSettings(query).map((item) => item.id),
+            query,
+          ).toContain("diff-layout");
+          expect(
+            searchSettings(query, [
+              { id: "requests", title: "Pull requests", to: "/settings/general" },
+            ]),
+          ).toMatchObject([
+            { id: "requests", title: enabled ? "Merge requests" : "Pull requests" },
+          ]);
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("hides the Secrets page from nav and search while the secrets feature is disabled", () => {

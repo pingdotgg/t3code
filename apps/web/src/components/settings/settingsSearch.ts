@@ -1525,11 +1525,13 @@ export function searchSettings(
   const terms = currentChangeRequestTerms();
 
   return settingsForThisPlatform(items)
-    .map((item) => ({ ...item, title: formatSettingsSearchTitle(item, terms) }))
-    .flatMap((item, index) => {
+    .flatMap((originalItem, index) => {
+      const item = { ...originalItem, title: formatSettingsSearchTitle(originalItem, terms) };
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
+        normalizeSearchText(originalItem.title),
+        normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
         normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], terms)),
         ...(item.searchTerms ?? []).flatMap((term) => [
           normalizeSearchText(term),
