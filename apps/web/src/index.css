@@ -2431,10 +2431,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     color-mix(in srgb, var(--ring) 66.667%, transparent),
     color-mix(in srgb, var(--ring) 20%, transparent)
   );
-  --subagent-avatar-1: #ffffff;
-  --subagent-avatar-2: #ffffff;
-  --subagent-avatar-3: #ffffff;
-  --subagent-avatar-ring: #f7f7f7;
   --code-gutter: #7f7f7f;
   --settings-effective-fill: #0000000c;
   --settings-active-rim: #000000b3;
@@ -2568,10 +2564,6 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --model-picker-label: #bdbdbd;
   --model-picker-selected: #ffffff0d;
   --diff-comment-rim: linear-gradient(180deg, #6e8cffaa, #6e8cff33);
-  --subagent-avatar-1: #2d2d2d;
-  --subagent-avatar-2: #2a2a2a;
-  --subagent-avatar-3: #292929;
-  --subagent-avatar-ring: #181818;
   --code-gutter: #5f5f5f;
   --settings-effective-fill: #ffffff14;
   --settings-active-rim: #ffffffb3;
@@ -2850,10 +2842,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --code-gutter: var(--dim-foreground);
   --search-line-number: var(--dim-foreground);
   --kbd-lit-foreground: color-mix(in oklab, var(--primary-foreground) 55%, var(--primary));
-  --subagent-avatar-1: color-mix(in srgb, var(--card), white 10%);
-  --subagent-avatar-2: color-mix(in srgb, var(--card), white 8%);
-  --subagent-avatar-3: color-mix(in srgb, var(--card), white 6%);
-  --subagent-avatar-ring: var(--card);
   --sidebar-settled-title: color-mix(in oklab, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --sidebar-settled-label: color-mix(in oklab, var(--sidebar-muted-foreground) 75%, var(--sidebar));
   --sidebar-settled-meta: color-mix(in oklab, var(--sidebar-muted-foreground) 65%, var(--sidebar));
