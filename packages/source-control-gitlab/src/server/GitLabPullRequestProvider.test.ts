@@ -1017,6 +1017,106 @@ describe("review decisions", () => {
     }),
   );
 
+  describe("across projects", () => {
+    const pageOf = (
+      repository: string,
+      updatedAts: ReadonlyArray<string>,
+      hasNextPage = false,
+    ) => ({
+      repository,
+      page: {
+        items: updatedAts.map((updatedAt, index) => ({ ...item, number: index + 1, updatedAt })),
+        states: new Map([
+          [1, { reviewDecision: "approved" as const, checksState: "passing" as const }],
+        ]),
+        rawCount: updatedAts.length,
+        hasNextPage,
+        endCursor: null,
+      },
+    });
+    const across = { ...listing, repositories: ["acme/web", "acme/docs"], limit: 10 };
+    const readAcross = (
+      listMergeRequestsInProjects: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestsInProjects"],
+      input: Partial<typeof across> & {
+        readonly cursor?: { readonly updatedBefore: string; readonly delivered: number };
+      } = {},
+    ) =>
+      providerWith(() => Effect.die("a GraphQL page carries its own states"), {
+        supportsGraphqlList: () => Effect.succeed(true),
+        listMergeRequestsInProjects,
+      }).pipe(
+        Effect.flatMap((provider) => {
+          assert.isDefined(provider.listChangeRequestsAcross);
+          return provider.listChangeRequestsAcross({ ...across, ...input });
+        }),
+      );
+
+    it.effect("leaves rows older than a project's unread rows to the next page", () =>
+      Effect.gen(function* () {
+        const page = yield* readAcross(() =>
+          Effect.succeed([
+            pageOf("acme/web", ["2026-11-09T10:00:05Z", "2026-11-09T10:00:03Z"], true),
+            pageOf("acme/docs", ["2026-11-09T10:00:04Z", "2026-11-09T10:00:01Z"]),
+          ]),
+        );
+
+        expect(page.items.map(({ repository, updatedAt }) => [repository, updatedAt])).toEqual([
+          ["acme/web", "2026-11-09T10:00:05Z"],
+          ["acme/docs", "2026-11-09T10:00:04Z"],
+          ["acme/web", "2026-11-09T10:00:03Z"],
+        ]);
+        expect(page.items[0]?.reviewDecision).toBe("approved");
+        expect(page.truncated).toBe(true);
+      }),
+    );
+
+    it.effect("continues from past the boundary second GitLab rounds updatedAt down to", () =>
+      Effect.gen(function* () {
+        const asked: Array<string | undefined> = [];
+        const read = (cursor?: { readonly updatedBefore: string; readonly delivered: number }) =>
+          readAcross(
+            (input) => {
+              asked.push(input.updatedBefore);
+              return Effect.succeed([]);
+            },
+            cursor === undefined ? {} : { cursor },
+          );
+
+        yield* read();
+        yield* read({ updatedBefore: "2026-11-09T10:10:44Z", delivered: 10 });
+
+        expect(asked).toEqual([undefined, "2026-11-09T10:10:45.000Z"]);
+      }),
+    );
+
+    it.effect("reports projects GitLab left out of its answer as unresolved", () =>
+      Effect.gen(function* () {
+        const page = yield* readAcross(() =>
+          Effect.succeed([pageOf("Acme/Web", ["2026-11-09T10:00:05Z"])]),
+        );
+
+        expect(page.unresolved).toEqual(["acme/docs"]);
+      }),
+    );
+
+    it.effect("splits more projects than one GitLab request takes across several", () =>
+      Effect.gen(function* () {
+        const requested: Array<number> = [];
+        const repositories = Array.from({ length: 60 }, (_, index) => `acme/project-${index}`);
+
+        yield* readAcross(
+          (input) => {
+            requested.push(input.repositories.length);
+            return Effect.succeed([]);
+          },
+          { repositories },
+        );
+
+        expect(requested.toSorted((left, right) => right - left)).toEqual([25, 25, 10]);
+      }),
+    );
+  });
+
   it.effect.each([
     {
       failure: "a failed read",

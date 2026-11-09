@@ -1,9 +1,12 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import type {
   PullRequestActor,
   PullRequestCapabilities,
@@ -16,6 +19,7 @@ import type { GitLabDiffRefs, GitLabMergeRequestListState } from "./gitLabMergeR
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
+  type ProviderBatchedChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
@@ -99,6 +103,19 @@ const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
 const READ_CACHE_CAPACITY = 256;
 /** A host's GitLab version only changes on upgrade. */
 const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
+/**
+ * GitLab takes at most 50 paths per `projects` read, but 50 projects' rows time out its query;
+ * 25 projects of 20 rows answer in about seven seconds on gitlab.com.
+ */
+const PROJECTS_PER_READ = 25;
+const ROWS_PER_PROJECT = 20;
+/** A whole chunk of the service's projects at once. */
+const PROJECT_READ_CONCURRENCY = 4;
+
+/** The checkout whose `glab` reads a host's version; any checkout of a project on it answers. */
+class VersionReadCheckout extends Context.Service<VersionReadCheckout, { readonly cwd: string }>()(
+  "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider/VersionReadCheckout",
+) {}
 
 function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
@@ -137,24 +154,29 @@ export const make = Effect.gen(function* () {
     },
   );
   const graphqlListSupport = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, host] = JSON.parse(key) as [string, string | undefined];
-      // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
-      return cli.supportsGraphqlList({ cwd, host }).pipe(
-        Effect.catchIf(
-          (cause) =>
-            cause._tag !== "GitLabCliUnavailableError" &&
-            cause._tag !== "GitLabCliAuthenticationError" &&
-            cause._tag !== "GitLabCliRateLimitError",
-          () => Effect.succeed(false),
+    (host: string) =>
+      VersionReadCheckout.use(({ cwd }) =>
+        // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
+        cli.supportsGraphqlList({ cwd, host }).pipe(
+          Effect.catchIf(
+            (cause) =>
+              cause._tag !== "GitLabCliUnavailableError" &&
+              cause._tag !== "GitLabCliAuthenticationError" &&
+              cause._tag !== "GitLabCliRateLimitError",
+            () => Effect.succeed(false),
+          ),
         ),
-      );
-    },
+      ),
     {
       capacity: READ_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? GRAPHQL_LIST_SUPPORT_TTL : Duration.zero),
+      requireServicesAt: "lookup",
     },
   );
+  const supportsGraphqlList = (input: { readonly cwd: string; readonly host: string }) =>
+    Cache.get(graphqlListSupport, input.host).pipe(
+      Effect.provideService(VersionReadCheckout, { cwd: input.cwd }),
+    );
   const projectMergeCapabilities = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
@@ -271,7 +293,7 @@ export const make = Effect.gen(function* () {
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
-      Cache.get(graphqlListSupport, JSON.stringify([input.cwd, input.host])).pipe(
+      supportsGraphqlList(input).pipe(
         // Without a known version the REST list still answers, only with fewer filters.
         Effect.orElseSucceed(() => false),
         Effect.flatMap((graphql) =>
@@ -308,6 +330,70 @@ export const make = Effect.gen(function* () {
         ),
         Effect.mapError(fail("listChangeRequests")),
       ),
+
+    listChangeRequestsAcross: Effect.fn("GitLabPullRequestProvider.listChangeRequestsAcross")(
+      function* (input) {
+        const failed = fail("listChangeRequestsAcross");
+        const graphql = yield* supportsGraphqlList(input).pipe(Effect.mapError(failed));
+        if (!graphql) {
+          return yield* new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("gitlab"),
+            operation: "listChangeRequestsAcross",
+            reason: "failed",
+            detail: "This GitLab version lists one project at a time.",
+          });
+        }
+        const updatedBefore =
+          input.cursor === undefined ? undefined : pastBoundarySecond(input.cursor.updatedBefore);
+        const chunks: Array<ReadonlyArray<string>> = [];
+        for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
+          chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
+        }
+        const pages = (yield* Effect.forEach(
+          chunks,
+          (repositories) =>
+            cli.listMergeRequestsInProjects({
+              cwd: input.cwd,
+              host: input.host,
+              repositories,
+              state: input.state,
+              involvement: input.involvement,
+              viewer: input.viewer,
+              first: Math.min(input.limit, ROWS_PER_PROJECT),
+              updatedBefore,
+              query: input.query,
+              filters: input.filters,
+            }),
+          { concurrency: PROJECT_READ_CONCURRENCY },
+        ).pipe(Effect.mapError(failed))).flat();
+
+        // A project with more rows than it sent may have some newer than another project's
+        // oldest, so rows older than the newest such cut are left to the next page.
+        let cut: string | null = null;
+        for (const { page } of pages) {
+          if (!page.hasNextPage) continue;
+          const oldest = page.items.at(-1)?.updatedAt;
+          if (oldest !== undefined && (cut === null || oldest > cut)) cut = oldest;
+        }
+        const complete = pages
+          .flatMap(({ repository, page }) =>
+            page.items.map((item): ProviderBatchedChangeRequest => ({
+              ...withListState(item, page.states),
+              repository,
+            })),
+          )
+          .filter((item) => cut === null || item.updatedAt >= cut)
+          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+        const answered = new Set(pages.map(({ repository }) => repository.trim().toLowerCase()));
+        return {
+          items: complete.slice(0, input.limit),
+          truncated: complete.length > input.limit || pages.some(({ page }) => page.hasNextPage),
+          unresolved: input.repositories.filter(
+            (repository) => !answered.has(repository.trim().toLowerCase()),
+          ),
+        };
+      },
+    ),
 
     getFileStats: (input) =>
       cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
@@ -661,6 +747,17 @@ export const make = Effect.gen(function* () {
 
   return provider;
 });
+
+/**
+ * GitLab reports `updatedAt` to the second but compares its stored fraction, so reading the
+ * boundary second inclusively takes the next one. The caller drops rows it already has there.
+ */
+function pastBoundarySecond(updatedBefore: string): string {
+  return Option.match(DateTime.make(updatedBefore), {
+    onNone: () => updatedBefore,
+    onSome: (boundary) => DateTime.formatIso(DateTime.add(boundary, { seconds: 1 })),
+  });
+}
 
 function withListState<Item extends { readonly number: number }>(
   item: Item,

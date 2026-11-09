@@ -51,6 +51,7 @@ import {
   decodeMergeRequestChangesJson,
   decodeGraphqlListSupportJson,
   decodeMergeRequestGraphqlListJson,
+  decodeMergeRequestGraphqlProjectsListJson,
   decodeMergeRequestListJson,
   decodeMergeRequestFileStatsJson,
   decodeMergeRequestStatsJson,
@@ -82,6 +83,7 @@ import {
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
   type GitLabMergeRequestListState,
+  type GitLabProjectMergeRequestGraphqlPage,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
@@ -368,6 +370,27 @@ export class GitLabPullRequestCli extends Context.Service<
        */
       readonly graphql?: boolean;
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
+
+    /**
+     * One GraphQL read of each project's newest `first` merge requests. Projects the reader cannot
+     * see, or that do not exist, are absent from the answer. Needs `supportsGraphqlList`.
+     */
+    readonly listMergeRequestsInProjects: (input: {
+      readonly cwd: string;
+      readonly host?: string | undefined;
+      readonly repositories: ReadonlyArray<string>;
+      readonly state: PullRequestListState;
+      readonly involvement: PullRequestInvolvement;
+      readonly viewer: string;
+      readonly first: number;
+      /** Exclusive, at GitLab's sub-second precision. */
+      readonly updatedBefore?: string | undefined;
+      readonly query?: string | undefined;
+      readonly filters?: PullRequestListFilters | undefined;
+    }) => Effect.Effect<
+      ReadonlyArray<GitLabProjectMergeRequestGraphqlPage>,
+      GitLabPullRequestCliError
+    >;
 
     /** Whether this host's GraphQL list takes every filter the REST list does. */
     readonly supportsGraphqlList: (input: {
@@ -727,21 +750,29 @@ function filterParams(input: {
   ];
 }
 
-/**
- * The GraphQL list takes the REST filters and narrows two review filters exactly: `approvedBy`
- * Any for approved, and reviewer states for changes requested. Only arguments in use are
- * declared, since GraphQL rejects a declared variable the query never reads.
- */
-function graphqlListQuery(input: {
-  readonly repository: string;
+interface GraphqlListFilters {
   readonly state: PullRequestListState;
   readonly involvement: PullRequestInvolvement;
   readonly viewer: string;
   readonly query?: string | undefined;
   readonly filters?: PullRequestListFilters | undefined;
-  readonly first: number;
-  readonly after: string | undefined;
-}): { readonly query: string; readonly variables: Record<string, unknown> } {
+}
+
+/**
+ * The GraphQL list takes the REST filters and narrows two review filters exactly: `approvedBy`
+ * Any for approved, and reviewer states for changes requested. Only arguments in use are
+ * declared, since GraphQL rejects a declared variable the query never reads.
+ */
+function graphqlListArguments(
+  input: GraphqlListFilters & {
+    readonly first: number;
+    readonly extra: ReadonlyArray<readonly [name: string, type: string, value: unknown]>;
+  },
+): {
+  readonly declarations: string;
+  readonly usages: string;
+  readonly variables: Record<string, unknown>;
+} {
   const filters = input.filters ?? {};
   const { required, excluded } = listableLabels(filters);
   const search = input.query?.trim() ?? "";
@@ -752,6 +783,8 @@ function graphqlListQuery(input: {
         ? undefined
         : resolvePullRequestAuthorFilter(filters.author, input.viewer);
   const args: ReadonlyArray<readonly [name: string, type: string, value: unknown]> = [
+    ["first", "Int!", input.first],
+    ...input.extra,
     ["state", "MergeRequestState", stateParam(input.state)],
     ...(author === undefined ? [] : [["authorUsername", "String", author] as const]),
     ...(input.involvement === "reviewing"
@@ -768,36 +801,78 @@ function graphqlListQuery(input: {
       ? [["reviewStates", "[MergeRequestReviewState!]", ["REQUESTED_CHANGES"]] as const]
       : []),
   ];
-  const declarations = [
-    "$fullPath: ID!",
-    "$first: Int!",
-    "$after: String",
-    ...args.map(([name, type]) => `$${name}: ${type}`),
-    ...(excluded.length === 0 ? [] : ["$notLabels: [String!]"]),
-  ];
-  const usages = [
-    "sort: UPDATED_DESC",
-    "first: $first",
-    "after: $after",
-    ...args.map(([name]) => `${name}: $${name}`),
-    ...(excluded.length === 0 ? [] : ["not: { labels: $notLabels }"]),
-  ];
   return {
-    query: `query(${declarations.join(", ")}) {
+    declarations: [
+      ...args.map(([name, type]) => `$${name}: ${type}`),
+      ...(excluded.length === 0 ? [] : ["$notLabels: [String!]"]),
+    ].join(", "),
+    usages: [
+      "sort: UPDATED_DESC",
+      ...args.map(([name]) => `${name}: $${name}`),
+      ...(excluded.length === 0 ? [] : ["not: { labels: $notLabels }"]),
+    ].join(", "),
+    variables: {
+      ...Object.fromEntries(args.map(([name, , value]) => [name, value])),
+      ...(excluded.length === 0 ? {} : { notLabels: excluded }),
+    },
+  };
+}
+
+function graphqlListQuery(
+  input: GraphqlListFilters & {
+    readonly repository: string;
+    readonly first: number;
+    readonly after: string | undefined;
+  },
+): { readonly query: string; readonly variables: Record<string, unknown> } {
+  const { declarations, usages, variables } = graphqlListArguments({
+    ...input,
+    extra: [["after", "String", input.after ?? null]],
+  });
+  return {
+    query: `query($fullPath: ID!, ${declarations}) {
   metadata { enterprise }
   project(fullPath: $fullPath) {
-    mergeRequests(${usages.join(", ")}) {
+    mergeRequests(${usages}) {
       pageInfo { hasNextPage endCursor }
       nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
     }
   }
 }`,
+    variables: { fullPath: input.repository.trim(), ...variables },
+  };
+}
+
+/** The same list over several projects, each its newest `first` rows from `updatedBefore` down. */
+function graphqlProjectsListQuery(
+  input: GraphqlListFilters & {
+    readonly repositories: ReadonlyArray<string>;
+    readonly first: number;
+    readonly updatedBefore?: string | undefined;
+  },
+): { readonly query: string; readonly variables: Record<string, unknown> } {
+  const { declarations, usages, variables } = graphqlListArguments({
+    ...input,
+    extra:
+      input.updatedBefore === undefined ? [] : [["updatedBefore", "Time", input.updatedBefore]],
+  });
+  return {
+    query: `query($fullPaths: [String!], $projectCount: Int!, ${declarations}) {
+  metadata { enterprise }
+  projects(fullPaths: $fullPaths, first: $projectCount) {
+    nodes {
+      fullPath
+      mergeRequests(${usages}) {
+        pageInfo { hasNextPage }
+        nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
+      }
+    }
+  }
+}`,
     variables: {
-      fullPath: input.repository.trim(),
-      first: input.first,
-      after: input.after ?? null,
-      ...Object.fromEntries(args.map(([name, , value]) => [name, value])),
-      ...(excluded.length === 0 ? {} : { notLabels: excluded }),
+      fullPaths: input.repositories.map((repository) => repository.trim()),
+      projectCount: input.repositories.length,
+      ...variables,
     },
   };
 }
@@ -1984,6 +2059,17 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+
+    listMergeRequestsInProjects: Effect.fn("GitLabPullRequestCli.listMergeRequestsInProjects")(
+      (input) =>
+        graphqlRead({
+          cwd: input.cwd,
+          host: input.host,
+          operation: "listMergeRequestsInProjects",
+          ...graphqlProjectsListQuery(input),
+          decode: decodeMergeRequestGraphqlProjectsListJson,
+        }),
+    ),
 
     supportsGraphqlList: Effect.fn("GitLabPullRequestCli.supportsGraphqlList")((input) =>
       graphqlRead({

@@ -1651,23 +1651,36 @@ const RawGraphqlListNodeSchema = Schema.Struct({
   ),
 });
 
+const RawGraphqlListPageSchema = Schema.Struct({
+  pageInfo: Schema.Struct({
+    hasNextPage: Schema.Boolean,
+    endCursor: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+  nodes: Schema.Array(Schema.Unknown),
+});
+
 // GitLab answers `project: null` for a project the reader cannot see, which REST reports as an error.
 const RawGraphqlListSchema = Schema.Struct({
   data: Schema.Struct({
     metadata: RawMetadataSchema,
-    project: Schema.Struct({
-      mergeRequests: Schema.Struct({
-        pageInfo: Schema.Struct({
-          hasNextPage: Schema.Boolean,
-          endCursor: Schema.optional(Schema.NullOr(Schema.String)),
-        }),
-        nodes: Schema.Array(Schema.Unknown),
-      }),
+    project: Schema.Struct({ mergeRequests: RawGraphqlListPageSchema }),
+  }),
+});
+
+// A path the reader cannot see, or that does not exist, is left out of `nodes`.
+const RawGraphqlProjectsListSchema = Schema.Struct({
+  data: Schema.Struct({
+    metadata: RawMetadataSchema,
+    projects: Schema.Struct({
+      nodes: Schema.Array(
+        Schema.Struct({ fullPath: Schema.String, mergeRequests: RawGraphqlListPageSchema }),
+      ),
     }),
   }),
 });
 
 const decodeGraphqlList = decodeJsonResult(RawGraphqlListSchema);
+const decodeGraphqlProjectsList = decodeJsonResult(RawGraphqlProjectsListSchema);
 const decodeGraphqlListNode = Schema.decodeUnknownExit(RawGraphqlListNodeSchema);
 
 export interface GitLabMergeRequestGraphqlPage {
@@ -1679,15 +1692,10 @@ export interface GitLabMergeRequestGraphqlPage {
   readonly endCursor: string | null;
 }
 
-export function decodeMergeRequestGraphqlListJson(
-  raw: string,
-): Result.Result<GitLabMergeRequestGraphqlPage, DecodeFailure> {
-  const decoded = decodeGraphqlList(raw);
-  if (!Result.isSuccess(decoded)) {
-    return Result.fail(decoded.failure);
-  }
-  const page = decoded.success.data.project.mergeRequests;
-  const enterprise = decoded.success.data.metadata?.enterprise;
+function toGraphqlListPage(
+  page: typeof RawGraphqlListPageSchema.Type,
+  enterprise: boolean | null | undefined,
+): GitLabMergeRequestGraphqlPage {
   const items: GitLabMergeRequestListItem[] = [];
   const states = new Map<number, GitLabMergeRequestListState>();
   for (const entry of page.nodes) {
@@ -1729,13 +1737,37 @@ export function decodeMergeRequestGraphqlListJson(
     });
     states.set(number, toListState(node, enterprise));
   }
-  return Result.succeed({
+  return {
     items,
     states,
     rawCount: page.nodes.length,
     hasNextPage: page.pageInfo.hasNextPage,
     endCursor: trimmed(page.pageInfo.endCursor),
-  });
+  };
+}
+
+export function decodeMergeRequestGraphqlListJson(
+  raw: string,
+): Result.Result<GitLabMergeRequestGraphqlPage, DecodeFailure> {
+  return Result.map(decodeGraphqlList(raw), ({ data }) =>
+    toGraphqlListPage(data.project.mergeRequests, data.metadata?.enterprise),
+  );
+}
+
+export interface GitLabProjectMergeRequestGraphqlPage {
+  readonly repository: string;
+  readonly page: GitLabMergeRequestGraphqlPage;
+}
+
+export function decodeMergeRequestGraphqlProjectsListJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitLabProjectMergeRequestGraphqlPage>, DecodeFailure> {
+  return Result.map(decodeGraphqlProjectsList(raw), ({ data }) =>
+    data.projects.nodes.map((project) => ({
+      repository: project.fullPath,
+      page: toGraphqlListPage(project.mergeRequests, data.metadata?.enterprise),
+    })),
+  );
 }
 
 export const SERVER_VERSION_GRAPHQL_QUERY = "{ metadata { version } }";
