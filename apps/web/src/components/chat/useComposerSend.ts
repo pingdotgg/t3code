@@ -470,7 +470,8 @@ export function useComposerSend(input: ComposerSendInput) {
         sendCtx.previewAnnotations.length > 0 ||
         sendCtx.reviewComments.length > 0 ||
         sendCtx.threadContexts.length > 0 ||
-        sendCtx.environmentContexts.length > 0
+        sendCtx.environmentContexts.length > 0 ||
+        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo
       ) {
         toastManager.add(
           stackedThreadToast({
