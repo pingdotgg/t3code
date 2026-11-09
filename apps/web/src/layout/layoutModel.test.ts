@@ -9,6 +9,7 @@ import {
   openLayoutGhostChat,
   openLayoutKeptTab,
   openLayoutTab,
+  placeLayoutTabs,
   replaceLayoutTabContent,
   selectFocusedTab,
   showLayoutContent,
@@ -310,5 +311,30 @@ describe("layoutChatSwaps", () => {
         ({ from, to }) => `${name(from)}>${name(to)}`,
       ),
     ).toEqual(swaps);
+  });
+});
+
+describe("placeLayoutTabs", () => {
+  it("gives an empty workspace a focused pane when a surface arrives in the background", () => {
+    const before = createLayoutState();
+    const tab: LayoutTab = { id: "diff", content: diff };
+    const after = placeLayoutTabs(
+      before,
+      [tab],
+      { kind: "column", workspaceId: before.focusedWorkspaceId, index: 0 },
+      { activate: null, focus: false },
+    );
+    expect(selectFocusedTab(after)).toBe(tab);
+  });
+
+  it("keeps the current chat focused when a surface arrives in the background", () => {
+    const before = layoutOf([[["A!"]]]);
+    const after = placeLayoutTabs(
+      before,
+      [{ id: "diff", content: diff }],
+      { kind: "column", workspaceId: before.focusedWorkspaceId, index: 1 },
+      { activate: null, focus: false },
+    );
+    expect(selectFocusedTab(after)).toBe(selectFocusedTab(before));
   });
 });
