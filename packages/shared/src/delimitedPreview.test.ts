@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
-import { delimitedColumnKinds, parseDelimitedPreview } from "./delimitedPreview.ts";
+import {
+  delimitedColumnKinds,
+  filePreviewDelimiter,
+  parseDelimitedPreview,
+} from "./delimitedPreview.ts";
 
 describe("delimited file previews", () => {
+  it("falls back to the file name under generic MIME types", () => {
+    expect(filePreviewDelimiter({ name: "a.csv", mimeType: "binary/octet-stream" })).toBe(",");
+    expect(filePreviewDelimiter({ name: "a.tsv", mimeType: "application/unknown" })).toBe("\t");
+  });
+
   it("classifies number, date and text columns from body cells", () => {
     expect(
       delimitedColumnKinds(

@@ -52,7 +52,7 @@ export function SettingsLabsRouteScreen() {
   );
 }
 
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ?? 7;
 
 /**
  * Usage-limit and auto-settle rows. The Threads page owns their writes, so they share its queue
@@ -268,7 +268,7 @@ function BetaSettingsSection() {
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Let agents on a machine work on your other machines, and theirs on it. Turn it on for each
-        machine. While it is off, nothing new starts over a link; tasks already running finish.
+        machine. While off, nothing new starts over a link; running tasks finish.
       </Text>
     </View>
   );
@@ -306,9 +306,8 @@ function ToolCallVisibilitySection() {
         ))}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        Hide the commands, edits, and searches agents run, so a thread reads like a conversation.
-        Hide successful keeps calls that fail. Zen also hides the agent&apos;s in-between messages
-        and shows only final answers. Approvals, questions, and errors always show.
+        Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows
+        only final answers. Approvals, questions, and errors always show.
       </Text>
     </View>
   );
