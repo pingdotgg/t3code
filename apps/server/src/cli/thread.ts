@@ -316,81 +316,52 @@ const readTimeline = Effect.fn("cli.thread.readTimeline")(function* (
   view: "messages" | "activity",
 ) {
   const items: Array<OrchestratorMcpThreadTimelineItem> = [];
-  let afterPosition: number | undefined;
+  let afterPosition = -1;
+  let page: OrchestratorMcpThreadReadResult;
+  do {
+    page = yield* tools.call(
+      "t3_thread_read",
+      { threadId, view, limit: READ_PAGE_LIMIT, runLimit: 1, afterPosition },
+      OrchestratorMcpThreadReadResult,
+    );
+    items.push(...page.items);
+    afterPosition = page.nextPosition ?? -1;
+  } while (page.hasMore && page.nextPosition !== null);
+  return { thread: page.thread, items };
+});
+
+/** The latest `count` user and assistant messages, oldest first, read backward from the end. */
+export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
+  tools: ThreadTools,
+  threadId: ThreadId,
+  count: number,
+) {
+  const pages: Array<ReadonlyArray<OrchestratorMcpThreadTimelineItem>> = [];
+  let found = 0;
+  let beforePosition: number | null = null;
   let page: OrchestratorMcpThreadReadResult;
   do {
     page = yield* tools.call(
       "t3_thread_read",
       {
         threadId,
-        view,
-        limit: READ_PAGE_LIMIT,
+        view: "messages",
+        limit: Math.min(count, READ_PAGE_LIMIT),
         runLimit: 1,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        ...(beforePosition === null ? {} : { beforePosition }),
       },
       OrchestratorMcpThreadReadResult,
     );
-    items.push(...page.items);
-    afterPosition = page.nextPosition ?? undefined;
-  } while (page.hasMore && afterPosition !== undefined);
-  return { thread: page.thread, items };
-});
-
-/**
- * The latest `count` user and assistant messages, oldest first. Positions
- * count every timeline item, so the read starts near the end and widens
- * backward only while tool and plan items leave too few messages.
- */
-export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(function* (
-  tools: ThreadTools,
-  threadId: ThreadId,
-  count: number,
-) {
-  let { thread } = yield* tools.call(
-    "t3_thread_read",
-    { threadId, limit: 1, runLimit: 1 },
-    OrchestratorMcpThreadReadResult,
-  );
-  let messages: Array<OrchestratorMcpThreadTimelineItem> = [];
-  // The newest window has no upper bound, so items added since the first
-  // read are still shown.
-  let before: number | undefined;
-  let start = thread.itemCount;
-  let span = Math.max(count, READ_PAGE_LIMIT);
-  do {
-    const end = before;
-    start = Math.max(0, start - span);
-    const window: Array<OrchestratorMcpThreadTimelineItem> = [];
-    let afterPosition = start - 1;
-    let page: OrchestratorMcpThreadReadResult;
-    do {
-      page = yield* tools.call(
-        "t3_thread_read",
-        {
-          threadId,
-          view: "messages",
-          limit: READ_PAGE_LIMIT,
-          runLimit: 1,
-          ...(afterPosition < 0 ? {} : { afterPosition }),
-        },
-        OrchestratorMcpThreadReadResult,
-      );
-      window.push(
-        ...page.items.filter(
-          (item) =>
-            (item.type === "user_message" || item.type === "assistant_message") &&
-            (end === undefined || item.position < end),
-        ),
-      );
-      afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
-    } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
-    thread = page.thread;
-    // A window can hold the whole --messages count, too many to spread as arguments.
-    messages = window.concat(messages);
-    before = start;
-    span *= 2;
-  } while (messages.length < count && start > 0);
-  return { thread, messages: messages.slice(Math.max(0, messages.length - count)) };
+    const messages = page.items.filter(
+      (item) => item.type === "user_message" || item.type === "assistant_message",
+    );
+    pages.push(messages);
+    found += messages.length;
+    beforePosition = page.earlierPosition ?? null;
+  } while (found < count && beforePosition !== null);
+  // `flat` because the whole --messages count is too many to spread as arguments.
+  const messages = pages.toReversed().flat();
+  return { thread: page.thread, messages: messages.slice(Math.max(0, messages.length - count)) };
 });
 
 /** Item text past the read's per-item cap. */

@@ -144,6 +144,10 @@ const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
+// Claude Code saves MCP results over ~25k tokens to a file instead of showing them. Thread JSON
+// runs about 2 chars per token, so a read stops adding items here and reports the rest as more.
+const THREAD_READ_BUDGET_CHARS = 30_000;
+const encodeJsonText = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
@@ -3065,20 +3069,23 @@ const make = Effect.gen(function* () {
     readThread: Effect.fn("OrchestratorMcpService.readThread")(function* (scope, input) {
       const { parent, target, shell } = yield* loadReadableThread(scope, input.threadId);
       const view = input.view ?? "messages";
-      const afterPosition = input.afterPosition ?? -1;
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
+      // Without a cursor, a read returns the newest items, which is what callers usually want.
+      const newestFirst = input.afterPosition === undefined || input.beforePosition !== undefined;
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
-          afterPosition,
+          ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
+          ...(newestFirst
+            ? { beforePosition: input.beforePosition ?? Number.POSITIVE_INFINITY }
+            : {}),
           limit,
           view,
           ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
         })
         .pipe(Effect.mapError(threadManagementFailure));
-      const page = timeline.items;
       const messageIdsByThread = new Map<ThreadId, Array<MessageId>>();
-      for (const row of page) {
+      for (const row of timeline.items) {
         if (row.item.type !== "user_message" && row.item.type !== "assistant_message") continue;
         const ids = messageIdsByThread.get(row.sourceThreadId) ?? [];
         ids.push(row.item.messageId);
@@ -3094,6 +3101,36 @@ const make = Effect.gen(function* () {
         { concurrency: 1 },
       );
       const messagesByThreadId = new Map(sourceMessages);
+      const thread = threadDetail(
+        scope,
+        target,
+        timeline.totalItems,
+        shell,
+        yield* Clock.currentTimeMillis,
+      );
+      const recentRuns = target.runs
+        .toSorted((left, right) => right.ordinal - left.ordinal)
+        .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
+        .map((run) => threadRun(target, run));
+      const allItems = timeline.items.map((row) =>
+        timelineItem({
+          row,
+          maxChars,
+          messagesByThreadId,
+          ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
+        }),
+      );
+      // Keep the end of the page the caller is reading toward, and at least one item.
+      let size = encodeJsonText({ thread, recentRuns }).length;
+      let kept = 0;
+      for (const item of newestFirst ? allItems.toReversed() : allItems) {
+        size += encodeJsonText(item).length + 1;
+        if (kept > 0 && size > THREAD_READ_BUDGET_CHARS) break;
+        kept++;
+      }
+      const start = newestFirst ? allItems.length - kept : 0;
+      const items = allItems.slice(start, start + kept);
+      const page = timeline.items.slice(start, start + kept);
       const returnedRunIds = new Set(
         page.filter((row) => row.sourceThreadId === target.thread.id).map((row) => row.item.runId),
       );
@@ -3149,27 +3186,12 @@ const make = Effect.gen(function* () {
         }
       }
       return {
-        thread: threadDetail(
-          scope,
-          target,
-          timeline.totalItems,
-          shell,
-          yield* Clock.currentTimeMillis,
-        ),
-        recentRuns: target.runs
-          .toSorted((left, right) => right.ordinal - left.ordinal)
-          .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
-          .map((run) => threadRun(target, run)),
-        items: page.map((row) =>
-          timelineItem({
-            row,
-            maxChars,
-            messagesByThreadId,
-            ...(input.itemId === undefined ? {} : { textOffset: input.textOffset ?? 0 }),
-          }),
-        ),
-        nextPosition: page.at(-1)?.position ?? null,
-        hasMore: timeline.hasMore,
+        thread,
+        recentRuns,
+        items,
+        nextPosition: items.at(-1)?.position ?? null,
+        hasMore: timeline.hasMore || (!newestFirst && kept < allItems.length),
+        earlierPosition: timeline.hasEarlier || start > 0 ? (items[0]?.position ?? null) : null,
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {

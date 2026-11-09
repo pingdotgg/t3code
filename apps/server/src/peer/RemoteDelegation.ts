@@ -449,7 +449,7 @@ const make = Effect.gen(function* () {
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    let afterPosition: number | undefined;
+    let cursor: { readonly afterPosition?: number; readonly beforePosition?: number } = {};
     let run: OrchestratorMcpThreadRun | undefined;
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
@@ -457,21 +457,30 @@ const make = Effect.gen(function* () {
         view: failed ? "activity" : "messages",
         limit: 100,
         runLimit: 50,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        ...cursor,
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
-      reply =
-        read.items.findLast(
-          (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
-        ) ?? reply;
-      if (failed) {
-        error =
-          read.items.findLast(
+      const pageReply = read.items.findLast(
+        (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
+      );
+      const pageError = failed
+        ? read.items.findLast(
             (item) => item.type === "error" && (runId === null || item.runId === runId),
-          ) ?? error;
+          )
+        : undefined;
+      // Older peers omit earlierPosition and page forward from the start; newer ones start at
+      // the newest page, so the first match found reading backward is the latest.
+      if (read.earlierPosition === undefined) {
+        reply = pageReply ?? reply;
+        error = pageError ?? error;
+        if (!read.hasMore || read.nextPosition === null) break;
+        cursor = { afterPosition: read.nextPosition };
+      } else {
+        reply ??= pageReply;
+        error ??= pageError;
+        if ((failed ? error : reply) !== undefined || read.earlierPosition === null) break;
+        cursor = { beforePosition: read.earlierPosition };
       }
-      if (!read.hasMore || read.nextPosition === null) break;
-      afterPosition = read.nextPosition;
     }
     reply = error ?? reply;
     if (reply === undefined) return undefined;
@@ -482,7 +491,7 @@ const make = Effect.gen(function* () {
         threadId: remote.threadId,
         itemId: reply.itemId,
         textOffset,
-        maxCharsPerItem: 50_000,
+        maxCharsPerItem: 20_000,
       });
       const part = rest.items[0];
       if (part === undefined) break;

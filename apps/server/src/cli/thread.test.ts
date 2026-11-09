@@ -206,23 +206,36 @@ const timelineTools = (types: ReadonlyArray<string>) => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
   const served: Array<number> = [];
   const call = ((_tool: string, input: unknown) => {
-    const args = input as { readonly afterPosition?: number; readonly limit: number };
+    const args = input as {
+      readonly afterPosition?: number;
+      readonly beforePosition?: number;
+      readonly limit: number;
+    };
+    const forward = args.afterPosition !== undefined;
+    const isMatch = (item: (typeof items)[number]) =>
+      ["user_message", "assistant_message", "proposed_plan"].includes(item.type);
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
-      const item = items[position]!;
-      if (["user_message", "assistant_message", "proposed_plan"].includes(item.type)) {
-        matching.push(item);
+    if (forward) {
+      for (let position = args.afterPosition! + 1; position < items.length; position++) {
+        if (isMatch(items[position]!)) matching.push(items[position]!);
+        if (matching.length > args.limit) break;
+      }
+    } else {
+      for (let position = (args.beforePosition ?? items.length) - 1; position >= 0; position--) {
+        if (isMatch(items[position]!)) matching.unshift(items[position]!);
         if (matching.length > args.limit) break;
       }
     }
-    const page = matching.slice(0, args.limit);
+    const page = forward ? matching.slice(0, args.limit) : matching.slice(-args.limit);
+    const more = matching.length > page.length;
     served.push(page.length);
     return Effect.succeed({
       thread: { itemCount: items.length },
       items: page,
       nextPosition: page.at(-1)?.position ?? null,
-      hasMore: matching.length > page.length,
+      hasMore: forward && more,
+      earlierPosition: !forward && more ? (page[0]?.position ?? null) : null,
     });
   }) as ThreadTools["call"];
   const latest = (count: number) =>

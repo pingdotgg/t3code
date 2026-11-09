@@ -363,9 +363,12 @@ const boxToolkitLayer = (thread: BoxThread) => {
                 (entry) => options.view === "activity" || entry.type === "assistant_message",
               )
             : replies.filter((entry) => entry.id === options.itemId);
-        const matching = visible
-          .filter((entry) => entry.position > (options.afterPosition ?? -1))
-          .slice(0, 1);
+        const before = options.beforePosition ?? Number.POSITIVE_INFINITY;
+        const inRange = visible.filter(
+          (entry) => entry.position > (options.afterPosition ?? -1) && entry.position < before,
+        );
+        const matching =
+          options.beforePosition === undefined ? inRange.slice(0, 1) : inRange.slice(-1);
         return {
           items: matching.map(({ id, runId: itemRunId, text, position, type }) => ({
             position,
@@ -402,6 +405,10 @@ const boxToolkitLayer = (thread: BoxThread) => {
             options.itemId === undefined &&
             matching.length > 0 &&
             visible.some((entry) => entry.position > matching.at(-1)!.position),
+          hasEarlier:
+            options.itemId === undefined &&
+            matching.length > 0 &&
+            visible.some((entry) => entry.position < matching[0]!.position),
         };
       }),
     interruptThread: (input) =>

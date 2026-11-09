@@ -395,8 +395,13 @@ export type ProjectionRecords<K extends ProjectionRecordField> = Pick<
   "thread" | K
 >;
 
+/**
+ * A page holds the oldest matches after `afterPosition`, or with `beforePosition`,
+ * the newest matches before it. `itemId` ignores both bounds.
+ */
 export interface ProjectionTimelinePageOptions {
   readonly afterPosition?: number;
+  readonly beforePosition?: number;
   readonly itemId?: TurnItemId;
   readonly attachmentId?: string;
   readonly view?: "messages" | "activity";
@@ -405,7 +410,10 @@ export interface ProjectionTimelinePageOptions {
 export interface ProjectionTimelinePage {
   readonly items: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
   readonly totalItems: number;
+  /** Matches exist after the page. */
   readonly hasMore: boolean;
+  /** Matches exist before the page. */
+  readonly hasEarlier: boolean;
 }
 
 export interface ShellSnapshotOptions {
@@ -5998,21 +6006,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       (row) => `${row.thread_id}:${row.turn_item_id}`,
                     ),
                   );
-            const matching = index.visible
+            const inView = index.visible
               .map((row, position) => ({ ...row, position }))
               .filter((row) =>
                 options.itemId === undefined
-                  ? row.position > (options.afterPosition ?? -1) &&
-                    (options.view === "activity" ||
-                      ["user_message", "assistant_message", "proposed_plan"].includes(
-                        row.item.type,
-                      ))
+                  ? options.view === "activity" ||
+                    ["user_message", "assistant_message", "proposed_plan"].includes(row.item.type)
                   : row.sourceItemId === options.itemId,
               )
               .filter(
                 (row) => attachmentOwners?.has(`${row.sourceThreadId}:${row.sourceItemId}`) ?? true,
               );
-            const page = matching.slice(0, options.limit);
+            const before = options.beforePosition ?? Number.POSITIVE_INFINITY;
+            const matching =
+              options.itemId === undefined
+                ? inView.filter(
+                    (row) => row.position > (options.afterPosition ?? -1) && row.position < before,
+                  )
+                : inView;
+            const page =
+              options.beforePosition === undefined
+                ? matching.slice(0, options.limit)
+                : matching.slice(-options.limit);
+            const pageEnd = page.at(-1)?.position ?? before - 1;
+            const pageStart = page[0]?.position ?? Number.NEGATIVE_INFINITY;
             const sources = yield* encodeTimelineSources(
               page
                 .filter((row) => row.synthetic === undefined)
@@ -6064,7 +6081,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return {
               items,
               totalItems: index.visible.length,
-              hasMore: matching.length > page.length,
+              hasMore: (inView.at(-1)?.position ?? -1) > pageEnd,
+              hasEarlier: (inView[0]?.position ?? Number.POSITIVE_INFINITY) < pageStart,
             };
           }),
         )

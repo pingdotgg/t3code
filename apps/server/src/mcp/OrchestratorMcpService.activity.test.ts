@@ -148,7 +148,8 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getTimelinePage: () =>
+            Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) =>
             callerUnavailable
               ? Effect.fail(
@@ -254,6 +255,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
               items: [row] as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
               totalItems: 1,
               hasMore: false,
+              hasEarlier: false,
             }),
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
@@ -301,6 +303,97 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
         });
       }
     }
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("readThread returns the newest items that fit the response budget", async () => {
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [makeRun({ id: activeRunId, ordinal: 1, status: "running" })],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  // A long thread's newest 100 activity items, the read agents make most.
+  const rows = Array.from({ length: 100 }, (_, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: parentThreadId,
+    sourceItemId: TurnItemId.make(`turn-item-mcp-long-${position}`),
+    item: {
+      type: "reasoning",
+      runId: activeRunId,
+      status: "completed",
+      title: null,
+      text: "x".repeat(1_500),
+      updatedAt: now,
+    },
+  }));
+  const pageOptions: Array<unknown> = [];
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: (_threadId, options) => {
+            pageOptions.push(options);
+            return Effect.succeed({
+              items: rows as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: 3_000,
+              hasMore: false,
+              hasEarlier: true,
+            });
+          },
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      view: "activity",
+      limit: 100,
+      maxCharsPerItem: 1_500,
+    });
+
+    expect(pageOptions).toEqual([
+      { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
+    ]);
+    // Claude Code saves results over ~50k chars of this JSON to a file instead of showing them.
+    expect(JSON.stringify(result).length).toBeLessThan(31_000);
+    expect(result.items.length).toBeLessThan(100);
+    expect(result.items.at(-1)?.position).toBe(99);
+    expect(result.earlierPosition).toBe(result.items[0]?.position);
+    expect(result.hasMore).toBe(false);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
@@ -388,7 +481,8 @@ it("taskStatus returns task.providerInstanceId rather than the driver kind", asy
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
+          getTimelinePage: () =>
+            Effect.succeed({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
           getThreadRecords: (threadId) => {
             if (threadId === parentThreadId) return Effect.succeed(parentProjection);
             if (threadId === childThreadId) return Effect.succeed(childProjection);
@@ -509,6 +603,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               items: foreignProjection(threadId).visibleTurnItems,
               totalItems: 1,
               hasMore: false,
+              hasEarlier: false,
             }),
           getProjectThreadRecords: (input) =>
             input.threadId === foreignThreadId && input.projectId === foreignProjectId
