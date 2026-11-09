@@ -3672,9 +3672,17 @@ describe("OrchestratorMcpService thread stop", () => {
   });
 
   it.effect.each([
-    { name: "a running turn", queued: false },
-    { name: "a running turn with a queued message", queued: true },
-  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued }) =>
+    {
+      name: "a running turn",
+      queued: false,
+      stop: { reason: undefined, message: "Stopped by an agent" },
+    },
+    {
+      name: "a running turn with a queued message",
+      queued: true,
+      stop: { reason: "Make room", message: "Stopped by an agent: Make room" },
+    },
+  ])("t3_thread_interrupt stop reports the run it interrupted on $name", ({ queued, stop }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("mcp-thread-stop");
@@ -3757,12 +3765,18 @@ describe("OrchestratorMcpService thread stop", () => {
             threadId,
             stop: true,
             clientRequestId: "stop",
+            ...(stop.reason === undefined ? {} : { reason: stop.reason }),
           });
           assert.deepEqual(stopped, {
             threadId,
             runId: runningRun.id,
             status: "interrupt_requested",
           });
+          // An agent's Stop must not read as the user's.
+          const request = (yield* orchestrator.getThreadProjection(threadId)).turnItems.find(
+            (item) => item.runId === runningRun.id && item.type === "run_interrupt_request",
+          );
+          assert.equal(request?.type === "run_interrupt_request" && request.message, stop.message);
         }).pipe(Effect.provide(layerTest));
       }),
     ),
