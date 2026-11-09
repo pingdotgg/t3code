@@ -1,6 +1,7 @@
 import {
   managedRuntimeModeDenial,
   type ManagedPolicySummary,
+  resolveSupportedRuntimeMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { type LucideIcon, LockIcon, PenLineIcon, ShieldOffIcon, SparklesIcon } from "lucide-react";
@@ -43,7 +44,7 @@ export function resolveCompatibleRuntimeMode(
     supportedRuntimeModes && supportedRuntimeModes.length > 0
       ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
       : runtimeModeOptions;
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+  return { modes, mode: resolveSupportedRuntimeMode(runtimeMode, supportedRuntimeModes) };
 }
 
 export function resolveRuntimeModeOptions(

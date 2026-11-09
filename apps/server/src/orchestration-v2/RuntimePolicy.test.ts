@@ -65,9 +65,11 @@ function makeThread(input: {
 
 const grokInstanceId = ProviderInstanceId.make("grok");
 const antigravityInstanceId = ProviderInstanceId.make("antigravity");
+const piInstanceId = ProviderInstanceId.make("pi");
 const supportedRuntimeModesByInstance = new Map<ProviderInstanceId, ReadonlyArray<RuntimeMode>>([
   [grokInstanceId, ["approval-required", "auto", "full-access"]],
   [antigravityInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
+  [piInstanceId, ["approval-required", "auto-accept-edits", "full-access"]],
 ]);
 const providerInstanceFor = (instanceId: ProviderInstanceId) =>
   ({
@@ -131,14 +133,14 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
       };
       const auto = yield* resolve("auto");
-      assert.equal(auto.runtimeMode, "approval-required");
+      assert.equal(auto.runtimeMode, "auto-accept-edits");
       assert.equal(acpPermissionDisposition(auto, request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
     }),
   );
 
-  it.effect("runs a mode the provider does not offer in Supervised", () =>
+  it.effect("steps a mode the provider does not offer down to the broadest one it does", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
@@ -150,6 +152,8 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
           })
           .pipe(Effect.map((resolved) => resolved.runtimeMode));
 
+      assert.equal(yield* modeFor(piInstanceId, "auto"), "auto-accept-edits");
+      assert.equal(yield* modeFor(piInstanceId, "full-access"), "full-access");
       assert.equal(yield* modeFor(grokInstanceId, "auto-accept-edits"), "approval-required");
       assert.equal(yield* modeFor(grokInstanceId, "auto"), "auto");
       assert.equal(yield* modeFor(grokInstanceId, "full-access"), "full-access");

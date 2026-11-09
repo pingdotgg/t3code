@@ -1,6 +1,7 @@
 import {
   managedRuntimeModeDenial,
   type ManagedPolicySummary,
+  resolveSupportedRuntimeMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 
@@ -78,9 +79,10 @@ export function compatibleRuntimeModeForChoices(
   runtimeMode: RuntimeMode,
   choices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
 ): RuntimeMode {
-  return choices.some((choice) => choice.mode === runtimeMode)
-    ? runtimeMode
-    : (choices[0]?.mode ?? runtimeMode);
+  return resolveSupportedRuntimeMode(
+    runtimeMode,
+    choices.map((choice) => choice.mode),
+  );
 }
 
 export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";

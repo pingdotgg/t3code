@@ -5,6 +5,7 @@ import {
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
   type ProviderInteractionMode,
+  resolveSupportedRuntimeMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -55,20 +56,15 @@ export function resolveRuntimeMode(
   if (supported === undefined || supported.length === 0 || supported.includes(resolved)) {
     return Effect.succeed(resolved);
   }
-  if (!inherited) {
-    return Effect.fail(
-      new OrchestratorMcpFailure({
-        code: "invalid_request",
-        message: `Provider ${target?.modelSelection.instanceId} does not offer runtime mode ${resolved}, so it would run as approval-required. Use one of: ${supported.join(", ")}.`,
-      }),
-    );
-  }
-  return Effect.succeed(
-    supported
-      .filter((mode) => runtimeModeRank(mode) <= runtimeModeRank(resolved))
-      .toSorted((left, right) => runtimeModeRank(right) - runtimeModeRank(left))[0] ??
-      "approval-required",
-  );
+  const steppedDown = resolveSupportedRuntimeMode(resolved, supported);
+  return inherited
+    ? Effect.succeed(steppedDown)
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: `Provider ${target?.modelSelection.instanceId} does not offer runtime mode ${resolved}, so it would run as ${steppedDown}. Use one of: ${supported.join(", ")}.`,
+        }),
+      );
 }
 
 /** The same, for interaction modes. */
