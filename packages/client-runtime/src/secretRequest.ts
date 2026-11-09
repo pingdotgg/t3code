@@ -38,12 +38,13 @@ function trimPunctuation(link: string): string {
   return link.slice(0, end);
 }
 
-/** Drops a closing `**`, `__`, `*` or `_` only when the same run opened emphasis before the link and is still open. */
+/** Drops a closing `*` or `_` run only when the same run opened emphasis before the link and is still open. */
 function trimEmphasis(link: string, before: string) {
-  const run = /(\*\*|__|\*|_)$/u.exec(link)?.[1];
+  const run = /(\*{1,3}|_{1,3})$/u.exec(link)?.[1];
   if (run === undefined) return link;
   const escaped = run.replaceAll("*", "\\*");
-  const opener = [...before.matchAll(new RegExp(`(?:^|[\\s(])${escaped}(?=\\S|$)`, "gu"))].at(-1);
+  // Nested emphasis (`**_url_**`) opens one run right after another.
+  const opener = [...before.matchAll(new RegExp(`(?:^|[\\s(*_])${escaped}(?=\\S|$)`, "gu"))].at(-1);
   if (opener === undefined) return link;
   const closed = new RegExp(`\\S${escaped}(?:[\\s.,;:!?)]|$)`, "u").test(
     before.slice(opener.index + opener[0].length),
@@ -56,9 +57,17 @@ function reasonLink(reason: string): string | undefined {
   const links = new Set(
     Array.from(reason.matchAll(REASON_LINK), (match) => {
       const [, ticked, angled, target, bare] = match;
-      return bare === undefined
-        ? (ticked ?? angled ?? target ?? "")
-        : trimEmphasis(trimPunctuation(bare), reason.slice(0, match.index));
+      if (bare === undefined) return ticked ?? angled ?? target ?? "";
+      const before = reason.slice(0, match.index);
+      let link = trimPunctuation(bare);
+      for (
+        let next = trimEmphasis(link, before);
+        next !== link;
+        next = trimEmphasis(link, before)
+      ) {
+        link = next;
+      }
+      return link;
     }),
   );
   return links.size === 1 ? [...links][0] : undefined;
