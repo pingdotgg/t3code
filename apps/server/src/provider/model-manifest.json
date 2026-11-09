@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-05T22:38:29Z",
+  "updatedAt": "2026-11-09T13:30:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -88,6 +88,12 @@
       "t3CodeRange": ">=0.0.46",
       "recommendedRange": ">=2.27.0",
       "ranges": [{ "range": ">=2.27.0", "status": "supported" }]
+    },
+    {
+      "driver": "zcode",
+      "t3CodeRange": ">=0.0.46",
+      "recommendedRange": ">=0.17.1",
+      "ranges": [{ "range": ">=0.17.1", "status": "supported" }]
     },
     {
       "driver": "pi",

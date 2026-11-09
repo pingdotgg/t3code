@@ -57,4 +57,7 @@ approvals for actions that support them.
 Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also asks you to
 review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
 
+ZCode maps **Supervised** to its guarded mode, which gates every tool call through T3 Code.
+Approvals offer only the choices ZCode sends. See [ZCode permissions](./providers-zcode.md#permission-modes).
+
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.
