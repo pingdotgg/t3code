@@ -17,8 +17,13 @@ export function limitTitleMessage(text: string, budget: number): string {
   if (text.length <= budget) return text;
   if (budget <= TRUNCATED.length) return "";
   const available = budget - TRUNCATED.length;
-  const head = Math.ceil(available / 2);
-  const tail = available - head;
+  let head = Math.ceil(available / 2);
+  let tail = available - head;
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = text.charCodeAt(head - 1);
+  if (last >= 0xd800 && last <= 0xdbff) head -= 1;
+  const first = text.charCodeAt(text.length - tail);
+  if (tail > 0 && first >= 0xdc00 && first <= 0xdfff) tail -= 1;
   return `${text.slice(0, head)}${TRUNCATED}${tail > 0 ? text.slice(-tail) : ""}`;
 }
 
