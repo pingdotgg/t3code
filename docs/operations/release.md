@@ -500,7 +500,7 @@ downloads, but the archive is a private repack: a fixed `t3/` root, sorted
 entries, zeroed times and owners, and `gzip -n --rsyncable`. Unchanged regions
 can retain their compressed bytes when their input bytes and metadata stay
 stable; content changes can still shift later blocks. Bundling the runtime
-requires a Linux build host with GNU `tar` and GNU `gzip` on `PATH`. WSL verifies
+requires a non-Windows build host with GNU `tar` and GNU `gzip` on `PATH`. WSL verifies
 and extracts that archive into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside the selected distro,
 then reuses it for later launches of the same update.
 

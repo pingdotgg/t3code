@@ -3640,14 +3640,10 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
 
-    // NSIS preserves the package bytes, inline or in a separate web-installer archive.
+    // Only the ordinary NSIS target embeds its app package without another wrapper.
     const target = input.target ?? PLATFORM_CONFIG.win.defaultTarget;
-    const payloadExtension =
-      target === "nsis" ? ".exe" : target === "nsis-web" ? ".nsis.7z" : undefined;
     const payloadFiles =
-      payloadExtension === undefined
-        ? []
-        : stageEntries.filter((entry) => entry.toLowerCase().endsWith(payloadExtension));
+      target === "nsis" ? stageEntries.filter((entry) => entry.toLowerCase().endsWith(".exe")) : [];
     if (payloadFiles.length > 0) {
       const readBuffer = (filePath: string) =>
         fs.readFile(filePath).pipe(

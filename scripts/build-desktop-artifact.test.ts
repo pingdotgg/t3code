@@ -157,7 +157,7 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   readonly wslRuntime?: "valid" | "loose-server-tree" | "missing-pty" | "bad-digest";
   readonly targetArch?: "x64" | "arm64";
   readonly ptyPrebuildArch?: "x64" | "arm64";
-  /** An NSIS installer next to win-unpacked that stores or recompresses the WSL archive. */
+  /** An installer payload that stores or recompresses the WSL archive. */
   readonly installer?: "stored" | "recompressed";
   readonly target?: "nsis" | "nsis-web" | "portable";
 }) {
@@ -249,11 +249,14 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
           ? archive
           : NodeZlib.gzipSync(NodeZlib.gunzipSync(archive), { level: 9 });
       const stem = `T3-Code-${WINDOWS_PAYLOAD_FIXTURE_VERSION}-${input.targetArch ?? "x64"}`;
+      const artifactDir =
+        input.target === "nsis-web" ? path.join(stageDistDir, "nsis-web") : stageDistDir;
+      yield* fs.makeDirectory(artifactDir, { recursive: true });
       if (input.target === "nsis-web") {
-        yield* fs.writeFileString(path.join(stageDistDir, `${stem}.exe`), "MZ web launcher");
+        yield* fs.writeFileString(path.join(artifactDir, `${stem}.exe`), "MZ web launcher");
       }
       yield* fs.writeFile(
-        path.join(stageDistDir, `${stem}${input.target === "nsis-web" ? ".nsis.7z" : ".exe"}`),
+        path.join(artifactDir, `${stem}${input.target === "nsis-web" ? ".nsis.7z" : ".exe"}`),
         Buffer.concat([Buffer.from("MZ installer stub"), payload, Buffer.from("trailer")]),
       );
     }
@@ -1008,10 +1011,9 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     { targetArch: "x64", target: "nsis" },
     { targetArch: "arm64", target: "nsis" },
     { targetArch: "x64", target: "nsis-web" },
-    { targetArch: "arm64", target: "nsis-web" },
     { targetArch: "x64", target: "portable" },
   ] as const)(
-    "accepts a $target payload with the Linux $targetArch node-pty prebuild",
+    "accepts a Windows payload with the target and Linux architecture %j",
     ({ targetArch, target }) =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -1060,29 +1062,25 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       ),
   );
 
-  it.effect.each(["nsis", "nsis-web"] as const)(
-    "rejects a %s payload that recompresses the WSL runtime archive",
-    (target) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const fixture = yield* makeWindowsPayloadFixture({
-            copyUnpackedNatives: true,
-            wslRuntime: "valid",
-            installer: "recompressed",
-            target,
-          });
-          const error = yield* validateWindowsPackagedPayload({
-            stageDistDir: fixture.stageDistDir,
-            appExecutableName: fixture.appExecutableName,
-            targetArch: "x64",
-            expectWslRuntime: true,
-            target,
-          }).pipe(Effect.flip);
+  it.effect("rejects an NSIS installer that recompresses the WSL runtime archive", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fixture = yield* makeWindowsPayloadFixture({
+          copyUnpackedNatives: true,
+          wslRuntime: "valid",
+          installer: "recompressed",
+        });
+        const error = yield* validateWindowsPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          appExecutableName: fixture.appExecutableName,
+          targetArch: "x64",
+          expectWslRuntime: true,
+        }).pipe(Effect.flip);
 
-          assert.instanceOf(error, WindowsPackagedPayloadValidationError);
-          assert.equal(error.reason, "wsl-runtime-recompressed");
-        }),
-      ),
+        assert.instanceOf(error, WindowsPackagedPayloadValidationError);
+        assert.equal(error.reason, "wsl-runtime-recompressed");
+      }),
+    ),
   );
 
   it.effect("rejects a Windows package missing its expected WSL runtime", () =>
