@@ -17,6 +17,8 @@ export function ComputerUseInspector(props: {
   readonly toolName: string | null;
   readonly input: unknown;
   readonly running: boolean;
+  /** The tool's text result, which carries confirmations and failures that have no image. */
+  readonly output: string | null;
   readonly images: ReadonlyArray<ToolOutputImage>;
   readonly environmentId: EnvironmentId;
   readonly pending: boolean;
@@ -61,6 +63,11 @@ export function ComputerUseInspector(props: {
                 />
               </div>
             ))}
+            {props.output ? <ComputerUseOutput text={props.output} /> : null}
+          </div>
+        ) : props.output ? (
+          <div className="space-y-2">
+            <ComputerUseOutput text={props.output} />
           </div>
         ) : (
           <p className="px-1 py-4 text-center text-2xs text-muted-foreground">
@@ -73,5 +80,14 @@ export function ComputerUseInspector(props: {
         )}
       </div>
     </div>
+  );
+}
+
+/** The tool's text result, which carries confirmations and failures such as `Permission denied`. */
+function ComputerUseOutput(props: { readonly text: string }) {
+  return (
+    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border/50 bg-muted/40 px-2 py-1.5 font-mono text-2xs text-muted-foreground">
+      {props.text}
+    </pre>
   );
 }

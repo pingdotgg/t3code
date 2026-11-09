@@ -57,6 +57,7 @@ describe("toolActivity", () => {
       "computer_use",
       "computer_screenshot",
       "ComputerScroll",
+      "computer.click",
       "screenshot",
       "mcp__computer-use__computer_click",
       "mcp__computer-use__left_click",

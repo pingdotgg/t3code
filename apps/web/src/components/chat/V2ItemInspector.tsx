@@ -384,6 +384,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
             toolName={item.toolName}
             input={item.input}
             running={item.status === "running" || item.status === "pending"}
+            output={outputState.output}
             images={outputState.images}
             environmentId={props.environmentId}
             pending={outputState.pending}

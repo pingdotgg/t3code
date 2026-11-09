@@ -56,11 +56,14 @@ function computerUseToolToken(toolName: string | null | undefined): string | und
   }
   // Harnesses namespace MCP tools as `mcp__server__tool`; the action is the last segment.
   const leaf = trimmed.includes("__") ? trimmed.slice(trimmed.lastIndexOf("__") + 2) : trimmed;
-  const token = toolNameToken(leaf);
+  // `toolNameToken` rejects dots so that `github.read_file` stays a namespaced name, but dotted
+  // screen-control names (`computer.click`) are common, so drop the dots before tokenizing.
+  const undotted = leaf.replace(/\./gu, "");
+  const token = toolNameToken(undotted);
   if (token) {
     return token;
   }
-  return leaf === trimmed ? undefined : toolNameToken(trimmed);
+  return leaf === trimmed ? undefined : toolNameToken(trimmed.replace(/\./gu, ""));
 }
 
 /** A computer-use MCP server's namespace, e.g. `mcp__computer-use__left_click`. */
