@@ -2293,6 +2293,9 @@ describe("deriveMessagesTimelineRows", () => {
             ),
             `the ${kind} is open, yet the working row times the whole run`,
           ).toEqual([]);
+          expect(rows.find((row) => row.kind === "working")).toMatchObject({
+            waitingOnUser: true,
+          });
         },
       );
 
