@@ -54,7 +54,10 @@ it("shows a captured MCP app for a failed deferred write", () => {
     input: {},
     output: { t3McpApp: mcpApp, result: { content: [], isError: true } },
   };
-  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([{ type: "mcp-app", app: mcpApp }]);
+  expect(buildThreadFeed([projected(item, 0)])).toMatchObject([
+    { type: "activity-group" },
+    { type: "mcp-app", app: mcpApp },
+  ]);
 });
 
 it("keeps an MCP app call's tool activity beside its app card", () => {
