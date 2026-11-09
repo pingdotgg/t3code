@@ -3646,6 +3646,29 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("settles a plain prompt an input handler consumed once Pi is idle", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "response",
+        command: "prompt",
+        success: true,
+        data: { disposition: "handled" },
+      });
+      yield* fake.takeRequest("get_state");
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("leaves /compacted as an ordinary prompt", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
