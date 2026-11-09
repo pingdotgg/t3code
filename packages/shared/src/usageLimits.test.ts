@@ -814,6 +814,42 @@ describe("pools", () => {
       ["claudeAgent", null, 3],
       ["codex", null, 1],
     ]);
+
+    const sources = input.get(EnvironmentId.make("env-a"))!.serverConfig.usageLimitSources;
+    for (const separateEnvironments of [false, true]) {
+      const sharedLabelSources = sources.map((entry) => ({ ...entry, label: "proxy.example.com" }));
+      const presentations = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [],
+              usageLimitSources: separateEnvironments
+                ? sharedLabelSources.slice(0, 1)
+                : sharedLabelSources,
+            },
+          },
+        ],
+      ]);
+      if (separateEnvironments) {
+        presentations.set(EnvironmentId.make("env-b"), {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [{ ...sharedLabelSources[1]!, id: sources[0]!.id }],
+          },
+        });
+      }
+      const sameLabelPools = collectLimitPools(collectLimitAccounts(presentations), now);
+      expect(sameLabelPools.map((pool) => [pool.driver, pool.accounts.length])).toEqual([
+        ["claudeAgent", 2],
+        ["claudeAgent", 1],
+        ["codex", 1],
+      ]);
+      expect(new Set(sameLabelPools.map((pool) => pool.key)).size).toBe(3);
+      expect(sameLabelPools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 80, 50]);
+    }
   });
 
   it("pools windows by id across accounts and orders resets by when they land", () => {
@@ -914,6 +950,7 @@ describe("pools", () => {
           plan: undefined,
           accentColor: undefined,
           environments: [],
+          sourceKey: null,
           sourceLabel: null,
           redeem: null,
           limits: {
@@ -959,6 +996,7 @@ describe("pooled account columns", () => {
     plan: undefined,
     accentColor: undefined,
     environments: [],
+    sourceKey: "hub",
     sourceLabel: "Hub",
     redeem: null,
     limits: { checkedAt: "2026-09-03T11:00:00.000Z", windows },

@@ -246,6 +246,7 @@ export interface LimitAccount {
     readonly environmentId: EnvironmentId;
     readonly label: string;
   }>;
+  readonly sourceKey: string | null;
   readonly sourceLabel: string | null;
   readonly redeem: {
     readonly environmentId: EnvironmentId;
@@ -315,6 +316,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       plan: planSources.get(key)?.plan ?? previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,
+      sourceKey: environments.length > 0 ? null : (previous.sourceKey ?? next.sourceKey),
       sourceLabel: environments.length > 0 ? null : (previous.sourceLabel ?? next.sourceLabel),
       redeem:
         hubRedeems.get(key)?.redeem ??
@@ -347,6 +349,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         plan: provider.auth.label,
         accentColor: provider.accentColor,
         environments: [{ environmentId, label }],
+        sourceKey: null,
         sourceLabel: null,
         redeem: { environmentId, input: { instanceId: provider.instanceId } },
         limits: provider.usageLimits,
@@ -370,6 +373,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
           plan: account.plan,
           accentColor: undefined,
           environments: [],
+          sourceKey: JSON.stringify([environmentId, source.id]),
           sourceLabel,
           redeem: account.usageLimits.resetCredits?.nextCreditId
             ? {
@@ -477,23 +481,20 @@ export function collectLimitPools(
   now: number,
   options: { readonly splitSources?: boolean } = {},
 ): readonly LimitPool[] {
-  // Accounts of one driver that come from two or more CLI Proxy sources (hubs) have separate quotas,
-  // so each source gets its own pool and is named in it: averaging two hubs' windows describes neither.
-  // Otherwise every account of a driver shares one pool, as before.
   const sourcesByDriver = new Map<ServerProvider["driver"], Set<string>>();
   if (options.splitSources ?? true) {
     for (const account of accounts) {
-      if (!account.sourceLabel) continue;
-      const labels = sourcesByDriver.get(account.driver) ?? new Set<string>();
-      sourcesByDriver.set(account.driver, labels.add(account.sourceLabel));
+      if (!account.sourceKey) continue;
+      const sources = sourcesByDriver.get(account.driver) ?? new Set<string>();
+      sourcesByDriver.set(account.driver, sources.add(account.sourceKey));
     }
   }
   const split = (account: LimitAccount) => (sourcesByDriver.get(account.driver)?.size ?? 0) > 1;
   const byPool = new Map<string, LimitAccount[]>();
   for (const account of accounts) {
     const key =
-      split(account) && account.sourceLabel
-        ? `${account.driver}:${account.sourceLabel}`
+      split(account) && account.sourceKey
+        ? `${account.driver}:${account.sourceKey}`
         : account.driver;
     const list = byPool.get(key);
     if (list) list.push(account);
