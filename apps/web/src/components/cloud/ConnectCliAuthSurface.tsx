@@ -5,7 +5,7 @@ import {
   readConnectAuthorizeRequest,
 } from "@t3tools/shared/connectAuth";
 import { SquareTerminalIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import {
   buildConnectCliClerkAuthorizeUrl,
@@ -50,10 +50,9 @@ export function ConnectCliAuthorizeSurface() {
   const { isLoaded, isSignedIn } = useAuth();
   const loadFailed = useClerkLoadFailed();
   const [redirecting, setRedirecting] = useState(false);
-  const redirectingRef = useRef(false);
 
   const authorize = () => {
-    if (!request || !isLoaded || redirectingRef.current) {
+    if (!request || !isLoaded || redirecting) {
       return;
     }
     if (!isSignedIn) {
@@ -69,16 +68,14 @@ export function ConnectCliAuthorizeSurface() {
     if (!authorizeUrl) {
       return;
     }
-    redirectingRef.current = true;
     setRedirecting(true);
     window.location.assign(authorizeUrl);
   };
 
   const cancel = () => {
-    if (!request || redirectingRef.current) {
+    if (!request || redirecting) {
       return;
     }
-    redirectingRef.current = true;
     setRedirecting(true);
     window.location.assign(connectLoopbackCancelUrl(request));
   };
