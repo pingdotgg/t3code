@@ -133,12 +133,7 @@ export function ThreadDetailsContext({
     <ThreadDetailsSection title="Context window" variant="usage">
       <Collapsible open={!collapsed} onOpenChange={(open) => setCollapsed(!open)}>
         {/* The trailing column shrinks to the compact button so it sits flush right. */}
-        <div
-          className={cn(
-            USAGE_ROW_CLASS,
-            "h-8",
-          )}
-        >
+        <div className={cn(USAGE_ROW_CLASS, "h-8")}>
           <CollapsibleTrigger
             render={<ThreadDetailsControl part="usage" />}
             aria-label={`Context: ${tokens}${maxTokens !== null ? " tokens" : ""}${used !== null ? `, ${Math.round(used)}% used` : " used"}`}
