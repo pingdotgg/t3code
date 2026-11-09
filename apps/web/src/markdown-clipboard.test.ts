@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   serializeRenderedMarkdownFragment,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
@@ -318,5 +319,220 @@ describe("copying rendered Markdown tables", () => {
       type: "link",
       url: "https://example.com/?q=a|b",
     });
+  });
+});
+
+describe("copying a table as HTML", () => {
+  const cell = (
+    tag: "TH" | "TD",
+    text: string,
+    attributes: Record<string, string> = {},
+    style?: { textAlign: string },
+  ) => {
+    const element = new FakeElement(tag, [], attributes).append(new FakeText(text));
+    return style ? Object.assign(element, { style }) : element;
+  };
+  const row = (...cells: FakeElement[]) => new FakeElement("TR").append(...cells);
+  const html = (table: FakeElement) => serializeTableElementToHtml(table as unknown as Element);
+
+  beforeEach(() => {
+    vi.stubGlobal("Node", { TEXT_NODE, ELEMENT_NODE });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** Structure only: every style attribute is reduced to its text alignment. */
+  const structure = (table: FakeElement) =>
+    html(table).replace(/ style="([^"]*)"/g, (_, style: string) => {
+      const align = /text-align:(\w+)/.exec(style)?.[1];
+      return align ? ` align="${align}"` : "";
+    });
+
+  it("styles the table inline with light, theme-independent colors", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(row(cell("TH", "Name"))),
+      new FakeElement("TBODY").append(row(cell("TD", "Ada"), cell("TD", ""))),
+    );
+
+    const cellStyle = "border:1px solid #d0d7de;padding:6px 12px;vertical-align:top";
+    expect(html(table)).toBe(
+      [
+        '<table style="border-collapse:collapse">',
+        "  <thead>",
+        `    <tr><th style="${cellStyle};background-color:#f6f8fa;color:#1f2328;font-weight:600;text-align:left">Name</th></tr>`,
+        "  </thead>",
+        "  <tbody>",
+        `    <tr><td style="${cellStyle}">Ada</td><td style="${cellStyle}"></td></tr>`,
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("escapes text and keeps column alignment from the style or the align attribute", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Name"), cell("TH", "Amount", {}, { textAlign: "right" })),
+      ),
+      new FakeElement("TBODY").append(
+        row(cell("TD", 'A & B <"Ltd">'), cell("TD", "1,200", {}, { textAlign: "right" })),
+        // An absent inline style reads as "": the align attribute still applies.
+        row(cell("TD", "  Bob\n  Smith "), cell("TD", "3", { align: "center" }, { textAlign: "" })),
+        row(cell("TD", "text", { align: "justify" }), cell("TD", "4", {}, { textAlign: "end" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        "<table>",
+        "  <thead>",
+        '    <tr><th align="left">Name</th><th align="right">Amount</th></tr>',
+        "  </thead>",
+        "  <tbody>",
+        '    <tr><td>A &amp; B &lt;&quot;Ltd&quot;&gt;</td><td align="right">1,200</td></tr>',
+        '    <tr><td>Bob Smith</td><td align="center">3</td></tr>',
+        '    <tr><td align="justify">text</td><td align="right">4</td></tr>',
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps every header row, body header cells, footers, and merged cells", () => {
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Region", { rowspan: "2" }), cell("TH", "Sales", { colspan: "2" })),
+        row(cell("TH", "Q1"), cell("TH", "Q2", { colspan: "1" })),
+      ),
+      new FakeElement("TBODY").append(
+        row(
+          cell("TH", "EU"),
+          cell("TD", "1", { rowspan: "0" }),
+          cell("TD", "2", { rowspan: "-1" }),
+        ),
+      ),
+      new FakeElement("TFOOT").append(
+        row(cell("TD", "Total"), cell("TD", "3", { colspan: "2garbage" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        "<table>",
+        "  <thead>",
+        '    <tr><th align="left" rowspan="2">Region</th><th align="left" colspan="2">Sales</th></tr>',
+        '    <tr><th align="left">Q1</th><th align="left">Q2</th></tr>',
+        "  </thead>",
+        "  <tbody>",
+        // rowspan="0" runs to the end of its section; a negative span is invalid.
+        '    <tr><th align="left">EU</th><td rowspan="0">1</td><td>2</td></tr>',
+        "  </tbody>",
+        "  <tfoot>",
+        // HTML reads a span's leading digits, as the DOM does.
+        '    <tr><td>Total</td><td colspan="2">3</td></tr>',
+        "  </tfoot>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps line breaks, block edges, nested cells, and formulas as TeX", () => {
+    const nested = new FakeElement("TABLE").append(
+      new FakeElement("TBODY").append(row(cell("TD", "a"), cell("TD", "b"))),
+    );
+    const table = new FakeElement("TABLE").append(
+      new FakeElement("TBODY").append(
+        row(
+          new FakeElement("TD").append(
+            new FakeText("first"),
+            new FakeElement("BR"),
+            new FakeElement("STRONG").append(new FakeText("second")),
+          ),
+          new FakeElement("TD").append(
+            new FakeElement("P").append(new FakeText("one")),
+            new FakeElement("P").append(new FakeText("two")),
+          ),
+        ),
+        row(
+          new FakeElement("TD").append(nested),
+          new FakeElement("TD").append(new FakeText("area "), renderedFormula("\\pi r^2")),
+        ),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        "<table>",
+        "  <tbody>",
+        "    <tr><td>first<br>second</td><td>one<br>two</td></tr>",
+        "    <tr><td>a b</td><td>area \\(\\pi r^2\\)</td></tr>",
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps every explicit break, preformatted spacing, and nonbreaking spaces", () => {
+    const br = () => new FakeElement("BR");
+    const content = (...children: Array<FakeElement | FakeText>) =>
+      structure(
+        new FakeElement("TABLE").append(
+          new FakeElement("TBODY").append(row(new FakeElement("TD").append(...children))),
+        ),
+      ).split("\n")[2];
+    const td = (html: string) => `    <tr><td>${html}</td></tr>`;
+
+    expect(content(new FakeText("a"), br(), br(), new FakeText("b"))).toBe(td("a<br><br>b"));
+    expect(content(br(), new FakeText(" lead "), br())).toBe(td("<br>lead<br>"));
+    // A break that ends a paragraph already ends the line.
+    expect(
+      content(
+        new FakeElement("P").append(new FakeText("a "), br()),
+        new FakeElement("P").append(new FakeText("b")),
+      ),
+    ).toBe(td("a<br>b"));
+    expect(
+      content(
+        new FakeText("run:"),
+        new FakeElement("PRE").append(
+          new FakeElement("CODE").append(new FakeText("if x:\n\ty  =  1\n\nend\n")),
+        ),
+      ),
+    ).toBe(
+      td("run:<br>if&nbsp;x:<br>&nbsp;&nbsp;&nbsp;&nbsp;y&nbsp;&nbsp;=&nbsp;&nbsp;1<br><br>end"),
+    );
+    expect(content(new FakeText("1\u00a0000   EUR"))).toBe(td("1&nbsp;000 EUR"));
+  });
+
+  it("keeps a right-to-left table's direction and puts headers on its start side", () => {
+    const table = new FakeElement("TABLE", [], { dir: "rtl" }).append(
+      new FakeElement("THEAD").append(
+        row(cell("TH", "Name"), cell("TH", "End", {}, { textAlign: "end" })),
+      ),
+    );
+
+    expect(structure(table)).toBe(
+      [
+        '<table dir="rtl">',
+        "  <thead>",
+        '    <tr><th align="right">Name</th><th align="left">End</th></tr>',
+        "  </thead>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("wraps rows outside any section in a body", () => {
+    const table = new FakeElement("TABLE").append(row(cell("TD", "only"), cell("TD", "cells")));
+
+    expect(structure(table)).toBe(
+      "<table>\n  <tbody>\n    <tr><td>only</td><td>cells</td></tr>\n  </tbody>\n</table>",
+    );
+  });
+
+  it("returns an empty string for a table without cells", () => {
+    expect(html(new FakeElement("TABLE").append(new FakeElement("TBODY").append(row())))).toBe("");
   });
 });

@@ -375,6 +375,211 @@ export function serializeTableElementToCsv(table: Element): string {
   return lines.join("\n");
 }
 
+const TABLE_SECTION_TAGS = new Set(["THEAD", "TBODY", "TFOOT"]);
+// Elements that start a new line inside a copied cell.
+const HTML_CELL_BLOCK_TAGS = new Set([
+  "ARTICLE",
+  "BLOCKQUOTE",
+  "DETAILS",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "LI",
+  "OL",
+  "P",
+  "PRE",
+  "SECTION",
+  "SUMMARY",
+  "TABLE",
+  "TR",
+  "UL",
+]);
+
+// Inline and theme-independent: mail clients and editors drop stylesheets, and a
+// copy from the dark theme must still read on a white page. Header cells set their
+// own text color so the light band stays readable in a dark paste target.
+const HTML_TABLE_STYLE = "border-collapse:collapse";
+const HTML_CELL_STYLE = "border:1px solid #d0d7de;padding:6px 12px;vertical-align:top";
+const HTML_HEADER_CELL_STYLE = `${HTML_CELL_STYLE};background-color:#f6f8fa;color:#1f2328;font-weight:600`;
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+// Markers in collected cell text: a block edge is a soft line boundary, a break is a <br>.
+const CELL_BLOCK_EDGE = "\u0001";
+const CELL_LINE_BREAK = "\u0002";
+// HTML's collapsible whitespace; a nonbreaking space is content.
+const COLLAPSIBLE_WHITESPACE = /[ \t\n\r\f]+/g;
+
+/** Preformatted text keeps its lines and spacing as breaks and nonbreaking spaces. */
+function preformattedCellText(text: string): string {
+  return text
+    .replace(/\r\n?|\n/g, CELL_LINE_BREAK)
+    .replaceAll("\t", " ".repeat(4))
+    .replaceAll(" ", " ");
+}
+
+/** Collects a cell's text with block edges and breaks marked, and each formula as its TeX. */
+function collectHtmlCellText(node: Node, parts: string[], preformatted: boolean): void {
+  for (const child of node.childNodes) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      const text = child.textContent ?? "";
+      parts.push(preformatted ? preformattedCellText(text) : text);
+      continue;
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE) continue;
+    const element = child as Element;
+    if (element.hasAttribute("data-markdown-math")) {
+      parts.push(element.getAttribute("data-markdown-copy")?.trim() ?? "");
+      continue;
+    }
+    if (element.tagName === "BR") {
+      parts.push(CELL_LINE_BREAK);
+      continue;
+    }
+    if (element.tagName === "PRE") {
+      const code: string[] = [];
+      collectHtmlCellText(element, code, true);
+      // A code block's closing newline ends the block, not a blank line.
+      parts.push(CELL_BLOCK_EDGE, code.join("").replace(/\u0002$/, ""), CELL_BLOCK_EDGE);
+      continue;
+    }
+    // Cells of a nested table stay apart on their row's line.
+    const separator = element.tagName === "TD" || element.tagName === "TH" ? " " : "";
+    const boundary = HTML_CELL_BLOCK_TAGS.has(element.tagName) ? CELL_BLOCK_EDGE : separator;
+    parts.push(boundary);
+    collectHtmlCellText(element, parts, preformatted);
+    parts.push(boundary);
+  }
+}
+
+/**
+ * Every explicit break stays a <br>, including repeated and edge ones. Block edges
+ * become one break between content, and none where a break already ends the line.
+ */
+function htmlCellContent(cell: Element): string {
+  const parts: string[] = [];
+  collectHtmlCellText(cell, parts, false);
+  const tokens = parts
+    .join("")
+    .replace(COLLAPSIBLE_WHITESPACE, " ")
+    .split(/([\u0001\u0002])/);
+  let html = "";
+  let atLineStart = true;
+  let pendingBlockEdge = false;
+  for (const token of tokens) {
+    if (token === CELL_LINE_BREAK) {
+      html = `${html.replace(/ +$/, "")}<br>`;
+      atLineStart = true;
+      pendingBlockEdge = false;
+    } else if (token === CELL_BLOCK_EDGE) {
+      pendingBlockEdge = true;
+    } else {
+      const text = atLineStart || pendingBlockEdge ? token.replace(/^ +/, "") : token;
+      if (!text) continue;
+      if (pendingBlockEdge && !atLineStart) html = `${html.replace(/ +$/, "")}<br>`;
+      html += escapeHtml(text).replaceAll(" ", "&nbsp;");
+      atLineStart = false;
+      pendingBlockEdge = false;
+    }
+  }
+  return html.replace(/ +$/, "");
+}
+
+/** Physical alignment for a paste target; logical values follow the table direction. */
+function htmlCellAlignment(align: string, rtl: boolean): string {
+  switch (align) {
+    case "left":
+    case "center":
+    case "right":
+    case "justify":
+      return align;
+    case "start":
+      return rtl ? "right" : "left";
+    case "end":
+      return rtl ? "left" : "right";
+    default:
+      return "";
+  }
+}
+
+/** HTML's non-negative integer parsing: leading digits count, anything invalid is 1. */
+function parseTableSpan(value: string | null): number {
+  const span = Number.parseInt(value ?? "", 10);
+  return Number.isNaN(span) || span < 0 ? 1 : span;
+}
+
+function htmlSpanAttributes(cell: Element): string {
+  // The DOM normalizes spans; the attribute fallback covers non-DOM callers.
+  const { colSpan, rowSpan } = cell as Partial<HTMLTableCellElement>;
+  const columns =
+    typeof colSpan === "number" ? colSpan : parseTableSpan(cell.getAttribute("colspan"));
+  const rows = typeof rowSpan === "number" ? rowSpan : parseTableSpan(cell.getAttribute("rowspan"));
+  let attributes = columns > 1 ? ` colspan="${columns}"` : "";
+  // rowspan="0" runs to the end of its section.
+  if (rows !== 1) attributes += ` rowspan="${rows}"`;
+  return attributes;
+}
+
+function htmlTableCell(cell: Element, rtl: boolean): string {
+  const tag = cell.tagName === "TH" ? "th" : "td";
+  // An absent inline style reads as "", so fall back to the align attribute on any falsy value.
+  const align = (cell as HTMLElement).style?.textAlign || cell.getAttribute("align") || "";
+  // Header cells default to the start side like the chat; paste targets would center them.
+  const textAlign = htmlCellAlignment(align || (tag === "th" ? "start" : ""), rtl);
+  const style = `${tag === "th" ? HTML_HEADER_CELL_STYLE : HTML_CELL_STYLE}${textAlign ? `;text-align:${textAlign}` : ""}`;
+  // Bare text, no <p>: Word would drop its 8pt gap but switch to its web font.
+  return `<${tag} style="${style}"${htmlSpanAttributes(cell)}>${htmlCellContent(cell)}</${tag}>`;
+}
+
+function htmlTableSection(tag: string, rows: ReadonlyArray<Element>, rtl: boolean): string[] {
+  const lines = rows.flatMap((row) => {
+    const cells = [...row.children].filter(
+      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
+    );
+    const html = cells.map((cell) => htmlTableCell(cell, rtl)).join("");
+    return cells.length > 0 ? [`    <tr>${html}</tr>`] : [];
+  });
+  return lines.length > 0 ? [`  <${tag}>`, ...lines, `  </${tag}>`] : [];
+}
+
+/**
+ * Inline-styled `<table>` markup without app chrome, so rich paste targets get a table.
+ * Sections, header cells, spans, line breaks, direction, and alignment follow the source.
+ * Cell content is text: inline formatting and link targets are not copied.
+ */
+export function serializeTableElementToHtml(table: Element): string {
+  const rtl = table.getAttribute("dir") === "rtl";
+  const lines: string[] = [];
+  let looseRows: Element[] = [];
+  const flushLooseRows = () => {
+    lines.push(...htmlTableSection("tbody", looseRows, rtl));
+    looseRows = [];
+  };
+  for (const child of table.children) {
+    if (child.tagName === "TR") {
+      looseRows.push(child);
+      continue;
+    }
+    if (!TABLE_SECTION_TAGS.has(child.tagName)) continue;
+    flushLooseRows();
+    const rows = [...child.children].filter((row) => row.tagName === "TR");
+    lines.push(...htmlTableSection(child.tagName.toLowerCase(), rows, rtl));
+  }
+  flushLooseRows();
+  const open = `<table${rtl ? ' dir="rtl"' : ""} style="${HTML_TABLE_STYLE}">`;
+  return lines.length > 0 ? [open, ...lines, "</table>"].join("\n") : "";
+}
+
 function mermaidSourceHtml(source: string) {
   const pre = document.createElement("pre");
   const code = document.createElement("code");
