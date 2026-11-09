@@ -545,6 +545,25 @@ describe("shared device stream readiness and recovery", () => {
     client.stop();
   });
 
+  it("decodes the key frame that carries the SPS instead of waiting for another one", async () => {
+    const { client, sockets, sps, decoders, decodedFrame, events, drawImage } =
+      recoveryFixture("android");
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.onopen?.();
+    // The first frame carries the SPS and is itself a key frame.
+    sockets[0]!.onmessage?.({ data: sps });
+    await vi.advanceTimersByTimeAsync(0);
+    // The decoder is configured from the SPS and immediately fed that key frame,
+    // so no reset-video round-trip is needed to get the stream moving.
+    expect(decoders[0]!.decode).toHaveBeenCalledOnce();
+    expect(sockets[0]!.send).not.toHaveBeenCalled();
+    decodedFrame();
+    expect(drawImage).toHaveBeenCalledOnce();
+    expect(events.onStatus).toHaveBeenLastCalledWith("streaming", undefined);
+    client.stop();
+  });
+
   it("ignores an old AVCC response rejected after a new attempt is connected", async () => {
     const { client, fetch, events } = recoveryFixture("ios", false);
     let resolveResponse!: (response: Response) => void;

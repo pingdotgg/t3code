@@ -656,22 +656,23 @@ export function createDeviceStreamClient(
     }
   };
 
-  const decode = (isKey: boolean, data: Uint8Array, pts?: number | null) => {
-    if (!videoDecoder || videoDecoder.state !== "configured") return;
+  /** Returns whether the chunk reached the decoder. */
+  const decode = (isKey: boolean, data: Uint8Array, pts?: number | null): boolean => {
+    if (!videoDecoder || videoDecoder.state !== "configured") return false;
     if (awaitingKeyframe) {
-      if (!isKey) return;
+      if (!isKey) return false;
       awaitingKeyframe = false;
     }
     if (videoDecoder.decodeQueueSize > SOFT_DECODE_QUEUE) {
       if (!avcc) {
         recoverDecoder();
-        return;
+        return false;
       }
       // Native IDRs are spaced by frame count, so an idle simulator may take
       // minutes to produce one. A new AVCC subscription forces a fresh IDR.
       controller?.abort();
       closeDecoder();
-      return;
+      return false;
     }
     try {
       videoDecoder.decode(
@@ -682,8 +683,10 @@ export function createDeviceStreamClient(
         }),
       );
       timestamp += FRAME_DURATION_US;
+      return true;
     } catch {
       recoverDecoder();
+      return false;
     }
   };
 
@@ -1232,12 +1235,20 @@ export function createDeviceStreamClient(
         configuring = true;
         const epoch = decoderEpoch;
         const isCurrent = () => !stopped && socket === ws;
+        // The packet carrying the SPS is a key frame itself. WebCodecs rejects
+        // every delta frame until a key frame arrives, so decode this one
+        // instead of asking the hub for another: that round-trip may not
+        // survive a proxy, and the hub rate-limits resets.
+        const pendingKeyFrame = { data: packet.data, isKey, timestamp: packet.timestamp };
         void configureDecoder({ codec: avcCodecString(scanned.sps) }, isCurrent).then(
           (configured) => {
             if (!isCurrent() || epoch !== decoderEpoch) return;
             configuring = false;
             awaitingKeyframe = true;
-            if (configured) requestKeyframe();
+            if (!configured) return;
+            if (!decode(pendingKeyFrame.isKey, pendingKeyFrame.data, pendingKeyFrame.timestamp)) {
+              requestKeyframe();
+            }
           },
         );
         return;
