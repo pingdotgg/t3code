@@ -324,6 +324,16 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       expect(shadowed.output).toContain(
         `Another t3 at ${NodePath.join(otherBin, "t3.cmd")} runs first`,
       );
+
+      // Its own folder on PATH with a trailing separator is already on PATH.
+      const slashed = await installOver({
+        script: "install.ps1",
+        home,
+        binDir,
+        env: { [pathKey]: `${binDir}\\;${process.env[pathKey] ?? ""}` },
+      });
+      expect(slashed.code, slashed.output).toBe(0);
+      expect(slashed.output).toContain("to use T3 Code here");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
