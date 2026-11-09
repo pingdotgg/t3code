@@ -1,4 +1,5 @@
 import type { AssetResource, OrchestrationV2TurnItem } from "@t3tools/contracts";
+import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { toolOutputImageBlocks, toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
@@ -177,6 +178,11 @@ function commandOutputText(output: string): string {
     .join("\n");
 }
 
+// App calls store the provider result beside the app reference.
+function mcpAppToolResult(output: unknown): unknown {
+  return isRecord(output) && MCP_APP_OUTPUT_KEY in output ? output.result : output;
+}
+
 export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "command_execution":
@@ -184,7 +190,7 @@ export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null
     case "dynamic_tool":
       return item.outputOmitted === true
         ? null
-        : formatToolValue(item.output, item.viewedImagePath !== undefined);
+        : formatToolValue(mcpAppToolResult(item.output), item.viewedImagePath !== undefined);
     case "file_search":
       return item.results?.length
         ? item.results
