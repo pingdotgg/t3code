@@ -89,8 +89,14 @@ function serviceUnitFromEnvironment(env: NodeJS.ProcessEnv = process.env): Servi
       reload: () => Promise.resolve(),
     };
   }
+  // The manager's own environment, which decides where it reads user units.
+  const xdgConfigHome = env.XDG_CONFIG_HOME?.trim();
+  const configHome =
+    xdgConfigHome && NodePath.isAbsolute(xdgConfigHome)
+      ? xdgConfigHome
+      : NodePath.join(home, ".config");
   return {
-    path: NodePath.join(home, ".config", "systemd", "user", unitName),
+    path: NodePath.join(configHome, "systemd", "user", unitName),
     reload: () =>
       new Promise((resolve, reject) => {
         NodeChildProcess.spawn("systemctl", ["--user", "daemon-reload"], {
