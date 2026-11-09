@@ -30,9 +30,8 @@ const Subscription = Schema.Struct({
 });
 const decodeSubscription = Schema.decodeUnknownOption(Schema.fromJsonString(Subscription));
 
-const Outcome = Schema.Struct({ outcome: Schema.optional(Schema.String) });
 const decodeStreamEnd = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Union([Schema.Struct({ data: Outcome }), Outcome])),
+  Schema.fromJsonString(Schema.Struct({ outcome: Schema.String })),
 );
 
 /**
@@ -45,10 +44,7 @@ type Ending = "reconnect" | "dropped" | "renew" | "personal" | "stop";
 const endingOf = (data: string): Ending =>
   Option.match(decodeStreamEnd(data), {
     onNone: () => "reconnect",
-    onSome: (end) =>
-      ("data" in end ? end.data.outcome : end.outcome) === "subscription_ended"
-        ? "renew"
-        : "reconnect",
+    onSome: ({ outcome }) => (outcome === "subscription_ended" ? "renew" : "reconnect"),
   });
 
 export interface PullRequestEventsInput {

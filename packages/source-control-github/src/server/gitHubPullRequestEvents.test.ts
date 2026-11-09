@@ -73,12 +73,12 @@ it.effect("follows a pull request across a refused app token, reconnects, and re
         new Response(
           sse(
             ["com.github.pull_request.head.changed.v1", "{}"],
-            ["github.stream.end", JSON.stringify({ outcome: "reconnect" })],
+            ["github.stream.end", '{"outcome":"reconnect","reason":"shutdown"}'],
           ),
         ),
       () =>
         new Response(
-          sse(["github.stream.end", JSON.stringify({ data: { outcome: "subscription_ended" } })]),
+          sse(["github.stream.end", '{"outcome":"subscription_ended","reason":"expired"}']),
         ),
       () => new Response(": heartbeat\n\n"),
     ];
