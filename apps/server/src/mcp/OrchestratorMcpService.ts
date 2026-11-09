@@ -1543,9 +1543,11 @@ const make = Effect.gen(function* () {
         : progress.resultRun;
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
-        ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
-          ? "result_available"
-          : "working"
+        ? !isTerminalTaskStatus(taskStatusForRun(taskResultRun))
+          ? "working"
+          : progress.state === "waiting_for_children"
+            ? "waiting_for_children"
+            : "result_available"
         : progress.state;
     const resultRunIds = [
       ...new Set(

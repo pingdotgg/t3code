@@ -12797,7 +12797,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly settledContinuationOf?: RunId;
         readonly syncRunId?: RunId;
         readonly task: OrchestrationV2Subagent;
-        readonly resultRun?: OrchestrationV2Run;
+        readonly progress: ReturnType<typeof delegatedTaskProgress>;
       },
     ) {
       const childThreadId = childControls.thread.id;
@@ -12813,7 +12813,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const childRun =
         taskRuns.length === 0
           ? options.task.id === forkedFrom.nodeId
-            ? options.resultRun
+            ? options.progress.resultRun
             : undefined
           : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
@@ -12875,6 +12875,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
+      // A follow-up turn that started its own subagents ends with them, as the first turn does.
+      if (options.progress.state === "waiting_for_children") return;
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -13093,11 +13095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))
       )
         continue;
-      yield* finalizeAppOwnedSubagentTask(childControls, {
-        ...options,
-        task,
-        ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
-      });
+      yield* finalizeAppOwnedSubagentTask(childControls, { ...options, task, progress });
     }
 
     const { resultRun } = progress;
