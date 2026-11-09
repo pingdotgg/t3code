@@ -664,6 +664,54 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect(
+    "re-publishes a long running thread every few minutes so its card never goes stale",
+    () =>
+      Effect.gen(function* () {
+        const { relay, publications } = yield* makeTestRelay();
+        yield* relay.start();
+        yield* relay.publishThread(THREAD_ID);
+        assert.equal(publications.length, 1);
+
+        yield* TestClock.adjust("3 minutes");
+        yield* relay.drain;
+        assert.equal(publications.length, 1);
+
+        yield* TestClock.adjust("1 minute");
+        yield* relay.drain;
+        assert.equal(publications.length, 2);
+        assert.equal(publications[1]?.state?.phase, "running");
+        assert.notEqual(publications[1]?.state?.updatedAt, publications[0]?.state?.updatedAt);
+
+        yield* TestClock.adjust("4 minutes");
+        yield* relay.drain;
+        assert.equal(publications.length, 3);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not heartbeat a thread that is waiting, so alerts do not repeat", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.start();
+      yield* Ref.set(
+        currentShell,
+        shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("parent-request"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+      const before = publications.length;
+      yield* TestClock.adjust("12 minutes");
+      yield* relay.drain;
+      assert.equal(publications.length, before);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("republishes unchanged state with fresh credentials after relinking", () =>
     Effect.gen(function* () {
       const { relay, secrets, publications } = yield* makeTestRelay();
@@ -1231,7 +1279,8 @@ it.effect("catches up after startup without polling after success", () =>
     assert.equal(catchUp.activitySnapshotReads, 2);
 
     const readsBeforeIdle = secretReads.length;
-    yield* TestClock.adjust("10 minutes");
+    // Stay under the heartbeat interval: a running thread is re-published every few minutes.
+    yield* TestClock.adjust("3 minutes");
     assert.equal(catchUp.activitySnapshotReads, 2);
     assert.equal(secretReads.length, readsBeforeIdle);
 

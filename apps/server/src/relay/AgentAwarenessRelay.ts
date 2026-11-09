@@ -203,6 +203,15 @@ function resolveAgentActivityPublishingStartupState(input: {
   return input.publishEnabled ? "enabled" : "disabled";
 }
 
+// The relay marks a Live Activity stale 10 minutes after each push, so a long run with no phase
+// change must be re-published sooner or iOS shows "Out of date".
+const RELAY_AGENT_ACTIVITY_HEARTBEAT_INTERVAL_MS = 4 * 60 * 1000;
+
+// Waiting phases are left out: Android keys alerts by phase and time, so a fresh time would re-alert.
+function isHeartbeatPhase(phase: RelayAgentActivityState["phase"] | undefined): boolean {
+  return phase === "starting" || phase === "running";
+}
+
 const RELAY_AGENT_ACTIVITY_DETAIL_MAX_LENGTH = 160;
 const REDACTED_RELAY_AGENT_FAILURE_DETAIL = "The agent run failed.";
 const RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
@@ -435,6 +444,8 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  // Threads the heartbeat sweep asked to re-publish even though their projected state is unchanged.
+  const heartbeatDueThreads = new Set<ThreadId>();
   // Android keys alerts by phase and time, so a child's unchanged request keeps
   // its first alert time through parent renames, relinks and the parent's own requests.
   const childAlertByThread = new Map<ThreadId, SubagentAlert>();
@@ -500,6 +511,7 @@ export const make = Effect.gen(function* () {
     cachedRelayClient = undefined;
     publishConfirmDeadlines.clear();
     heldCompletions.clear();
+    heartbeatDueThreads.clear();
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
@@ -611,8 +623,13 @@ export const make = Effect.gen(function* () {
     ) {
       if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
     }
+    const heartbeatDue =
+      heartbeatDueThreads.delete(threadId) &&
+      isHeartbeatPhase(snapshot.state?.phase) &&
+      publishedStateByThread.get(threadId) === publishIdentity;
     if (
       publishedStateByThread.get(threadId) === publishIdentity &&
+      !heartbeatDue &&
       // A held completion settled after an earlier clear still has to alert.
       !(snapshot.state === null && heldCompletions.has(threadId))
     ) {
@@ -706,12 +723,17 @@ export const make = Effect.gen(function* () {
 
     const childRequestId = snapshot.subagentWait?.requestId;
     const childAlert = childAlertByThread.get(threadId);
-    const state =
+    const projectedState =
       snapshot.state !== null &&
       childRequestId !== undefined &&
       childAlert?.requestId === childRequestId
         ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
         : snapshot.state;
+    // A fresh time makes the relay push again, which renews the activity's stale date.
+    const state =
+      heartbeatDue && projectedState !== null
+        ? { ...projectedState, updatedAt: DateTime.formatIso(yield* DateTime.now) }
+        : projectedState;
     yield* publishState({
       projectId: snapshot.projectId,
       state,
@@ -977,6 +999,27 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
+        ),
+      );
+      yield* forkParked(
+        Effect.forever(
+          Effect.sleep(RELAY_AGENT_ACTIVITY_HEARTBEAT_INTERVAL_MS).pipe(
+            Effect.andThen(
+              Effect.gen(function* () {
+                const published = yield* Ref.get(publishedStateByThreadRef);
+                for (const threadId of published.keys()) {
+                  if (!hasLivePublishedState(published, threadId)) continue;
+                  heartbeatDueThreads.add(threadId);
+                  yield* enqueueThreadPublish(threadId);
+                }
+              }),
+            ),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("agent activity heartbeat sweep failed", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          ),
         ),
       );
       yield* forkParked(
