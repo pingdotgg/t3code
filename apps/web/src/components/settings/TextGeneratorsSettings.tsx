@@ -11,7 +11,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { CheckIcon, PlusIcon } from "lucide-react";
+import { CheckIcon, MoreVertical, PlusIcon, ServerIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -52,8 +52,8 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Label } from "../ui/label";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
@@ -62,11 +62,6 @@ import { searchableSetting } from "./settingsSearch";
 import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const decodeTextGenerator = Schema.decodeUnknownOption(TextGeneratorConfig);
-
-const KIND_LABELS = {
-  openaiCompatible: "OpenAI-compatible",
-  anthropic: "Anthropic",
-} satisfies Record<TextGeneratorConfig["kind"], string>;
 
 type Saved = { readonly id: ProviderInstanceId; readonly config: TextGeneratorConfig };
 type Editing = Saved | "new";
@@ -118,7 +113,7 @@ export function TextGeneratorsSettings({
             <SettingsRow
               key={id}
               title={
-                <span className="inline-flex items-center gap-2">
+                <span className="inline-flex items-center gap-2.5">
                   <ProviderInstanceIcon
                     driverKind={textGeneratorBrand(config)}
                     displayName={name}
@@ -128,28 +123,42 @@ export function TextGeneratorsSettings({
                 </span>
               }
               description={
-                <span className="break-all">
-                  {KIND_LABELS[config.kind]}
-                  {config.enabled ? "" : " · Off"} · {config.baseUrl}
+                // Indented past the icon so it lines up with the name.
+                <span className="block truncate ps-7.5">
+                  {config.enabled ? "" : "Off · "}
+                  {config.baseUrl.replace(/^https?:\/\//, "")}
                 </span>
               }
               control={
                 readOnly ? null : (
-                  <div className="flex items-center gap-1.5">
-                    <Button
-                      size="xs"
-                      variant="ghost"
-                      disabled={!config.enabled}
-                      onClick={() => setViewing({ id, config })}
-                    >
-                      Models
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={() => setEditing({ id, config })}>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="outline" onClick={() => setEditing({ id, config })}>
                       Edit
                     </Button>
-                    <Button size="xs" variant="ghost" onClick={() => setRemoving(id)}>
-                      Remove
-                    </Button>
+                    <Menu>
+                      <MenuTrigger
+                        render={
+                          <Button
+                            size="icon-sm"
+                            variant="ghost-muted"
+                            aria-label={`More actions for ${name}`}
+                          />
+                        }
+                      >
+                        <MoreVertical />
+                      </MenuTrigger>
+                      <MenuPopup align="end">
+                        <MenuItem
+                          disabled={!config.enabled}
+                          onClick={() => setViewing({ id, config })}
+                        >
+                          Show models
+                        </MenuItem>
+                        <MenuItem variant="destructive" onClick={() => setRemoving(id)}>
+                          Remove
+                        </MenuItem>
+                      </MenuPopup>
+                    </Menu>
                     <Switch
                       checked={config.enabled}
                       onCheckedChange={(enabled) =>
@@ -277,6 +286,11 @@ function TextGeneratorWizard({
     enabled: existing?.enabled ?? true,
   });
   const keyRequired = existing === null && preset.id !== "custom";
+  // Presets know their URL; only a custom endpoint, or one already saved as such, asks for it.
+  const showBaseUrl =
+    existing === null
+      ? preset.id === "custom"
+      : !["openai", "anthropic", "openrouter"].includes(textGeneratorBrand(existing));
   const canConnect = keyValid && Option.isSome(config) && (!keyRequired || apiKey !== "");
   const name = Option.isSome(config) ? textGeneratorDisplayName(config.value) : preset.label;
 
@@ -327,50 +341,63 @@ function TextGeneratorWizard({
             >
               {existing === null ? (
                 <div className="grid gap-1.5">
-                  <Label htmlFor="text-generator-preset">Service</Label>
-                  <Select
-                    value={preset.id}
-                    onValueChange={(value) => {
-                      const next = TEXT_GENERATOR_PRESETS.find(
-                        (candidate) => candidate.id === value,
-                      );
-                      if (!next) return;
-                      setPreset(next);
-                      setBaseUrl(next.baseUrl);
-                      setCheckError(null);
-                    }}
+                  <span className="text-sm font-medium">Service</span>
+                  <div
+                    role="radiogroup"
+                    aria-label="Service"
+                    className="grid grid-cols-2 gap-2 sm:grid-cols-4"
                   >
-                    <SelectTrigger id="text-generator-preset" size="sm" aria-label="Service">
-                      <SelectValue>
-                        {(value: string) =>
-                          TEXT_GENERATOR_PRESETS.find((candidate) => candidate.id === value)?.label
-                        }
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup>
-                      {TEXT_GENERATOR_PRESETS.map((candidate) => (
-                        <SelectItem key={candidate.id} value={candidate.id}>
-                          {candidate.label}
-                        </SelectItem>
-                      ))}
-                    </SelectPopup>
-                  </Select>
+                    {TEXT_GENERATOR_PRESETS.map((candidate) => {
+                      const selected = candidate.id === preset.id;
+                      return (
+                        <button
+                          key={candidate.id}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          className={
+                            selected
+                              ? "flex flex-col items-center gap-2 rounded-lg border border-primary bg-primary/5 px-2 py-3 text-sm font-medium text-foreground ring-1 ring-primary ring-inset outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                              : "flex flex-col items-center gap-2 rounded-lg border bg-background px-2 py-3 text-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                          }
+                          onClick={() => {
+                            setPreset(candidate);
+                            setBaseUrl(candidate.baseUrl);
+                            setCheckError(null);
+                          }}
+                        >
+                          {candidate.id === "custom" ? (
+                            <ServerIcon className="size-5" aria-hidden />
+                          ) : (
+                            <ProviderInstanceIcon
+                              driverKind={textGeneratorBrand(candidate)}
+                              displayName={candidate.label}
+                              badgeContent="none"
+                            />
+                          )}
+                          {candidate.id === "custom" ? "Custom" : candidate.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               ) : null}
-              <div className="grid gap-1.5">
-                <Label htmlFor="text-generator-url">Base URL</Label>
-                <Input
-                  id="text-generator-url"
-                  placeholder="http://localhost:11434/v1"
-                  value={baseUrl}
-                  onChange={(event) => {
-                    setBaseUrl(event.target.value);
-                    setCheckError(null);
-                  }}
-                  spellCheck={false}
-                  autoFocus={existing === null && preset.id === "custom"}
-                />
-              </div>
+              {showBaseUrl ? (
+                <div className="grid gap-1.5">
+                  <Label htmlFor="text-generator-url">Base URL</Label>
+                  <Input
+                    id="text-generator-url"
+                    placeholder="http://localhost:11434/v1"
+                    value={baseUrl}
+                    onChange={(event) => {
+                      setBaseUrl(event.target.value);
+                      setCheckError(null);
+                    }}
+                    spellCheck={false}
+                    autoFocus={existing === null && preset.id === "custom"}
+                  />
+                </div>
+              ) : null}
               <div className="grid gap-1.5">
                 <Label htmlFor="text-generator-key">
                   {keyRequired ? "API key" : "API key (optional)"}
@@ -386,6 +413,7 @@ function TextGeneratorWizard({
                     setCheckError(null);
                   }}
                   onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                  autoFocus={existing === null && preset.id !== "custom"}
                   onValidityChange={setKeyValid}
                 />
               </div>
@@ -448,7 +476,10 @@ function TextGeneratorWizard({
               </Button>
             </>
           ) : (
-            <Button onClick={onClose}>Done</Button>
+            // Connect's button unmounts here; without this, focus lands on the step list.
+            <Button autoFocus onClick={onClose}>
+              Done
+            </Button>
           )}
         </WizardFooter>
       </WizardPopup>
@@ -519,7 +550,7 @@ function TextGenerationTaskPicker({
         {testable ? (
           <Button
             size="xs"
-            variant="ghost"
+            variant="outline"
             aria-busy={testing}
             disabled={testing}
             onClick={() => void test()}
@@ -575,11 +606,12 @@ function TextGeneratorModelList({
           type="search"
           placeholder="Search models"
           aria-label="Search models"
+          autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
       ) : null}
-      <div className="max-h-64 overflow-y-auto rounded-lg border">
+      <div className="max-h-80 overflow-y-auto rounded-lg border divide-y divide-border/60">
         {shown.length === 0 ? (
           <p className="px-3 py-2 text-sm text-muted-foreground">No models match.</p>
         ) : (
@@ -588,12 +620,14 @@ function TextGeneratorModelList({
               const isSelected = model.id === selected;
               const label = (
                 <>
-                  <span className="min-w-0 flex-1 truncate">{model.name}</span>
-                  {model.name !== model.id ? (
-                    <span className="max-w-[45%] truncate text-xs text-muted-foreground">
-                      {model.id}
-                    </span>
-                  ) : null}
+                  <span className="grid min-w-0 flex-1">
+                    <span className="truncate">{model.name}</span>
+                    {model.name !== model.id ? (
+                      <span className="truncate font-mono text-xs text-muted-foreground">
+                        {model.id}
+                      </span>
+                    ) : null}
+                  </span>
                   {isSelected ? <CheckIcon className="size-4 shrink-0 text-primary" /> : null}
                 </>
               );
@@ -606,13 +640,13 @@ function TextGeneratorModelList({
                   {onSelect ? (
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                       onClick={() => onSelect(model.id)}
                     >
                       {label}
                     </button>
                   ) : (
-                    <div className="flex items-center gap-2 px-3 py-1.5 text-sm">{label}</div>
+                    <div className="flex items-center gap-2 px-3 py-2 text-sm">{label}</div>
                   )}
                 </li>
               );
