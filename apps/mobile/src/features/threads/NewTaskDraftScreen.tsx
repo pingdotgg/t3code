@@ -78,6 +78,7 @@ import {
 } from "../../lib/modelOptions";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import {
+  environmentConnectedAtom,
   useRemoteConnections,
   useRemoteEnvironmentRuntime,
 } from "../../state/use-remote-environment-registry";
@@ -95,6 +96,8 @@ import {
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
 import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
+import { serverEnvironment } from "../../state/server";
+import { vcsEnvironment } from "../../state/vcs";
 import { appAtomRegistry } from "../../state/atom-registry";
 
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
@@ -244,26 +247,6 @@ export function NewTaskDraftScreen(props: {
       navigation.dispatch(StackActions.replace("Home"));
     }
   };
-  const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
-  const attachmentBlockReason = selectedProject
-    ? composerAttachmentUploadBlockReason({
-        environmentId: selectedProject.environmentId,
-        attachments: flow.attachments,
-        connected: environmentConnected,
-        serverConfig: selectedEnvironmentServerConfig,
-        states: uploadStates,
-      })
-    : null;
-  const attachmentsUploading =
-    environmentConnected &&
-    selectedProject !== null &&
-    composerAttachmentsStillUploading({
-      environmentId: selectedProject.environmentId,
-      attachments: flow.attachments,
-      serverConfig: selectedEnvironmentServerConfig,
-      states: uploadStates,
-    });
-  const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
   const submittingRef = useRef(false);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
@@ -606,7 +589,15 @@ export function NewTaskDraftScreen(props: {
     const initialMessageText = draft.text.trim();
 
     if (
-      attachmentBlockReason !== null ||
+      composerAttachmentUploadBlockReason({
+        environmentId: selectedProject.environmentId,
+        attachments: draft.attachments,
+        connected: appAtomRegistry.get(environmentConnectedAtom(selectedProject.environmentId)),
+        serverConfig: appAtomRegistry.get(
+          serverEnvironment.configValueAtom(selectedProject.environmentId),
+        ),
+        states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+      }) !== null ||
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
@@ -664,7 +655,33 @@ export function NewTaskDraftScreen(props: {
 
     flow.setSubmitting(true);
     const message = await flow.buildPendingTaskMessage(creationMetadata, {
-      currentCheckoutBranch: queuesInsteadOfStarting ? null : flow.currentCheckoutBranchName,
+      currentCheckoutBranch: (attachments) => {
+        const environmentId = selectedProject.environmentId;
+        if (!appAtomRegistry.get(environmentConnectedAtom(environmentId))) return null;
+        const uploadInput = {
+          environmentId,
+          attachments,
+          connected: true,
+          serverConfig: appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId)),
+          states: appAtomRegistry.get(composerAttachmentUploadsAtom),
+        };
+        if (
+          composerAttachmentUploadBlockReason(uploadInput) ||
+          composerAttachmentsStillUploading(uploadInput)
+        )
+          return null;
+        return (
+          AsyncResult.getOrElse(
+            appAtomRegistry.get(
+              vcsEnvironment.status({
+                environmentId,
+                input: { cwd: selectedProject.workspaceRoot },
+              }),
+            ),
+            () => null,
+          )?.refName ?? null
+        );
+      },
     });
     if (!message) {
       flow.setSubmitting(false);

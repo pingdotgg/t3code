@@ -189,7 +189,9 @@ type NewTaskFlowContextValue = {
   readonly buildPendingTaskMessage: (
     metadata: TurnCommandMetadata,
     options?: {
-      readonly currentCheckoutBranch?: string | null;
+      readonly currentCheckoutBranch?: (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ) => string | null;
     },
   ) => Promise<QueuedThreadMessage | null>;
   readonly setPrompt: (value: string) => void;
@@ -694,7 +696,11 @@ export function NewTaskFlowProvider(
 
   const buildPendingTaskMessage = async (
     metadata: TurnCommandMetadata,
-    options?: { readonly currentCheckoutBranch?: string | null },
+    options?: {
+      readonly currentCheckoutBranch?: (
+        attachments: ReadonlyArray<DraftComposerAttachment>,
+      ) => string | null;
+    },
   ): Promise<QueuedThreadMessage | null> => {
     if (!selectedProject || !selectedProjectDraftKey) {
       return null;
@@ -790,7 +796,7 @@ export function NewTaskFlowProvider(
         branch: resolveProjectThreadCreationBranch({
           workspaceMode: mode,
           selectedBranch: workspaceSelection?.branch ?? null,
-          currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+          currentCheckoutBranch: options?.currentCheckoutBranch?.(draft.attachments) ?? null,
         }),
         worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
         ...((workspaceSelection?.startFromOrigin ?? startFromOrigin)

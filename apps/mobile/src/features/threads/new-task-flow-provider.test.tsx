@@ -1,3 +1,4 @@
+import { composerAttachmentsStillUploading } from "../../lib/composerAttachmentUploadQueue";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
@@ -380,106 +381,140 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.selectedBranchName).toBe("main");
 });
 
-it.each(["removed", "disabled", "valid", "switch-pending", "switch-during", "picker"] as const)(
-  "queues the displayed model when the saved pick is %s",
-  async (state) => {
-    using screen = setup();
-    const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
-    const saved = { instanceId: ProviderInstanceId.make("claude_work"), model: "sonnet" };
-    const providers: ServerProvider[] = [primary, ...(state === "removed" ? [] : [saved])].map(
-      (selection) => ({
-        instanceId: selection.instanceId,
-        driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
-        enabled: selection === primary || state !== "disabled",
-        installed: true,
-        version: "1",
-        status: "ready",
-        auth: { status: "authenticated" },
-        checkedAt: "2026-01-01T00:00:00Z",
-        models: [],
-        slashCommands: [],
-        skills: [],
-      }),
-    );
-    mocks.config.mockReturnValue({
-      providers,
-      scratchWorkspaceRoot: "/a",
-      settings: {
-        ...DEFAULT_SERVER_SETTINGS,
-        defaultModelSelection: primary,
-        providerInstances: {
-          [primary.instanceId]: { driver: "codex", config: {} },
-          [saved.instanceId]: { driver: "claudeAgent", config: { enabled: state !== "disabled" } },
-        },
+it.each([
+  "removed",
+  "disabled",
+  "valid",
+  "switch-pending",
+  "switch-during",
+  "picker",
+  "picker-explicit",
+] as const)("queues the displayed model when the saved pick is %s", async (state) => {
+  using screen = setup();
+  const primary = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
+  const saved = { instanceId: ProviderInstanceId.make("claude_work"), model: "sonnet" };
+  const providers: ServerProvider[] = [primary, ...(state === "removed" ? [] : [saved])].map(
+    (selection) => ({
+      instanceId: selection.instanceId,
+      driver: ProviderDriverKind.make(selection === primary ? "codex" : "claudeAgent"),
+      enabled: selection === primary || state !== "disabled",
+      installed: true,
+      version: "1",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00Z",
+      models: [],
+      slashCommands: [],
+      skills: [],
+    }),
+  );
+  mocks.config.mockReturnValue({
+    providers,
+    scratchWorkspaceRoot: state === "picker-explicit" ? "/scratch" : "/a",
+    settings: {
+      ...DEFAULT_SERVER_SETTINGS,
+      defaultModelSelection: primary,
+      providerInstances: {
+        [primary.instanceId]: { driver: "codex", config: {} },
+        [saved.instanceId]: { driver: "claudeAgent", config: { enabled: state !== "disabled" } },
       },
-    });
-    await screen.render(true);
+    },
+  });
+  await screen.render(true);
+  act(() => {
+    screen.current.setPrompt("hello");
+    mocks.writeSettings(screen.current.draftKey!, { modelSelection: saved });
+  });
+  const shown = state === "removed" || state === "disabled" ? primary : saved;
+  expect(screen.current.selectedModel).toEqual(shown);
+  let completeSwitch!: (value: AsyncResult.Success<EnvironmentProject>) => void;
+  mocks.openScratch.mockReturnValue(
+    new Promise<AsyncResult.Success<EnvironmentProject>>((resolve) => {
+      completeSwitch = resolve;
+    }),
+  );
+  let switching: Promise<boolean> | undefined;
+  if (state === "switch-pending") {
     act(() => {
-      screen.current.setPrompt("hello");
-      mocks.writeSettings(screen.current.draftKey!, { modelSelection: saved });
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
     });
-    const shown = state === "removed" || state === "disabled" ? primary : saved;
-    expect(screen.current.selectedModel).toEqual(shown);
-    let completeSwitch!: (value: AsyncResult.Success<EnvironmentProject>) => void;
-    mocks.openScratch.mockReturnValue(
-      new Promise<AsyncResult.Success<EnvironmentProject>>((resolve) => {
-        completeSwitch = resolve;
-      }),
-    );
-    let switching: Promise<boolean> | undefined;
-    if (state === "switch-pending") {
-      act(() => {
-        switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
-      });
-    }
-    const operation =
-      state === "picker" ? startComposerDraftOperation(screen.current.draftKey!) : undefined;
-    let finished = false;
-    const pending = screen.current.buildPendingTaskMessage({
+  }
+  const operation = state.startsWith("picker")
+    ? startComposerDraftOperation(screen.current.draftKey!)
+    : undefined;
+  let finished = false;
+  const pending = screen.current.buildPendingTaskMessage(
+    {
       commandId: "command",
       messageId: "message",
       threadId: "thread",
       createdAt: "2026-01-01T00:00:00Z",
+    },
+    {
+      currentCheckoutBranch: (attachments) =>
+        composerAttachmentsStillUploading({
+          environmentId: EnvironmentId.make("one"),
+          attachments,
+          serverConfig: {
+            environment: { capabilities: { fileAttachments: { maxUploadBytes: 10 } } },
+          },
+          states: {},
+        })
+          ? null
+          : "main",
+    },
+  );
+  pending.then(() => {
+    finished = true;
+  });
+  if (state === "switch-during") {
+    act(() => {
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
     });
-    pending.then(() => {
-      finished = true;
+  }
+  if (operation) {
+    await act(async () => {});
+    expect(finished).toBe(false);
+    act(() =>
+      mocks.writeSettings(screen.current.draftKey!, {
+        ...(state === "picker-explicit"
+          ? {
+              workspaceSelection: {
+                mode: "local",
+                branch: "chosen",
+                worktreePath: null,
+                startFromOrigin: false,
+              },
+            }
+          : {}),
+        attachments: [
+          {
+            type: "file",
+            id: "picked",
+            name: "picked.txt",
+            mimeType: "text/plain",
+            sizeBytes: 1,
+            fileUri: "file:///picked.txt",
+          },
+        ],
+      }),
+    );
+    operation.finish();
+  }
+  const message = await pending;
+  if (switching) {
+    expect(message).toBeNull();
+    await act(async () => {
+      completeSwitch(AsyncResult.success(screen.projects[2]!));
+      await switching;
     });
-    if (state === "switch-during") {
-      act(() => {
-        switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
-      });
-    }
-    if (operation) {
-      await act(async () => {});
-      expect(finished).toBe(false);
-      act(() =>
-        mocks.writeSettings(screen.current.draftKey!, {
-          attachments: [
-            {
-              type: "file",
-              id: "picked",
-              name: "picked.txt",
-              mimeType: "text/plain",
-              sizeBytes: 1,
-              fileUri: "file:///picked.txt",
-            },
-          ],
-        }),
-      );
-      operation.finish();
-    }
-    const message = await pending;
-    if (switching) {
-      expect(message).toBeNull();
-      await act(async () => {
-        completeSwitch(AsyncResult.success(screen.projects[2]!));
-        await switching;
-      });
-      expect(screen.current.selectedEnvironmentId).toBe("two");
-    } else {
-      expect(message?.modelSelection).toEqual(shown);
-      if (state === "picker")
-        expect(message?.attachments).toMatchObject([{ id: "picked", name: "picked.txt" }]);
-    }
-  },
-);
+    expect(screen.current.selectedEnvironmentId).toBe("two");
+  } else {
+    expect(message?.modelSelection).toEqual(shown);
+    expect(message?.creation?.branch).toBe(
+      state === "picker-explicit" ? "chosen" : state === "picker" ? null : "main",
+    );
+    if (state.startsWith("picker"))
+      expect(message?.attachments).toMatchObject([{ id: "picked", name: "picked.txt" }]);
+  }
+});
