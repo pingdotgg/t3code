@@ -54,22 +54,18 @@ function trimEmphasis(link: string, before: string) {
 
 /** The one distinct http(s) link in `reason`, for agents that put it there instead of in `url`. */
 function reasonLink(reason: string): string | undefined {
-  const links = new Set(
-    Array.from(reason.matchAll(REASON_LINK), (match) => {
-      const [, ticked, angled, target, bare] = match;
-      if (bare === undefined) return ticked ?? angled ?? target ?? "";
-      const before = reason.slice(0, match.index);
-      let link = trimPunctuation(bare);
-      for (
-        let next = trimEmphasis(link, before);
-        next !== link;
-        next = trimEmphasis(link, before)
-      ) {
-        link = next;
-      }
-      return link;
-    }),
-  );
+  const raw = Array.from(reason.matchAll(REASON_LINK), (match) => {
+    const [, ticked, angled, target, bare] = match;
+    if (bare === undefined) return ticked ?? angled ?? target ?? "";
+    const before = reason.slice(0, match.index);
+    let link = trimPunctuation(bare);
+    for (let next = trimEmphasis(link, before); next !== link; next = trimEmphasis(link, before)) {
+      link = next;
+    }
+    return link;
+  });
+  // Two spellings of one page (`https://a.dev` and `https://a.dev/`) count once.
+  const links = new Set(raw.map((link) => secretRequestPageUrl(link)?.href ?? link));
   return links.size === 1 ? [...links][0] : undefined;
 }
 

@@ -63,6 +63,7 @@ describe("secretRequestLink", () => {
     ["Open `https://a.dev/x?s=1.` and sign in.", "https://a.dev/x?s=1."],
     ["Open https://a.dev/x?s=1, then if needed https://a.dev/x?s=1 again.", "https://a.dev/x?s=1"],
     ["Open https://a.dev or https://b.dev.", undefined],
+    ["Open https://a.dev (also written https://a.dev/).", "https://a.dev/"],
     ["Paste the code the CLI printed.", undefined],
   ])("finds the one link in a reason: %s", (reason, href) => {
     expect(secretRequestLink({ reason })?.href).toBe(href);
