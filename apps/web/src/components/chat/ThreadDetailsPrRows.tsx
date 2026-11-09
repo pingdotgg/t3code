@@ -100,21 +100,32 @@ export function ThreadDetailsPrRows({
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
   if (rest.length === 0) return currentRow;
 
+  const linkRows = rest.map((link) => (
+    <ThreadDetailsPrLinkRow
+      key={threadPullRequestKeyOf(link)}
+      environmentId={row.environmentId}
+      link={link}
+      onOpen={(event) => onOpenLink(event, link.url)}
+      onActed={row.onActed}
+      onStopWatching={stopWatching(link)}
+    />
+  ));
+  // A lone extra PR takes the same space as the "Show 1 more" row, so show it directly.
+  if (rest.length === 1) {
+    return (
+      <>
+        {currentRow}
+        {linkRows}
+      </>
+    );
+  }
+
   return (
     <>
       {currentRow}
       {expanded ? (
         <div data-thread-details-pr-list className="flex flex-col">
-          {rest.map((link) => (
-            <ThreadDetailsPrLinkRow
-              key={threadPullRequestKeyOf(link)}
-              environmentId={row.environmentId}
-              link={link}
-              onOpen={(event) => onOpenLink(event, link.url)}
-              onActed={row.onActed}
-              onStopWatching={stopWatching(link)}
-            />
-          ))}
+          {linkRows}
         </div>
       ) : null}
       <ThreadDetailsControl
