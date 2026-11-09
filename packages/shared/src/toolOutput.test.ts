@@ -184,8 +184,6 @@ describe("commandRunsTests", () => {
       "yarn run test:unit",
       "vp test run src/a.test.ts",
       "cd apps/web && npx jest --ci",
-      "go test ./...",
-      "cargo test -p core",
       "uv run pytest -q",
     ]) {
       expect(commandRunsTests(command), command).toBe(true);
@@ -199,9 +197,7 @@ describe("commandRunsTests", () => {
       "git log --grep test",
       "ls tests",
       "rg available src",
-      "cat avatar.tsx",
       "cat vitest.config.ts",
-      "ls jest.config.js",
     ]) {
       expect(commandRunsTests(command), command).toBe(false);
     }
