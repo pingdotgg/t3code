@@ -30,10 +30,8 @@ import {
 } from "@t3tools/client-runtime/providerSkills";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useProjects, useVisibleThreadShells } from "~/state/entities";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
-import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   pullRequestEnvironment,
   usePullRequestList,
@@ -149,8 +147,7 @@ export function useComposerMenuItems({
     machine: environmentMachines.get(identity.environmentId) ?? ("server" as const),
   }));
   const environmentProjects = useProjects();
-  const nowMinute = useNowMinute();
-  // Thread rows read "project · 2h ago", like the sidebar.
+  // Thread rows show project and age, like the sidebar.
   const describeComposerThread = makeComposerThreadDescription(environmentProjects);
   const withThreadAge = (item: Extract<ComposerCommandItem, { type: "thread" }>) => {
     const shell = environmentThreadShells.find(
@@ -164,9 +161,7 @@ export function useComposerMenuItems({
         item.thread.environmentId === environmentId
           ? undefined
           : linkedEnvironments.get(item.thread.environmentId),
-      metadata: shell
-        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`))
-        : undefined,
+      updatedAt: shell?.updatedAt,
     };
   };
   const workspaceEntries = useComposerPathSearch({

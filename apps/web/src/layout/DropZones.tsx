@@ -1,4 +1,5 @@
-import { AppWindowIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
+import { AppWindowIcon, AtSignIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { PANE_TAB_CLASS } from "../components/PaneNotch";
@@ -25,6 +26,8 @@ const GRIP_THICKNESS = 4;
 /** Pen ZyA9S/JYBD5: window-edge bars are 6px, 4px outside the strip. */
 const EXTEND_THICKNESS = 6;
 const EXTEND_GAP = 4;
+/** The dragged row covers the composer, so the mention pill's middle sits this far above it. */
+const MENTION_PILL_LIFT = 24;
 const GHOST_OFFSET_X = 24;
 const GHOST_OFFSET_Y = 14;
 const PILL_GAP = 8;
@@ -262,6 +265,27 @@ function DraggedTabGhostBody({ tab, point }: { tab: LayoutTab; point: { x: numbe
   );
 }
 
+/** Cuts the composers out of the zones, so a composer reads as above them. */
+function zonesClipPath(composers: readonly LayoutDragRect[]): string | undefined {
+  if (composers.length === 0) return undefined;
+  const holes = composers.map(
+    (rect) => `M${rect.left} ${rect.top}H${rect.right}V${rect.bottom}H${rect.left}Z`,
+  );
+  return `path(evenodd, "M0 0H${window.innerWidth}V${window.innerHeight}H0Z${holes.join("")}")`;
+}
+
+/** The label that names where the drop lands (pen MI18S). */
+function DropPill({ x, y, children }: { x: number; y: number; children: ReactNode }) {
+  return (
+    <div
+      className={cn("absolute -translate-x-1/2 -translate-y-1/2", PILL_CLASS)}
+      style={{ left: x, top: y }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** A window overlay keeps webviews and iframes from swallowing layout drags. */
 export function LayoutDropZones() {
   const state = useLayoutDragState();
@@ -275,40 +299,51 @@ export function LayoutDropZones() {
       className="fixed inset-0 z-[90] cursor-grabbing select-none"
     >
       <div className="pointer-events-none absolute inset-0">
-        <ExtendBars state={state} />
-        {zone ? (
-          <div
-            className="absolute rounded-card bg-foreground/[0.04] inset-ring inset-ring-foreground/22"
-            style={zone}
-          />
-        ) : null}
-        {state.panes.map((pane) => (
-          <PaneGrips key={pane.paneId} pane={pane} target={state.target} />
-        ))}
+        <div className="absolute inset-0" style={{ clipPath: zonesClipPath(state.composers) }}>
+          <ExtendBars state={state} />
+          {zone ? (
+            <div
+              className="absolute rounded-card bg-foreground/[0.04] inset-ring inset-ring-foreground/22"
+              style={zone}
+            />
+          ) : null}
+          {state.panes.map((pane) => (
+            <PaneGrips key={pane.paneId} pane={pane} target={state.target} />
+          ))}
+        </div>
         {state.source.kind === "tab" ? (
           <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
         ) : null}
         {into ? <InsertionMarker tabs={into.tabs} index={into.index} /> : null}
         {zone && state.target ? (
-          <div
-            className={cn(
-              "absolute flex",
-              into ? "left-2 justify-end-safe" : "-translate-x-1/2 -translate-y-1/2",
-            )}
-            style={
-              into
-                ? {
-                    top: zone.top + zone.height + PILL_GAP,
-                    width: Math.max(0, state.point.x - GHOST_OFFSET_X - PILL_GAP * 2),
-                  }
-                : { left: zone.left + zone.width / 2, top: zone.top + zone.height / 2 }
-            }
-          >
-            <div className={PILL_CLASS}>
-              <PillIcon target={state.target} />
-              {layoutDropLabel(state.target, into?.reorder ?? false)}
+          into ? (
+            <div
+              className="absolute left-2 flex justify-end-safe"
+              style={{
+                top: zone.top + zone.height + PILL_GAP,
+                width: Math.max(0, state.point.x - GHOST_OFFSET_X - PILL_GAP * 2),
+              }}
+            >
+              <div className={PILL_CLASS}>
+                <PillIcon target={state.target} />
+                {layoutDropLabel(state.target, into.reorder)}
+              </div>
             </div>
-          </div>
+          ) : (
+            <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
+              <PillIcon target={state.target} />
+              {layoutDropLabel(state.target, false)}
+            </DropPill>
+          )
+        ) : null}
+        {state.composer ? (
+          <DropPill
+            x={(state.composer.left + state.composer.right) / 2}
+            y={state.composer.top - MENTION_PILL_LIFT}
+          >
+            <AtSignIcon aria-hidden className="size-3.25 shrink-0" />
+            Mention thread
+          </DropPill>
         ) : null}
       </div>
     </div>,

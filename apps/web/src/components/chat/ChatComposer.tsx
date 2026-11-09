@@ -929,7 +929,10 @@ export function ChatComposer(props: ChatComposerProps) {
     selectedModel,
   );
   // Over-limit prompts show their line as soon as they overflow, and send stays off until they fit.
-  const promptLengthMessage = getComposerPromptLengthValidationMessage(prompt);
+  const promptLengthMessage = getComposerSubmissionValidationMessage({
+    prompt,
+    submissionTarget: activePendingProgress ? "pending-user-input" : "provider-turn",
+  });
   const [promptLengthDismissed, setPromptLengthDismissed] = useState(false);
   if (promptLengthDismissed && promptLengthMessage === null) setPromptLengthDismissed(false);
   const sendDisabledReason =

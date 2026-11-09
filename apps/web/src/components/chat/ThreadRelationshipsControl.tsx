@@ -15,7 +15,10 @@ import {
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
-import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  deriveProviderSubagentStatus,
+  formatSubagentEffort,
+} from "@t3tools/client-runtime/state/thread-execution";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -90,8 +93,8 @@ import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/men
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
-import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS,
   THREAD_DETAILS_PANEL_META_CLASS,
@@ -811,6 +814,10 @@ export function ThreadRelationshipsPanel(props: {
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
     const agent = workflowGroup ? projectedAgent : currentSubagent(projectedAgent, node?.thread);
     const failed = rowStatus === "failed" || rowStatus === "error";
+    // A child agent shows its state; parents, forks and transfers are named on the second line.
+    const childAgent = isSubagent && !isParent;
+    const running = childAgent && (rowStatus === "running" || rowStatus === "in_progress");
+    const childFailed = childAgent && failed;
     const canStop =
       agent &&
       (agent.origin === "app_owned" ||
@@ -884,8 +891,15 @@ export function ThreadRelationshipsPanel(props: {
         }
       />
     );
-    const relationshipModel =
-      node?.thread?.modelSelection.model ?? agent?.modelSelection?.model ?? agent?.model;
+    const relationshipSelection = node?.thread?.modelSelection ?? agent?.modelSelection;
+    const relationshipModel = relationshipSelection?.model ?? agent?.model;
+    const relationshipEffort = relationshipModel
+      ? formatSubagentEffort({
+          modelSlug: relationshipModel,
+          modelSelection: relationshipSelection,
+          provider,
+        })
+      : null;
     const relationshipContent = (
       <>
         {providerDriver ? (
@@ -906,39 +920,36 @@ export function ThreadRelationshipsPanel(props: {
           <RelationshipIcon className="size-4 shrink-0 text-muted-foreground" />
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-label leading-4">{threadTitle}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-label leading-4">{threadTitle}</span>
+            {childFailed || running ? (
+              <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
+                {childFailed ? (
+                  <span className="text-destructive-foreground">Failed</span>
+                ) : (
+                  <Spinner size="xs" tone="muted" aria-label="Running" />
+                )}
+              </span>
+            ) : null}
+          </span>
           <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
-            <span className="shrink-0">{relationship}</span>
+            {childAgent ? null : <span className="shrink-0">{relationship}</span>}
             {relationshipModel ? (
               <span className="min-w-0 truncate">
                 {lineageModelLabel(relationshipModel, providerEntry)}
               </span>
             ) : null}
+            {relationshipEffort ? <span className="shrink-0">{relationshipEffort}</span> : null}
+            {childAgent && !failed ? (
+              <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
+                {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
+                  <AgentElapsed agent={agent} compact />
+                ) : running ? null : (
+                  threadRelationshipStatusLabel(rowStatus)
+                )}
+              </span>
+            ) : null}
           </span>
-        </span>
-        <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
-          {isParent ? (
-            "Parent"
-          ) : !isSubagent ? (
-            edge.kind === "transfer" ? (
-              relationship
-            ) : (
-              "Fork"
-            )
-          ) : failed ? (
-            <span className="text-destructive-foreground">Failed</span>
-          ) : (
-            <>
-              {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
-                <AgentElapsed agent={agent} compact />
-              ) : (
-                threadRelationshipStatusLabel(rowStatus)
-              )}
-              {rowStatus === "running" || rowStatus === "in_progress" ? (
-                <Spinner size="xs" tone="muted" aria-label="Running" />
-              ) : null}
-            </>
-          )}
         </span>
       </>
     );

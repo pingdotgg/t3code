@@ -292,3 +292,26 @@ it("pages promoted open threads together with the remaining conversations", asyn
     .element(screen.getByText("Finding thread-10", { exact: true }))
     .not.toBeInTheDocument();
 });
+
+it("adds promoted review conversations to chat without requiring review permissions", async () => {
+  setup();
+  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
+  const thread = openThread("finding");
+  const onAddToChat = vi.fn();
+  const value = { ...detail, reviewThreads: [thread] };
+  await using screen = await renderUi(
+    <PullRequestSummaryTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      threadRef={null}
+      reference={value}
+      detail={value}
+      activityPending={false}
+      activityError={null}
+      onRefresh={() => {}}
+      onAddToChat={onAddToChat}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to chat", exact: true }));
+  expect(onAddToChat).toHaveBeenCalledWith({ kind: "thread", thread });
+});
