@@ -1,8 +1,10 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -16,6 +18,7 @@ import type {
 import { ConnectionTransientError } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
+  authorizesThroughConnect,
   connectionRoutes,
   routeEntry,
   routeHttpBaseUrl,
@@ -49,6 +52,8 @@ const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // wait the full probe timeout for a LAN the device has already left. A route
 // that misses it connects over relay, then upgrades with a second reconnect.
 const ROUTE_CHECK_HEAD_START_MS = 500;
+// How long a route authorized through T3 Connect keeps its turn over a later route that answered.
+const CONNECT_AUTHORIZATION_GRACE_MS = 5_000;
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -104,6 +109,50 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     return result;
   });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
+  const preempted: Array<{ readonly route: ConnectionRoute; readonly check: RouteCheck }> = [];
+  const answers = (position: number) =>
+    Fiber.join(checks[position]!).pipe(
+      Effect.filterOrElse(
+        (check) => check === "answered",
+        () => Effect.never,
+      ),
+    );
+  // A route needing a T3 Connect credential can stall on Connect for longer than the setup
+  // budget. A route the head start skipped takes its turn as soon as it answers; a later route
+  // that needs no Connect credential waits out a grace, so a healthy Connect route keeps its place.
+  const overtaken = (index: number) => {
+    const later = routes.flatMap((route, position) =>
+      position > index && !authorizesThroughConnect(route) ? [answers(position)] : [],
+    );
+    const waits = [
+      ...silent.map(({ index: position }) => answers(position)),
+      ...(later.length === 0
+        ? []
+        : [
+            Effect.sleep(CONNECT_AUTHORIZATION_GRACE_MS).pipe(
+              Effect.andThen(Effect.raceAll(later)),
+            ),
+          ]),
+    ];
+    return waits.length === 0 ? undefined : Effect.raceAll(waits);
+  };
+  const attemptUnlessOvertaken = Effect.fnUntraced(function* (
+    route: ConnectionRoute,
+    check: RouteCheck,
+    overtakenBy: Effect.Effect<unknown>,
+  ) {
+    const running = yield* Effect.forkChild(attempt(route, check));
+    const finished = yield* Effect.raceFirst(
+      Fiber.await(running).pipe(Effect.as(true)),
+      overtakenBy.pipe(Effect.as(false)),
+    );
+    if (!finished) yield* Fiber.interrupt(running);
+    // An attempt that finished just as it was overtaken still counts, so its session is kept.
+    const exit = yield* Fiber.await(running);
+    if (Exit.isSuccess(exit)) return Option.some(exit.value);
+    if (Cause.hasInterruptsOnly(exit.cause)) return Option.none();
+    return yield* Effect.failCause(exit.cause);
+  });
   for (const [index, route] of routes.entries()) {
     const check =
       checks.length === 0
@@ -116,10 +165,18 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       silent.push({ route, index });
       continue;
     }
-    const result = yield* attempt(route, check);
-    if (result._tag === "Success") return result.success;
+    const overtakenBy = authorizesThroughConnect(route) ? overtaken(index) : undefined;
+    const result =
+      overtakenBy === undefined
+        ? Option.some(yield* attempt(route, check))
+        : yield* attemptUnlessOvertaken(route, check, overtakenBy);
+    if (Option.isNone(result)) {
+      preempted.push({ route, check });
+      continue;
+    }
+    if (result.value._tag === "Success") return result.value.success;
     // An incompatible server is the same server on every route.
-    if (result.failure.reason === "unsupported") return yield* result.failure;
+    if (result.value.failure.reason === "unsupported") return yield* result.value.failure;
   }
   // A slow route that answered after the head start goes before one that is
   // still dead, which can hold an attempt open far longer than its probe.
@@ -130,6 +187,7 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     ...silent.flatMap((entry, position) =>
       late[position] === "silent" ? [] : [{ ...entry, check: late[position]! }],
     ),
+    ...preempted,
     ...silent.flatMap((entry, position) =>
       late[position] === "silent" ? [{ ...entry, check: "silent" as const }] : [],
     ),
