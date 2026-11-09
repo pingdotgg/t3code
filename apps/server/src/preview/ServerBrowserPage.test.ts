@@ -98,6 +98,27 @@ describe("server browser element refs", () => {
     expect(await page.locator("li").count()).toBe(5);
   });
 
+  it("tells a click target that matches nothing from one that never becomes clickable", async () => {
+    await page.setContent(`<button hidden>hidden</button>`);
+    const failure = (selector: string) =>
+      ServerBrowserPage.click(page, { selector, timeoutMs: 500 }).then(
+        () => expect.unreachable(),
+        ServerBrowserPage.toOperationError,
+      );
+
+    const absent = await failure(".definitely-no-such-t3-target");
+    expect(absent.tag).toBe("PreviewAutomationTimeoutError");
+    expect(absent.message).toBe(
+      'The click may have happened and removed its target or navigated; check the page before retrying. No element matches ".definitely-no-such-t3-target" after the timeout; take a fresh snapshot and use its locator.',
+    );
+    expect(absent.cause).toMatchObject({ name: "TimeoutError" });
+    const hidden = await failure("button");
+    expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
+    expect(hidden.message).toBe(
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+    );
+  });
+
   it("does not retarget a removed ref to a replacement node", async () => {
     await page.setContent("<button onclick=\"this.textContent='clicked'\">original</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "original");
@@ -212,6 +233,11 @@ describe("server browser element refs", () => {
     expect(tree).not.toContain("PAYLOAD");
   });
 
+  it("shows a data: page's own URL by media type only", async () => {
+    await page.goto("data:text/html,<title>Key</title>PAYLOAD");
+    expect((await takeSnapshot()).url).toBe("data:text/html,…");
+  });
+
   it("rejects refs from another tab", async () => {
     await page.setContent("<button>same label</button>");
     const locator = buttonLocator((await takeSnapshot()).accessibilityTree, "same label");
@@ -283,10 +309,11 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot } = await ServerBrowserPage.snapshot({
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
+      fullScreenshot: true,
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
@@ -309,7 +336,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, pixels };
+    return { screenshot, fullScreenshot, pixels };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -324,12 +351,13 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
 
     expect({
       size: [screenshot.width, screenshot.height],
+      fullSize: [fullScreenshot?.width, fullScreenshot?.height],
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], colors: ["blue", "red", "red"] });
+    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
   });
 
   it("shrinks the screenshot of an XML document, whose createElement makes no canvas", async () => {
@@ -386,5 +414,19 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser net errors", () => {
+  it.each([
+    ["net::ERR_CONNECTION_REFUSED", "ERR_CONNECTION_REFUSED", -102],
+    [
+      "page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://localhost:5173/",
+      "ERR_HTTP2_PROTOCOL_ERROR",
+      -2,
+    ],
+    ["net::ERR_TLS13_DOWNGRADE_DETECTED", "ERR_TLS13_DOWNGRADE_DETECTED", -2],
+  ])("reads the whole error name from %j", (errorText, description, code) => {
+    expect(ServerBrowserPage.parseNetError(errorText)).toEqual({ description, code });
   });
 });

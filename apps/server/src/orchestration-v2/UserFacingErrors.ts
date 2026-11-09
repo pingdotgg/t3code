@@ -37,6 +37,18 @@ function databaseErrorMessage(value: unknown): string | undefined {
   return "The T3 Code server could not complete this database request. Retry once; if it still fails, check the server logs for the database error.";
 }
 
+export function userFacingDatabaseErrorMessage(cause: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let value = cause;
+  while (Predicate.isObject(value) && !seen.has(value)) {
+    seen.add(value);
+    const message = databaseErrorMessage(value);
+    if (message !== undefined) return message;
+    value = value.cause;
+  }
+  return undefined;
+}
+
 const CAPABILITY_REJECTION_MESSAGES: Record<string, (provider: string) => string> = {
   queued_messages: (p) => `${p} cannot queue messages behind an active run.`,
   active_steering: (p) =>

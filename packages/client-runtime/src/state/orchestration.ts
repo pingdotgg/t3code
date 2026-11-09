@@ -1,6 +1,8 @@
 import {
   ORCHESTRATION_V2_WS_METHODS,
+  type EnvironmentId,
   type ThreadId,
+  type OrchestrationV2ThreadLinkMetadata,
   type OrchestrationGetTurnDiffResult,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -13,6 +15,7 @@ import { Atom } from "effect/reactivity";
 import { applyCommandOutputFrame, EMPTY_COMMAND_OUTPUT } from "./commandOutput.ts";
 
 import {
+  createEnvironmentQueryAtomFamily,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -23,12 +26,17 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as ManagedRelayDpopSigner from "../relay/managedRelay.ts";
-import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
+import { EnvironmentRpcUnavailableError, request } from "../rpc/client.ts";
+import type { EnvironmentShellState } from "./shell.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
 
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | HttpClient.HttpClient | R, E>,
   options: {
+    /** Re-checks `threadTitles` when one of their threads leaves the shell. */
+    readonly shellState?: (
+      environmentId: EnvironmentId,
+    ) => Atom.Atom<Pick<EnvironmentShellState, "removedAt">>;
     /** Runs on each turn-range and full-thread diff the server answers. */
     readonly onCheckpointDiffAnswer?: QueryAnswerHandler<
       { readonly ignoreWhitespace?: boolean },
@@ -40,7 +48,60 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     options.onCheckpointDiffAnswer === undefined
       ? {}
       : { onAnswer: options.onCheckpointDiffAnswer };
+  const shellState = options.shellState;
+  const refreshThreadLookup = ({
+    environmentId,
+    input,
+  }: {
+    readonly environmentId: EnvironmentId;
+    readonly input: { readonly threadIds: ReadonlyArray<ThreadId> };
+  }) => {
+    if (shellState === undefined) return undefined;
+    const state = shellState(environmentId);
+    return Atom.make((get) => {
+      const { removedAt } = get(state);
+      return Math.max(-1, ...input.threadIds.map((threadId) => removedAt.get(threadId) ?? -1));
+    });
+  };
   return {
+    threadTitles: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-titles",
+      tag: ORCHESTRATION_V2_WS_METHODS.getThreadTitles,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      // Deleting a thread the shell already left out keeps these ids, so the query would not rerun.
+      // A removal can also be an archive, so it only prompts a re-check.
+      refreshTrigger: refreshThreadLookup,
+    }),
+    threadLinkMetadata: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-link-metadata",
+      staleTimeMs: 0,
+      idleTtlMs: 0,
+      refreshTrigger: refreshThreadLookup,
+      execute: Effect.fn("orchestration.threadLinkMetadata")(function* (input: {
+        readonly threadIds: ReadonlyArray<ThreadId>;
+      }) {
+        const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+        const session = yield* SubscriptionRef.get(supervisor.session);
+        if (Option.isNone(session)) {
+          return yield* new EnvironmentRpcUnavailableError({
+            environmentId: supervisor.target.environmentId,
+            message: "The environment has no session.",
+          });
+        }
+        const config = yield* session.value.initialConfig;
+        if (config.threadLinkMetadata === true) {
+          return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata, input);
+        }
+        const titles = yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadTitles, input);
+        return Object.fromEntries(
+          Object.entries(titles).map(([id, title]) => [
+            id,
+            { title, projectId: null } satisfies OrchestrationV2ThreadLinkMetadata,
+          ]),
+        );
+      }),
+    }),
     threadTranscript: createEnvironmentCommand(runtime, {
       label: "environment-data:orchestration:thread-transcript",
       execute: Effect.fn("orchestration.execute")(function* (input: {
@@ -91,6 +152,12 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             Stream.filter((view) => view !== EMPTY_COMMAND_OUTPUT),
           ),
       }),
+      // The open thread's predicted next prompt, while its composer is mounted.
+      promptSuggestion: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+        label: "environment-data:orchestration-v2:prompt-suggestion",
+        tag: ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion,
+        idleTtlMs: 0,
+      }),
     },
     turnDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-diff",
@@ -102,6 +169,13 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       tag: ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
+    }),
+    // Mounted only while a subagent inspector is open; running children change between opens.
+    nativeChildWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:native-child-work",
+      tag: ORCHESTRATION_V2_WS_METHODS.getNativeChildWork,
+      staleTimeMs: 0,
+      idleTtlMs: 0,
     }),
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",

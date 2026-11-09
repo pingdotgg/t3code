@@ -16,27 +16,19 @@ function assert(condition: unknown, message?: string): asserts condition {
 
 const CR = "\r".charCodeAt(0);
 const LF = "\n".charCodeAt(0);
-const STATUS_REGEXP =
-  /^HTTP\/\d(?:\.\d)? (?<rawStatusCode>\d+) (?<statusText>.*)$/;
+const STATUS_REGEXP = /^HTTP\/\d(?:\.\d)? (?<rawStatusCode>\d+) (?<statusText>.*)$/;
 
 /** Returns the index of the first `\r\n\r\n` in `buffer`, or -1. */
 function findBlankLineIndex(buffer: Uint8Array): number {
   for (let i = 0; i + 3 < buffer.length; i++) {
-    if (
-      buffer[i] === CR &&
-      buffer[i + 1] === LF &&
-      buffer[i + 2] === CR &&
-      buffer[i + 3] === LF
-    ) {
+    if (buffer[i] === CR && buffer[i + 1] === LF && buffer[i + 2] === CR && buffer[i + 3] === LF) {
       return i;
     }
   }
   return -1;
 }
 
-export async function parseHttpResponse(
-  stream: ReadableStream<Uint8Array>,
-): Promise<Response> {
+export async function parseHttpResponse(stream: ReadableStream<Uint8Array>): Promise<Response> {
   // Buffer until first "\r\n\r\n"
   let buffer = new Uint8Array(0);
   let blankLineIndex = -1;
@@ -51,9 +43,7 @@ export async function parseHttpResponse(
   assert(blankLineIndex !== -1, "Expected to find blank line in HTTP message");
 
   // Parse status and headers
-  const rawStatusHeaders = new TextDecoder().decode(
-    buffer.subarray(0, blankLineIndex),
-  );
+  const rawStatusHeaders = new TextDecoder().decode(buffer.subarray(0, blankLineIndex));
   const [rawStatus, ...rawHeaders] = rawStatusHeaders.split("\r\n");
   // https://www.rfc-editor.org/rfc/rfc7230#section-3.1.2
   const statusMatch = rawStatus.match(STATUS_REGEXP);
@@ -66,10 +56,7 @@ export async function parseHttpResponse(
   // https://www.rfc-editor.org/rfc/rfc7230#section-3.2
   const headers = rawHeaders.map((rawHeader): [string, string] => {
     const index = rawHeader.indexOf(":");
-    return [
-      rawHeader.substring(0, index),
-      rawHeader.substring(index + 1).trim(),
-    ];
+    return [rawHeader.substring(0, index), rawHeader.substring(index + 1).trim()];
   });
 
   // Construct body, by concatenating the prefix (what we read over from
