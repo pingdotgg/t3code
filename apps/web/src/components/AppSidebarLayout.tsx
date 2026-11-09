@@ -31,7 +31,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode } from "../hooks/useSettings";
+import { useClientSettings, useEnvironmentIdentificationMode } from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -402,6 +402,10 @@ function SidebarControl() {
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
+  const revealOnHover = useClientSettings((settings) => settings.sidebarRevealOnHover);
+  const hoverAnimationDurationMs = useClientSettings(
+    (settings) => settings.sidebarHoverAnimationDurationMs ?? settings.panelAnimationDurationMs,
+  );
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -454,6 +458,8 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         <Sidebar
           side="left"
           collapsible="offcanvas"
+          revealOnHover={revealOnHover}
+          hoverAnimationDurationMs={hoverAnimationDurationMs}
           data-app-sidebar=""
           {...sidebarArea}
           role="navigation"
