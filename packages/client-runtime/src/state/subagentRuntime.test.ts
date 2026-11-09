@@ -13,6 +13,7 @@ import {
   isWorkflowScriptMessage,
   projectedSubagentsToRuntime,
   resolveWorkflowOpening,
+  subagentModelSelection,
   workflowMemberModelSelection,
 } from "./subagentRuntime.ts";
 import { resolveSubagentMetadata } from "./subagentDisplay.ts";
@@ -110,6 +111,30 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       provider,
     });
     expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
+  });
+
+  it("labels a delegated child by its own saved selection, not the parent's or a guess", () => {
+    const instanceId = ProviderInstanceId.make("pi");
+    const model = "opencode-go/deepseek-v4.1-flash";
+    const provider = { driver: ProviderDriverKind.make("pi"), models: [] };
+    const child = {
+      modelSelection: { instanceId, model, options: [{ id: "thinking", value: "high" }] },
+    };
+    const reported = { instanceId, model, options: [{ id: "thinking", value: "max" }] };
+    const effortOf = (modelSelection: ReturnType<typeof subagentModelSelection>) =>
+      formatSubagentEffort({
+        modelSlug: resolveSubagentMetadata({ model, modelSelection, provider }).modelSlug,
+        modelSelection,
+        provider,
+      });
+
+    expect(effortOf(subagentModelSelection({ origin: "app_owned" }, child))).toBe("high");
+    expect(effortOf(subagentModelSelection({ origin: "app_owned" }, undefined))).toBeNull();
+    expect(
+      effortOf(
+        subagentModelSelection({ origin: "provider_native", modelSelection: reported }, child),
+      ),
+    ).toBe("max");
   });
 
   it("names a workflow by the model it runs on when the provider reports none", () => {

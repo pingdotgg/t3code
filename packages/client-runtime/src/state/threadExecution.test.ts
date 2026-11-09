@@ -29,6 +29,7 @@ import {
   deriveThreadActivityRun,
   deriveThreadRuntime,
   formatModelSelectionEffort,
+  formatSubagentEffort,
   isBackgroundWorkStopPending,
   presentPendingBackgroundWork,
   presentProviderGoal,
@@ -577,6 +578,71 @@ describe("formatModelSelectionEffort", () => {
     );
 
     expect(formatModelSelectionEffort(selection, models)).toBe("Extra High");
+  });
+});
+
+describe("formatSubagentEffort", () => {
+  const piModel = {
+    slug: "opencode-go/deepseek-v4.1-flash",
+    name: "DeepSeek V4.1 Flash",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "thinking",
+          label: "Thinking",
+          type: "select",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+            { id: "max", label: "Max", isDefault: true },
+          ],
+        },
+      ],
+    }),
+  };
+  const claudeModel = {
+    slug: "claude-haiku-5-5",
+    name: "Claude Haiku 5.5",
+    isCustom: false,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        { id: "thinking", label: "Thinking", type: "boolean", currentValue: true },
+      ],
+    }),
+  };
+  const pi = { driver: ProviderDriverKind.make("pi"), models: [piModel] };
+  const piUncatalogued = { driver: ProviderDriverKind.make("pi"), models: [] };
+  const claude = { driver: ProviderDriverKind.make("claudeAgent"), models: [claudeModel] };
+
+  it.each([
+    [
+      "labels a Pi child's thinking level",
+      pi,
+      piModel.slug,
+      [{ id: "thinking", value: "high" }],
+      "High",
+    ],
+    [
+      "keeps a Pi level the catalog does not know",
+      piUncatalogued,
+      "pi-local",
+      [{ id: "thinking", value: "low" }],
+      "low",
+    ],
+    ["never shows the catalog default for a Pi child that stated none", pi, piModel.slug, [], null],
+    [
+      "never reads Claude's boolean thinking as effort",
+      claude,
+      claudeModel.slug,
+      [{ id: "thinking", value: true }],
+      null,
+    ],
+  ] as const)("%s", (_name, provider, model, options, expected) => {
+    const modelSelection = createModelSelection(ProviderInstanceId.make("child"), model, [
+      ...options,
+    ]);
+    expect(formatSubagentEffort({ modelSlug: model, modelSelection, provider })).toBe(expected);
   });
 });
 

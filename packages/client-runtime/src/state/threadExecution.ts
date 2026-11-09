@@ -197,6 +197,7 @@ export function deriveReportedModelSelection(projection: ThreadStructure): Model
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
+/** Effort labels read only select descriptors and string values: Pi's `thinking` counts, Claude's boolean does not. */
 export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "reasoningEffort",
   "effort",
@@ -204,6 +205,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thinking",
 ];
 
 export function formatModelSelectionEffort(

@@ -202,6 +202,17 @@ export function workflowMemberModelSelection(
   };
 }
 
+/**
+ * The selection a subagent runs on: a T3 delegated child's saved selection, or what the provider
+ * reported for its own subagent. Undefined when unknown, never the parent's.
+ */
+export function subagentModelSelection(
+  subagent: Pick<OrchestrationV2Subagent, "origin" | "modelSelection">,
+  childThread: Pick<OrchestrationV2AppThread, "modelSelection"> | null | undefined,
+): ModelSelection | undefined {
+  return subagent.origin === "app_owned" ? childThread?.modelSelection : subagent.modelSelection;
+}
+
 export function projectedSubagentsToRuntime(
   subagents: ReadonlyArray<{
     readonly id: string;
