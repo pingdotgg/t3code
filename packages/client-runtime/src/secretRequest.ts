@@ -27,7 +27,16 @@ export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
 // exact text; a bare link drops trailing sentence punctuation.
 const REASON_LINK =
   /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
-const trimPunctuation = (link: string) => link.replace(/[.,;:!?)]+$/u, "");
+/** Drops trailing sentence punctuation; a `)` stays when the link opened a matching `(`. */
+function trimPunctuation(link: string): string {
+  let end = link.length;
+  while (end > 0 && ".,;:!?)".includes(link[end - 1]!)) {
+    const kept = link.slice(0, end);
+    if (link[end - 1] === ")" && kept.split("(").length > kept.split(")").length - 1) break;
+    end -= 1;
+  }
+  return link.slice(0, end);
+}
 
 /** Drops a closing `**`, `__`, `*` or `_` only when the same run opened emphasis before the link and is still open. */
 function trimEmphasis(link: string, before: string) {

@@ -43,6 +43,8 @@ describe("secretRequestLink", () => {
     ],
     ["Open [https://a.dev/x?s=1](https://a.dev/x?s=1) and sign in.", "https://a.dev/x?s=1"],
     ["Sign in [here](https://a.dev/login?state=abc(def)).", "https://a.dev/login?state=abc(def)"],
+    ["Sign in at https://a.dev/login?state=abc(def).", "https://a.dev/login?state=abc(def)"],
+    ["(Sign in at https://a.dev/login.)", "https://a.dev/login"],
     ["Open **https://a.dev/x?s=1** and sign in.", "https://a.dev/x?s=1"],
     ["Open https://a.dev/x?state=u7o_ and sign in.", "https://a.dev/x?state=u7o_"],
     ["**Sign in at https://a.dev/device**", "https://a.dev/device"],
