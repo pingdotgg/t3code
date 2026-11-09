@@ -338,8 +338,8 @@ function SidebarControl() {
         selectors: [
           '[data-sidebar-row][aria-current="page"]',
           "[data-sidebar-row]",
-          // Search results replace the rows; their combobox input owns arrow-key navigation.
-          '[aria-controls="sidebar-thread-search-results"]',
+          // A search hides the rows, even with no matches; its combobox owns arrow-key navigation.
+          'input[role="combobox"][aria-label="Search threads"]',
         ],
       });
     };
