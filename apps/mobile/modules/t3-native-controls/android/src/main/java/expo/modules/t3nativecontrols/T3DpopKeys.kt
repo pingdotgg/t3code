@@ -1,7 +1,6 @@
 package expo.modules.t3nativecontrols
 
 import java.math.BigInteger
-import java.security.AlgorithmParameters
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
@@ -20,19 +19,17 @@ internal object T3DpopKeys {
   private const val SCALAR_BYTES = 32
   private const val CURVE = "secp256r1"
   private const val ALGORITHM = "SHA256withECDSA"
-  private val curve: ECParameterSpec by lazy {
-    AlgorithmParameters.getInstance("EC").run {
-      init(ECGenParameterSpec(CURVE))
-      getParameterSpec(ECParameterSpec::class.java)
-    }
+  // AlgorithmParameters("EC") needs API 26; a generated key carries the same spec on any level.
+  private val curve: ECParameterSpec by lazy { (generateKeyPair().public as ECPublicKey).params }
+
+  private fun generateKeyPair() = KeyPairGenerator.getInstance("EC").run {
+    initialize(ECGenParameterSpec(CURVE))
+    generateKeyPair()
   }
 
   /** The private scalar followed by the public point. */
   fun generate(): ByteArray {
-    val pair = KeyPairGenerator.getInstance("EC").run {
-      initialize(ECGenParameterSpec(CURVE))
-      generateKeyPair()
-    }
+    val pair = generateKeyPair()
     val point = (pair.public as ECPublicKey).w
     return scalar((pair.private as ECPrivateKey).s) +
       byteArrayOf(UNCOMPRESSED) +
