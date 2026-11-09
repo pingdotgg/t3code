@@ -80,7 +80,10 @@ function presentation(
     return {
       label: model.label,
       icon: icon.source,
-      chip: { accent: contextChipPresentation("model").accent, tintsIcon: icon.tintsIcon },
+      chip: {
+        accent: icon.accent ?? contextChipPresentation("model").accent,
+        tintsIcon: icon.tintsIcon,
+      },
     };
   }
   const link = resolveMarkdownLinkPresentation(url);

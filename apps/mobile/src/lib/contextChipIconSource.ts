@@ -16,11 +16,11 @@ export function contextChipIconUri(icon: ContextChipIconRef): string | null {
 const isRasterIconUrl = (url: string | undefined): url is string =>
   url !== undefined && url !== "" && !/\.svg(?:$|[?#])/iu.test(url);
 
-/** A provider's own raster image, else its bundled logo, else a generic glyph. */
+/** A provider's own raster image, else its bundled logo, else a generic glyph; colored logos carry an accent. */
 export function modelChipIcon(model: {
   readonly driver: string;
   readonly iconUrl?: string | undefined;
-}) {
+}): (typeof PROVIDER_CHIP_ICONS)[string] {
   if (isRasterIconUrl(model.iconUrl)) return { source: { uri: model.iconUrl }, tintsIcon: false };
   return (
     PROVIDER_CHIP_ICONS[model.driver] ?? { source: CONTEXT_CHIP_ICON_SOURCES.bot, tintsIcon: true }

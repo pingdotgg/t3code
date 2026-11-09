@@ -86,7 +86,8 @@ for (const name of lucideIcons) {
 await renderIcon("skill", skillSvg);
 
 // Provider logos, so a model chip can show what the model menu shows. Native chips take images,
-// not SVG. Logos that swap between black and white per theme are tinted with the chip's accent.
+// not SVG. Logos that swap between black and white per theme are tinted with the chip's accent;
+// colored logos keep their colors and lend the chip their main color as its accent.
 const mobileProviderIcon = NodeFS.readFileSync(
   NodePath.join(appDirectory, "src/components/ProviderIcon.tsx"),
   "utf8",
@@ -130,6 +131,7 @@ const providerLogos = [
   {
     driverKind: "claudeAgent",
     tintsIcon: false,
+    accent: "#D97757",
     svg: providerSvg("0 0 256 257", [{ d: bundledPath("0 0 256 257"), fill: "#D97757" }]),
   },
   ...packageClients.map(({ driverKind, icon }) => {
@@ -137,6 +139,7 @@ const providerLogos = [
     return {
       driverKind,
       tintsIcon,
+      ...(tintsIcon ? {} : { accent: icon.fill.light }),
       svg: providerSvg(
         icon.viewBox,
         icon.paths.map((path) => ({
@@ -161,13 +164,20 @@ const generatedSource = `import type { ImageSourcePropType } from "react-native"
       `  ${/^\w+$/.test(token) ? token : `"${token}"`}: require("../../assets/context-chip-icons/${token}.png"),`,
   )
   .join("\n")}\n} as const satisfies Readonly<Record<string, ImageSourcePropType>>;\n`;
-const providerSource = `\nexport const PROVIDER_CHIP_ICONS: Readonly<\n  Record<string, { readonly source: ImageSourcePropType; readonly tintsIcon: boolean }>\n> = {\n${providerLogos
-  .toSorted((left, right) => left.driverKind.localeCompare(right.driverKind))
-  .map(
-    ({ driverKind, tintsIcon }) =>
-      `  ${driverKind}: {\n    source: require("../../assets/context-chip-icons/provider-${driverKind}.png"),\n    tintsIcon: ${tintsIcon},\n  },`,
-  )
-  .join(
-    "\n",
-  )}\n  antigravity: { source: require("../../assets/antigravity.png"), tintsIcon: false },\n};\n`;
+const providerSource = `\nexport const PROVIDER_CHIP_ICONS: Readonly<\n  Record<
+    string,
+    {
+      readonly source: ImageSourcePropType;
+      readonly tintsIcon: boolean;
+      readonly accent?: string;
+    }
+  >\n> = {\n${providerLogos
+    .toSorted((left, right) => left.driverKind.localeCompare(right.driverKind))
+    .map(
+      ({ driverKind, tintsIcon, accent }) =>
+        `  ${driverKind}: {\n    source: require("../../assets/context-chip-icons/provider-${driverKind}.png"),\n    tintsIcon: ${tintsIcon},\n${accent ? `    accent: "${accent}",\n` : ""}  },`,
+    )
+    .join(
+      "\n",
+    )}\n  antigravity: {\n    source: require("../../assets/antigravity.png"),\n    tintsIcon: false,\n    accent: "#5b87bf",\n  },\n};\n`;
 NodeFS.writeFileSync(generatedModulePath, generatedSource + providerSource);

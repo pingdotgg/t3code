@@ -30,6 +30,18 @@ const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
 };
 
+const BUNDLED_LOGO_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
+  [ProviderDriverKind.make("claudeAgent")]: "#d97757",
+  [ProviderDriverKind.make("antigravity")]: "#5b87bf",
+};
+
+/** The logo's own color, or null for logos that swap between black and white per theme. */
+export function providerLogoColor(driverKind: ProviderDriverKind): string | null {
+  const fill = providerClients.get(driverKind)?.icon?.fill;
+  if (fill) return fill.light === fill.dark ? fill.light : null;
+  return BUNDLED_LOGO_COLOR_BY_PROVIDER[driverKind] ?? null;
+}
+
 export function providerTextColor(driverKind: ProviderDriverKind): {
   readonly className?: string;
   readonly style?: CSSProperties;

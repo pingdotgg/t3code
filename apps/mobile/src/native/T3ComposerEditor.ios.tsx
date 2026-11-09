@@ -204,7 +204,11 @@ export function ComposerEditor({
           source: token.source,
           start: token.start,
           end: token.end,
-          accent: contextChipAccent(presentation.accent, theme, chipTextColor),
+          accent: contextChipAccent(
+            (model && modelChipIcon(model).accent) || presentation.accent,
+            theme,
+            chipTextColor,
+          ),
           label:
             token.type === "skill"
               ? (skillLabels.get(token.value) ?? token.value)
