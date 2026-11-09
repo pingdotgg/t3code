@@ -1795,20 +1795,31 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ownerKey: questionAttachmentTarget ?? composerDraftTargetKey,
     draftText: prompt,
     disabled: dictationDisabled,
-    captureSubmissionDraft: questionAttachmentTarget
-      ? undefined
-      : () => {
-          const target = routeThreadRef;
-          const captured = getComposerDraft(target);
-          return {
-            readDraft: () => {
-              if (getComposerDraft(target) !== captured) return null;
-              const text = captured?.prompt ?? "";
-              return { text, selection: { start: text.length, end: text.length } };
-            },
-            commitDraft: (text) => setComposerDraftPrompt(target, text),
-          };
-        },
+    captureSubmissionDraft:
+      questionAttachmentTarget || isEditingQueuedMessage
+        ? undefined
+        : () => {
+            const target = routeThreadRef;
+            const captured = getComposerDraft(target);
+            return {
+              readDraft: () => {
+                const current = getComposerDraft(target);
+                if (
+                  (current?.prompt ?? "") !== (captured?.prompt ?? "") ||
+                  (current?.images.length ?? 0) !== (captured?.images.length ?? 0) ||
+                  current?.images.some(
+                    (image, index) => image.id !== captured?.images[index]?.id,
+                  ) ||
+                  (current?.files.length ?? 0) !== (captured?.files.length ?? 0) ||
+                  current?.files.some((file, index) => file.id !== captured?.files[index]?.id)
+                )
+                  return null;
+                const text = current?.prompt ?? "";
+                return { text, selection: { start: text.length, end: text.length } };
+              },
+              commitDraft: (text) => setComposerDraftPrompt(target, text),
+            };
+          },
     readDraft: () => {
       const snapshot = readComposerSnapshot();
       return {
@@ -2138,7 +2149,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       const transcript = new Promise<string | null>((resolve) => {
-        submitAfterDictation(resolve, () => resolve(null));
+        submitAfterDictation(
+          (text) => {
+            resolve(text);
+            if (
+              composerDraftTargetKeyRef.current === composerDraftTargetKey &&
+              composerFormRef.current?.isConnected
+            ) {
+              onTypingGuardSend();
+              if (shouldBlurMobileComposerOnSubmit()) blurMobileComposerAfterSend();
+            }
+          },
+          () => resolve(null),
+        );
       });
       onSend(
         undefined,
