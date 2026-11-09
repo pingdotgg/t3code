@@ -71,7 +71,8 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -575,6 +576,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       );
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
+      // Pi reruns extension factories on session replacement, which resets T3's tier to Standard.
+      let appliedServiceTier: string | null = null;
       let appliedSessionName: string | null = null;
       const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
       let lastKnownLeaf: string | null = null;
@@ -2448,6 +2451,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           threadState = null;
           appliedModel = null;
           appliedThinking = null;
+          appliedServiceTier = null;
           appliedSessionName = null;
           baselineModel = null;
           baselineThinking = null;
@@ -2597,6 +2601,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ) {
           yield* request({ type: "set_thinking_level", level: thinking });
           appliedThinking = thinking;
+        }
+        const requestedTier = getModelSelectionStringOptionValue(modelSelection, "serviceTier");
+        const serviceTier =
+          requestedTier === undefined || requestedTier === PI_STANDARD_SERVICE_TIER
+            ? null
+            : requestedTier;
+        if (serviceTier !== appliedServiceTier) {
+          const result = yield* request({
+            type: "prompt",
+            message: `/${PI_T3_SERVICE_TIER_COMMAND} ${serviceTier ?? ""}`.trimEnd(),
+          });
+          if (recordString(result, "disposition") !== "handled") {
+            return yield* protocolError("T3 Code's Pi extension did not apply the service tier");
+          }
+          appliedServiceTier = serviceTier;
         }
       });
 
@@ -3208,6 +3227,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                       lastNativeThreadId = forkSessionFile;
                       appliedModel = null;
                       appliedThinking = null;
+                      appliedServiceTier = null;
                       appliedSessionName = null;
                       lastKnownLeaf = leafId;
                       leafCursorStale = entriesData === undefined;
