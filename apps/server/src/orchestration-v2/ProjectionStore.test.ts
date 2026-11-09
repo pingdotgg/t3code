@@ -5,6 +5,7 @@ import {
   CommandId,
   CheckpointId,
   ContextTransferId,
+  type ContextBreakdown,
   CheckpointRef,
   CheckpointScopeId,
   MessageId,
@@ -2695,6 +2696,78 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const replaced = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(replaced.providerTurns[0]?.tokenUsage, replacementUsage);
+
+      const categories = [
+        { kind: "system_prompt", tokens: 3_000 },
+        { kind: "system_tools", tokens: 4_000 },
+        { kind: "messages", tokens: 11_000 },
+      ] as const;
+      const fresh = [
+        { kind: "system_prompt", tokens: 2_000 },
+        { kind: "messages", tokens: 21_000 },
+      ] as const;
+      const phases = [
+        { usedTokens: 18_000, breakdown: categories, expected: categories },
+        {
+          usedTokens: 20_000,
+          expected: [...categories.slice(0, 2), { kind: "messages", tokens: 13_000 }],
+        },
+        {
+          usedTokens: 19_000,
+          expected: [...categories.slice(0, 2), { kind: "messages", tokens: 12_000 }],
+        },
+        {
+          usedTokens: 24_000,
+          breakdown: fresh,
+          expected: [fresh[0], { kind: "messages", tokens: 22_000 }],
+        },
+        { usedTokens: 25_000, expected: [fresh[0], { kind: "messages", tokens: 23_000 }] },
+        { usedTokens: 4_000, breakdown: [], expected: [] },
+        { usedTokens: 6_000, expected: undefined },
+        {
+          usedTokens: 24_000,
+          breakdown: fresh,
+          expected: [fresh[0], { kind: "messages", tokens: 22_000 }],
+        },
+        { usedTokens: 1_000, expected: [] },
+      ] satisfies ReadonlyArray<{
+        usedTokens: number;
+        breakdown?: ContextBreakdown;
+        expected: ContextBreakdown | undefined;
+      }>;
+      for (const [index, phase] of phases.entries()) {
+        const turn = yield* projectionStore.carryProviderTurnContextUsage(threadId, {
+          ...providerTurn,
+          tokenUsage: {
+            usedTokens: phase.usedTokens,
+            ...("breakdown" in phase ? { breakdown: phase.breakdown } : {}),
+            updatedAt: `2026-08-29T12:01:0${index}.000Z`,
+          },
+        });
+        assert.deepEqual(turn.tokenUsage?.breakdown, phase.expected);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:provider-usage-reload:phase-${index}`),
+          type: "provider-turn.updated",
+          threadId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: turn,
+        });
+        const reloaded = yield* projectionStore.getThreadRecords(threadId, ["providerTurns"], {
+          latestProviderTurnUsageOnly: true,
+        });
+        assert.deepEqual(reloaded.providerTurns[0]?.tokenUsage?.breakdown, phase.expected);
+      }
+      const unrelated = {
+        ...providerTurn,
+        providerThreadId: ProviderThreadId.make("other-context"),
+        tokenUsage: replacementUsage,
+      };
+      assert.deepEqual(
+        yield* projectionStore.carryProviderTurnContextUsage(threadId, unrelated),
+        unrelated,
+      );
     }),
   );
 
