@@ -5,7 +5,6 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
-import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
@@ -18,7 +17,7 @@ import {
   encodeOptionalPayload,
   runHandler,
 } from "./_internal/shared.ts";
-import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
+import { makeChildStdio, makeStderrTail, makeTerminationError } from "./_internal/stdio.ts";
 
 export interface CodexAppServerClientOptions {
   readonly logIncoming?: boolean;
@@ -153,6 +152,29 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
       >
     | undefined => CodexRpc.CLIENT_NOTIFICATION_PARAMS[method] as never;
 
+  // A notification the schema rejects has no reply to fail, so it is dropped.
+  // A Codex build that drifted from the generated schema repeats the bad shape
+  // on every frame, so each distinct failure is warned about once per client.
+  const warnedDecodeFailures = new Set<string>();
+  const warnUndecodableNotification = (error: CodexError.CodexAppServerProtocolParseError) => {
+    const key = `${error.method}\n${error.issueKinds?.join(",")}`;
+    if (warnedDecodeFailures.has(key)) {
+      return Effect.void;
+    }
+    warnedDecodeFailures.add(key);
+    return Effect.logWarning("Dropped a Codex App Server notification that failed to decode").pipe(
+      Effect.annotateLogs({
+        operation: error.operation,
+        ...(error.method === undefined ? {} : { method: error.method }),
+        ...(error.issueCount === undefined ? {} : { issueCount: error.issueCount }),
+        ...(error.issueKinds === undefined ? {} : { issueKinds: error.issueKinds }),
+        ...(error.maximumPathDepth === undefined
+          ? {}
+          : { maximumPathDepth: error.maximumPathDepth }),
+      }),
+    );
+  };
+
   const dispatchNotification = (
     notification: CodexProtocol.CodexAppServerIncomingNotification,
   ): Effect.Effect<void, never> => {
@@ -166,6 +188,7 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
 
     if (schema) {
       return decodeNotificationPayload(notification.method, schema, notification.params).pipe(
+        Effect.tapError(warnUndecodableNotification),
         Effect.flatMap((decoded) =>
           Effect.forEach(handlers, (handler) => handler(decoded), { discard: true }),
         ),
@@ -287,6 +310,10 @@ export const layerChildProcess = (
 const makeChildProcessClient = Effect.fn(
   "effect-codex-app-server/CodexAppServerClient.makeChildProcessClient",
 )(function* (handle: ChildProcessSpawner.ChildProcessHandle, options: CodexAppServerClientOptions) {
-  yield* Stream.runDrain(handle.stderr).pipe(Effect.ignore, Effect.forkScoped);
-  return yield* make(makeChildStdio(handle), options, makeTerminationError(handle));
+  const stderrTail = yield* makeStderrTail(handle.stderr);
+  return yield* make(
+    makeChildStdio(handle, stderrTail.awaitDrained),
+    options,
+    makeTerminationError(handle, stderrTail.read),
+  );
 });

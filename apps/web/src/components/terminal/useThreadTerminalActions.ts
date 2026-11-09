@@ -87,6 +87,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly terminalId?: string;
     readonly location?: TerminalLaunchLocation | null;
     readonly extraEnv?: Record<string, string>;
+    readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
     if (!threadRef || !canWrite() || !project) return null;
@@ -107,16 +108,17 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
           ...(input.extraEnv ? { extraEnv: input.extraEnv } : {}),
         }),
         ...input.size,
+        ...(input.stopOnSettle !== undefined ? { stopOnSettle: input.stopOnSettle } : {}),
       },
     });
     return { terminalId, result };
   };
 
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
-  const closeTerminalSession = (terminalId: string) => {
-    if (!threadRef || !canWrite()) return;
-    const environmentId = threadRef.environmentId;
-    const threadId = threadRef.threadId;
+  const closeTerminalSession = (terminalId: string, target = threadRef) => {
+    if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
+    const environmentId = target.environmentId;
+    const threadId = target.threadId;
     void (async () => {
       const closeResult = await closeTerminalCommand({
         environmentId,

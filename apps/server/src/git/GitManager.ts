@@ -1,8 +1,9 @@
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ByteSize from "effect/ByteSize";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -171,6 +172,7 @@ const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
+const SETTLED_PR_LOOKUP_RECHECK_INTERVAL = Duration.minutes(15);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
 const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
@@ -556,6 +558,11 @@ function parseCustomCommitMessage(raw: string): { subject: string; body: string 
   };
 }
 
+// A branch remote of "." tracks another local branch, which no change request can have as its head.
+function publishedRemoteName(branchRemote: string | null): string | null {
+  return branchRemote === "." ? null : branchRemote;
+}
+
 function headBranchProbe(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   headSelectors: ReadonlyArray<string>,
@@ -653,7 +660,7 @@ export const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -743,9 +750,20 @@ export const make = Effect.gen(function* () {
     }
     return result;
   });
-  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
-    Effect.map((settings) => settings.worktreesDirectory),
-    Effect.orElseSucceed(() => ""),
+  const readWorktreeCreationSettings = serverSettingsService.getSettings.pipe(
+    Effect.map((settings) => ({
+      worktreesDirectory: settings.worktreesDirectory,
+      fastCheckout: settings.fastWorktreeCheckout,
+    })),
+    Effect.orElseSucceed(() => ({ worktreesDirectory: "" })),
+  );
+  // Turning fast checkout off deletes its cache right away, not at the next worktree.
+  yield* serverSettingsService.streamChanges.pipe(
+    Stream.map((settings) => settings.fastWorktreeCheckout),
+    Stream.changes,
+    Stream.filter((enabled) => !enabled),
+    Stream.runForEach(() => gitCore.clearWorktreeCheckoutCache),
+    Effect.forkScoped,
   );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
@@ -757,9 +775,8 @@ export const make = Effect.gen(function* () {
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    const worktreesDirectory = yield* readWorktreesDirectory;
     const result = yield* gitCore.createWorktree(input, {
-      worktreesDirectory,
+      ...(yield* readWorktreeCreationSettings),
       ...options,
       submodules,
     });
@@ -791,7 +808,7 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "GitManager.readRecentCommitSubjects",
         cwd,
-        args: ["log", "-n", "20", "--no-merges", "--pretty=format:%s"],
+        args: ["log", "-n", "20", "--no-merges", "--no-show-signature", "--pretty=format:%s"],
       })
       .pipe(
         Effect.map((result) =>
@@ -854,7 +871,7 @@ export const make = Effect.gen(function* () {
     }
   });
   const randomUUIDv4 = (cwd: string) =>
-    crypto.randomUUIDv4().pipe(
+    random.uuidV4().pipe(
       Effect.mapError(
         (cause) =>
           new GitManagerError({
@@ -893,6 +910,11 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  const pullRequestHostOptions = (url: string) => {
+    const host = URL.parse(url)?.host;
+    return host ? { host } : {};
+  };
+
   const configurePullRequestHeadUpstreamBase = Effect.fn("configurePullRequestHeadUpstream")(
     function* (
       cwd: string,
@@ -923,6 +945,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1036,6 +1059,7 @@ export const make = Effect.gen(function* () {
       const cloneUrls = yield* (yield* sourceControlProvider(cwd)).getRepositoryCloneUrls({
         cwd,
         repository: repositoryNameWithOwner,
+        ...pullRequestHostOptions(pullRequest.url),
       });
       const originRemoteUrl = yield* gitCore.readConfigValue(cwd, "remote.origin.url");
       const remoteUrl = shouldPreferSshRemote(originRemoteUrl) ? cloneUrls.sshUrl : cloneUrls.url;
@@ -1090,7 +1114,11 @@ export const make = Effect.gen(function* () {
         ),
       ),
     );
-  const tempDir = process.env.TMPDIR ?? process.env.TEMP ?? process.env.TMP ?? "/tmp";
+  const tempDir = yield* Config.String("TMPDIR").pipe(
+    Config.orElse(() => Config.String("TEMP")),
+    Config.orElse(() => Config.String("TMP")),
+    Config.withDefault("/tmp"),
+  );
   const canonicalizeExistingPath = (value: string) =>
     fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
   const normalizeStatusCacheKey = canonicalizeExistingPath;
@@ -1225,7 +1253,7 @@ export const make = Effect.gen(function* () {
         }
         if (
           details.localBranchExists &&
-          details.upstreamRef === null &&
+          (details.upstreamRef === null || headContext.remoteName === null) &&
           (yield* isUnpublishedBranch(cwd, headContext))
         ) {
           return { latest: null, headContext };
@@ -1251,6 +1279,7 @@ export const make = Effect.gen(function* () {
   const getPrLookup = (key: string) => detachStackFrame(Cache.get(prLookupCache, key));
   interface LastKnownPr {
     readonly pr: ReturnType<typeof toStatusPr> | null;
+    readonly headSha: string | null;
     readonly upstreamRef: string | null;
     readonly headBranch: string;
     readonly remoteName: string | null;
@@ -1272,7 +1301,7 @@ export const make = Effect.gen(function* () {
   const resolveLastKnownPr = (
     branchKey: string,
     current: Pick<LastKnownPr, "upstreamRef" | "headBranch" | "remoteName" | "headRemoteUrlKey">,
-  ): ReturnType<typeof toStatusPr> | null => {
+  ): LastKnownPr | null => {
     const lastKnown = lastKnownPrByBranchKey.get(branchKey);
     if (!lastKnown) return null;
     if (lastKnown.headBranch !== current.headBranch) {
@@ -1281,7 +1310,7 @@ export const make = Effect.gen(function* () {
 
     // Config read failures become null; require both remote URLs before treating a mismatch as real.
     if (lastKnown.headRemoteUrlKey !== null && current.headRemoteUrlKey !== null) {
-      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown.pr : null;
+      return lastKnown.headRemoteUrlKey === current.headRemoteUrlKey ? lastKnown : null;
     }
 
     if (
@@ -1290,9 +1319,9 @@ export const make = Effect.gen(function* () {
       lastKnown.remoteName !== null &&
       current.remoteName !== null
     ) {
-      return lastKnown.remoteName === current.remoteName ? lastKnown.pr : null;
+      return lastKnown.remoteName === current.remoteName ? lastKnown : null;
     }
-    return lastKnown.pr;
+    return lastKnown;
   };
   const lookupStatusPr = Effect.fn("lookupStatusPr")(function* (
     cwd: string,
@@ -1317,17 +1346,18 @@ export const make = Effect.gen(function* () {
     }
     return yield* getPrLookup(cacheKey).pipe(
       Effect.map(({ latest, headContext }) => {
-        if (!latest) return { pr: null, headContext };
+        if (!latest) return { pr: null, headSha: null, headContext };
         // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
         if (details.isDefaultBranch && latest.state !== "open") {
-          return { pr: null, headContext };
+          return { pr: null, headSha: null, headContext };
         }
-        return { pr: toStatusPr(latest), headContext };
+        return { pr: toStatusPr(latest), headSha: latest.headSha ?? null, headContext };
       }),
-      Effect.tap(({ pr, headContext }) =>
+      Effect.tap(({ pr, headSha, headContext }) =>
         Effect.sync(() =>
           rememberLastKnownPr(branchKey, {
             pr,
+            headSha,
             upstreamRef: details.upstreamRef,
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
@@ -1335,7 +1365,7 @@ export const make = Effect.gen(function* () {
           }),
         ),
       ),
-      Effect.map(({ pr }) => pr),
+      Effect.map(({ pr, headSha }) => ({ pr, headSha })),
       Effect.catch((error) => {
         const fallback = lastKnownPrByBranchKey.get(branchKey)?.pr
           ? resolveLookupHeadContext(cwd, details).pipe(
@@ -1367,6 +1397,10 @@ export const make = Effect.gen(function* () {
               : {}),
           }),
           Effect.andThen(fallback),
+          Effect.map((lastKnown) => ({
+            pr: lastKnown?.pr ?? null,
+            headSha: lastKnown?.headSha ?? null,
+          })),
         );
       }),
     );
@@ -1382,7 +1416,7 @@ export const make = Effect.gen(function* () {
       return null;
     }
 
-    const pr =
+    const { pr, headSha } =
       details.branch !== null
         ? yield* lookupStatusPr(
             cwd,
@@ -1394,13 +1428,35 @@ export const make = Effect.gen(function* () {
             },
             options?.refreshMissingPullRequest,
           )
-        : null;
+        : { pr: null, headSha: null };
+    // Squash and rebase merges land new commits, so HEAD never becomes reachable from the base.
+    const shippedByMergedPr =
+      pr?.state === "merged" &&
+      headSha !== null &&
+      (yield* Effect.gen(function* () {
+        const defaultBranch =
+          details.defaultBranch ??
+          (yield* gitCore.resolvePrimaryRemoteName(cwd).pipe(
+            Effect.flatMap((remoteName) => gitCore.resolveDefaultBranchName(cwd, remoteName)),
+            Effect.orElseSucceed(() => null),
+          ));
+        const mergedIntoDefault =
+          defaultBranch === null
+            ? pr.baseRef === "main" || pr.baseRef === "master"
+            : pr.baseRef === defaultBranch;
+        if (!mergedIntoDefault) return false;
+        return yield* gitCore.resolveCommit({ cwd, revision: "HEAD" }).pipe(
+          Effect.map(({ commitSha }) => commitSha === headSha),
+          Effect.orElseSucceed(() => false),
+        );
+      }));
 
     return {
       hasUpstream: details.hasUpstream,
-      aheadCount: details.aheadCount,
+      // A real upstream delta stays; only the no-upstream fallback counts against the base.
+      aheadCount: shippedByMergedPr && !details.hasUpstream ? 0 : details.aheadCount,
       behindCount: details.behindCount,
-      aheadOfDefaultCount: details.aheadOfDefaultCount,
+      aheadOfDefaultCount: shippedByMergedPr ? 0 : details.aheadOfDefaultCount,
       pr,
     } satisfies VcsStatusRemoteResult;
   });
@@ -1516,12 +1572,14 @@ export const make = Effect.gen(function* () {
     cwd: string,
     details: { branch: string; upstreamRef: string | null; remoteName?: string },
   ) {
-    const remoteName =
+    const branchRemote =
       details.remoteName ??
       (yield* readConfigValueNullable(cwd, `branch.${details.branch}.remote`));
-    const headBranchFromUpstream = details.upstreamRef
-      ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName })
-      : "";
+    const remoteName = publishedRemoteName(branchRemote);
+    const headBranchFromUpstream =
+      details.upstreamRef && branchRemote !== "."
+        ? extractBranchNameFromRemoteRef(details.upstreamRef, { remoteName })
+        : "";
     const headBranch = headBranchFromUpstream.length > 0 ? headBranchFromUpstream : details.branch;
     const shouldProbeLocalBranchSelector =
       headBranchFromUpstream.length === 0 || headBranch === details.branch;
@@ -1802,7 +1860,7 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: "unbounded" },
       );
-      if (configuredRemote !== null && configuredMerge !== null) {
+      if (configuredRemote !== null && configuredRemote !== "." && configuredMerge !== null) {
         return false;
       }
 
@@ -2332,7 +2390,15 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)));
 
-    const created = yield* findOpenPr(cwd, headContext);
+    // The PR already exists at this point, so a failed lookup only loses its metadata.
+    const created = yield* findOpenPr(cwd, headContext).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("GitManager.runPrStep lookup after create failed", {
+          provider: provider.kind,
+          errorTag: error._tag,
+        }).pipe(Effect.as(null)),
+      ),
+    );
     if (!created) {
       return {
         status: "created" as const,
@@ -2410,6 +2476,10 @@ export const make = Effect.gen(function* () {
     prLookupGitStateByKey.set(entryKey, { readAtMs, value });
     return value;
   });
+  const settledPrLookupByBranchKey = new Map<
+    string,
+    { readonly url: string; readonly fingerprint: string; readonly confirmedAtMs: number }
+  >();
   const forgetPrLookupGitState = (cwd: string) =>
     normalizeStatusCacheKey(cwd).pipe(
       Effect.map((cacheCwd) => {
@@ -2441,7 +2511,9 @@ export const make = Effect.gen(function* () {
                 remoteUrl ? sourceControlDefinitions.repositoryKeyFromRemote(remoteUrl) : null,
               ),
             );
-      const remoteName = remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`));
+      const remoteName = publishedRemoteName(
+        remoteNameOverride ?? (yield* readConfig(`branch.${branch}.remote`)),
+      );
       const [headRemoteUrlKey, targetRemoteUrlKey] =
         remoteName === "origin"
           ? yield* readRemoteUrlKey("origin").pipe(Effect.map((key) => [key, key] as const))
@@ -2455,6 +2527,39 @@ export const make = Effect.gen(function* () {
       };
     },
   );
+  // objectname lets a settled PR result notice new commits on its branch.
+  const readPrLookupBranchRef = (cacheCwd: string, branch: string, fresh: boolean) =>
+    rememberPrLookupGitState(
+      cacheCwd,
+      `branchRef\u0000${branch}`,
+      fresh,
+      gitCore
+        .execute({
+          operation: "GitManager.branchPullRequest.branchRef",
+          cwd: cacheCwd,
+          args: [
+            "for-each-ref",
+            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(objectname)",
+            `refs/heads/${branch}`,
+          ],
+        })
+        .pipe(Effect.map((result) => result.stdout)),
+    );
+  const readSettledPrLookupFingerprint = (cacheCwd: string, branch: string) =>
+    Effect.all(
+      [
+        readPrLookupBranchRef(cacheCwd, branch, true),
+        gitCore
+          .execute({
+            operation: "GitManager.branchPullRequest.remoteUrls",
+            cwd: cacheCwd,
+            args: ["config", "--get-regexp", "^remote\\..*\\.url$"],
+            allowNonZeroExit: true,
+          })
+          .pipe(Effect.map((result) => result.stdout)),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.map((parts) => parts.join("\u0000")));
   const lookupBranchPullRequest = Effect.fn("lookupBranchPullRequest")(function* (
     cacheCwd: string,
     branch: string,
@@ -2478,20 +2583,7 @@ export const make = Effect.gen(function* () {
       .filter((remoteName) => remoteName.length > 0);
     const [firstRemoteName] = remoteNames;
     if (firstRemoteName === undefined) return null;
-    const branchRef = yield* remember(
-      `branchRef\u0000${branch}`,
-      gitCore
-        .execute({
-          operation: "GitManager.branchPullRequest.branchRef",
-          cwd: cacheCwd,
-          args: [
-            "for-each-ref",
-            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
-            `refs/heads/${branch}`,
-          ],
-        })
-        .pipe(Effect.map((result) => result.stdout)),
-    );
+    const branchRef = yield* readPrLookupBranchRef(cacheCwd, branch, options.freshGitState);
     const expectedRefName = `refs/heads/${branch}`;
     const exactBranch = (branchRef ?? "")
       .split("\n")
@@ -2642,10 +2734,38 @@ export const make = Effect.gen(function* () {
       freshGitState,
     });
     if (pullRequest === null || pullRequest.state === "open" || freshGitState) return pullRequest;
-    return yield* lookupBranchPullRequest(cacheCwd, branch, {
+    // A confirmed closed or merged result stays final until the branch or remotes change,
+    // with a periodic fresh lookup so a new PR from a reused branch still shows up.
+    const settledKey = `${cacheCwd}\u0000${branch}`;
+    const now = yield* Clock.currentTimeMillis;
+    const settled = settledPrLookupByBranchKey.get(settledKey);
+    // Read before any fresh lookup, so a change made during it forces another one.
+    const fingerprint = yield* readSettledPrLookupFingerprint(cacheCwd, branch);
+    if (
+      settled !== undefined &&
+      settled.url === pullRequest.url &&
+      settled.fingerprint === fingerprint &&
+      now - settled.confirmedAtMs < Duration.toMillis(SETTLED_PR_LOOKUP_RECHECK_INTERVAL)
+    ) {
+      return pullRequest;
+    }
+    const confirmed = yield* lookupBranchPullRequest(cacheCwd, branch, {
       refresh: false,
       freshGitState: true,
     });
+    settledPrLookupByBranchKey.delete(settledKey);
+    if (confirmed !== null && confirmed.state !== "open") {
+      if (settledPrLookupByBranchKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
+        const oldestKey = settledPrLookupByBranchKey.keys().next().value;
+        if (oldestKey !== undefined) settledPrLookupByBranchKey.delete(oldestKey);
+      }
+      settledPrLookupByBranchKey.set(settledKey, {
+        url: confirmed.url,
+        fingerprint,
+        confirmedAtMs: now,
+      });
+    }
+    return confirmed;
   });
   const invalidateLocalStatus: GitManager["Service"]["invalidateLocalStatus"] = Effect.fn(
     "invalidateLocalStatus",
@@ -2965,7 +3085,7 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
-          worktreesDirectory: yield* readWorktreesDirectory,
+          ...(yield* readWorktreeCreationSettings),
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),

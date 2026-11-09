@@ -46,9 +46,10 @@
     "measure-renders": "node scripts/measure-renders.mts",
     "generate": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-uniwind-themes.mts",
     "generate:highlights": "node scripts/generate-highlights.mts",
+    "generate:nitro": "cd modules/t3-highlights && nitrogen",
     "eas-build-on-success": "node scripts/upload-sourcemaps.mts build",
     "test": "vp test run --project unit --project react",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
     "@clerk/expo": "catalog:",
@@ -59,7 +60,6 @@
     "@expo/ui": "58.0.20",
     "@legendapp/list": "catalog:",
     "@material/material-color-utilities": "0.3.0",
-    "@noble/curves": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/highlights": "catalog:",
     "@react-native-ai/apple": "0.12.0",
@@ -117,11 +117,12 @@
     "expo-video": "58.0.11",
     "expo-web-browser": "~58.0.6",
     "expo-widgets": "58.0.20",
+    "pele": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-native": "0.88.0",
     "react-native-blob-util": "0.25.1",
-    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.16-29ddd424.tgz",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz",
     "react-native-gesture-handler": "~3.3.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.8",
@@ -150,8 +151,8 @@
     "aws4fetch": "1.0.20",
     "babel-preset-expo": "~58.0.17",
     "jsdom": "^30.0.1",
-    "tailwindcss": "^4.0.0",
-    "typescript": "catalog:"
+    "nitrogen": "0.37.1",
+    "tailwindcss": "^4.0.0"
   },
   "enriched-markdown": {
     "enableMath": true,
@@ -161,7 +162,6 @@
     "install": {
       "exclude": [
         "react-native-keyboard-controller",
-        "typescript",
         "react-native-screens",
         "react-native-enriched-markdown"
       ]
@@ -176,7 +176,8 @@
         "@react-native-menu/menu",
         "expo-audio",
         "expo-video",
-        "expo-network"
+        "expo-network",
+        "expo-sharing"
       ]
     }
   },
