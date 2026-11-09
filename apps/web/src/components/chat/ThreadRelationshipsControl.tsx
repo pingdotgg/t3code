@@ -958,7 +958,7 @@ export function ThreadRelationshipsPanel(props: {
               render={
                 groups
                   .find((group) => group.id === "previous")
-                  ?.rows.some((row) => row.threadId === threadId) ? (
+                  ?.rows.some((row) => !("remote" in row) && row.threadId === threadId) ? (
                   <MenuItem />
                 ) : undefined
               }
@@ -1138,7 +1138,7 @@ export function ThreadRelationshipsPanel(props: {
                 .filter((group) => group.id !== "previous")
                 .map((group) => (
                   <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-                    {(visibleRows) => visibleRows.map(renderLineageRow)}
+                    {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
                   </ThreadLineageGroup>
                 ))}
               {groups
