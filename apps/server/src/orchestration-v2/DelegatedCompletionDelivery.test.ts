@@ -2856,13 +2856,36 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           1,
         );
 
+        // Another turn in the child does not release the hold while the grandchild runs.
+        for (const status of ["running", "completed"] as const) {
+          yield* eventSink.write({
+            commandId: reconcileCommandId(`followup-grandchild-user-${status}`),
+            events: [
+              runEvent({
+                threadId: child.childThreadId,
+                runId: RunId.make("run:followup-grandchild-user"),
+                ordinal: followupRun.ordinal + 1,
+                status,
+                now,
+              }),
+            ],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          assert.isNull(
+            (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+              (task) => task.id === followupTaskId,
+            )?.result ?? null,
+            `the follow-up closed while another child run was ${status}`,
+          );
+        }
+
         // The grandchild's completion wakes the child in a run without a delegatedTaskId.
         const wakeRunId = RunId.make("run:followup-grandchild-wake");
         const wakeRun = (status: "running" | "completed") =>
           runEvent({
             threadId: child.childThreadId,
             runId: wakeRunId,
-            ordinal: followupRun.ordinal + 1,
+            ordinal: followupRun.ordinal + 2,
             status,
             now,
           });
