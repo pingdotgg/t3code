@@ -3308,7 +3308,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
                   });
-            const anchor = piForkAnchor(boundary);
+            const anchor =
+              boundary.type === "entry"
+                ? boundary.entryId
+                : boundary.type === "uncaptured"
+                  ? boundary.stopAt
+                  : null;
             const forkSourceFile =
               anchor === null ? sourceFile : yield* forkSourceFileFor(sourceFile, anchor);
             // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
@@ -3335,22 +3340,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   Effect.ignore,
                   Effect.forkScoped,
                 );
-                const historicalEntries =
-                  forkSourceFile !== sourceFile && boundary.type === "uncaptured"
+                const entries =
+                  boundary.type === "uncaptured"
                     ? yield* forkConnection.request({ type: "get_entries" })
                     : undefined;
                 const beforeEntry =
                   boundary.type === "nothing" ||
                   (boundary.type === "uncaptured" &&
-                    piTerminalForkTarget(historicalEntries, boundary))
+                    forkSourceFile !== sourceFile &&
+                    piTerminalForkTarget(entries, boundary))
                     ? null
-                    : yield* piForkEntry(
-                        boundary,
-                        source.createdAt,
-                        historicalEntries === undefined
-                          ? forkConnection.request({ type: "get_entries" })
-                          : Effect.succeed(historicalEntries),
-                      );
+                    : yield* piForkEntry(boundary, source.createdAt, Effect.succeed(entries));
                 if (beforeEntry !== null) {
                   const result = yield* forkConnection.request({
                     type: "fork",
@@ -3569,12 +3569,6 @@ function piForkBoundary(input: {
   return { type: "uncaptured", turn: boundary, target, stopAt };
 }
 
-/** The entry a fork's source session must contain, when the boundary names one. */
-function piForkAnchor(boundary: PiForkBoundary): string | null {
-  if (boundary.type === "entry") return boundary.entryId;
-  return boundary.type === "uncaptured" ? boundary.stopAt : null;
-}
-
 /** CLI --fork retains the whole tree; only keep it intact when it proves the target is its end. */
 function piTerminalForkTarget(
   data: unknown,
@@ -3591,6 +3585,7 @@ function piTerminalForkTarget(
   ) {
     return false;
   }
+  // One unbranched chain holding every entry, so the walk below must reach the target.
   const full = walkPiBranch(listing.entries, listing.leafId, null);
   if (full === null || !full.reachedStop || full.entryCount !== listing.entries.size) return false;
   const end = DateTime.toEpochMillis(target.completedAt);
@@ -3602,7 +3597,7 @@ function piTerminalForkTarget(
     hasAnswer ||= entry.isAssistantMessage;
     current = entry.parentId;
   }
-  return current === boundary.stopAt && hasAnswer;
+  return hasAnswer;
 }
 
 /** Reads the session tree only for an uncaptured boundary. */
