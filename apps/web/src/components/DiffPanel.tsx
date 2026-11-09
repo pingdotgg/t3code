@@ -54,6 +54,7 @@ import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   getDiffCollapseIconClassName,
+  getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -124,7 +125,6 @@ import {
   DiffFileChangeIcon,
   DiffFileHeaderStat,
   diffHeaderTitlePath,
-  fileDiffLineStat,
 } from "./diffs/DiffFileHeaderParts";
 
 type DiffThemeType = "light" | "dark";
@@ -1459,7 +1459,7 @@ export default function DiffPanel({
                       // A lazily loaded file's hunks may not be here yet; the scope's stats are.
                       const stat = lazySource
                         ? fileStats.get(resolveFileDiffPath(fileDiff))
-                        : fileDiffLineStat(fileDiff);
+                        : getDiffLineStat([fileDiff]);
                       return stat ? (
                         <DiffFileHeaderStat additions={stat.additions} deletions={stat.deletions} />
                       ) : null;
