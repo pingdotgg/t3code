@@ -44,12 +44,16 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       }),
   );
 
-  it.effect("keeps a symlinked file linked and rewrites its destination", () =>
+  it.effect.each(
+    HostProcess.Platform.defaultValue() === "linux"
+      ? ["settings.json", `${"s".repeat(250)}.json`]
+      : ["settings.json"],
+  )("keeps a symlinked file linked and rewrites its destination %s", (fileName) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const destination = path.join(root, "dotfiles", "settings.json");
+      const destination = path.join(root, "dotfiles", fileName);
       const link = path.join(root, "home", "settings.json");
       yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
