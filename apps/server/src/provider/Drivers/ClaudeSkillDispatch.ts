@@ -68,9 +68,20 @@ export function planClaudeSkillDispatch(
   };
 }
 
-/** Cheap pre-check so an answer with no skill syntax skips skill discovery. */
+// A leading `/name` invokes a skill in the composer, so an answer may open with one too.
+function leadingSlashAsMention(answer: string) {
+  const leadingSlash = /^(\s*)\/(?=\S)/.exec(answer);
+  const indent = leadingSlash?.[1];
+  return leadingSlash === null || indent === undefined
+    ? undefined
+    : { indent, text: `${indent}$${answer.slice(leadingSlash[0].length)}` };
+}
+
+/** Lets an answer with no skill syntax skip skill discovery. */
 export function answerMayMentionClaudeSkill(answer: string): boolean {
-  return /\p{Sc}|^\s*\//u.test(answer);
+  return [answer, leadingSlashAsMention(answer)?.text].some(
+    (text) => text !== undefined && text.search(SKILL_MENTION_PATTERN) !== -1,
+  );
 }
 
 /** Tool results never expand skills, so an answer only names them for the agent to run. */
@@ -78,13 +89,11 @@ export function rewriteClaudeSkillMentionsInAnswer(
   answer: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
 ): string {
-  // A leading `/name` invokes a skill in the composer, so it counts here too.
-  const leadingSlash = /^(\s*)\/(?=\S)/.exec(answer);
-  if (leadingSlash) {
-    const asMention = `${leadingSlash[1]}$${answer.slice(leadingSlash[0].length)}`;
-    const mentions = matchSkillMentions(asMention, skills);
-    if (mentions[0]?.start === leadingSlash[1]?.length) {
-      return inlineSkillMentions(asMention, mentions, undefined);
+  const leading = leadingSlashAsMention(answer);
+  if (leading) {
+    const mentions = matchSkillMentions(leading.text, skills);
+    if (mentions[0]?.start === leading.indent.length) {
+      return inlineSkillMentions(leading.text, mentions, undefined);
     }
   }
   const mentions = matchSkillMentions(answer, skills);

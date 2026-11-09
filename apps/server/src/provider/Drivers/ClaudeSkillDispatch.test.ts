@@ -95,7 +95,7 @@ describe("planClaudeSkillDispatch", () => {
       expect(rewriteClaudeSkillMentionsInAnswer(answer, userOnly)).not.toBe(answer);
       expect(answerMayMentionClaudeSkill(answer)).toBe(true);
     }
-    for (const answer of ["Yes", "Simple, Safe", "see docs/review", ""]) {
+    for (const answer of ["Yes", "Simple, Safe", "see docs/review", "", "$100", "/srv/file"]) {
       expect(answerMayMentionClaudeSkill(answer)).toBe(false);
     }
   });
