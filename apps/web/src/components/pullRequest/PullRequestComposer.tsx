@@ -47,9 +47,11 @@ export function PullRequestComposer({
   openReviewRequest?: number | undefined;
 }) {
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
-  const [open, setOpen] = useState(false);
+  // "review" is open from a review request, which offers the review over a plain comment.
+  const [popover, setPopover] = useState<"closed" | "open" | "review">("closed");
+  const open = popover !== "closed";
+  const reviewRequested = popover === "review";
   const [reviewPending, setReviewPending] = useState(false);
-  const [reviewRequested, setReviewRequested] = useState(false);
   const [requestedMode, setRequestedMode] = useState<PullRequestReviewVerdict>("comment");
   const commentRef = useRef<HTMLTextAreaElement>(null);
   const reviewRef = useRef<HTMLTextAreaElement>(null);
@@ -63,8 +65,7 @@ export function PullRequestComposer({
   const [answeredOpenRequest, setAnsweredOpenRequest] = useState(openReviewRequest);
   if (openReviewRequest !== answeredOpenRequest) {
     setAnsweredOpenRequest(openReviewRequest);
-    setReviewRequested(true);
-    setOpen(true);
+    setPopover("review");
   }
 
   const canComment = detail.capabilities.comment && detail.viewerPermissions.comment;
@@ -115,8 +116,7 @@ export function PullRequestComposer({
       open={open}
       onOpenChange={(next) => {
         // The last mode is kept: line comments waiting already turn Comment into the review.
-        if (!next) setReviewRequested(false);
-        setOpen(next);
+        setPopover((current) => (!next ? "closed" : current === "closed" ? "open" : current));
       }}
     >
       <PopoverTrigger
@@ -188,8 +188,7 @@ export function PullRequestComposer({
               pending={reviewPending}
               onPendingChange={setReviewPending}
               onSubmitted={() => {
-                setOpen(false);
-                setReviewRequested(false);
+                setPopover("closed");
                 onReviewSubmitted();
               }}
             />
@@ -207,8 +206,7 @@ export function PullRequestComposer({
               onCommentAction={onCommentAction}
               onCommented={onCommented}
               onClose={() => {
-                setOpen(false);
-                setReviewRequested(false);
+                setPopover("closed");
               }}
             />
           </div>
