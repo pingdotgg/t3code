@@ -23,6 +23,8 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  accountResetCredits,
+  resetCreditInput,
   windowResetCredits,
 } from "./usageLimits.ts";
 
@@ -208,6 +210,28 @@ describe("windowResetCredits", () => {
         "seven_day",
       ),
     ).toEqual({ availableCount: 0 });
+  });
+
+  it("names the next credit in window order and always pins it", () => {
+    const limits = {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        window,
+        { id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable", usedPercent: 3 },
+      ],
+      resetCredits: {
+        availableCount: 1,
+        nextCreditId: "fable",
+        grants: [{ id: "fable", count: 1, clearsWindowIds: ["seven_day_fable", "five_hour"] }],
+      },
+    } as const;
+    const instanceId = ProviderInstanceId.make("claude");
+
+    expect(accountResetCredits(limits)?.clears).toBe("Clears Session and Weekly · Fable");
+    expect(resetCreditInput({ instanceId }, windowResetCredits(limits, "five_hour"))).toEqual({
+      instanceId,
+      creditId: "fable",
+    });
   });
 });
 

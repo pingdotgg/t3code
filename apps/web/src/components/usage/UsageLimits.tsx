@@ -17,6 +17,8 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  resetCreditInput,
+  type ResetCreditsOffer,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useLayoutEffect, useState } from "react";
@@ -274,11 +276,13 @@ export function ResetCreditDialog({
   open,
   onOpenChange,
   onConfirm,
+  clears,
   disabled = false,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: () => void;
+  readonly clears: string | undefined;
   readonly disabled?: boolean;
 }) {
   return (
@@ -287,8 +291,9 @@ export function ResetCreditDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
           <AlertDialogDescription>
-            This redeems one credit on your account and clears the current rate-limit windows. It
-            cannot be undone.
+            {clears
+              ? `This redeems one credit on your account. ${clears}. It cannot be undone.`
+              : "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone."}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -326,17 +331,20 @@ export function ResetCredits({
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
-  readonly credits: ServerProviderResetCredits;
+  readonly credits: ResetCreditsOffer;
   readonly now: number;
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
-    input,
+    resetCreditInput(input, credits),
   );
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
+      <span className="tabular-nums">
+        {resetCreditsSummary(credits, now)}
+        {credits.clears ? ` · ${credits.clears}` : ""}
+      </span>
       {credits.availableCount > 0 ? (
         <Button
           size="xs"
@@ -354,6 +362,7 @@ export function ResetCredits({
         open={confirming}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
+        clears={credits.clears}
         disabled={!canManageProviders}
       />
     </div>

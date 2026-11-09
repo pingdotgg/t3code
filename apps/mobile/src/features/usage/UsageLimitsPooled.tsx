@@ -624,18 +624,10 @@ export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
             {account.redeem && credits ? (
               <View className="gap-3 rounded-[24px] border-continuous bg-grouped-card p-4">
                 <Text className="text-sm font-t3-medium text-foreground">Reset credits</Text>
-                {credits.clears ? (
-                  <Text className="text-xs text-foreground-tertiary">{credits.clears}</Text>
-                ) : null}
                 <ResetCredits
                   key={account.key}
                   environmentId={account.redeem.environmentId}
-                  input={
-                    credits.nextCreditId &&
-                    credits.nextCreditId !== account.limits.resetCredits?.nextCreditId
-                      ? { ...account.redeem.input, creditId: credits.nextCreditId }
-                      : account.redeem.input
-                  }
+                  input={account.redeem.input}
                   credits={credits}
                   now={now}
                 />

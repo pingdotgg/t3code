@@ -625,6 +625,35 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
   return limits.windows.length === 0 ? "No limits reported." : null;
 }
 
+export type ResetCreditsOffer = ServerProviderResetCredits & {
+  /** What the offered credit clears, when it does not clear every window. */
+  readonly clears?: string;
+};
+
+function resetCreditClears(
+  limits: ServerProviderUsageLimits,
+  creditId: string | undefined,
+): string | undefined {
+  const clearsWindowIds = limits.resetCredits?.grants?.find(
+    (grant) => grant?.id === creditId,
+  )?.clearsWindowIds;
+  if (!clearsWindowIds) return undefined;
+  const labels = limits.windows.flatMap((window) =>
+    window && clearsWindowIds.includes(window.id) ? [window.label] : [],
+  );
+  if (labels.length === 0) return undefined;
+  return `Clears ${labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ` : ""}${labels.at(-1)}`;
+}
+
+/** Every banked credit, and what the next one clears. */
+export function accountResetCredits(
+  limits: ServerProviderUsageLimits,
+): ResetCreditsOffer | undefined {
+  const credits = limits.resetCredits;
+  const clears = resetCreditClears(limits, credits?.nextCreditId);
+  return credits && clears ? { ...credits, clears } : credits;
+}
+
 /**
  * The reset credits that clear one window, and the credit a redeem from that window
  * claims. A grant without `clearsWindowIds` clears every window.
@@ -632,25 +661,31 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
 export function windowResetCredits(
   limits: ServerProviderUsageLimits,
   windowId: string,
-): (ServerProviderResetCredits & { readonly clears?: string }) | undefined {
+): ResetCreditsOffer | undefined {
   const credits = limits.resetCredits;
   if (!credits?.grants) return credits;
   const grants = credits.grants.filter(
     (grant) => grant && (!grant.clearsWindowIds || grant.clearsWindowIds.includes(windowId)),
   );
   const next = grants.find((grant) => grant.id === credits.nextCreditId) ?? grants[0];
-  const windowLabels = new Map(limits.windows.map((window) => [window?.id, window?.label]));
-  const labels = (next?.clearsWindowIds ?? []).flatMap((id) => windowLabels.get(id) ?? []);
+  const clears = resetCreditClears(limits, next?.id);
   return {
     availableCount: grants.reduce((sum, grant) => sum + grant.count, 0),
     ...(next?.expiresAt ? { nextExpiresAt: next.expiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
-    ...(labels.length > 0
-      ? {
-          clears: `Clears ${labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ` : ""}${labels.at(-1)}`,
-        }
-      : {}),
+    ...(clears ? { clears } : {}),
   };
+}
+
+/**
+ * Names the offered credit, so a confirmation that outlives a refresh cannot spend
+ * a different grant. Servers that predate per-credit redeems ignore the id.
+ */
+export function resetCreditInput(
+  input: ProviderConsumeResetCreditInput,
+  credits: ServerProviderResetCredits | undefined,
+): ProviderConsumeResetCreditInput {
+  return credits?.nextCreditId ? { ...input, creditId: credits.nextCreditId } : input;
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {

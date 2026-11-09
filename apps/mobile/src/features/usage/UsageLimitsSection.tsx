@@ -7,7 +7,6 @@ import {
   type ProviderConsumeResetCreditOutcome,
   type ProviderConsumeResetCreditInput,
   type ServerProvider,
-  type ServerProviderResetCredits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
@@ -17,6 +16,8 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  resetCreditInput,
+  type ResetCreditsOffer,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -230,7 +231,7 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
 export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
-  readonly credits: ServerProviderResetCredits;
+  readonly credits: ResetCreditsOffer;
   readonly now: number;
   readonly dense?: boolean;
 }) {
@@ -251,13 +252,13 @@ export function ResetCredits(props: {
       ? "No reset credits banked"
       : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
           expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
+        }${credits.clears ? ` · ${credits.clears}` : ""}`;
 
   const redeem = async () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input });
+    const result = await consume({ environmentId, input: resetCreditInput(input, credits) });
     setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
@@ -274,7 +275,9 @@ export function ResetCredits(props: {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Dialog.alert(
       "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      credits.clears
+        ? `This redeems one credit on your account. ${credits.clears}. It cannot be undone.`
+        : "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         { text: "Use credit", onPress: () => void redeem() },

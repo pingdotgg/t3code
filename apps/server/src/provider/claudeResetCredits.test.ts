@@ -117,6 +117,20 @@ describe("claudeResetCreditsToContract", () => {
       },
     ]);
   });
+
+  it("skips clears entries it cannot read instead of dropping the grant", () => {
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "scoped",
+        grants: [{ id: "scoped", resets_left: 1, usable_now: true, clears: ["five_hour", 7] }],
+      },
+      NOW,
+    );
+
+    expect(credits?.availableCount).toBe(1);
+    expect(credits?.grants).toEqual([{ id: "scoped", count: 1, clearsWindowIds: ["five_hour"] }]);
+  });
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {

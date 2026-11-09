@@ -33,7 +33,8 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
-  clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  // Unknown elements are skipped rather than dropping the whole grant.
+  clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -138,7 +139,11 @@ export function claudeResetCreditsToContract(
               ...(grant.clears
                 ? {
                     clearsWindowIds: [
-                      ...new Set(grant.clears.flatMap((type) => windowIds.get(type) ?? [])),
+                      ...new Set(
+                        grant.clears.flatMap((type) =>
+                          typeof type === "string" ? (windowIds.get(type) ?? []) : [],
+                        ),
+                      ),
                     ],
                   }
                 : {}),

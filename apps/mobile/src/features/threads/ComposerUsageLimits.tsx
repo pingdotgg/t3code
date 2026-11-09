@@ -3,6 +3,8 @@ import { Pressable, ScrollView, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
+import { accountResetCredits } from "@t3tools/shared/usageLimits";
+
 import { AccountLimits, ResetCredits } from "../usage/UsageLimitsSection";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = { codex: "Codex", claudeAgent: "Claude" };
@@ -38,6 +40,7 @@ export function ComposerUsageLimits({
             account.resetCreditInput ??
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const driverLabel = DRIVER_LABEL[account.driver] ?? String(account.driver);
+          const resetCredits = accountResetCredits(account.limits);
           return (
             <AccountLimits
               key={account.id}
@@ -59,12 +62,12 @@ export function ComposerUsageLimits({
               now={now}
               trailing={index === 0 ? close : undefined}
               footer={
-                resetCreditInput && account.limits.resetCredits ? (
+                resetCreditInput && resetCredits ? (
                   <ResetCredits
                     dense
                     environmentId={environmentId}
                     input={resetCreditInput}
-                    credits={account.limits.resetCredits}
+                    credits={resetCredits}
                     now={now}
                   />
                 ) : undefined

@@ -1,6 +1,6 @@
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { accountResetCredits, limitsNotice } from "@t3tools/shared/usageLimits";
 import { GaugeIcon } from "lucide-react";
 
 import { ensureLocalApi } from "../../localApi";
@@ -119,6 +119,7 @@ function UsageLimitsBannerBody({
             (account.instanceId ? { instanceId: account.instanceId } : undefined);
           const notice = limitsNotice(account.limits);
           const externalUsage = account.limits.externalUsage;
+          const resetCredits = accountResetCredits(account.limits);
           return (
             <div key={account.id} className="flex min-w-0 flex-col gap-1">
               {report.accounts.length > 1 ? (
@@ -147,11 +148,11 @@ function UsageLimitsBannerBody({
                   Manage usage
                 </Button>
               ) : null}
-              {resetCreditInput && account.limits.resetCredits ? (
+              {resetCreditInput && resetCredits ? (
                 <ResetCredits
                   environmentId={environmentId}
                   input={resetCreditInput}
-                  credits={account.limits.resetCredits}
+                  credits={resetCredits}
                   now={now}
                 />
               ) : null}

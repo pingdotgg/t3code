@@ -13,6 +13,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  resetCreditInput,
   windowResetCredits,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
@@ -307,14 +308,8 @@ function RedeemableSegment({
 }: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
-  const creditId = windowResetCredits(props.account.limits, props.window.id)?.nextCreditId;
-  // Pin the redeem to this window's credit only when it differs from the account's next one.
-  const redeem = useResetCredit(
-    redeemAt.environmentId,
-    creditId && creditId !== props.account.limits.resetCredits?.nextCreditId
-      ? { ...redeemAt.input, creditId }
-      : redeemAt.input,
-  );
+  const credits = windowResetCredits(props.account.limits, props.window.id);
+  const redeem = useResetCredit(redeemAt.environmentId, resetCreditInput(redeemAt.input, credits));
   return (
     <>
       <SegmentTriggers redeem={redeem} {...props} />
@@ -322,6 +317,7 @@ function RedeemableSegment({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
+        clears={credits?.clears}
         disabled={!redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}

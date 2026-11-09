@@ -603,12 +603,24 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
+  const fableGrant = {
+    id: "fable",
+    resets_left: 1,
+    usable_now: true,
+    clears: ["five_hour", "seven_day_overage_included"],
+  };
+  const redeemClaudeReset = (claim: {
+    result: string;
+    usageFailsAfterClaim: boolean;
+    creditId?: string;
+    scopedNext?: boolean;
+  }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const fixtures = yield* makeTildeProviderFixtures();
       const marker = path.join(fixtures.claudeHomePath, "redeemed");
+      const claimed: Array<string> = [];
       yield* fs.writeFileString(
         path.join(fixtures.claudeHomePath, ".credentials.json"),
         '{"claudeAiOauth":{"accessToken":"fake-token"}}',
@@ -625,13 +637,19 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
               Response.json({
                 cedar_ember: {
                   eligible: true,
-                  next_grant_id: "grant_a",
-                  grants: [{ id: "grant_a", resets_left: 1, usable_now: true }],
+                  next_grant_id: claim.scopedNext ? fableGrant.id : "grant_a",
+                  grants: [
+                    { id: "grant_a", resets_left: 1, usable_now: true },
+                    ...(claim.scopedNext ? [fableGrant] : []),
+                  ],
                 },
               }),
             );
           }
           if (request.url.endsWith("/reset_rate_limits")) {
+            if (request.body._tag === "Uint8Array") {
+              claimed.push(JSON.parse(new TextDecoder().decode(request.body.body)).grant_id);
+            }
             yield* fs.writeFileString(marker, "redeemed").pipe(Effect.orDie);
             return HttpClientResponse.fromWeb(request, Response.json({ result: claim.result }));
           }
@@ -663,9 +681,11 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(instance).toBeDefined();
       const before = yield* instance!.snapshot.refresh;
       expect(before.usageLimits?.windows[0]?.usedPercent).toBe(100);
-      expect(before.usageLimits?.resetCredits?.nextCreditId).toBe("grant_a");
-      const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
-      return { outcome, after: yield* instance!.snapshot.getSnapshot };
+      expect(before.usageLimits?.resetCredits?.nextCreditId).toBe(
+        claim.scopedNext ? fableGrant.id : "grant_a",
+      );
+      const outcome = yield* instance!.consumeResetCredit!(claim.creditId).pipe(Effect.result);
+      return { outcome, claimed, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
       // macOS logins live in the Keychain, where resets are never read.
       Effect.provideService(HostProcess.Platform, "linux"),
@@ -680,6 +700,32 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       });
       expect(outcome).toMatchObject({ _tag: "Success", success: "reset" });
       expect(after.usageLimits?.windows[0]?.usedPercent).toBe(0);
+    }),
+  );
+
+  it.live.skipIf(windowsHost)("claims the named grant, not Claude's next one", () =>
+    Effect.gen(function* () {
+      const { outcome, claimed } = yield* redeemClaudeReset({
+        result: "reset",
+        usageFailsAfterClaim: false,
+        creditId: "grant_a",
+        scopedNext: true,
+      });
+      expect(outcome).toMatchObject({ _tag: "Success", success: "reset" });
+      expect(claimed).toEqual(["grant_a"]);
+    }),
+  );
+
+  it.live.skipIf(windowsHost)("claims nothing when the named grant is gone", () =>
+    Effect.gen(function* () {
+      const { outcome, claimed } = yield* redeemClaudeReset({
+        result: "reset",
+        usageFailsAfterClaim: false,
+        creditId: "spent",
+        scopedNext: true,
+      });
+      expect(outcome).toMatchObject({ _tag: "Success", success: "noCredit" });
+      expect(claimed).toEqual([]);
     }),
   );
 
