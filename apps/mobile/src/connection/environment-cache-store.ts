@@ -54,13 +54,13 @@ function mapDatabaseError(operation: CacheOperation) {
   return (error: MobileDatabase.MobileDatabaseError) => persistenceError(operation, error);
 }
 
-function loadDecodedCache<A, B>(input: {
+function loadDecodedCache<A, B, E>(input: {
   readonly database: MobileDatabase.MobileDatabase["Service"];
   readonly environmentId: EnvironmentId;
   readonly kind: MobileDatabase.ClientCacheKind;
   readonly cacheKey: string;
   readonly operation: CacheOperation;
-  readonly decode: (raw: string) => Effect.Effect<A, unknown>;
+  readonly decode: (raw: string) => Effect.Effect<A, E>;
   readonly select: (value: A) => Option.Option<B>;
 }): Effect.Effect<Option.Option<B>, Persistence.ConnectionPersistenceError> {
   return input.database.loadCache(input.environmentId, input.kind, input.cacheKey).pipe(
@@ -81,7 +81,7 @@ function loadDecodedCache<A, B>(input: {
                 Effect.andThen(
                   input.database
                     .removeCache(input.environmentId, input.kind, input.cacheKey)
-                    .pipe(Effect.catch(() => Effect.void)),
+                    .pipe(Effect.ignore),
                 ),
                 Effect.as(Option.none<B>()),
               ),
@@ -106,7 +106,13 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         operation: "load-shell",
         decode: decodeStoredShellSnapshot,
         select: (stored) =>
-          stored.environmentId === environmentId ? Option.some(stored.snapshot) : Option.none(),
+          stored.environmentId === environmentId
+            ? Option.some(
+                stored.origin === undefined
+                  ? stored.snapshot
+                  : { ...stored.snapshot, origin: stored.origin },
+              )
+            : Option.none(),
       }).pipe(
         Effect.zipWith(
           Effect.promise(() => projectFaviconDatabaseCache.hydrate()),
@@ -115,16 +121,25 @@ export const make = Effect.fn("MobileEnvironmentCacheStore.make")(function* () {
         ),
       ),
     ),
-    saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(function* (environmentId, snapshot) {
-      const payload = yield* encodeStoredShellSnapshot({
-        schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
-        environmentId,
-        snapshot,
-      }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
-      yield* database
-        .saveCache(environmentId, "shell", "snapshot", ORCHESTRATION_CACHE_SCHEMA_VERSION, payload)
-        .pipe(Effect.mapError(mapDatabaseError("save-shell")));
-    }),
+    saveShell: Effect.fn("MobileEnvironmentCache.saveShell")(
+      function* (environmentId, snapshot, origin) {
+        const payload = yield* encodeStoredShellSnapshot({
+          schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+          environmentId,
+          snapshot,
+          ...(origin === undefined ? {} : { origin }),
+        }).pipe(Effect.mapError((cause) => persistenceError("save-shell", cause)));
+        yield* database
+          .saveCache(
+            environmentId,
+            "shell",
+            "snapshot",
+            ORCHESTRATION_CACHE_SCHEMA_VERSION,
+            payload,
+          )
+          .pipe(Effect.mapError(mapDatabaseError("save-shell")));
+      },
+    ),
     loadThread: Effect.fn("MobileEnvironmentCache.loadThread")((environmentId, threadId) =>
       loadDecodedCache({
         database,

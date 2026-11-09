@@ -11,8 +11,8 @@ import {
 } from "react";
 import { Pressable, View } from "react-native";
 
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
-import { AndroidHeaderIconButton } from "./AndroidScreenHeader";
+import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
+import { AndroidHeaderIconButton } from "./AndroidScreenHeader.android";
 import { AppText } from "./AppText";
 import { NativeAppBar } from "./NativeAppBar.android";
 import { useControlTheme } from "./useControlTheme";
