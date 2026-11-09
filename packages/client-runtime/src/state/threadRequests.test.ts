@@ -9,6 +9,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderSessionId,
+  ProviderTurnId,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2TurnItem,
@@ -705,6 +706,14 @@ describe("pending v2 approvals", () => {
           nativeItemRef: { ...nativeItemRef, nativeId: "item-8" },
           type: "file_change",
           fileName: "src/other.ts",
+        },
+        {
+          ...base,
+          id: TurnItemId.make("previous-turn-file-change"),
+          providerTurnId: ProviderTurnId.make("previous-turn"),
+          nativeItemRef,
+          type: "file_change",
+          fileName: "src/previous.ts",
         },
         {
           ...base,
