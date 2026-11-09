@@ -94,7 +94,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
-import { CommandBlock } from "../CommandBlock";
+import { InstallT3Commands } from "../InstallT3Commands";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
@@ -541,7 +541,7 @@ function ConnectAccountOption({
             <p className="text-sm text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
-            <CommandBlock command="npx t3 connect" className="mt-3" />
+            <InstallT3Commands command="t3 connect" className="mt-3" />
             <p className="mt-3 text-xs text-muted-foreground">
               Keep T3 Code running. Select the computers you want to set up above.
             </p>
@@ -650,11 +650,11 @@ function PairingForm({
           <CollapsiblePanel>
             <p className="pt-3 text-sm text-muted-foreground">
               On the computer with your code, start T3 Code or run{" "}
-              <code className="font-mono">npx t3 serve</code>, then run:
+              <code className="font-mono">t3 serve</code>, then run:
             </p>
-            <CommandBlock command="npx t3 pair" className="mt-2" />
+            <InstallT3Commands command="t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
+              On a tailnet, run <code className="font-mono">t3 pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>
