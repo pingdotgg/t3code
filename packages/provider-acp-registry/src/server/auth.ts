@@ -47,8 +47,11 @@ export const formatFailureDetail = (detail: string, cause?: unknown): string => 
 
 type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
-  "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
+  "initialize" | "authenticate" | "start" | "handleElicitation" | "handleExtNotification" | "logout"
 >;
+
+/** CodeBuddy Code (v2.181.0) announces its login URL this way, then blocks in authenticate. */
+const CodebuddyAuthUrl = Schema.Struct({ authUrl: Schema.String });
 
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -291,6 +294,21 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
               ? ({ action: "accept" } as const)
               : ({ action: "decline" } as const);
           }),
+        );
+        yield* runtime.handleExtNotification(
+          "_codebuddy.ai/authUrl",
+          CodebuddyAuthUrl,
+          ({ authUrl }) => {
+            const url = normalizeAcpRegistryWebUrl(authUrl);
+            return url
+              ? context.setInteraction({
+                  type: "browser",
+                  id: "codebuddy-auth-url",
+                  url,
+                  requiresConsent: false,
+                })
+              : Effect.void;
+          },
         );
         const initialized = yield* runtime
           .initialize()
