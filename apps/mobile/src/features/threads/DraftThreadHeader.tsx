@@ -24,9 +24,7 @@ export function NewTaskDraftShellHeader() {
       title="New thread"
       subtitle=""
       hasThreadCwd={false}
-      fileInspectorSupported={false}
       inspectorMode={null}
-      onToggleInspector={() => {}}
       onOpenFilesInspector={() => {}}
       gitControls={draftOpenGitControls()}
     />
