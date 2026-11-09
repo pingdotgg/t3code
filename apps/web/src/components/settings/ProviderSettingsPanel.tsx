@@ -99,6 +99,7 @@ import { useManagedPolicy } from "~/state/managedPolicy";
 import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
+import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -1171,6 +1172,17 @@ export function EnvironmentProviderSettings({
         sources={settings.usageLimitSources}
         readOnly={readOnly}
       />
+
+      {/* The server drops text generators under a provider allow-list. */}
+      {managedPolicy?.limits?.providers?.allowedDrivers === undefined ? (
+        <TextGeneratorsSettings
+          key={`text-generators:${environmentId}`}
+          environmentId={environmentId}
+          environmentLabel={environmentLabel}
+          providers={serverProviders}
+          readOnly={readOnly}
+        />
+      ) : null}
 
       <SettingsSection title="Advanced">
         <SettingsRow

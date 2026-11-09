@@ -110,7 +110,7 @@ const devinConfiguredModels = (process.env.T3_ACP_DEVIN_MODELS ?? "")
 const devinInitialModel = devinConfiguredModels.find(() => true) ?? "swe-2-high";
 
 let currentModeId = antigravityProfile
-  ? "default"
+  ? (process.env.T3_ACP_INITIAL_MODE ?? "default")
   : devinProfile
     ? "smart"
     : copilotModesProfile

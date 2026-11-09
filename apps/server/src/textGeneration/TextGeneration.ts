@@ -21,6 +21,8 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ThreadTitleLinks from "./ThreadTitleLinks.ts";
+import * as TextGenerators from "./TextGenerators.ts";
+import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 export type {
   BranchNameGenerationInput,
@@ -78,6 +80,7 @@ export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const textGenerators = yield* TextGenerators.TextGenerators;
   const generate = Effect.fn("TextGeneration.generate")(function* <A>(
     operation: TextGenerationOp,
     selection: ModelSelection,
@@ -86,6 +89,17 @@ export const make = Effect.gen(function* () {
       modelSelection: ModelSelection,
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
+    const textGenerator = yield* textGenerators.runner(selection.instanceId);
+    // A review guide reaches a text generator only through a fallback; it needs an agent instead.
+    const textGeneratorId = selection.instanceId;
+    const textGeneratorCannotRun =
+      textGenerator !== undefined && operation === "generateReviewGuide";
+    if (textGenerator !== undefined && !textGeneratorCannotRun) {
+      return yield* invoke(
+        TextGenerationOperations.fromRunner("TextGenerator", textGenerator),
+        selection,
+      );
+    }
     const snapshots = yield* registry.listInstances.pipe(
       Effect.flatMap((instances) =>
         Effect.forEach(instances, (instance) => instance.snapshot.getSnapshot),
@@ -95,9 +109,10 @@ export const make = Effect.gen(function* () {
     const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
     // Only a failed probe counts: a pending one is also not installed yet.
     const unusable =
-      selected?.enabled === true &&
-      selected.status === "error" &&
-      (!selected.installed || selected.auth.status === "unauthenticated");
+      textGeneratorCannotRun ||
+      (selected?.enabled === true &&
+        selected.status === "error" &&
+        (!selected.installed || selected.auth.status === "unauthenticated"));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(
@@ -129,6 +144,13 @@ export const make = Effect.gen(function* () {
           },
           { includeConfiguredInstances: true },
         ) ?? selection;
+    }
+    if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
+      return yield* new TextGenerationError({
+        operation,
+        detail:
+          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
+      });
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),
@@ -187,12 +209,17 @@ export const make = Effect.gen(function* () {
           }),
       );
     }),
-    rankPullRequests: Effect.fn("TextGeneration.rankPullRequests")(function (input) {
-      return resolveInstance(registry, "rankPullRequests", input.modelSelection.instanceId).pipe(
-        Effect.flatMap((textGeneration) => textGeneration.rankPullRequests(input)),
-      );
+    rankPullRequests: Effect.fn("TextGeneration.rankPullRequests")(function* (input) {
+      const textGenerator = yield* textGenerators.runner(input.modelSelection.instanceId);
+      const service =
+        textGenerator !== undefined
+          ? TextGenerationOperations.fromRunner("TextGenerator", textGenerator)
+          : yield* resolveInstance(registry, "rankPullRequests", input.modelSelection.instanceId);
+      return yield* service.rankPullRequests(input);
     }),
   });
 });
 
-export const layer = Layer.effect(TextGeneration, make);
+export const layer = Layer.effect(TextGeneration, make).pipe(
+  Layer.provideMerge(TextGenerators.layer),
+);

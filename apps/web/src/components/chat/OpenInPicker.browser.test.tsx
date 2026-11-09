@@ -378,6 +378,8 @@ describe("remote editor links", () => {
     await using fixture = await setup();
     const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
     state.remote = { mode: "remote-links", host: { kind: "ssh-alias", host: "sol" } };
+    // A successful open would announce on a real timer that fires in the next test.
+    state.openUrl.mockResolvedValueOnce(false);
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
 
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);

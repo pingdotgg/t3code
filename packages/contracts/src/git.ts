@@ -116,6 +116,9 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsBranchStatus = Schema.Struct({ refName: Schema.NullOr(Schema.String) });
+export type VcsBranchStatus = typeof VcsBranchStatus.Type;
+
 export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
   /** Passive observers receive cached remote status without retaining its refresh loop. */

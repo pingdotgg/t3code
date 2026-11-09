@@ -401,7 +401,7 @@ it.each([
       .element(screen.getByRole("combobox", { name: "Transcribe with" }))
       .toHaveTextContent("Off");
     await expect
-      .element(screen.getByRole("switch", { name: "Clean up transcripts with a provider" }))
+      .element(screen.getByRole("switch", { name: "Clean up transcripts" }))
       .not.toBeChecked();
   },
 );

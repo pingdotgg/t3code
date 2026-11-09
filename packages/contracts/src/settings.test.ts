@@ -767,7 +767,6 @@ describe("ClientSettings environment identification", () => {
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     const settings = decodeClientSettings({});
-    expect(settings.legacySidebarEnabled).toBe(false);
     expect(settings.tabsEnabled).toBe(false);
     expect(settings.sidebarActiveThreadSortOrder).toBe("updated_at");
   });
@@ -791,7 +790,6 @@ describe("ClientSettings sidebar", () => {
       sidebarV2Enabled: false,
       sidebarV2ConfiguredByUser: true,
     });
-    expect(decoded.legacySidebarEnabled).toBe(false);
     expect(decoded).not.toHaveProperty("sidebarV2Enabled");
     expect(decoded).not.toHaveProperty("sidebarV2ConfiguredByUser");
   });
@@ -804,11 +802,10 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch(stored)).toEqual({});
   });
 
-  it("preserves an explicit legacy sidebar opt-in", () => {
-    expect(decodeClientSettings({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(true);
-    expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
-      true,
-    );
+  it("drops the retired legacy sidebar opt-in", () => {
+    const stored = { legacySidebarEnabled: true };
+    expect(decodeClientSettings(stored)).not.toHaveProperty("legacySidebarEnabled");
+    expect(decodeClientSettingsPatch(stored)).toEqual({});
   });
 
   it("keeps unpin confirmation opt-in and patchable", () => {
@@ -818,15 +815,13 @@ describe("ClientSettings sidebar", () => {
   });
 });
 
-describe("ClientSettings context window meter", () => {
-  it("defaults off and preserves an explicit legacy opt-in", () => {
-    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
-    expect(
-      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
-    expect(
-      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+describe("ClientSettings retired Labs toggles", () => {
+  it("drops plan mode and the context window meter opt-ins", () => {
+    const stored = { planModeEnabled: true, contextWindowMeterEnabled: true };
+    const decoded = decodeClientSettings(stored);
+    expect(decoded).not.toHaveProperty("planModeEnabled");
+    expect(decoded).not.toHaveProperty("contextWindowMeterEnabled");
+    expect(decodeClientSettingsPatch(stored)).toEqual({});
   });
 });
 
@@ -842,8 +837,8 @@ describe("ClientSettings send shortcut", () => {
 });
 
 describe("ClientSettings follow-up behavior", () => {
-  it("defaults to queue and accepts either behavior", () => {
-    expect(decodeClientSettings({}).followUpBehavior).toBe("queue");
+  it("defaults to steer and accepts either behavior", () => {
+    expect(decodeClientSettings({}).followUpBehavior).toBe("steer");
     for (const followUpBehavior of ["queue", "steer"]) {
       expect(decodeClientSettings({ followUpBehavior }).followUpBehavior).toBe(followUpBehavior);
       expect(decodeClientSettingsPatch({ followUpBehavior }).followUpBehavior).toBe(

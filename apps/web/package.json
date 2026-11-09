@@ -75,7 +75,7 @@
     "micromark-util-combine-extensions": "^2.0.1",
     "morphicons": "^1.7.1",
     "pdfjs-dist": "6.4.299",
-    "pele": "^1.8.0",
+    "pele": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",

@@ -3088,6 +3088,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSLocalNetworkUsageDescription: `${productName} connects to devices on your local network for remote environments and commands run by terminals and coding agents.`,
         // macOS 26 offers Messages/Mail codes in every text field unless opted out.
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
+        NSCalendarsUsageDescription: `Commands you run in ${productName} may need access to your calendars.`,
+        NSCalendarsFullAccessUsageDescription: `Commands you run in ${productName} may need to read and write your calendar events.`,
+        NSCalendarsWriteOnlyAccessUsageDescription: `Commands you run in ${productName} may need to add events to your calendars.`,
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
         NSCameraUsageDescription: `${productName} lets commands run by terminals and coding agents use the camera.`,

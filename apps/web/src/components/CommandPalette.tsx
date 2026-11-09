@@ -863,8 +863,15 @@ function OpenCommandPaletteDialog(props: {
     (() => {
       const isScratch = (project: CommandPaletteProject) =>
         isScratchProject(project, scratchWorkspaceRootFor(project.environmentId));
+      const currentEntry =
+        currentProjectId === null
+          ? undefined
+          : projectPickerEntries.find((entry) => entry.isPreferred);
       const projectItems = buildNewThreadInProjectItems({
         projects: pickerProjects.filter((project) => !isScratch(project)),
+        currentProjectKey: currentEntry
+          ? `${currentEntry.targetProject.environmentId}:${currentEntry.targetProject.id}`
+          : null,
         projectGroupByTargetKey,
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,

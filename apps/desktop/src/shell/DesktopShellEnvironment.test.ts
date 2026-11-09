@@ -484,10 +484,13 @@ describe("DesktopShellEnvironment", () => {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/failing", PATH: "/usr/bin" };
       const commands: string[] = [];
 
-      yield* runShellEnvironment({
+      const discovery = (service: DesktopShellEnvironment.DesktopShellEnvironment["Service"]) =>
+        Effect.all([service.awaitDiscovery, service.awaitUserShellDiscovery]);
+      const answered = yield* runShellEnvironment({
         env,
         platform: "linux",
         userShell: "/usr/local/bin/fish",
+        use: (service) => discovery(service).pipe(Effect.map(([, fromUserShell]) => fromUserShell)),
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
           commands.push(command.command);
@@ -499,6 +502,23 @@ describe("DesktopShellEnvironment", () => {
 
       assert.deepEqual(commands, ["/bin/failing", "/usr/local/bin/fish"]);
       assert.equal(env.PATH, "/home/test/.local/bin:/usr/bin");
+      // The account's own login shell answered.
+      assert.isTrue(answered);
+
+      // Only the platform fallback answered: its PATH can miss folders the user's shell adds.
+      const fallbackOnly = yield* runShellEnvironment({
+        env: { SHELL: "/usr/bin/fish", PATH: "/usr/bin" },
+        platform: "linux",
+        use: (service) =>
+          discovery(service).pipe(
+            Effect.map(([prepared, fromUserShell]) => prepared && !fromUserShell),
+          ),
+        handler: (command) =>
+          command._tag === "StandardCommand" && command.command === "/usr/bin/fish"
+            ? { output: "", exitCode: 7 }
+            : envOutput({ PATH: "/usr/bin" }),
+      }).pipe(Effect.provide(Logger.layer([])));
+      assert.isTrue(fallbackOnly);
     }),
   );
 

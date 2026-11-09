@@ -35,7 +35,6 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   confirmThreadUnpin: false,
-  contextWindowMeterEnabled: false,
   diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   desktopNotifications: {
@@ -59,7 +58,6 @@ const clientSettings: ClientSettings = {
   glassOpacity: 80,
   onboardingCompletedAt: null,
   panelAnimationDurationMs: 0,
-  planModeEnabled: false,
   proactivePanelsEnabled: true,
   showSkillsInSlashMenu: false,
   persistComposerContextStrip: true,
@@ -75,7 +73,6 @@ const clientSettings: ClientSettings = {
   boringSidebarMultilineRows: false,
   threadDetailsUsageEnabled: false,
   threadDetailsItems: {},
-  legacySidebarEnabled: false,
   soundNotificationsEnabled: true,
   tabsEnabled: true,
   sidebarWorkingShelfEnabled: false,
