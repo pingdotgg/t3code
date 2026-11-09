@@ -908,17 +908,6 @@ function WorkingWindowView({
   const windowRef = useRef<HTMLDivElement>(null);
   const spacerRef = useRef<HTMLDivElement>(null);
   const [collapseClips, setCollapseClips] = useState(false);
-  const { listRef } = ctx;
-  const collapsing = !open && history !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the list applies shrinks a frame late, so the collapse reports each frame's row size itself
-  useLayoutEffect(() => {
-    const row = windowRef.current?.closest<HTMLElement>("[data-timeline-row-id]");
-    if (!collapsing || !row) return;
-    const report = () =>
-      listRef.current?.setItemSize(itemKey, { width: row.offsetWidth, height: row.offsetHeight });
-    report();
-    return observeResize(row, report);
-  }, [collapsing, itemKey, listRef]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the expanded height before the collapse transition paints its first frame
   useLayoutEffect(() => {
     if (open) return;

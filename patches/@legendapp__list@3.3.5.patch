@@ -1618,8 +1618,20 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..d7cbe1cb43449cc29822b2646deabbdd
        }
      }
    }
+diff --git a/react.d.ts b/react.d.ts
+index b6c7481603f4119495551b3e4c1c071984c144af..e2b66085d5898b776c4761d61e5ab8e39057263e 100644
+--- a/react.d.ts
++++ b/react.d.ts
+@@ -298,6 +298,7 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * @default 0.1
+      */
+     maintainScrollAtEndThreshold?: number;
++    immediateWebShrinks?: boolean;
+     /**
+      * Maintains visibility of content.
+      * - scroll (default: true) stabilizes during size/layout changes while scrolling.
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b7dee26dc 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..9aa4c264e51ccaee4acb0cbbce026892c74d5524 100644
 --- a/react.js
 +++ b/react.js
 @@ -1908,6 +1908,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
@@ -1779,6 +1791,15 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
+@@ -5410,7 +5451,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
 @@ -5651,6 +5692,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
@@ -1902,8 +1923,24 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..8c320b0dfb3ea60ef145274b37b1297b
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -7725,6 +7796,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -7993,6 +8065,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize: useWrapIfItem(getFixedItemSize),
+     getItemType: useWrapIfItem(getItemType),
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff754f1c899 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..9f20f37db928826b2f4bf8703f7ff66fd48d8d8a 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -1887,6 +1887,10 @@ function updateScroll(ctx, newScroll, forceUpdate, options) {
@@ -2063,6 +2100,15 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff7
      }
    }, [ctx, containerLayoutEpoch]);
    return children;
+@@ -5389,7 +5430,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
 @@ -5630,6 +5671,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
  });
  
@@ -2186,6 +2232,22 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..252a9d5b23e271c089d30c357a78dff7
              void contentNode.offsetHeight;
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
+@@ -7704,6 +7775,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -7972,6 +8044,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize: useWrapIfItem(getFixedItemSize),
+     getItemType: useWrapIfItem(getItemType),
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index e5043320700b12f34f4c0babbc341f85ca8135c1..e8cbd461325a2e2e9ffd61de26a85ae4d108555c 100644
 --- a/reanimated.d.ts

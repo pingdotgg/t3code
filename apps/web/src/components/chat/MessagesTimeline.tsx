@@ -1502,6 +1502,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                   : maintainVisibleContentPosition
               }
               maintainScrollAtEndThreshold={1}
+              immediateWebShrinks={disclosureToggleSettling || workingHistoryCollapsing}
               onScroll={handleScroll}
               onItemSizeChanged={handleItemSizeChanged}
               className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]"
