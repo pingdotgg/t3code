@@ -25,7 +25,7 @@ import {
   isAttachmentOnlyBootstrapPrompt,
   parseComposerContextHref,
 } from "./composerContextReferences.ts";
-import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
+import { parseAssistantCitationHref } from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
@@ -141,7 +141,8 @@ function markdownThreadFindText(
     const citation =
       node.tagName === "a" && typeof href === "string" ? parseAssistantCitationHref(href) : null;
     if (citation) {
-      text += assistantCitationLabel(citation);
+      // The quote card is not searched; its text is found in the message it came from.
+      text += citation.comment ?? "";
       return;
     }
     {

@@ -15,7 +15,6 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { memo, use, useState, type ReactNode } from "react";
 import {
   createMessageAttachmentPreviewProjector,
@@ -1014,7 +1013,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
-                  text={isolateCitations(resolvedContext.text)}
+                  text={resolvedContext.text}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
                   markdownCwd={ctx.markdownCwd}
@@ -1213,16 +1212,3 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     />
   );
 });
-
-/** Puts each quoted response in its own paragraph, so it renders as a block where it sits. */
-function isolateCitations(text: string): string {
-  let body = "";
-  let cursor = 0;
-  for (const match of collectAssistantCitations(text)) {
-    const before = text.slice(cursor, match.start).trimEnd();
-    body += `${before}${before ? "\n\n" : ""}${match.source}\n\n`;
-    cursor = match.end;
-    while (text[cursor] === " ") cursor += 1;
-  }
-  return body + text.slice(cursor);
-}

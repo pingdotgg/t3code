@@ -2967,6 +2967,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
           );
         }
+        // An open question owns the composer, and its answer would not carry the reply.
+        if (pendingUserInputs.length > 0 || projectSelectionRequired) return false;
         setComposerDraftReplyTo(composerDraftTarget, citation);
         focusComposer();
         return true;

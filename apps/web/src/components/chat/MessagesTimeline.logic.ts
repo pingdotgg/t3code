@@ -3,10 +3,7 @@ import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-mes
 import { isLiveSubagentTurnItem } from "@t3tools/client-runtime/state/subagentRuntime";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
-import {
-  assistantCitationLabel,
-  collectAssistantCitations,
-} from "@t3tools/shared/assistantCitations";
+import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
 import { claudeResumeCompactionAge } from "@t3tools/shared/claudeCompaction";
 import {
@@ -2654,7 +2651,9 @@ function visibleUserMessageText(text: string): string {
   let visible = "";
   let cursor = 0;
   for (const match of collectAssistantCitations(text)) {
-    visible += linkLabels(text.slice(cursor, match.start)) + assistantCitationLabel(match.citation);
+    // A quote shows as a two-line card with its comment under it.
+    visible += linkLabels(text.slice(cursor, match.start));
+    visible += "\n\n" + (match.citation.comment ?? "") + "\n";
     cursor = match.end;
   }
   return visible + linkLabels(text.slice(cursor));

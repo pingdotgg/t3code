@@ -20,6 +20,7 @@ import {
   assistantCitationHash,
   assistantCitationNavigation,
 } from "../../lib/assistantCitationNavigation";
+import { cn } from "~/lib/utils";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
@@ -48,16 +49,36 @@ function citationSourceLinkProps(
   };
 }
 
-/** A quoted response inside a message. Clicking it goes to the source; its comment follows as text. */
-export function AssistantCitationEmbed({ citation }: { citation: AssistantCitation }) {
+/**
+ * A quoted response inside a message. Clicking it goes to the source; its comment follows as
+ * text. `leading` and `trailing` say it starts or ends its block, which already has spacing.
+ */
+export function AssistantCitationEmbed({
+  citation,
+  leading,
+  trailing,
+}: {
+  citation: AssistantCitation;
+  leading: boolean;
+  trailing: boolean;
+}) {
   const navigate = useNavigate();
   const wholeResponse = citation.prefix === "" && citation.suffix === "";
   const flat = (text: string) => text.replace(/\s+/g, " ");
   const { comment, ...quoted } = citation;
+  const { "data-markdown-copy": markdownCopy, ...linkProps } = citationSourceLinkProps(
+    citation,
+    navigate,
+  );
   return (
-    <>
+    // One copy boundary for the card and its comment, so a copied quote carries the comment once.
+    <span
+      data-markdown-copy={markdownCopy}
+      className={cn("block", !leading && "mt-[0.65rem]", !trailing && "mb-[0.65rem]")}
+    >
       <Link
-        {...citationSourceLinkProps(citation, navigate)}
+        {...linkProps}
+        // The quote is findable in its source message; here it is clamped and mostly hidden.
         data-thread-find-ignore
         aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
         // The message's markdown styles colour and underline links; a quote is neither.
@@ -78,11 +99,11 @@ export function AssistantCitationEmbed({ citation }: { citation: AssistantCitati
         </span>
       </Link>
       {comment ? (
-        <span className="mt-1.5 block" dir={textDirection(comment)}>
+        <span className="mt-1.5 block whitespace-pre-wrap" dir={textDirection(comment)}>
           {comment}
         </span>
       ) : null}
-    </>
+    </span>
   );
 }
 
