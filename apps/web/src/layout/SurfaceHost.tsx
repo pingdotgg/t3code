@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { kickBrowserSurfaceTracking } from "../browser/browserSurfaceTracking";
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -55,7 +55,12 @@ import {
 import { useLayoutBehavior } from "./layoutBehavior";
 import { useSyncLayoutBehavior } from "./useSyncLayoutBehavior";
 import { ChatPaneStandIn } from "./ChatPaneStandIn";
-import { chatHoldsLiveWork, queueChatRender, registerWaitingChat } from "./chatRenderGate";
+import {
+  chatHoldsLiveWork,
+  queueChatRender,
+  registerWaitingChat,
+  renderWaitingChatNow,
+} from "./chatRenderGate";
 import { useThreeFingerSwipe } from "./useThreeFingerSwipe";
 import { ThreadSurfaceServices, ThreadSurfaceTab } from "../components/ThreadSurfaceTab";
 import { findThreadChat, useLayoutSurfaceSync } from "./surfaceSync";
@@ -1505,6 +1510,7 @@ function LayoutChatSurface({
   const claimFocus = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
     claimPaneFocus(tab.id);
+    renderWaitingChatNow(tab.id);
   };
 
   return (
@@ -1569,11 +1575,21 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
   /** Under the overview: a chat not rendered yet draws its thumbnail at once. */
   thumbnail: boolean;
 }) {
+  // Navigation stays urgent; superseded chat renders may yield to the next jump.
+  const deferredTarget = useDeferredValue(target);
+  const [inputTarget, setInputTarget] = useState(target);
+  // Draft handoffs retain their synchronous editor lifetime.
+  const shownTarget =
+    inputTarget === target || target.kind === "draft" || deferredTarget.kind === "draft"
+      ? target
+      : deferredTarget;
   // Panel motion holds off for this chat's own first frame and thread swaps.
   // The window-wide suppression flips on every navigation, and every focus
   // move navigates, so it re-rendered every mounted chat twice per keypress.
   const panelAnimationsSuppressed = usePanelNavigationSuppression(
-    target.kind === "draft" ? `draft:${target.draftId}` : scopedThreadKey(target.threadRef),
+    shownTarget.kind === "draft"
+      ? `draft:${shownTarget.draftId}`
+      : scopedThreadKey(shownTarget.threadRef),
   );
   // Paint the pane before rendering ChatView in a separate task. Avoid transitions, whose
   // interruption can destroy the composer editor beneath the pane. The first frame after a
@@ -1636,18 +1652,21 @@ const LayoutChatSurfaceBody = memo(function LayoutChatSurfaceBody({
     if (!covering || !loaded) return;
     return queueChatRender(() => setDrawn(false), "normal");
   }, [covering, loaded]);
-  // A shortcut for this chat arriving before then renders it at once.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Register an unrendered chat with the external shortcut wake-up registry.
-  useEffect(() => {
-    if (rendered || tabId === null) return;
-    return registerWaitingChat(tabId, () => setRendered(true));
-  }, [rendered, tabId]);
+  // Input must land on the selected thread even before its deferred render commits.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Publish the synchronous input gate before any key or pointer can reach the previous chat.
+  useLayoutEffect(() => {
+    if ((rendered && shownTarget === target) || tabId === null) return;
+    return registerWaitingChat(tabId, () => {
+      setInputTarget(target);
+      setRendered(true);
+    });
+  }, [rendered, shownTarget, tabId, target]);
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <LayoutPaneContext value={paneState}>
         {rendered ? (
           <ThreadRouteView
-            target={target}
+            target={shownTarget}
             tabId={paneState.tabId}
             background={background}
             // The URL stays on the chat while its surface tab has focus.
