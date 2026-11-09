@@ -27,7 +27,10 @@ import {
 } from "../../promptStashStore";
 import { type PendingUserInput } from "../../session-logic";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
-import { collapseExpandedComposerCursor } from "../../composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  formatAssistantCitationForComposer,
+} from "../../composer-logic";
 import { compressImageForStash } from "../../lib/imageCompression";
 import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -126,6 +129,7 @@ export function useComposerStash(input: {
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
+  const setComposerDraftReplyTo = useComposerDraftStore((store) => store.setReplyTo);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const addComposerDraftFiles = useComposerDraftStore((store) => store.addFiles);
   const removeComposerDraftPreviewAnnotation = useComposerDraftStore(
@@ -455,7 +459,9 @@ export function useComposerStash(input: {
       });
       return;
     }
-    const prompt = promptRef.current.trim();
+    const replyTo = getComposerDraft(composerDraftTarget)?.replyTo;
+    const prompt =
+      `${replyTo ? formatAssistantCitationForComposer(replyTo) : ""}${promptRef.current}`.trim();
     const attachmentDraft = readAttachmentDraft();
     const images = [...attachmentDraft.images];
     const files = [...attachmentDraft.files];
@@ -564,6 +570,7 @@ export function useComposerStash(input: {
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
       setComposerDraftThreadContexts(stashTarget, []);
+      setComposerDraftReplyTo(stashTarget, null);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }
