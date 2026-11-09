@@ -39,8 +39,9 @@ import {
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
   BotIcon,
-  ChevronRightIcon,
+  CheckIcon,
   CircleStopIcon,
+  XIcon,
   ArrowRightLeftIcon,
   ArrowRightIcon,
   EraserIcon,
@@ -60,6 +61,9 @@ import { formatShortTimestamp } from "../../timestampFormat";
 import { getTriggerDisplayModelName } from "./providerIconUtils";
 import { ProviderInstanceIcon, providerTextColor } from "./ProviderInstanceIcon";
 import { cn } from "~/lib/utils";
+import { formatModelSlugName } from "@t3tools/shared/model";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
+import { Spinner } from "../ui/spinner";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { subagentResumedSince } from "./V2LifecycleRow.logic";
 import { Button, InlineButton } from "../ui/button";
@@ -228,6 +232,7 @@ function SubagentAvatar({
   showBadge,
   status,
   className,
+  plain,
 }: {
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
@@ -236,7 +241,32 @@ function SubagentAvatar({
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
   className?: string;
+  /** The bare provider logo, for rows that show the status elsewhere. */
+  plain?: boolean | undefined;
 }) {
+  if (plain) {
+    return (
+      <span
+        aria-hidden
+        className={cn("inline-flex size-4 shrink-0 items-center justify-center", className)}
+      >
+        {driver ? (
+          <ProviderInstanceIcon
+            driverKind={driver}
+            displayName={displayName ?? driver}
+            accentColor={accentColor}
+            acpRegistryIconUrl={iconUrl}
+            showBadge={showBadge}
+            size="compact"
+            className="z-auto"
+            iconClassName="size-4"
+          />
+        ) : (
+          <BotIcon className="size-4 text-muted-foreground" />
+        )}
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden
@@ -287,6 +317,7 @@ export function EnvironmentSubagentAvatar({
   /** A task in a linked environment runs a provider instance there; its driver here is only a label. */
   remote?: OrchestrationV2RemoteTaskChild | undefined;
   status?: OrchestrationV2TurnItem["status"] | undefined;
+  plain?: boolean | undefined;
 }) {
   const providerEnvironmentId = remote?.environmentId ?? environmentId;
   const providersAtom = serverEnvironment.providersValueAtom(providerEnvironmentId);
@@ -403,6 +434,55 @@ export function SubagentNotificationLink(props: {
   );
 }
 
+/** The row's trailing state: working, done or failed at a glance. */
+function SubagentStatusGlyph({ status }: { status: OrchestrationV2TurnItem["status"] }) {
+  return (
+    <span className="flex size-3.5 shrink-0 items-center justify-center">
+      {status === "pending" || status === "running" || status === "waiting" ? (
+        <Spinner size="xs" tone="muted" aria-label={subagentStatusVisual(status).label} />
+      ) : status === "completed" ? (
+        <CheckIcon aria-hidden className="size-3 text-success-foreground" />
+      ) : status === "failed" ? (
+        <XIcon aria-hidden className="size-3 text-error-foreground" />
+      ) : (
+        <span aria-hidden className="size-1.5 rounded-full bg-dim-foreground" />
+      )}
+    </span>
+  );
+}
+
+/** The model as the picker names it, with its effort. Selects a string, so a row re-renders only when that changes. */
+function SubagentModelLabel(props: {
+  readonly environmentId: EnvironmentId;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly modelSelection: OrchestrationV2Subagent["modelSelection"];
+}) {
+  const label = useAtomValue(
+    serverEnvironment.providersValueAtom(props.environmentId),
+    (providers) => {
+      const provider = providers?.find(
+        (candidate) => candidate.instanceId === props.providerInstanceId,
+      );
+      const model = provider?.models.find((candidate) => candidate.slug === props.model);
+      const name = model
+        ? getTriggerDisplayModelName(model, provider?.driver)
+        : formatModelSlugName(props.model);
+      const effort = formatSubagentEffort({
+        modelSlug: props.model,
+        modelSelection: props.modelSelection,
+        provider,
+      });
+      return effort ? `${name} ${effort}` : name;
+    },
+  );
+  return (
+    <span className="shrink-0 whitespace-nowrap text-caption text-muted-foreground max-sm:hidden">
+      {label}
+    </span>
+  );
+}
+
 function SubagentTimelineLink(props: {
   readonly parentRef: ScopedThreadRef;
   readonly subagentId: NodeId;
@@ -461,76 +541,44 @@ function SubagentTimelineLink(props: {
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
   const flat = props.layout === "flat";
-  // Group members: status dot, title, status, elapsed, chevron on one line.
-  const flatContent = (
-    <>
-      <span
-        aria-hidden
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          subagentStatusVisual(status ?? liveStatus).dotClass,
-        )}
-      />
-      <span className="min-w-0 truncate text-meta text-foreground">{props.title}</span>
-      {remote !== undefined ? (
-        <span className="min-w-0 truncate text-caption text-dim-foreground">on {remote.label}</span>
-      ) : null}
-      <span
-        className={cn(
-          "shrink-0 text-caption",
-          failed ? "text-error-foreground" : "text-dim-foreground",
-        )}
-      >
-        {statusLabel}
-      </span>
-      <span className="ms-auto shrink-0 text-caption text-dim-foreground tabular-nums">
-        <SubagentElapsed agent={timing} />
-      </span>
-      {open !== null ? (
-        <ChevronRightIcon
-          aria-hidden
-          className="size-3 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
-        />
-      ) : null}
-    </>
-  );
-  const content = flat ? (
-    flatContent
-  ) : (
+  // One quiet line: logo, title, what it is doing, model, time, state.
+  const content = (
     <>
       <EnvironmentSubagentAvatar
         environmentId={props.parentRef.environmentId}
         providerInstanceId={props.providerInstanceId}
         driver={props.driver}
         remote={remote}
-        status={status ?? undefined}
+        plain
       />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-2">
-          <span className="min-w-0 truncate text-meta text-strong-foreground">{props.title}</span>
-          {remote !== undefined ? (
-            <span className="shrink-0 text-meta text-muted-foreground">on {remote.label}</span>
-          ) : null}
-        </span>
-        <span
-          className={cn(
-            "block text-2xs leading-relaxed",
-            failed ? "text-error-foreground" : "text-muted-foreground",
-          )}
-        >
-          {detail === null ? (
-            statusLabel
-          ) : detail.includes("/") && !detail.includes(" ") ? (
-            <MiddleTruncate value={detail} showTitle={false} className="flex" />
-          ) : (
-            <span className="block truncate">{detail}</span>
-          )}
-        </span>
+      <span className="min-w-0 shrink truncate text-label text-foreground">{props.title}</span>
+      {remote !== undefined ? (
+        <span className="shrink-0 text-caption text-dim-foreground">on {remote.label}</span>
+      ) : null}
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-body",
+          failed ? "text-error-foreground" : "text-dim-foreground",
+        )}
+      >
+        {detail === null ? null : detail.includes("/") && !detail.includes(" ") ? (
+          <MiddleTruncate value={detail} showTitle={false} className="flex" />
+        ) : (
+          detail
+        )}
       </span>
-      {detail !== null && (props.event !== undefined || status !== "completed") ? (
+      {agent?.model ? (
+        <SubagentModelLabel
+          environmentId={remote?.environmentId ?? props.parentRef.environmentId}
+          providerInstanceId={props.providerInstanceId}
+          model={agent.model}
+          modelSelection={agent.modelSelection}
+        />
+      ) : null}
+      {props.event ? (
         <span
           className={cn(
-            "shrink-0 text-meta",
+            "shrink-0 text-caption",
             failed ? "text-error-foreground" : "text-muted-foreground",
           )}
         >
@@ -540,18 +588,13 @@ function SubagentTimelineLink(props: {
       <span className="shrink-0 font-mono text-3xs text-dim-foreground tabular-nums">
         {props.event ? props.event.timestamp : <SubagentElapsed agent={timing} />}
       </span>
-      {open !== null ? (
-        <ChevronRightIcon
-          aria-hidden
-          className="ms-1.5 size-3.5 shrink-0 text-dim-foreground transition-colors group-hover/subagent:text-foreground"
-        />
-      ) : null}
+      {props.event ? null : <SubagentStatusGlyph status={liveStatus} />}
     </>
   );
   // Timeline rows share the tool rows' columns: avatar on the text line, title on the label line.
   const className = flat
     ? "group/subagent flex h-[30px] w-full min-w-0 items-center gap-2 rounded-row px-2.5 text-left"
-    : "group/subagent flex w-full min-w-0 items-center gap-1 rounded-row px-1 py-1.5 text-left";
+    : "group/subagent flex h-7.5 w-full min-w-0 items-center gap-2 rounded-row px-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger
