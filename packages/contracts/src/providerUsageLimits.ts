@@ -30,6 +30,8 @@ export const ServerProviderResetCreditOption = Schema.Struct({
   description: TrimmedNonEmptyString,
   availableCount: NonNegativeInt,
   expiresAt: Schema.optional(IsoDateTime),
+  /** Usage window ids this reset clears. Absent means it clears every window. */
+  clearsWindowIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ServerProviderResetCreditOption = typeof ServerProviderResetCreditOption.Type;
 

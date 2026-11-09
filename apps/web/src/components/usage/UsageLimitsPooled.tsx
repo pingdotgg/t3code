@@ -11,6 +11,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
+  resetCreditsForWindow,
 } from "@t3tools/shared/usageLimits";
 import { T, Var, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
@@ -374,7 +375,11 @@ function SegmentTriggers({
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m);
   const refillIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   const gt = useGT();
   const segmentLabel = [
     gt("{name}: {remaining}% left", {
@@ -470,6 +475,9 @@ function SegmentTriggers({
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
+                    {scope ? (
+                      <span className="font-normal text-muted-foreground">{scope}</span>
+                    ) : null}
                   </span>
                 </>
               ) : null}
@@ -498,7 +506,11 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const m = useMessages();
   const resetsIn = formatResetsIn(window, now, m, "refill");
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   const gt = useGT();
   return (
     <PopoverTrigger
@@ -530,6 +542,7 @@ function LegendRow({
             >
               <TicketIcon className="size-3" aria-hidden />
               {credits}
+              {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
               {gt(

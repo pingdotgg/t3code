@@ -306,11 +306,15 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               // Reset credits need Claude's sign-in token, which T3 reads only with usage access.
-              (version) =>
+              (version, overageIncluded) =>
                 usageAccess.pipe(
                   Effect.flatMap((allowed) =>
                     allowed
-                      ? ClaudeResetCredits.readClaudeResetCredits(configDir, version)
+                      ? ClaudeResetCredits.readClaudeResetCredits(
+                          configDir,
+                          version,
+                          overageIncluded,
+                        )
                       : Effect.undefined,
                   ),
                   Effect.provideService(HttpClient.HttpClient, httpClient),

@@ -12,6 +12,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { claudeUsageWindowId } from "./claudeUsageLimits.ts";
+
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
 const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
@@ -130,6 +132,7 @@ const grantKind = (grant: typeof Grant.Type): ResetKind => {
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
+  overageIncluded?: string,
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
@@ -158,12 +161,22 @@ export function claudeResetCreditsToContract(
       const target = grants?.[0];
       if (!grants || !target) return [];
       const optionExpiresAt = expiresAt(target);
+      const clears = grants.every((grant) => grant.clears?.length)
+        ? new Set(
+            grants.flatMap((grant) =>
+              (grant.clears ?? []).flatMap((bucket) =>
+                typeof bucket === "string" ? [claudeUsageWindowId(bucket, overageIncluded)] : [],
+              ),
+            ),
+          )
+        : undefined;
       return [
         {
           creditId: target.id,
           ...RESET_KINDS[kind],
           availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
           ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+          ...(clears?.size ? { clearsWindowIds: [...clears] } : {}),
         },
       ];
     },
@@ -208,7 +221,7 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
+  function* (configDir: string, version: string, overageIncluded?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
@@ -223,6 +236,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     return claudeResetCreditsToContract(
       body.cedar_ember,
       DateTime.toEpochMillis(yield* DateTime.now),
+      overageIncluded,
     );
   },
   Effect.timeout("10 seconds"),

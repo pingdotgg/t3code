@@ -86,23 +86,30 @@ describe("claudeResetCreditsToContract", () => {
             gives_back_weekly: true,
             ends_at: "2027-03-09T07:59:00Z",
           }),
-          grant({ id: "fable_b", gives_back_weekly: true, type: "weekly" }),
+          grant({
+            id: "fable_b",
+            clears: ["seven_day_overage_included"],
+            gives_back_weekly: true,
+            type: "weekly",
+          }),
           grant({ id: "session_a", type: "session" }),
           grant({ id: "spent", clears: ["seven_day"], resets_left: 0 }),
         ],
       },
       NOW,
+      "Fable",
     );
     expect(
-      credits?.options?.map(({ creditId, label, availableCount }) => [
+      credits?.options?.map(({ creditId, label, availableCount, clearsWindowIds }) => [
         creditId,
         label,
         availableCount,
+        clearsWindowIds,
       ]),
     ).toEqual([
-      ["session_a", "5-hour reset", 1],
-      ["weekly_a", "Weekly reset", 1],
-      ["fable_a", "Fable reset", 2],
+      ["session_a", "5-hour reset", 1, undefined],
+      ["weekly_a", "Weekly reset", 1, ["seven_day"]],
+      ["fable_a", "Fable reset", 2, ["seven_day_fable"]],
     ]);
     expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
   });
