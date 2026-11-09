@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import * as PullRequestSyncReactor from "../../../orchestration-v2/PullRequestSyncReactor.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
@@ -198,6 +199,7 @@ function projectForPullRequest(
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+  const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
@@ -274,9 +276,15 @@ const make = Effect.gen(function* () {
     if (watching && thread.lineage.relationshipToParent === "subagent") {
       return yield* new PullRequestWatchFromSubagentError();
     }
-    const before = watchedLink(thread);
+    let before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
-      return yield* new PullRequestNotOpenError({ state: "merged" });
+      // A recreated repository reuses numbers, and stored merged snapshots are never re-read.
+      yield* pullRequestSync.requestSync(before);
+      yield* pullRequestSync.drain;
+      before = watchedLink(yield* requireThread(PullRequestWatchFailedError, thread.id));
+      if (before?.snapshot?.state === "merged") {
+        return yield* new PullRequestNotOpenError({ state: "merged" });
+      }
     }
     yield* engine
       .dispatch({
