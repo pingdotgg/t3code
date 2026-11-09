@@ -4,6 +4,7 @@ import {
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestLink,
   secretRequestPrivacyNote,
   secretRequestReference,
   secretRequestSources,
@@ -21,7 +22,14 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, KeyRoundIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ExternalLinkIcon,
+  KeyRoundIcon,
+  LockIcon,
+  MinusIcon,
+  ShieldCheckIcon,
+} from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { isSecretsFeatureEnabled } from "../../env";
@@ -126,6 +134,7 @@ function PendingSecretRequestForm(props: {
     }
   };
   const draft = source === null ? secret : reference;
+  const link = secretRequestLink(item);
   const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
 
   return (
@@ -160,6 +169,22 @@ function PendingSecretRequestForm(props: {
           {secretRequestPrivacyNote(item)}
         </p>
       </div>
+      {link !== null ? (
+        <div className="flex min-w-0 flex-col items-start gap-1.5 px-3 pb-2.5">
+          <Button
+            variant="secondary"
+            size="sm"
+            render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
+          >
+            Open {link.host}
+            <ExternalLinkIcon aria-hidden />
+          </Button>
+          {/* A link found in the reason is already shown there. */}
+          {item.url !== undefined ? (
+            <p className="font-mono text-meta wrap-anywhere text-muted-foreground">{item.url}</p>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex min-w-0 flex-col gap-2 rounded-lg bg-card p-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           {sources.length > 0 ? (

@@ -5,6 +5,7 @@ import {
   isSecretReference,
   secretReferencesInSettings,
   type ServerSettings,
+  SimlockDeviceHostConfig,
   UsageLimitSourceConfig,
 } from "@t3tools/contracts";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
@@ -18,6 +19,7 @@ type SecretUseSettings = Pick<
   | "sourceControlHosts"
   | "usageLimitSources"
   | "easDeviceHosts"
+  | "simlockDeviceHosts"
   | "cloudSpeechCredentials"
 >;
 
@@ -93,6 +95,9 @@ export function secretProviderUses(
     ),
     ...settings.easDeviceHosts.flatMap((host) =>
       uses({ settingsSchema: EasDeviceHostConfig }, `eas:${host.id}`, host.label, host),
+    ),
+    ...settings.simlockDeviceHosts.flatMap((host) =>
+      uses({ settingsSchema: SimlockDeviceHostConfig }, `simlock:${host.id}`, host.label, host),
     ),
     ...CloudSpeechProvider.literals.flatMap((provider) => {
       const credential = settings.cloudSpeechCredentials[provider];
