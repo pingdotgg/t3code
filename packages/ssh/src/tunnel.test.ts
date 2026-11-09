@@ -1,7 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Runs the generated remote shell script with isolated filesystem state.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -86,6 +92,59 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 const ARCHIVE = { archiveVersion: "1.2.3-preview.20260911.4" } as const;
 
 describe("ssh tunnel scripts", () => {
+  it.live("refuses unpublished macOS x64 archives before downloading", () =>
+    Effect.sync(() => {
+      const windowsHost = HostProcess.Platform.defaultValue() === "win32";
+      const env = HostProcess.Environment.defaultValue();
+      const shell = windowsHost
+        ? NodePath.resolve(
+            NodeChildProcess.execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim(),
+            "../../../bin/sh.exe",
+          )
+        : "sh";
+      for (const [platform, arch, supported] of [
+        ["Darwin", "x86_64", false],
+        ["Darwin", "arm64", true],
+        ["Linux", "x86_64", true],
+        ["Linux", "aarch64", true],
+      ] as const) {
+        const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-ssh-platform-"));
+        try {
+          const result = NodeChildProcess.spawnSync(shell, ["-s"], {
+            encoding: "utf8",
+            env: {
+              ...env,
+              HOME: home.replaceAll("\\", "/"),
+              ...(windowsHost
+                ? {
+                    PATH: `${NodePath.resolve(NodePath.dirname(shell), "../usr/bin")};${env.PATH ?? ""}`,
+                  }
+                : {}),
+            },
+            input: `
+uname() {
+  case "$1" in
+    -s) printf '%s\\n' '${platform}' ;;
+    -m) printf '%s\\n' '${arch}' ;;
+  esac
+}
+curl() { printf 'download attempted\\n' >&2; return 1; }
+${SshTunnel.buildRemoteT3RunnerScript(ARCHIVE)}`,
+          });
+          assert.isUndefined(result.error);
+          assert.equal(result.status, 1);
+          if (supported) assert.include(result.stderr, "download attempted");
+          else {
+            assert.include(result.stderr, "Remote host darwin-x64 has no t3 release archive.");
+            assert.notInclude(result.stderr, "download attempted");
+          }
+        } finally {
+          NodeFS.rmSync(home, { recursive: true, force: true });
+        }
+      }
+    }),
+  );
+
   it("rejects archive versions that are not a single exact version segment", () => {
     for (const archiveVersion of [
       "../other",
