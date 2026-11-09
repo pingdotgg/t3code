@@ -7,6 +7,7 @@ import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSour
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import type { PullRequestProviderApi } from "@t3tools/source-control-core/server/PullRequestProvider";
 import { gitLabViewerPermissions, make } from "./GitLabPullRequestProvider.ts";
 
 it.effect.each(["merge", "disable-auto-merge"] as const)(
@@ -1016,6 +1017,110 @@ describe("review decisions", () => {
       expect(versionReads).toHaveLength(1);
     }),
   );
+
+  describe("across projects", () => {
+    const pageOf = (
+      repository: string,
+      updatedAts: ReadonlyArray<string>,
+      hasNextPage = false,
+    ) => ({
+      repository,
+      page: {
+        items: updatedAts.map((updatedAt, index) => ({ ...item, number: index + 1, updatedAt })),
+        states: new Map(),
+        rawCount: updatedAts.length,
+        hasNextPage,
+        endCursor: null,
+      },
+    });
+    const across = { ...listing, repositories: ["acme/web", "acme/docs"], limit: 99 };
+    const readAcross = (
+      listMergeRequestsInProjects: GitLabPullRequestCli.GitLabPullRequestCli["Service"]["listMergeRequestsInProjects"],
+      input: Partial<
+        Parameters<NonNullable<PullRequestProviderApi["listChangeRequestsAcross"]>>[0]
+      > = {},
+    ) =>
+      providerWith(() => Effect.die("a GraphQL page carries its own states"), {
+        supportsGraphqlList: () => Effect.succeed(true),
+        listMergeRequestsInProjects,
+      }).pipe(
+        Effect.flatMap((provider) => {
+          assert.isDefined(provider.listChangeRequestsAcross);
+          return provider.listChangeRequestsAcross({ ...across, ...input });
+        }),
+      );
+
+    it.effect("leaves rows older than a project's unread rows to the next page", () =>
+      Effect.gen(function* () {
+        const page = yield* readAcross(() =>
+          Effect.succeed([
+            pageOf("acme/web", ["2026-11-09T10:00:05Z", "2026-11-09T10:00:03Z"], true),
+            pageOf("acme/docs", ["2026-11-09T10:00:04Z", "2026-11-09T10:00:01Z"]),
+          ]),
+        );
+
+        expect(page.items.map(({ repository, updatedAt }) => [repository, updatedAt])).toEqual([
+          ["acme/web", "2026-11-09T10:00:05Z"],
+          ["acme/docs", "2026-11-09T10:00:04Z"],
+          ["acme/web", "2026-11-09T10:00:03Z"],
+        ]);
+        expect(page.truncated).toBe(true);
+        expect(page.unresolved).toEqual([]);
+      }),
+    );
+
+    it.effect("asks a host with one project for a whole page of its rows", () =>
+      Effect.gen(function* () {
+        const asked: Array<number> = [];
+        yield* readAcross(
+          (input) => {
+            asked.push(input.first);
+            return Effect.succeed([]);
+          },
+          { repositories: ["acme/web"] },
+        );
+
+        expect(asked).toEqual([99]);
+      }),
+    );
+
+    it.effect("leaves later pages to each project's own cursor", () =>
+      Effect.gen(function* () {
+        const page = yield* readAcross(() => Effect.die("a continuation reads each project"), {
+          cursor: { updatedBefore: "2026-11-09T10:00:00Z", delivered: 99, seenAt: [1] },
+        });
+
+        expect(page).toEqual({ items: [], truncated: false, unresolved: across.repositories });
+      }),
+    );
+
+    it.effect(
+      "hands back a failed read's projects to be read alone, but fails on a rate limit",
+      () =>
+        Effect.gen(function* () {
+          const failure = (
+            error: GitLabCli.GitLabCliCommandError | GitLabCli.GitLabCliRateLimitError,
+          ) =>
+            readAcross(() => Effect.fail(error)).pipe(
+              Effect.map(({ unresolved }) => unresolved),
+              Effect.catch(({ reason }) => Effect.succeed(reason)),
+            );
+          const context = {
+            operation: "execute" as const,
+            command: "glab" as const,
+            cwd: "/w",
+            cause: null,
+          };
+
+          expect(yield* failure(new GitLabCli.GitLabCliCommandError(context))).toEqual(
+            across.repositories,
+          );
+          expect(yield* failure(new GitLabCli.GitLabCliRateLimitError(context))).toBe(
+            "rate-limited",
+          );
+        }),
+    );
+  });
 
   it.effect.each([
     {

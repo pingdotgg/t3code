@@ -1,6 +1,7 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
+import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,6 +17,7 @@ import type { GitLabDiffRefs, GitLabMergeRequestListState } from "./gitLabMergeR
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
+  type ProviderBatchedChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
@@ -99,6 +101,19 @@ const PROJECT_MERGE_CAPABILITIES_TTL = Duration.minutes(15);
 const READ_CACHE_CAPACITY = 256;
 /** A host's GitLab version only changes on upgrade. */
 const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
+/**
+ * gitlab.com takes at most 50 paths per `projects` read and cuts a query off at about 20 s; about
+ * 200 rows over a dozen projects answer in well under half that.
+ */
+const PROJECTS_PER_READ = 12;
+const ROWS_PER_READ = 200;
+const MIN_ROWS_PER_PROJECT = 20;
+const PROJECT_READ_CONCURRENCY = 4;
+
+/** The checkout whose `glab` reads a host's version; any checkout of a project on it answers. */
+class VersionReadCheckout extends Context.Service<VersionReadCheckout, { readonly cwd: string }>()(
+  "@t3tools/source-control-gitlab/server/GitLabPullRequestProvider/VersionReadCheckout",
+) {}
 
 function gitLabProviderFailure(
   error: GitLabPullRequestCli.GitLabPullRequestCliError,
@@ -137,24 +152,26 @@ export const make = Effect.gen(function* () {
     },
   );
   const graphqlListSupport = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd, host] = JSON.parse(key) as [string, string | undefined];
-      // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
-      return cli.supportsGraphqlList({ cwd, host }).pipe(
-        Effect.catchIf(
-          (cause) =>
-            cause._tag !== "GitLabCliUnavailableError" &&
-            cause._tag !== "GitLabCliAuthenticationError" &&
-            cause._tag !== "GitLabCliRateLimitError",
-          () => Effect.succeed(false),
+    (host: string) =>
+      VersionReadCheckout.use(({ cwd }) =>
+        // A host whose version read fails keeps failing it; remember REST rather than ask each poll.
+        cli.supportsGraphqlList({ cwd, host }).pipe(
+          Effect.catchIf(
+            (cause) => !isAccountFailure(cause),
+            () => Effect.succeed(false),
+          ),
         ),
-      );
-    },
+      ),
     {
       capacity: READ_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? GRAPHQL_LIST_SUPPORT_TTL : Duration.zero),
+      requireServicesAt: "lookup",
     },
   );
+  const supportsGraphqlList = (input: { readonly cwd: string; readonly host: string }) =>
+    Cache.get(graphqlListSupport, input.host).pipe(
+      Effect.provideService(VersionReadCheckout, { cwd: input.cwd }),
+    );
   const projectMergeCapabilities = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, repository, host] = JSON.parse(key) as [string, string, string];
@@ -215,14 +232,10 @@ export const make = Effect.gen(function* () {
     fallback: A,
   ) =>
     read.pipe(
-      Effect.catch((error) => {
-        const { reason } = gitLabProviderFailure(error);
-        return reason === "rate-limited" ||
-          reason === "unauthenticated" ||
-          reason === "missing-tool"
-          ? Effect.fail(error)
-          : Effect.succeed(fallback);
-      }),
+      Effect.catchIf(
+        (error) => !isAccountFailure(error),
+        () => Effect.succeed(fallback),
+      ),
     );
 
   // The rows were already read, so even a rate limit only leaves their states unknown.
@@ -271,7 +284,7 @@ export const make = Effect.gen(function* () {
     getViewer: (input) => cli.getViewerUsername(input).pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
-      Cache.get(graphqlListSupport, JSON.stringify([input.cwd, input.host])).pipe(
+      supportsGraphqlList(input).pipe(
         // Without a known version the REST list still answers, only with fewer filters.
         Effect.orElseSucceed(() => false),
         Effect.flatMap((graphql) =>
@@ -308,6 +321,85 @@ export const make = Effect.gen(function* () {
         ),
         Effect.mapError(fail("listChangeRequests")),
       ),
+
+    listChangeRequestsAcross: Effect.fn("GitLabPullRequestProvider.listChangeRequestsAcross")(
+      function* (input) {
+        // Each project's own cursor knows which rows at the boundary second it already sent.
+        if (input.cursor !== undefined) {
+          return { items: [], truncated: false, unresolved: input.repositories };
+        }
+        const failed = fail("listChangeRequestsAcross");
+        if (!(yield* supportsGraphqlList(input).pipe(Effect.mapError(failed)))) {
+          return yield* new PullRequestProviderError({
+            provider: SourceControlProviderKind.make("gitlab"),
+            operation: "listChangeRequestsAcross",
+            reason: "failed",
+            detail: "This GitLab version lists one project at a time.",
+          });
+        }
+        const chunks: Array<ReadonlyArray<string>> = [];
+        for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
+          chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
+        }
+        const pages = (yield* Effect.forEach(
+          chunks,
+          (repositories) =>
+            cli
+              .listMergeRequestsInProjects({
+                cwd: input.cwd,
+                host: input.host,
+                repositories,
+                state: input.state,
+                involvement: input.involvement,
+                viewer: input.viewer,
+                first: Math.min(
+                  input.limit,
+                  Math.max(MIN_ROWS_PER_PROJECT, Math.floor(ROWS_PER_READ / repositories.length)),
+                ),
+                query: input.query,
+                filters: input.filters,
+              })
+              .pipe(
+                // Left out, its projects come back unresolved and the caller reads each alone.
+                Effect.catchIf(
+                  (error) => !isAccountFailure(error),
+                  (error) =>
+                    Effect.logWarning("GitLab merge request list across projects failed", {
+                      host: input.host,
+                      reason: error._tag,
+                    }).pipe(Effect.as([])),
+                ),
+              ),
+          { concurrency: PROJECT_READ_CONCURRENCY },
+        ).pipe(Effect.mapError(failed))).flat();
+
+        // A project with more rows than it sent may have some newer than another project's
+        // oldest, so rows older than the newest such cut are left to the next page.
+        let cut: string | null = null;
+        for (const { page } of pages) {
+          if (!page.hasNextPage) continue;
+          const oldest = page.items.at(-1)?.updatedAt;
+          if (oldest !== undefined && (cut === null || oldest > cut)) cut = oldest;
+        }
+        const complete = pages
+          .flatMap(({ repository, page }) =>
+            page.items.map((item): ProviderBatchedChangeRequest => ({
+              ...withListState(item, page.states),
+              repository,
+            })),
+          )
+          .filter((item) => cut === null || item.updatedAt >= cut)
+          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+        const answered = new Set(pages.map(({ repository }) => repository.trim().toLowerCase()));
+        return {
+          items: complete.slice(0, input.limit),
+          truncated: complete.length > input.limit || pages.some(({ page }) => page.hasNextPage),
+          unresolved: input.repositories.filter(
+            (repository) => !answered.has(repository.trim().toLowerCase()),
+          ),
+        };
+      },
+    ),
 
     getFileStats: (input) =>
       cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),
@@ -661,6 +753,12 @@ export const make = Effect.gen(function* () {
 
   return provider;
 });
+
+/** Failures that every other read on the host would meet too, so the caller must see them. */
+function isAccountFailure(error: GitLabPullRequestCli.GitLabPullRequestCliError): boolean {
+  const { reason } = gitLabProviderFailure(error);
+  return reason === "rate-limited" || reason === "unauthenticated" || reason === "missing-tool";
+}
 
 function withListState<Item extends { readonly number: number }>(
   item: Item,
