@@ -81,6 +81,8 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
+  // A broken version needs an update, which its row offers; signing in again would not help.
+  if (provider.compatibilityAdvisory?.status === "broken") return "done";
   // The terminal shows the command first, so it also helps a CLI whose check failed.
   const fixable =
     state === "install" ||
@@ -96,12 +98,16 @@ export function cliTerminalStep(
 export function welcomePhonePath(input: {
   readonly isPrimary: boolean;
   readonly cloud: boolean;
+  // Relay read and write access, which sharing this computer through T3 Connect needs.
+  readonly canShare: boolean;
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   if (!input.isPrimary || managedCapabilityDenial(input.policy, "remoteClients") !== undefined) {
     return null;
   }
-  return input.cloud && managedCapabilityDenial(input.policy, "connect") === undefined
+  return input.cloud &&
+    input.canShare &&
+    managedCapabilityDenial(input.policy, "connect") === undefined
     ? "connect"
     : "pairing";
 }

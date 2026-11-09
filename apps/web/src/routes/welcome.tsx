@@ -31,7 +31,8 @@ function WelcomeRouteView() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments, isReady } = useEnvironments();
   // Trust the id only once the catalog has it; an unknown computer falls back to this one.
-  const waitingForCatalog = resumeEnvironmentId !== undefined && !isReady;
+  const waitingForCatalog =
+    !isReady && (resumeEnvironmentId !== undefined || primaryEnvironmentId === null);
   const resumeKnown =
     resumeEnvironmentId !== undefined &&
     environments.some((environment) => environment.environmentId === resumeEnvironmentId);

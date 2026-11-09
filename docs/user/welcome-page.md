@@ -97,9 +97,11 @@ does not count toward that limit. It ignores malformed records and skips
 unreadable or unparseable conversations.
 
 Each import attempt reads up to 100 conversation files and 4 GiB per project,
-with up to 100,000 input records. Run import again to continue a large batch.
+with up to 100,000 input records. To continue a large batch, open the Welcome page again
+and pick the project in **Review all**.
 Completed conversations are not imported again. You can continue without the
 remaining history.
 
 You can start without importing. While an import runs, T3 Code stays on the
-Welcome page. If you quit, open the Welcome page again to import the rest.
+Welcome page. If you quit, open the Welcome page again from **Settings → About**; the
+projects you started stay checked.

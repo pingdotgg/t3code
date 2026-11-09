@@ -147,6 +147,17 @@ describe("cliTerminalStep", () => {
     expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
     // A check that timed out still gets the sign-in command.
     expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
+    // A broken version needs the update its row offers, not another sign-in.
+    expect(
+      step({
+        compatibilityAdvisory: {
+          status: "broken",
+          message: "Update Codex.",
+          recommendedVersion: null,
+          recommendedRange: null,
+        },
+      }),
+    ).toBe("done");
     expect(step()).toBe("done");
   });
 });
@@ -159,10 +170,17 @@ describe("welcomePhonePath", () => {
       ...(limits === undefined ? {} : { limits }),
     });
     const path = (input: Partial<Parameters<typeof welcomePhonePath>[0]>) =>
-      welcomePhonePath({ isPrimary: true, cloud: true, policy: undefined, ...input });
+      welcomePhonePath({
+        isPrimary: true,
+        cloud: true,
+        canShare: true,
+        policy: undefined,
+        ...input,
+      });
 
     expect(path({})).toBe("connect");
     expect(path({ cloud: false })).toBe("pairing");
+    expect(path({ canShare: false })).toBe("pairing");
     expect(path({ policy: policy({ connect: false }) })).toBe("pairing");
     expect(path({ policy: policy({ clients: ["desktop"] }) })).toBeNull();
     expect(path({ isPrimary: false })).toBeNull();

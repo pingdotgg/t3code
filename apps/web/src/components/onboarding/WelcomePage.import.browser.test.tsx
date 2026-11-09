@@ -2,6 +2,8 @@ import { RegistryContext } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
   EnvironmentId,
   ProjectId,
   ProviderDriverKind,
@@ -513,18 +515,53 @@ it("stays busy while setup saves after an import with nothing to open", async ()
   expect(state.createProject).toHaveBeenCalledOnce();
 });
 
-it("leaves projects already in T3 Code out of the default import", async () => {
+it("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
   using _now = setup();
   const existing = ProjectId.make("existing");
+  const justAdded = ProjectId.make("just-added");
   appAtomRegistry.set(projectsAtom(), [
     { id: existing, environmentId: primaryId, workspaceRoot: "/projects/first" },
+    // Added a moment ago, so the cached scan does not know it exists yet.
+    { id: justAdded, environmentId: primaryId, workspaceRoot: "/projects/second" },
   ]);
   appAtomRegistry.set(candidatesAtom(), [
     candidate("/projects/first", { alreadyImported: true, projectId: existing }),
     candidate("/projects/second"),
+    candidate("/projects/third"),
   ]);
+  {
+    await using _screen = await mountWelcome();
+    await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
+  }
+
+  // With every project already in T3 Code, checking the box still picks them.
+  appAtomRegistry.set(candidatesAtom(), appAtomRegistry.get(candidatesAtom()).slice(0, 2));
   await using _screen = await mountWelcome();
-  await vi.waitFor(() => expect(pageText()).toContain("Import 1 project and their threads"));
+  const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+  await act(async () => importProjects?.click());
+  await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
+  expect(button("Import threads and start").disabled).toBe(false);
+});
+
+it("keeps the started projects checked when the page opens again after a quit", async () => {
+  using _now = setup();
+  const imported = deferred<{ importedCount: number; skippedCount: number }>();
+  state.importThreads.mockImplementationOnce(async () =>
+    AsyncResult.success(await imported.promise),
+  );
+  {
+    await using _first = await mountWelcome();
+    await click("Import 2 projects and start");
+    await vi.waitFor(() => expect(state.importThreads).toHaveBeenCalledOnce());
+  }
+  // The app quit during the first project's history; it now exists in T3 Code.
+  const [first] = appAtomRegistry.get(projectsAtom());
+  appAtomRegistry.set(candidatesAtom(), [
+    candidate("/projects/first", { alreadyImported: true, projectId: first!.id }),
+    candidate("/projects/second"),
+  ]);
+  await using _second = await mountWelcome();
+  await vi.waitFor(() => expect(pageText()).toContain("Import 2 projects and their threads"));
 });
 
 it("keeps the project controls when a later scan fails", async () => {
@@ -554,6 +591,12 @@ it("says the phone is set up only once this computer is shared with the signed-i
   using _now = setup();
   state.cloud = true;
   state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
+  appAtomRegistry.set(
+    sessionAtom(primaryId),
+    AsyncResult.success(
+      session([AuthOrchestrationOperateScope, AuthRelayReadScope, AuthRelayWriteScope]),
+    ),
+  );
   state.linkError = "Could not read T3 Connect link state.";
   await using _screen = await mountWelcome();
   await click("Set up");

@@ -10,6 +10,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -17,6 +18,8 @@ import {
 import {
   AgentSessionSource,
   AuthProvidersManageScope,
+  AuthRelayReadScope,
+  AuthRelayWriteScope,
   AuthTerminalOperateScope,
   CommandId,
   AuthOrchestrationOperateScope,
@@ -86,7 +89,6 @@ import {
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getProviderSummary } from "../settings/providerStatus";
-import { providerClients } from "../settings/providerDriverMeta";
 import { AddProviderInstanceDialog } from "../settings/AddProviderInstanceDialog";
 import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { CodexSetupSection } from "../settings/CodexSetupSection";
@@ -126,9 +128,13 @@ export function WelcomePage({
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     "this computer";
   const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
+  // Sharing this computer needs the same relay access as Settings → Sharing & access.
+  const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
+  const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
   const phonePath = welcomePhonePath({
     isPrimary: usePrimaryEnvironmentId() === environmentId,
     cloud: hasCloudPublicConfig(),
+    canShare: canReadRelay && canWriteRelay,
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
@@ -226,15 +232,15 @@ export function WelcomePage({
   });
   // Without import permission, starting simply skips the projects.
   const selected = projectImport.canWrite ? projectImport.selected : [];
-  // The scan can be a little old, so a project added a moment ago is matched here too.
-  const projects = useProjects();
-  const newCount = selected.filter(
-    (candidate) =>
-      resolveOnboardingProjectId(projects, candidate.environmentId, candidate) === null,
-  ).length;
+  const newCount = selected.filter(projectImport.isNew).length;
   const start = () => {
-    if (selected.length > 0) void projectImport.runImport(selected);
-    else projectImport.finishAfterImport();
+    if (selected.length === 0) {
+      projectImport.finishAfterImport();
+      return;
+    }
+    // Stored now, so after a restart mid-import these stay checked even once they exist.
+    projectImport.setSelectedKeys(new Set(selected.map((candidate) => candidate.key)));
+    void projectImport.runImport(selected);
   };
 
   return (
@@ -354,14 +360,8 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-function agentName(provider: ServerProvider) {
-  return (
-    provider.displayName ||
-    (provider.driver === "claudeAgent"
-      ? "Claude Code"
-      : (providerClients.get(provider.driver)?.label ?? provider.driver))
-  );
-}
+// The same name the model picker shows, which tells two unnamed instances of one agent apart.
+const agentName = resolveProviderInstanceDisplayName;
 
 // Shared by the page (to enable Start) and the agents section, so both agree on what is ready.
 function useWelcomeAgents(environmentId: EnvironmentId) {
@@ -430,10 +430,14 @@ function AgentsSection({
         isProviderAvailable(provider) &&
         provider.auth.status !== "authenticated"));
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
-  // starts after an install is not lost when the agent moves between groups.
+  // starts after an install is not lost when the agent moves between groups. It closes once
+  // Codex is signed in; anything left, such as a broken version, shows on its row.
   const codexSetupProvider =
     providers?.find(
-      (provider) => provider.instanceId === codexSetupId && stateOf(provider) !== "ready",
+      (provider) =>
+        provider.instanceId === codexSetupId &&
+        stateOf(provider) !== "ready" &&
+        provider.auth.status !== "authenticated",
     ) ?? null;
 
   const openTerminal = (provider: ServerProvider) => {
@@ -710,6 +714,7 @@ function ProjectsSection({
   const {
     canWrite,
     candidates,
+    isNew,
     recent,
     selected,
     selectedKeys,
@@ -755,9 +760,11 @@ function ProjectsSection({
   }
 
   const allKeys = candidates.map((candidate) => candidate.key);
-  const defaultKeys = (
-    recent.length > 0 ? recent : candidates.filter((candidate) => !candidate.alreadyImported)
-  ).map((candidate) => candidate.key);
+  // Checking the box picks recent new projects, else any new ones, else everything listed.
+  const fresh = candidates.filter(isNew);
+  const defaultKeys = (recent.length > 0 ? recent : fresh.length > 0 ? fresh : candidates).map(
+    (candidate) => candidate.key,
+  );
   const partial =
     selected.length > 0 &&
     selected.length < candidates.length &&
@@ -1047,7 +1054,12 @@ function OnboardingCodexSetup({
       if (result._tag === "Failure") {
         onUseCliChange(false);
         if (!isAtomCommandInterrupted(result)) {
-          toastManager.add({ type: "error", title: "Could not save Codex setup" });
+          const cause = squashAtomCommandFailure(result);
+          toastManager.add({
+            type: "error",
+            title: "Could not save Codex setup",
+            ...(cause instanceof Error ? { description: cause.message } : {}),
+          });
         }
       }
     });
@@ -1366,8 +1378,11 @@ function useProjectImport({
     ),
   );
   // Projects already in T3 Code stay in the list, but reopening the page does not import their
-  // history again unless the user picks them.
-  const recent = recentActive.filter((candidate) => !candidate.alreadyImported);
+  // history again unless the user picks them. The scan can be 30 s old, so the live list decides.
+  const projects = useProjects();
+  const isNew = (candidate: ImportCandidate) =>
+    resolveOnboardingProjectId(projects, candidate.environmentId, candidate) === null;
+  const recent = recentActive.filter(isNew);
   const recentKeys = new Set(recent.map((candidate) => candidate.key));
   const knownKeys = new Set(importSelection?.knownKeys);
   const pickedKeys = new Set(importSelection?.keys);
@@ -1556,6 +1571,7 @@ function useProjectImport({
   return {
     canWrite,
     candidates,
+    isNew,
     recent,
     selected,
     selectedKeys,

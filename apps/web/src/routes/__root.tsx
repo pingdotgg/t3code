@@ -165,11 +165,7 @@ function RootRouteBranch() {
   }
 
   const isWelcome = pathname === "/welcome";
-  if (
-    !isWelcome &&
-    authGateState.status !== "authenticated" &&
-    authGateState.status !== "hosted-static"
-  ) {
+  if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
   }
 
