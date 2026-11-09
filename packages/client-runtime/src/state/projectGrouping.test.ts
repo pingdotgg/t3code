@@ -246,6 +246,21 @@ describe("buildProjectGroups", () => {
     },
   );
 
+  it("labels a renamed scratch home with its title", () => {
+    const groups = buildProjectGroups({
+      projects: [
+        makeProject("scratch", "/scratch", {
+          title: "EOY reviews",
+          isScratch: true,
+          repositoryIdentity: null,
+        }),
+      ],
+      groupScratchProjects: true,
+      settings: settings("repository"),
+    });
+    expect(groups[0]?.label).toBe("EOY reviews");
+  });
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),
