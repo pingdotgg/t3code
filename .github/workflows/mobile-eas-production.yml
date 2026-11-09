@@ -626,40 +626,29 @@ jobs:
             exit 1
           fi
 
-      # Record before submitting: a build that can't be recorded is never
-      # submitted, so the next merge's rebuild can't duplicate a store build.
-      - id: tag
-        name: Record build
+      - name: Submit to Google Play
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        run: eas submit --platform android --profile production --path "$RUNNER_TEMP/t3code.aab" --non-interactive
+
+      # The tag means "delivered", so it follows the submit. If it can't be
+      # pushed, the next merge rebuilds with a new build number; nothing is lost.
+      - name: Record build
         if: steps.record.outputs.built != 'true'
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/$BUILD_TAG" >/dev/null; then
             echo "$BUILD_TAG already exists."
-            exit 0
-          fi
-          git tag "$BUILD_TAG" HEAD
-          # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
-          for attempt in 1 2 3; do
-            if git push origin "refs/tags/$BUILD_TAG"; then
-              echo "created=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep $((attempt * 15))
-          done
-          echo "::error::Could not push $BUILD_TAG; nothing was submitted."
-          exit 1
-
-      - name: Submit to Google Play
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        env:
-          TAG_CREATED: ${{ steps.tag.outputs.created }}
-        run: |
-          if ! eas submit --platform android --profile production --path "$RUNNER_TEMP/t3code.aab" --non-interactive; then
-            # Unrecord, so the next merge rebuilds and submits again.
-            if [ "$TAG_CREATED" = "true" ]; then
-              git push origin --delete "refs/tags/$BUILD_TAG" || echo "::error::Delete tag $BUILD_TAG by hand so the next merge resubmits."
-            fi
-            exit 1
+          else
+            git tag "$BUILD_TAG" HEAD
+            # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
+            for attempt in 1 2 3; do
+              git push origin "refs/tags/$BUILD_TAG" && break
+              if [ "$attempt" = 3 ]; then
+                echo "::error::Submitted, but could not push $BUILD_TAG; the next merge will rebuild."
+                exit 1
+              fi
+              sleep $((attempt * 15))
+            done
           fi
           echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
@@ -780,39 +769,28 @@ jobs:
           export EAS_LOCAL_BUILD_WORKINGDIR="$RUNNER_TEMP/eas-build"
           eas build --local --platform ios --profile "$PROFILE" --non-interactive --output "$RUNNER_TEMP/t3code.ipa"
 
-      # Record before submitting: a build that can't be recorded is never
-      # submitted, so the next merge's rebuild can't duplicate a store build.
-      - id: tag
-        name: Record build
+      - name: Submit to App Store Connect
+        if: steps.record.outputs.built != 'true'
+        working-directory: apps/mobile
+        run: eas submit --platform ios --profile "$PROFILE" --path "$RUNNER_TEMP/t3code.ipa" --non-interactive
+
+      # The tag means "delivered", so it follows the submit. If it can't be
+      # pushed, the next merge rebuilds with a new build number; nothing is lost.
+      - name: Record build
         if: steps.record.outputs.built != 'true'
         run: |
           if git ls-remote --exit-code --tags origin "refs/tags/$BUILD_TAG" >/dev/null; then
             echo "$BUILD_TAG already exists."
-            exit 0
-          fi
-          git tag "$BUILD_TAG" HEAD
-          # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
-          for attempt in 1 2 3; do
-            if git push origin "refs/tags/$BUILD_TAG"; then
-              echo "created=true" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep $((attempt * 15))
-          done
-          echo "::error::Could not push $BUILD_TAG; nothing was submitted."
-          exit 1
-
-      - name: Submit to App Store Connect
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        env:
-          TAG_CREATED: ${{ steps.tag.outputs.created }}
-        run: |
-          if ! eas submit --platform ios --profile "$PROFILE" --path "$RUNNER_TEMP/t3code.ipa" --non-interactive; then
-            # Unrecord, so the next merge rebuilds and submits again.
-            if [ "$TAG_CREATED" = "true" ]; then
-              git push origin --delete "refs/tags/$BUILD_TAG" || echo "::error::Delete tag $BUILD_TAG by hand so the next merge resubmits."
-            fi
-            exit 1
+          else
+            git tag "$BUILD_TAG" HEAD
+            # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
+            for attempt in 1 2 3; do
+              git push origin "refs/tags/$BUILD_TAG" && break
+              if [ "$attempt" = 3 ]; then
+                echo "::error::Submitted, but could not push $BUILD_TAG; the next merge will rebuild."
+                exit 1
+              fi
+              sleep $((attempt * 15))
+            done
           fi
           echo ":rocket: ios: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
