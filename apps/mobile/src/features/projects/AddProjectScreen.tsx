@@ -52,6 +52,7 @@ import {
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
+  FILESYSTEM_PATH_MAX_LENGTH,
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
@@ -946,7 +947,10 @@ function FolderBrowser(props: {
           !browsePath.filterQuery.startsWith(".")
             ? {
                 searchQuery: browsePath.filterQuery,
-                searchRoots: props.environment.searchDirectories ?? [],
+                searchRoots:
+                  props.environment.searchDirectories?.filter(
+                    (root) => root.length > 0 && root.length <= FILESYSTEM_PATH_MAX_LENGTH,
+                  ) ?? [],
               }
             : {}),
         }
