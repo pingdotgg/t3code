@@ -33,7 +33,7 @@ export type LayoutTabContent =
   | LayoutPageContent
   /**
    * An empty tab showing the launcher: start a thread, or open a surface for
-   * `context`, the thread it was opened from (cmd+T, cmd+D, alt+cmd+B).
+   * `context`, the thread it was opened from (cmd+T, cmd+\, alt+cmd+B).
    * Picking a thread turns the tab into that chat; picking a surface replaces it.
    */
   | { kind: "launcher"; id: string; context: ThreadRouteTarget | null }
