@@ -569,7 +569,7 @@ const makeLaptop = (
           offer: (request) => SubscriptionRef.update(offers, (seen) => [...seen, request]),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       ),

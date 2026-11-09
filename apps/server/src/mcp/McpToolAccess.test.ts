@@ -4,7 +4,9 @@ import {
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ProviderInstanceId,
+  ProviderDriverKind,
   ProviderInteractionMode,
+  ProviderThreadId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -379,7 +381,7 @@ it.effect("reads a waking caller's modes after its continuation starts the run",
         offer: () => Effect.void,
         take: Effect.never,
         settle: () => Effect.void,
-        isPending: () => Effect.succeed(true),
+        pending: () => Effect.succeed(1),
         awaitSettled: () =>
           Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(settled))),
       }),
@@ -394,6 +396,40 @@ it.effect("reads a waking caller's modes after its continuation starts the run",
     yield* Deferred.succeed(settled, undefined);
     expect(yield* Fiber.join(outcome)).toBe("capability_denied");
   }),
+);
+
+it.effect("lets a waking caller act once its run starts, while later continuations queue", () =>
+  Effect.gen(function* () {
+    const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const continuation = (threadId: ThreadId) => ({
+      threadId,
+      providerThreadId: ProviderThreadId.make(`provider-thread:${threadId}`),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      detail: null,
+    });
+    // The native wake, another thread's slow continuation, then a delegated completion.
+    yield* continuations.offer(continuation(fullAccessThreadId));
+    yield* continuations.offer(continuation(supervisedThreadId));
+    yield* continuations.offer(continuation(fullAccessThreadId));
+    const shell = yield* Ref.make(liveThreadShell(fullAccessThreadId, { activeRunId: null }));
+    const shellRead = yield* Deferred.make<void>();
+    const outcome = yield* call("writes_environment", fullAccess).pipe(
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () =>
+              Ref.get(shell).pipe(Effect.tap(() => Deferred.succeed(shellRead, undefined))),
+          }),
+        ),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(shellRead);
+    // The wake's dispatch commits its run and settles; the completion stays queued.
+    yield* Ref.set(shell, liveThreadShell(fullAccessThreadId));
+    yield* continuations.settle(fullAccessThreadId);
+    expect(yield* Fiber.join(outcome)).toBe("ran");
+  }).pipe(Effect.provide(ProviderContinuationRequests.layer)),
 );
 
 const box = EnvironmentId.make("environment-box");

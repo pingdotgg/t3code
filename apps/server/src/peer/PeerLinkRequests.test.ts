@@ -145,7 +145,7 @@ const makeLaptop = Effect.gen(function* () {
         offer: () => Effect.void,
         take: Effect.never,
         settle: () => Effect.void,
-        isPending: () => Effect.succeed(false),
+        pending: () => Effect.succeed(0),
         awaitSettled: () => Effect.void,
       }),
     ),

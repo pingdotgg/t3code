@@ -40,15 +40,16 @@ export class ProviderContinuationRequests extends Context.Reference<{
   readonly take: Effect.Effect<ProviderContinuationRequest>;
   /** The taker calls this once per request when its dispatch has finished, either way. */
   readonly settle: (threadId: ThreadId) => Effect.Effect<void>;
-  readonly isPending: (threadId: ThreadId) => Effect.Effect<boolean>;
-  /** Waits until no request for the thread is offered and unsettled. */
-  readonly awaitSettled: (threadId: ThreadId) => Effect.Effect<void>;
+  /** How many requests for the thread are offered and not yet settled. */
+  readonly pending: (threadId: ThreadId) => Effect.Effect<number>;
+  /** Waits until fewer than `below` requests for the thread are pending. */
+  readonly awaitSettled: (threadId: ThreadId, below: number) => Effect.Effect<void>;
 }>("@t3tools/provider-core/server/ProviderContinuationRequests", {
   defaultValue: () => ({
     offer: () => Effect.void,
     take: Effect.never,
     settle: () => Effect.void,
-    isPending: () => Effect.succeed(false),
+    pending: () => Effect.succeed(0),
     awaitSettled: () => Effect.void,
   }),
 }) {}
@@ -79,16 +80,15 @@ export const layer = Layer.effect(
       settle: Effect.fn("ProviderContinuationRequests.settle")(function* (threadId: ThreadId) {
         yield* adjustPending(threadId, -1);
       }),
-      isPending: Effect.fn("ProviderContinuationRequests.isPending")(function* (
-        threadId: ThreadId,
-      ) {
-        return (yield* SubscriptionRef.get(pending)).has(threadId);
+      pending: Effect.fn("ProviderContinuationRequests.pending")(function* (threadId: ThreadId) {
+        return (yield* SubscriptionRef.get(pending)).get(threadId) ?? 0;
       }),
       awaitSettled: Effect.fn("ProviderContinuationRequests.awaitSettled")(function* (
         threadId: ThreadId,
+        below: number,
       ) {
         yield* SubscriptionRef.changes(pending).pipe(
-          Stream.filter((current) => !current.has(threadId)),
+          Stream.filter((current) => (current.get(threadId) ?? 0) < below),
           Stream.take(1),
           Stream.runDrain,
         );

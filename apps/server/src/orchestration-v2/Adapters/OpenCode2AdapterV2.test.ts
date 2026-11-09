@@ -1435,7 +1435,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             }),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -1509,7 +1509,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             }),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -1556,7 +1556,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -1714,7 +1714,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -1790,7 +1790,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -1895,7 +1895,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: (request) => Deferred.succeed(offered, request).pipe(Effect.asVoid),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -3854,7 +3854,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: (request) => Effect.sync(() => void offers.push(request)),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -4422,7 +4422,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: () => Deferred.succeed(offered, undefined).pipe(Effect.asVoid),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -4511,7 +4511,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -4717,7 +4717,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           offer: (request) => Effect.sync(() => void offers.push(request)),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -4848,7 +4848,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -4927,7 +4927,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );
@@ -5028,7 +5028,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ),
           take: Effect.never,
           settle: () => Effect.void,
-          isPending: () => Effect.succeed(false),
+          pending: () => Effect.succeed(0),
           awaitSettled: () => Effect.void,
         }),
       );

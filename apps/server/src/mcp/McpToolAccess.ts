@@ -101,12 +101,19 @@ const awaitPendingWakeRun = Effect.fn("McpToolAccess.awaitPendingWakeRun")(funct
   if (scope.thread === undefined) return;
   const { threadId } = scope.thread;
   const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-  if (!(yield* continuations.isPending(threadId))) return;
-  // A run commits before its continuation settles, so a run missing here has not settled yet.
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
-  if (shell === null || shell.activeRunId !== null) return;
-  yield* continuations.awaitSettled(threadId).pipe(Effect.timeoutOption("60 seconds"));
+  // Recheck after each settle: other continuations for the thread may queue behind a slow one.
+  const waitForRun = Effect.gen(function* () {
+    while (true) {
+      const pending = yield* continuations.pending(threadId);
+      if (pending === 0) return;
+      // A run commits before its continuation settles, so a run missing here has not settled yet.
+      const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
+      if (shell === null || shell.activeRunId !== null) return;
+      yield* continuations.awaitSettled(threadId, pending);
+    }
+  });
+  yield* waitForRun.pipe(Effect.timeoutOption("60 seconds"));
 });
 
 /** Declares a tool that checks its caller's run, which a wake turn may not have committed yet. */

@@ -509,7 +509,7 @@ const makeAdapter = Effect.fnUntraced(function* (
         ...continuationRequests,
         take: Effect.never,
         settle: () => Effect.void,
-        isPending: () => Effect.succeed(false),
+        pending: () => Effect.succeed(0),
         awaitSettled: () => Effect.void,
       }),
     );
