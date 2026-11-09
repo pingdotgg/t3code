@@ -154,6 +154,11 @@ private final class TerminalInputField: UITextField {
 
   // System pastes must bypass typed input to preserve paste encoding and chunking.
   override func paste(_ sender: Any?) {
+    // Commit an in-progress composition first so it reaches the PTY ahead of the paste.
+    if markedTextRange != nil {
+      unmarkText()
+      sendActions(for: .editingChanged)
+    }
     onPaste?()
   }
 
