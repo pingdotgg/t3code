@@ -468,7 +468,6 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
       description: "False returns a ref. Default true.",
     }),
   ),
-  timeoutMs: OptionalTimeoutMs,
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
 

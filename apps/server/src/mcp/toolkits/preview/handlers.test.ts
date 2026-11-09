@@ -27,27 +27,6 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import { claimPreviewRecording, layerStandard } from "./handlers.ts";
 import { PreviewStandardToolkit } from "./tools.ts";
 
-const withPreviewThread = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-  effect.pipe(
-    Effect.provideService(McpInvocationContext.McpInvocationContext, {
-      environmentId: EnvironmentId.make("environment-1"),
-      requestNamespace: "provider-session-1",
-      thread: {
-        threadId: ThreadId.make("thread-1"),
-        providerSessionId: "provider-session-1",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-      },
-      client: undefined,
-      capabilities: new Set(["preview"] as const),
-      issuedAt: 1,
-    }),
-    Effect.provide(
-      Layer.mergeAll(PreviewAutomationBroker.layer, liveThreadsLayer).pipe(
-        Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      ),
-    ),
-  );
-
 it.effect("preview_open navigates the opened tab to a dev server in one tool call", () =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -103,41 +82,25 @@ it.effect("preview_open navigates the opened tab to a dev server in one tool cal
       ]);
       expect(requests[1]?.tabId).toBe(tabId);
       expect(requests[1]?.tabIdExplicit).toBe(true);
-    }).pipe(withPreviewThread),
-  ),
-);
-
-it.effect("preview_evaluate gives the broker the caller's timeout", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const scope = yield* McpInvocationContext.McpInvocationContext;
-      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
-      const connected = yield* Deferred.make<void>();
-      const requests: PreviewAutomationRequest[] = [];
-      const events = yield* broker.connect({
-        clientId: "client-1",
-        environmentId: scope.environmentId,
-      });
-      yield* Stream.runForEach(events, (event) => {
-        if (event.type === "connected") return Deferred.succeed(connected, undefined);
-        requests.push(event.request);
-        return broker.respond({
-          clientId: "client-1",
-          connectionId: event.connectionId,
-          requestId: event.request.requestId,
-          ok: true,
-          result: "/",
-        });
-      }).pipe(Effect.forkScoped);
-      yield* Deferred.await(connected);
-      const toolkit = yield* PreviewStandardToolkit.pipe(
-        Effect.provide(McpToolAccess.HandlersLayer.layer(layerStandard)),
-      );
-      yield* toolkit
-        .handle("preview_evaluate", { expression: "location.pathname", timeoutMs: 45_000 })
-        .pipe(Stream.unwrap, Stream.runCollect);
-      expect(requests.find(({ operation }) => operation === "evaluate")?.timeoutMs).toBe(45_000);
-    }).pipe(withPreviewThread),
+    }).pipe(
+      Effect.provideService(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment-1"),
+        requestNamespace: "provider-session-1",
+        thread: {
+          threadId: ThreadId.make("thread-1"),
+          providerSessionId: "provider-session-1",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["preview"] as const),
+        issuedAt: 1,
+      }),
+      Effect.provide(
+        Layer.mergeAll(PreviewAutomationBroker.layer, liveThreadsLayer).pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
   ),
 );
 
