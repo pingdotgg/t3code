@@ -6,6 +6,8 @@ import {
 } from "@t3tools/contracts";
 import type * as Arr from "effect/Array";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Stream from "effect/Stream";
@@ -110,6 +112,8 @@ export function withOutputWindow(
 const MAX_QUEUED_OUTPUT = 8 * 1024 * 1024;
 // Charge an envelope so tiny events cannot bypass the byte budget.
 const EVENT_OVERHEAD = 128;
+// Output that follows an emission this closely waits and rides along in one batch.
+const OUTPUT_WINDOW_NANOS = 2_000_000n;
 
 type Listener<A> = (event: A) => Effect.Effect<void>;
 // Acquisition must register cleanup synchronously with installing the listener.
@@ -133,11 +137,15 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
 ): Stream.Stream<A, E> {
   return Stream.unwrap(
     Effect.gen(function* () {
+      const clock = yield* Clock.Clock;
       const ready = yield* Latch.make();
       let pending: Array<A | undefined> = [];
       let sizes: number[] = [];
       let head = 0;
       let queued = 0;
+      // Pending events other than output; any of them flushes the window early.
+      let lifecycle = 0;
+      let deadline = 0n;
       let overflowed = false;
       let subscription = 0;
       let unsubscribe: (() => void) | null = null;
@@ -149,7 +157,9 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
         sizes = [];
         head = 0;
         queued = 0;
+        lifecycle = 0;
       };
+      const urgent = () => lifecycle > 0 || queued >= MAX_PENDING_BYTES;
       yield* Effect.addFinalizer(() => Effect.sync(release));
 
       const listen = (from: Subscribe<A, E>) =>
@@ -159,16 +169,19 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
             (event) =>
               Effect.sync(() => {
                 if (id !== subscription) return;
+                const wasEmpty = head === pending.length;
                 const size = queuedSize(event);
                 pending.push(event);
                 sizes.push(size);
                 queued += size;
+                if (event.type !== "output") lifecycle += 1;
                 // A single snapshot must fit even when history fills the budget.
                 if (queued - sizes[head]! > maxQueued) {
                   release();
                   overflowed = true;
                 }
-                ready.openUnsafe();
+                // A pull holding pending output already has a deadline timer.
+                if (wasEmpty || overflowed || urgent()) ready.openUnsafe();
               }),
             (stop) => {
               // Overflow or cancellation may invalidate acquisition before registration.
@@ -185,6 +198,7 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
         const event = pending[head]!;
         pending[head] = undefined;
         head += 1;
+        if (event.type !== "output") lifecycle -= 1;
         return event;
       };
       const takeBatch = (): Arr.NonEmptyReadonlyArray<A> => {
@@ -203,15 +217,23 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
         return batch;
       };
 
+      // Every wait restarts from the top, so overflow and cancellation are rechecked.
       const pull: Effect.Effect<Arr.NonEmptyReadonlyArray<A>, E | Cause.Done> = Effect.suspend(
         () => {
           if (overflowed) {
             overflowed = false;
             return resync ? listen(resync).pipe(Effect.andThen(pull)) : Cause.done();
           }
-          if (head < pending.length) return Effect.succeed(takeBatch());
           ready.closeUnsafe();
-          return ready.await.pipe(Effect.andThen(pull));
+          if (head === pending.length) return ready.await.pipe(Effect.andThen(pull));
+          const now = clock.currentTimeNanosUnsafe();
+          if (now >= deadline || urgent()) {
+            deadline = now + OUTPUT_WINDOW_NANOS;
+            return Effect.succeed(takeBatch());
+          }
+          return Effect.raceFirst(ready.await, Effect.sleep(Duration.nanos(deadline - now))).pipe(
+            Effect.andThen(pull),
+          );
         },
       );
 
