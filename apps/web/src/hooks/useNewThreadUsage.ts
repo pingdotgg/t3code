@@ -82,7 +82,12 @@ export function useNewThreadUsage(
           : undefined;
       return reading &&
         (!provider.usageLimits ||
-          Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt))
+          (!reading.unavailable &&
+            (provider.usageLimits.unavailable ||
+              Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt))) ||
+          (reading.unavailable &&
+            provider.usageLimits.unavailable &&
+            Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt)))
         ? { ...provider, usageLimits: reading }
         : provider;
     }),

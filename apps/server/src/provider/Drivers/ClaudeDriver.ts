@@ -2,6 +2,7 @@ import {
   UsagePolling,
   UsageAfterReset,
   UsageAccountIdentity,
+  makeUnavailableUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -286,7 +287,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.provideService(FileSystem.FileSystem, fileSystem),
     );
 
-    const checkProvider = catalogService.refreshInBackground.pipe(
+    const probeProvider = catalogService.refreshInBackground.pipe(
       Effect.andThen(
         modelCatalog.pipe(
           Effect.flatMap((catalog) =>
@@ -314,22 +315,33 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               ? Cache.invalidateAll(capabilitiesProbeCache)
               : Effect.void,
           ),
-          Effect.flatMap((provider) =>
-            getUsageRefreshKey.pipe(
-              Effect.map((usageRefreshKey) =>
-                stampIdentity({
-                  ...provider,
-                  auth: { ...provider.auth, usageRefreshKey },
-                }),
-              ),
-            ),
-          ),
         ),
       ),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
+
+    const checkProvider = Effect.gen(function* () {
+      const before = yield* getUsageRefreshKey;
+      const provider = yield* probeProvider;
+      const after = yield* getUsageRefreshKey;
+      return stampIdentity(
+        before === after
+          ? { ...provider, auth: { ...provider.auth, usageRefreshKey: before } }
+          : {
+              ...provider,
+              auth: { status: "unknown", usageRefreshKey: after },
+              usageLimits: {
+                ...makeUnavailableUsageLimits({
+                  checkedAt: provider.checkedAt,
+                  reason: "probeFailed",
+                }),
+                refreshAfter: 0,
+              },
+            },
+      );
+    });
 
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<ClaudeSettings>>({

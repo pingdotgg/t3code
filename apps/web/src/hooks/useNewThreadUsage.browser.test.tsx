@@ -101,6 +101,19 @@ it("reconciles fallback quota results across subscription updates before allowin
     />,
   );
   await expect.element(screen.getByText("ready:claudeAgent")).toBeVisible();
+  const placeholder = {
+    ...provider(primary, false, "2026-06-10T00:03:00.000Z"),
+    usageLimits: {
+      checkedAt: "2026-06-10T00:03:00.000Z",
+      windows: [],
+      unavailable: { reason: "probeFailed" as const },
+    },
+  };
+  await screen.rerender(<Probe providers={[placeholder, initial[1]!]} />);
+  await expect.element(screen.getByText("ready:codex")).toBeVisible();
+  refresh.mockResolvedValue([primaryUpdate[0]!, initial[1]!]);
+  await userEvent.click(screen.getByRole("button", { name: "Send" }));
+  await expect.element(screen.getByText("ready:claudeAgent")).toBeVisible();
   refresh.mockReturnValue(new Promise(() => {}));
   await screen.rerender(
     <Probe

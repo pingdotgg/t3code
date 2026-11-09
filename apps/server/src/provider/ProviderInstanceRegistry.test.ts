@@ -627,7 +627,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.live("refreshes Claude quotas immediately after a local account switch", () =>
+  it.live("refreshes Claude quotas across in-flight and between-read organization switches", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -643,32 +643,39 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           path.join(home, ".claude.json"),
           JSON.stringify({
             oauthAccount: {
-              organizationUuid: "shared-org",
-              accountUuid: account,
-              emailAddress: `${account}@example.com`,
+              organizationUuid: `org-${account}`,
+              accountUuid: "same-person",
+              emailAddress: "same@example.com",
             },
           }),
         );
       yield* writeAccount();
       let quotaReads = 0;
+      const started = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
       using _query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
         () =>
           ({
             initializationResult: async () => ({
               commands: [],
               account: {
-                email: `${account}@example.com`,
+                email: "same@example.com",
                 subscriptionType: "pro",
                 tokenSource: "oauth",
               },
             }),
             usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
               quotaReads++;
+              const captured = account;
+              if (quotaReads === 1) {
+                started.resolve();
+                await release.promise;
+              }
               return {
                 rate_limits_available: true,
                 rate_limits: {
                   five_hour: {
-                    utilization: account === "a" ? 100 : 25,
+                    utilization: captured === "a" ? 100 : 25,
                     resets_at: "2026-07-18T14:39:00Z",
                   },
                 },
@@ -689,22 +696,30 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       });
       const instance = (yield* registry.getInstance(instanceId))!;
       yield* instance.snapshot.refresh;
-      yield* instance.snapshot.refreshUsage!;
-      const first = yield* instance.snapshot.getSnapshot;
-      expect(first.usageLimits?.windows[0]?.usedPercent).toBe(100);
-      expect(quotaReads).toBe(1);
-      yield* instance.snapshot.refreshUsage!;
-      expect(quotaReads).toBe(1);
+      const pending = yield* instance.snapshot.refreshUsage!.pipe(Effect.forkChild);
+      yield* Effect.promise(() => started.promise);
       account = "b";
+      yield* writeAccount();
+      release.resolve();
+      yield* Fiber.join(pending);
+      const first = yield* instance.snapshot.getSnapshot;
+      expect(first.usageLimits?.windows).toEqual([]);
+      expect(quotaReads).toBe(1);
+      yield* instance.snapshot.refresh;
+      expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows.length ?? 0).toBe(0);
+      yield* instance.snapshot.refreshUsage!;
+      expect((yield* instance.snapshot.getSnapshot).usageLimits?.windows[0]?.usedPercent).toBe(25);
+      expect(quotaReads).toBe(2);
+      account = "c";
       yield* writeAccount();
       yield* instance.snapshot.refreshUsage!;
       const switched = yield* instance.snapshot.getSnapshot;
-      expect(switched.auth.email).toBe("b@example.com");
+      expect(switched.auth.email).toBe("same@example.com");
       expect(switched.usageLimits?.windows[0]?.usedPercent).toBe(25);
       expect(switched.auth.usageRefreshKey).not.toBe(first.auth.usageRefreshKey);
-      expect(quotaReads).toBe(2);
+      expect(quotaReads).toBe(3);
       yield* instance.snapshot.refreshUsage!;
-      expect(quotaReads).toBe(2);
+      expect(quotaReads).toBe(3);
     }).pipe(Effect.provide(layerTest)),
   );
 
