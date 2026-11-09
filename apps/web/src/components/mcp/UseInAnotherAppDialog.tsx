@@ -6,6 +6,7 @@ import {
   AuthMcpClientAccess,
   AuthRelayReadScope,
   type EnvironmentId,
+  managedCapabilityDenial,
   managedRuntimeModeDenial,
   mcpClientScopes,
   sessionGrantsScope,
@@ -205,16 +206,20 @@ function useGrantableLevels(environment: EnvironmentPresentation) {
   const session = useEnvironmentSessionState(environmentId).data;
   const canMint = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const policy = useManagedPolicy(environmentId);
+  // The server refuses codes for any level when its policy keeps remote clients out.
+  const remoteDenial = managedCapabilityDenial(policy, "remoteClients");
   return new Map(
     AuthMcpClientAccess.literals.flatMap((level) => {
-      const reason = !canMint
-        ? `This device needs the Manage access permission on ${environment.label}.`
-        : session === null ||
-            !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
-          ? `This device cannot grant this on ${environment.label}.`
-          : level === "read-only"
-            ? undefined
-            : managedRuntimeModeDenial(policy, level);
+      const reason =
+        remoteDenial ??
+        (!canMint
+          ? `This device needs the Manage access permission on ${environment.label}.`
+          : session === null ||
+              !mcpClientScopes(level).every((scope) => sessionGrantsScope(session, scope))
+            ? `This device cannot grant this on ${environment.label}.`
+            : level === "read-only"
+              ? undefined
+              : managedRuntimeModeDenial(policy, level));
       return reason === undefined ? [] : [[level, reason] as const];
     }),
   );
@@ -509,15 +514,11 @@ function ConnectStep({
             Apps that ask for a client ID cannot connect.
           </p>
         ) : app.docs ? (
-          <Button variant="link" size="sm" onClick={() => openLink(app.docs!)}>
-            {app.name} help
-          </Button>
+          <TextButton onClick={() => openLink(app.docs ?? "")}>{app.name} help</TextButton>
         ) : null}
         {code}
         {app === null ? null : (
-          <Button variant="link" size="sm" onClick={() => setAnotherWay(false)}>
-            Back to one click
-          </Button>
+          <TextButton onClick={() => setAnotherWay(false)}>Back to one click</TextButton>
         )}
         <LinkedLine environment={environment} access={access} />
       </section>
@@ -528,11 +529,27 @@ function ConnectStep({
       <PrimaryAction app={app} mcpUrl={mcpUrl} />
       <CopyRow label="URL" value={mcpUrl} />
       {code}
-      <Button variant="link" size="sm" onClick={() => setAnotherWay(true)}>
-        Set up another way
-      </Button>
+      <TextButton onClick={() => setAnotherWay(true)}>Set up another way</TextButton>
       <LinkedLine environment={environment} access={access} />
     </section>
+  );
+}
+
+function TextButton({
+  onClick,
+  children,
+}: {
+  readonly onClick: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="block text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -619,7 +636,7 @@ function ApprovalCode({
       setError(`Could not get a code from ${name}. Try again.`);
     }
   };
-  const left = code === null ? 0 : Math.max(0, Math.ceil((code.expiresAt - now) / 1000));
+  const left = code === null ? 0 : Math.max(0, Math.floor((code.expiresAt - now) / 1000));
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center justify-between gap-2">

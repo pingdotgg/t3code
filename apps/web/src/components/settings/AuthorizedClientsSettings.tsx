@@ -642,6 +642,10 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
+      <Button size="xs" variant="outline" onClick={() => openUseInAnotherApp(environmentId)}>
+        <PlugIcon className="size-3" />
+        Use in another app (MCP)
+      </Button>
       <Button
         size="xs"
         variant="destructive-outline"
@@ -649,10 +653,6 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         onClick={() => void onRevokeOtherClients()}
       >
         {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
-      </Button>
-      <Button size="xs" variant="outline" onClick={() => openUseInAnotherApp(environmentId)}>
-        <PlugIcon className="size-3" />
-        Use in another app (MCP)
       </Button>
       {pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
