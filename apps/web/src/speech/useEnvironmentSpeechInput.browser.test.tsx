@@ -398,6 +398,41 @@ function SubmissionProbe({
   return null;
 }
 
+it("does not retain a send when transcription finishes before the editor rerenders", async () => {
+  setup({ destination: "env-a" });
+  let finish!: (text: string) => void;
+  mocks.transcripts = [
+    new Promise<string>((resolve) => {
+      finish = resolve;
+    }),
+  ];
+  mocks.drafts = { "thread-a": "Fix", "thread-b": "" };
+  const submit = vi.fn();
+  const cancel = vi.fn();
+  await using screen = await render(<SubmissionProbe owner="thread-a" />);
+  await act(() => mocks.voice.start());
+  let stopping!: Promise<void>;
+  await act(() => {
+    stopping = mocks.voice.stop();
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("transcribing"));
+  const stale = mocks.voice;
+  await act(async () => {
+    finish("the login bug");
+    await stopping;
+    expect(mocks.voice).toBe(stale);
+    stale.submitAfterDictation(submit, cancel);
+  });
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(submit).not.toHaveBeenCalled();
+  expect(mocks.drafts["thread-a"]).toBe("Fix the login bug");
+  await screen.rerender(<div />);
+  await screen.rerender(<SubmissionProbe owner="thread-b" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.microphoneRequests).toEqual(["env-a", "env-a"]);
+  await act(() => mocks.voice.cancel());
+});
+
 it.each([
   ["transcribing", "finish"],
   ["post-processing", "finish"],
