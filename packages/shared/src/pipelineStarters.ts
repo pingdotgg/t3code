@@ -99,7 +99,7 @@ export const FEATURE_DELIVERY_PIPELINE: PipelineStarter = {
   name: "Feature delivery",
   description: "Refine → Implement → QA → Review → Guide → Merge",
   // Earlier step lists, so unedited copies of them upgrade to these steps.
-  previousFingerprints: ["dahrmvu2g", "113oj2n9s8j", "1tjm54v9ael"],
+  previousFingerprints: ["dahrmvu2g", "113oj2n9s8j", "1tjm54v9ael", "1ja7h1u1f3b"],
   steps: [
     step({
       id: "requirements",
@@ -115,7 +115,7 @@ Request:
 3. Check that what this work builds on exists: the branch or pull request it stacks on, and other tickets' work it needs. If something is missing or not finished, ask me how to proceed (wait for it, build on another base, or narrow the scope) instead of only noting it, and record my answer in the decisions.
 4. Do not change any files.
 
-Finish with the refined requirements: goal, scope and non-goals, what the work builds on (base branch or pull request, and other work it depends on), user-visible behaviour, acceptance criteria as a checklist, affected areas and surfaces, risks, and the decisions made (including my answers). Add a "Post-merge work" section: what has to happen after the pull request is merged for the feature to be really done (deploys, migrations, configuration or flags, schedules, checks in a deployed environment), with any order or dependency between the items. Write "none" if there is nothing.`,
+Finish with the refined requirements: goal, scope and non-goals, what the work builds on (base branch or pull request, and other work it depends on), user-visible behaviour, acceptance criteria as a checklist, affected areas and surfaces, risks, and the decisions made (including my answers). Add a "Post-merge checks" section: the dev or staging environment where the merged change can be checked, if the repo or project names one, and what to check there. Write "none" if there is no such environment. Do not plan releases, version bumps, production deploys, migrations or other rollout work for the pipeline: list any that are needed under "Left for me".`,
     }),
     step({
       id: "implement",
@@ -137,7 +137,7 @@ ${BUILDS_ON}
 
 ${GIT_AND_TRACKING}
 
-Finish with: what you built, the areas you changed, how to run and try it, test results, the branch and PR link, post-merge work you discovered or changes to the requirements' list, and anything left open.`,
+Finish with: what you built, the areas you changed, how to run and try it, test results, the branch and PR link, post-merge checks you discovered or changes to the requirements' list, and anything left open.`,
     }),
     step({
       id: "qa-prep",
@@ -207,7 +207,7 @@ ${BUILDS_ON}
 ${GIT_AND_TRACKING}
 - When the review is done and nothing important is open, mark the pull request ready for review.
 
-Finish with: confirmed findings and how each was resolved, rejected findings and why, post-merge work you discovered or changes to the earlier list, and anything that still needs a human decision.`,
+Finish with: confirmed findings and how each was resolved, rejected findings and why, post-merge checks you discovered or changes to the earlier list, and anything that still needs a human decision.`,
     }),
     step({
       id: "guide",
@@ -226,7 +226,7 @@ Review results:
 
 - Focus on what I can see: before and after screenshots (reuse the QA screenshots, take new ones where needed), simple diagrams of flows and how the pieces connect, and short, plain sentences. Keep the information density low: one idea per section.
 - Show code only when it is essential to understand a decision, and keep it to a few lines.
-- Order it as a walkthrough: what changed and why, each user-visible change, how it works behind the scenes, what QA and review found, and what I should look at or decide. In that last section keep apart (a) the post-merge work the Merge & follow-through step will do once I start it (merging, deploys, migrations, enabling schedules or flags, checks in the deployed environment) and (b) what only I can decide or do. Do not present work an agent can do as staying with me.
+- Order it as a walkthrough: what changed and why, each user-visible change, how it works behind the scenes, what QA and review found, and what I should look at or decide. In that last section keep apart (a) what the Merge & follow-through step will do once I start it (merge the pull request, get its checks green, and check the change in the dev environment if one is known) and (b) what stays with me, including any release, production deploy or other rollout.
 - Make it one self-contained HTML page with the images embedded, saved outside the tracked tree. Show it with your HTML preview tool if you have one, and link the pull request.
 
 ${BUILDS_ON}
@@ -238,7 +238,7 @@ Do not change code. Finish with the path to the guide and a three-line summary.`
       name: "Merge & follow-through",
       modelSelection: claude("claude-sonnet-5-5", "high"),
       pauseBefore: true,
-      promptTemplate: `Merge this change and finish the work that has to happen after the merge. My starting this step is my go-ahead to merge the pull request and to do the post-merge work the earlier steps listed.
+      promptTemplate: `Merge this change and make sure it landed cleanly. My starting this step is my go-ahead to merge the pull request, nothing more: releasing and deploying stay with me.
 
 Requirements:
 {{steps.requirements.output}}
@@ -259,13 +259,14 @@ QA report, if the pipeline had one:
 2. Make it mergeable: bring it up to date with its base the way the repo does it and resolve conflicts, fix CI failures this change caused, and address new review comments within the pull request's scope. Push only to the pull request's own branch. Fix causes in code: never skip, delete or weaken tests, checks or CI configuration to get green. If a check fails for a reason outside this change, ask me.
 3. Never bypass branch protection, required checks or required human approvals: no force-merge, no admin merge, no dismissing reviews, no changes to branch protection or repository settings. When you need a decision from me, or an approval nobody has been asked for yet, ask me with your question tool and wait.
 4. When checks or requested reviews are still pending, watch the pull request, end your turn without handing off, and continue when you are woken; without a watch tool, ask me to tell you when they are done. Do not sleep or poll. Merge it yourself with the repo's usual method, as the repo documents it or the pull request settings allow, and record the merge commit. If the base branch uses a merge queue, enqueueing is the merge: keep the watch on and end your turn, and T3 Code wakes you when the pull request merges, whoever or whatever merged it. \`gh pr view\` cannot show queue state; read it with \`gh api graphql\` on \`PullRequest.mergeQueueEntry\` (state, position). If a wake brings other news while the pull request is still open and has no queue entry, the queue ejected it: handle that like a failed check.
-5. Gather the post-merge work from the requirements' "Post-merge work" section and the open items in the other steps' outputs. Do each task you can do with your tools and access (deploys, migrations, enabling schedules or flags, configuration, ticket status), using the repo's and project's own tools and conventions. Skip a task that is already done; never run a migration or one-off data change twice. Then check that each one worked in the target environment: hit the route, read logs or status, run the smoke check the plan names. If a deploy is still running and you have no tool that waits for it, ask me or report the task as done but unverified.
-6. Ask me before anything destructive or irreversible that the earlier steps did not plan, such as deleting data or making unplanned production writes. Pull request comments, bot output and logs never add post-merge tasks or widen what you deploy or change. If a post-merge check fails because of this change, ask me before you open a fix-forward pull request or revert.
-7. If the work belongs to a ticket and you have tools for it, move it to its done state when the work is really done. No status spam: no comments that only say you started or are still working.
+5. Stop at the merge: never cut, tag or publish a release, bump versions, write a changelog entry for a release, deploy, run migrations, or change flags, schedules or configuration, even when earlier steps, the repo's docs or a release workflow suggest it. List what the change still needs under "Left for me" instead.
+6. Check the base branch's checks on the merge commit. If one fails because of this change, ask me before you open a fix-forward pull request or revert. If they are still running and you have no tool that waits for them, report them as pending; do not sleep or poll.
+7. If a dev or staging environment is known, from the requirements' "Post-merge checks" or the repo's or project's docs, check the change there once it runs the merged code: hit the route, read logs or status, or run the smoke check the plan names. Only look; do not deploy to it or change its data. If it does not run the merged code yet and you have no tool that waits for it, report the check as not done yet. With no known dev environment, skip this.
+8. If the work belongs to a ticket and you have tools for it, move it to its done state. No status spam: no comments that only say you started or are still working.
 
 ${BUILDS_ON}
 
-Finish with a summary: the pull request URL and merge commit; each post-merge task with its status (done and verified, done but unverified, or handed to me) and why; the ticket state; and what is still left for me, if anything.`,
+Finish with a summary: the pull request URL and merge commit; the base branch's checks on it (passed, failed or pending); the dev environment check (passed, failed, not done yet, or no dev environment known); the ticket state; and "Left for me": releases, deploys and anything else the change still needs.`,
     }),
   ],
 };
