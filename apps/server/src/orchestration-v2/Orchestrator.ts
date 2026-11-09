@@ -6260,11 +6260,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     // An explicit pick queued ahead reaches the thread only when its run starts. A goal
     // command that stops the active run goes first, so nothing queued applies before it.
+    // Buffered provider wakes drain output their own provider already produced.
+    const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
       command.modelSelection === undefined &&
       goalStopRunId === undefined &&
-      !followsCurrentConversation({ ...command, delegatedCompletion })
+      !followsCurrentConversation(incomingMessage) &&
+      !isBufferedProviderNotification(incomingMessage)
     ) {
       modelSelection = queueTailModelSelection(projection);
       yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
