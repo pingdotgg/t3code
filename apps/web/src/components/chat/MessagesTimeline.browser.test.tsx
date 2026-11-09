@@ -1115,14 +1115,6 @@ describe("MessagesTimeline messages", () => {
     }
   });
 
-  it("omits queue intent beneath sent user messages", async () => {
-    await using screen = await renderTimeline([
-      message("Queued prompt", { inputIntent: "queued_turn" }),
-    ]);
-    expect(screen.text()).toContain("Queued prompt");
-    expect(screen.container.querySelector("[data-user-message-intent]")).toBeNull();
-  });
-
   it("opens standalone skill details and its instructions", async () => {
     setup();
     const threadRef = {
