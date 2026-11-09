@@ -52,7 +52,7 @@ export interface TimelineRowSharedState {
     | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
     | undefined;
   citationRequest: AssistantCitationTarget | null;
-  /** Absent hides "Reply", as in the guest view. Without an anchor it cites a whole response. */
+  /** Absent hides "Reply", as in the guest view. Without an anchor it sets the composer's reply target. */
   onCiteAssistantText:
     | ((citation: AssistantCitation, sourceAnchor?: AssistantCitationSourceAnchor) => boolean)
     | undefined;
