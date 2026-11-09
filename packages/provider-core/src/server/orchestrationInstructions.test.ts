@@ -101,14 +101,14 @@ describe("T3 secret instructions", () => {
       /password/i,
       "the request_secret guidance never ties a command's password prompt to the tool",
     );
-    assert.match(
+    assert.include(
       section,
-      /do not [^.]*suggest passwordless sudo/i,
-      "nothing stops agents from steering the user to passwordless sudo instead of requesting the password",
+      "`sudo -n <cmd>` fails",
+      "without a sudo -n check first, agents request a password that passwordless sudo never needs",
     );
     assert.match(
       section,
-      /file argument for any input it would read from stdin/,
+      /other input as a file argument/,
       "the sudo recipe replaces the command's piped stdin with the password file, so `... | sudo tee` writes nothing",
     );
   });
