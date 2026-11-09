@@ -2,7 +2,6 @@ import {
   CommandId,
   type EnvironmentId,
   type ModelSelection,
-  type ProviderInteractionMode,
   type ScopedThreadRef,
   type ThreadId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -36,7 +35,6 @@ import { getComposerPromptInjectionState, getComposerProviderState } from "./com
 import {
   formatOutgoingPrompt,
   getAntigravitySendBlockReason,
-  resolveComposerInteractionMode,
   cloneComposerImageForRetry,
   type ComposerSendSnapshot,
   readFileAsDataUrl,
@@ -277,7 +275,6 @@ export function restoreComposerDraft(
 export interface MultipleModelTarget {
   readonly selection: ModelSelection;
   readonly text: string;
-  readonly interactionMode: ProviderInteractionMode;
 }
 
 /**
@@ -288,10 +285,8 @@ export function resolveMultipleModelTargets(input: {
   readonly selections: ReadonlyArray<ModelSelection>;
   readonly providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly messageText: string;
-  readonly planModeEnabled: boolean;
-  readonly interactionMode: ProviderInteractionMode;
 }): Array<MultipleModelTarget | { readonly error: string }> {
-  const { messageText, planModeEnabled } = input;
+  const { messageText } = input;
   return input.selections.map((selection) => {
     const provider = input.providerInstanceEntries.find(
       (entry) => entry.instanceId === selection.instanceId,
@@ -307,7 +302,6 @@ export function resolveMultipleModelTargets(input: {
       models: provider.models,
       modelOptions: selection.options,
       promptInjectionState: getComposerPromptInjectionState(messageText),
-      planModeEnabled,
     });
     return {
       selection: createModelSelection(
@@ -322,11 +316,6 @@ export function resolveMultipleModelTargets(input: {
         effort: providerState.promptEffort,
         text: messageText || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
       }),
-      interactionMode: resolveComposerInteractionMode({
-        planModeEnabled,
-        provider: provider.snapshot,
-        interactionMode: input.interactionMode,
-      }).interactionMode,
     };
   });
 }
