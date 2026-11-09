@@ -504,6 +504,8 @@ jobs:
         with:
           ref: ${{ needs.production.outputs.android_sha }}
           fetch-depth: 0
+          # Dependency scripts and the build run in this job; only Record build gets a token.
+          persist-credentials: false
 
       # A queued run can follow a build of the same fingerprint; manual runs always build.
       - id: record
@@ -635,21 +637,25 @@ jobs:
       # pushed, the next merge rebuilds with a new build number; nothing is lost.
       - name: Record build
         if: steps.record.outputs.built != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$BUILD_TAG" >/dev/null; then
-            echo "$BUILD_TAG already exists."
-          else
-            git tag "$BUILD_TAG" HEAD
-            # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
-            for attempt in 1 2 3; do
-              git push origin "refs/tags/$BUILD_TAG" && break
-              if [ "$attempt" = 3 ]; then
-                echo "::error::Submitted, but could not push $BUILD_TAG; the next merge will rebuild."
-                exit 1
-              fi
-              sleep $((attempt * 15))
-            done
-          fi
+          sha="$(git rev-parse HEAD)"
+          # GitHub occasionally fails ref writes server-side ("fatal error in commit_refs").
+          for attempt in 1 2 3; do
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$BUILD_TAG" >/dev/null 2>&1; then
+              echo "$BUILD_TAG exists."
+              break
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$BUILD_TAG" -f sha="$sha" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Submitted, but could not create $BUILD_TAG; the next merge will rebuild."
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
           echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
   # Off unless the MOBILE_IOS_LOCAL_BUILDS repository variable is `true`; the
@@ -681,6 +687,8 @@ jobs:
         with:
           ref: ${{ needs.production.outputs.ios_sha }}
           fetch-depth: 0
+          # Dependency scripts and the build run in this job; only Record build gets a token.
+          persist-credentials: false
 
       # A queued run can follow a build of the same fingerprint; manual runs always build.
       - id: record
@@ -778,19 +786,23 @@ jobs:
       # pushed, the next merge rebuilds with a new build number; nothing is lost.
       - name: Record build
         if: steps.record.outputs.built != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if git ls-remote --exit-code --tags origin "refs/tags/$BUILD_TAG" >/dev/null; then
-            echo "$BUILD_TAG already exists."
-          else
-            git tag "$BUILD_TAG" HEAD
-            # GitHub occasionally fails ref pushes server-side ("fatal error in commit_refs").
-            for attempt in 1 2 3; do
-              git push origin "refs/tags/$BUILD_TAG" && break
-              if [ "$attempt" = 3 ]; then
-                echo "::error::Submitted, but could not push $BUILD_TAG; the next merge will rebuild."
-                exit 1
-              fi
-              sleep $((attempt * 15))
-            done
-          fi
+          sha="$(git rev-parse HEAD)"
+          # GitHub occasionally fails ref writes server-side ("fatal error in commit_refs").
+          for attempt in 1 2 3; do
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$BUILD_TAG" >/dev/null 2>&1; then
+              echo "$BUILD_TAG exists."
+              break
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$BUILD_TAG" -f sha="$sha" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::Submitted, but could not create $BUILD_TAG; the next merge will rebuild."
+              exit 1
+            fi
+            sleep $((attempt * 15))
+          done
           echo ":rocket: ios: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
