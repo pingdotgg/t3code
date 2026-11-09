@@ -377,24 +377,19 @@ export function projectComposerContextForProvider(input: {
   text: string;
   records: ReadonlyArray<ComposerContextRecord>;
 }): string {
-  return expandAssistantCitationsForProvider(projectContextReferences(input));
-}
-
-function projectContextReferences(input: {
-  text: string;
-  records: ReadonlyArray<ComposerContextRecord>;
-}): string {
   const occurrences = collectComposerContextReferences(input.text);
-  if (occurrences.length === 0) return input.text;
+  if (occurrences.length === 0) return expandAssistantCitationsForProvider(input.text);
   const recordsById = new Map<ComposerContextId, ComposerContextRecord | undefined>();
   for (const record of input.records) {
     recordsById.set(record.contextId, recordsById.has(record.contextId) ? undefined : record);
   }
-  const body = replaceComposerContextReferences(input.text, (occurrence) =>
-    formatComposerContextProviderMarker(
-      recordsById.get(occurrence.contextId)?.kind ?? occurrence.kind,
-      occurrence.label,
-      occurrence.contextId,
+  const body = expandAssistantCitationsForProvider(
+    replaceComposerContextReferences(input.text, (occurrence) =>
+      formatComposerContextProviderMarker(
+        recordsById.get(occurrence.contextId)?.kind ?? occurrence.kind,
+        occurrence.label,
+        occurrence.contextId,
+      ),
     ),
   );
   const seen = new Set<ComposerContextId>();

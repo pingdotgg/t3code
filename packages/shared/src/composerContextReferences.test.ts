@@ -221,6 +221,12 @@ describe("provider projection", () => {
       expect(projected).toContain('"text": "Use a mutex here"');
       expect(projected).toContain('"comment": "Why not a channel?"');
     }
+    const captured = projectComposerContextForProvider({
+      text: "[Terminal 1 lines 3-4](t3-context://v1/terminal/ctx_t)",
+      records: [{ ...terminal, lineStart: 1, lineEnd: 1, text: citation }],
+    });
+    expect(captured).toContain(citation);
+    expect(captured).not.toContain("assistant_citations");
   });
 
   it("uses the payload kind when a reference disagrees with its record", () => {
