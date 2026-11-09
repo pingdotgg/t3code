@@ -7,6 +7,8 @@ export default Effect.gen(function* () {
     CREATE INDEX orchestration_v2_projection_threads_subagent_parent_idx
     ON orchestration_v2_projection_threads(json_extract(payload_json, '$.lineage.parentThreadId'))
     WHERE deleted_at IS NULL
-      AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+      AND CASE WHEN json_valid(payload_json)
+        THEN json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+        ELSE 0 END
   `;
 });

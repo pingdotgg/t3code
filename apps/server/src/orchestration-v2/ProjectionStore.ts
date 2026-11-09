@@ -8857,8 +8857,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = child.thread_id ORDER BY ordinal DESC LIMIT 1
           )
           WHERE child.deleted_at IS NULL
+            AND CASE WHEN json_valid(child.payload_json)
+              THEN json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+              ELSE 0 END
             AND json_extract(child.payload_json, '$.lineage.parentThreadId') = ${threadId}
-            AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
             AND NOT EXISTS (SELECT 1 FROM tasks WHERE child_thread_id = child.thread_id)
         ), previous AS (
           SELECT * FROM children

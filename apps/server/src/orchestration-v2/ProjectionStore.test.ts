@@ -3692,7 +3692,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const plan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
         SELECT thread_id FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL AND json_extract(payload_json, '$.lineage.parentThreadId') = ${threadId}
-          AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'`;
+          AND CASE WHEN json_valid(payload_json)
+            THEN json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            ELSE 0 END`;
       assert.isTrue(plan.some((row) => row.detail.includes("subagent_parent_idx")));
       const first = yield* store.listPreviousAgents({ threadId, limit: 12 });
       assert.equal(first.total, 141);
