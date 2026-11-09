@@ -72,6 +72,14 @@ type DraftInput = {
   readonly selection: { readonly start: number; readonly end: number };
 };
 
+type DraftAccess = {
+  readonly readDraft: () => DraftInput | null;
+  readonly commitDraft: (
+    text: string,
+    selection: { readonly start: number; readonly end: number },
+  ) => void;
+};
+
 function cleanupContext({ text, selection }: DraftInput): DraftInput {
   const limit = 1_024;
   const start = Math.max(0, Math.min(selection.start, text.length));
@@ -105,6 +113,11 @@ type HookInput = {
     text: string,
     selection: { readonly start: number; readonly end: number },
   ) => void;
+  /**
+   * Reaches this owner's draft after the editor moves to another owner, so a recording in
+   * progress finishes into it. Without it, changing owners discards the recording.
+   */
+  readonly detachDraft?: (() => DraftAccess) | undefined;
 };
 
 /**
@@ -207,10 +220,18 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     text?: string;
   } | null>(null);
   const latestRef = useRef({ input, clientSettings, cleanupPrepared, projectWords });
+  const previousInputRef = useRef(input);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes committed props and settings to the asynchronous recording controller
   useEffect(() => {
+    previousInputRef.current = latestRef.current.input;
     latestRef.current = { input, clientSettings, cleanupPrepared, projectWords };
   });
+  const lastSnapshotRef = useRef<VoiceDraftSnapshot | null>(null);
+  const detachedRef = useRef<{
+    readonly ownerKey: string;
+    readonly revision: number;
+    readonly access: DraftAccess;
+  } | null>(null);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks committed draft revisions so a late transcript cannot overwrite an edited draft
   useEffect(() => {
@@ -238,7 +259,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }
       | undefined;
 
-    const readDraft = (): VoiceDraftSnapshot => {
+    const readDraft = (): VoiceDraftSnapshot | null => {
+      const detached = detachedRef.current;
+      if (detached) {
+        const draft = detached.access.readDraft();
+        return draft && { ...draft, ownerKey: detached.ownerKey, revision: detached.revision };
+      }
       const current = latestRef.current.input;
       const draft = current.readDraft();
       const revision = draftRevisionRef.current;
@@ -249,12 +275,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           revision: revision.revision + 1,
         };
       }
-      return {
+      lastSnapshotRef.current = {
         ownerKey: current.ownerKey,
         text: draft.text,
         selection: draft.selection,
         revision: draftRevisionRef.current.revision,
       };
+      return lastSnapshotRef.current;
     };
     const platform = createBrowserVoiceInputPlatform({
       prepared,
@@ -318,7 +345,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         preferences.cleanupGrant !== readCleanupGrant() ||
         current.cleanup === false ||
         current.environmentId !== preferences.environmentId ||
-        current.ownerKey !== options.draft.ownerKey
+        (detachedRef.current?.ownerKey ?? current.ownerKey) !== options.draft.ownerKey
       )
         return null;
       if (!target)
@@ -353,12 +380,29 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         }),
       readDraft,
       commitDraft: (text, selection) => {
+        if (detachedRef.current) {
+          detachedRef.current.access.commitDraft(text, selection);
+          return;
+        }
         if (latestRef.current.input.disabled) return;
         latestRef.current.input.commitDraft(text, selection);
         if (pendingSubmissionRef.current) pendingSubmissionRef.current.text = text;
       },
       onStateChange: (value) => {
         if (disposed) return;
+        if (detachedRef.current) {
+          if (value.phase !== "idle" && value.phase !== "error") return;
+          detachedRef.current = null;
+          if (value.phase === "error") {
+            toastManager.add({
+              type: "error",
+              title: "Dictation for the previous thread failed",
+              description: value.error,
+            });
+            controller.cancel();
+            return;
+          }
+        }
         if (value.phase === "error") pendingSubmissionRef.current = null;
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
@@ -367,6 +411,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     controllerRef.current = controller;
     return () => {
       disposed = true;
+      detachedRef.current = null;
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
@@ -419,13 +464,36 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   }, [prepared, setup.downloading, setup.open, setupModelId]);
 
   const previousOwnerRef = useRef(input.ownerKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons the recording and any queued submission when the draft's owner changes
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on an owner change, finishes the recording into the previous owner's detached draft or abandons it, and drops any queued submission
   useEffect(() => {
-    if (previousOwnerRef.current === input.ownerKey && !input.disabled) return;
+    const previousOwner = previousOwnerRef.current;
+    if (previousOwner === input.ownerKey && !input.disabled) return;
     previousOwnerRef.current = input.ownerKey;
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
-    controllerRef.current?.ownerChanged();
+    const controller = controllerRef.current;
+    if (!controller || detachedRef.current) return;
+    const phase = controller.currentState.phase;
+    const detachDraft = previousInputRef.current.detachDraft;
+    const snapshot = lastSnapshotRef.current;
+    if (
+      previousOwner === input.ownerKey ||
+      !detachDraft ||
+      snapshot?.ownerKey !== previousOwner ||
+      (phase !== "recording" && phase !== "transcribing" && phase !== "post-processing")
+    ) {
+      controller.ownerChanged();
+      return;
+    }
+    detachedRef.current = {
+      ownerKey: previousOwner,
+      revision: snapshot.revision,
+      access: detachDraft(),
+    };
+    setControllerState((current) => ({ ...current, value: INITIAL_STATE }));
+    setPreview(null);
+    setLevel(0);
+    void controller.stop();
   }, [input.ownerKey, input.disabled]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft

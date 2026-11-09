@@ -1807,6 +1807,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
+    detachDraft: questionAttachmentTarget
+      ? undefined
+      : () => ({
+          readDraft: () => {
+            const text = getComposerDraft(composerDraftTarget)?.prompt ?? "";
+            return { text, selection: { start: text.length, end: text.length } };
+          },
+          commitDraft: (text) => setComposerDraftPrompt(composerDraftTarget, text),
+        }),
   });
   const { blocksSubmission: voiceInputActive, submitAfterDictation } = speechInput;
   const voiceSendDisabledReason =

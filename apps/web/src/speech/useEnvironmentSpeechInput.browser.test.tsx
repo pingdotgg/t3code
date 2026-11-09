@@ -19,6 +19,7 @@ import {
 
 import { act, render, stubGlobal } from "../../test/render";
 import { VoiceInputSetup } from "../components/chat/VoiceInputSetup";
+import { toastManager } from "../components/ui/toast";
 import type { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { useEnvironmentSpeechInput } from "./useEnvironmentSpeechInput";
 import {
@@ -398,6 +399,20 @@ it("finishes a recording into the thread it started in when the editor moves to 
   await vi.waitFor(() => expect(drafts["thread-a"]).toBe("Fix the login bug"));
   expect(drafts["thread-b"]).toBe("Unrelated");
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
+});
+
+it("keeps a thread's edited draft when a recording finishes after leaving it", async () => {
+  setup({ destination: "env-a" });
+  vi.mocked(toastManager.add).mockClear();
+  mocks.transcripts = ["the login bug"];
+  const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "Unrelated" };
+  await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
+  await act(() => mocks.voice.start());
+  drafts["thread-a"] = "Fix it now";
+  await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
+  await vi.waitFor(() => expect(toastManager.add).toHaveBeenCalled());
+  expect(drafts).toEqual({ "thread-a": "Fix it now", "thread-b": "Unrelated" });
+  expect(mocks.voice.state.phase).toBe("idle");
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {
