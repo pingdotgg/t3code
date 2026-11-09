@@ -3133,7 +3133,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM window_items
                   WHERE ordinal >= ${boundary.ordinal}
                   ORDER BY ordinal DESC, turn_item_id DESC
-                  -- Every branch must stay <= tailRows, or rows below workStart go missing.
+                  -- Every LIMIT here and in latest_user_turn must stay <= tailRows, or rows below workStart go missing.
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
                     WHEN (SELECT row_count FROM latest_user_turn)

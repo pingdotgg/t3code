@@ -3402,10 +3402,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* moveFirstItemToRun(sharedRunId);
       // A failed error below the tail still blocks folding for its run. Only the SQL columns
       // change; the row sits below the window, so its payload is never decoded.
-      const setSecondItem = (type: string, status: string) => sql`
+      // A steer at 100 starts a later segment, so the error sits below the scan start too.
+      const setItem = (ordinal: number, type: string, status: string) => sql`
         UPDATE orchestration_v2_projection_turn_items SET type = ${type}, status = ${status}
-        WHERE thread_id = ${threadId} AND ordinal = 2`;
-      yield* setSecondItem("error", "failed");
+        WHERE thread_id = ${threadId} AND ordinal = ${ordinal}`;
+      yield* setItem(100, "user_message", "completed");
+      yield* setItem(2, "error", "failed");
       const blockedWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
         rowLimit: sqlPageLimit,
         userTurnLimit: 10,
@@ -3418,7 +3420,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         blockedWindow.projection.turnItems.map((item) => item.ordinal),
         Array.from({ length: sqlPageLimit }, (_, index) => 1001 - sqlPageLimit + index),
       );
-      yield* setSecondItem("command_execution", "completed");
+      yield* setItem(2, "command_execution", "completed");
+      yield* setItem(100, "command_execution", "completed");
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution')
         WHERE thread_id = ${threadId} AND ordinal BETWEEN 300 AND 899`;
@@ -3479,6 +3482,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       });
       assert.isTrue(runlessPage.hasMoreHistory);
       assert.isNotNull(runlessPage.historyCursor);
+      // Limits SQLite reads differently from `tailRows` skip the tail bound and match main.
+      const windowOrdinalCount = (rowLimit: number) =>
+        projectionStore
+          .getThreadSnapshotWindow(threadId, { rowLimit, userTurnLimit: 10, deferWork: true })
+          .pipe(Effect.map((window) => window.projection.turnItems.length));
+      assert.strictEqual(yield* windowOrdinalCount(502.5), THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT);
+      yield* sql`UPDATE orchestration_v2_projection_turn_items
+        SET payload_json = json_set(payload_json, '$.inputIntent', 'steer')
+        WHERE thread_id = ${threadId} AND ordinal = 991`;
+      assert.strictEqual(yield* windowOrdinalCount(-1), 1000);
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET run_id = ${sharedRunId},
         type = 'command_execution',
         payload_json = json_set(payload_json, '$.type', 'command_execution', '$.runId', ${sharedRunId})
