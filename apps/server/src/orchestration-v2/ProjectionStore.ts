@@ -3407,7 +3407,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ? sql`ORDER BY ordinal ASC`
                   : filter.includeLatestRun !== true
                     ? // `+ordinal` stops SQLite from walking every run in the (thread_id, ordinal)
-                      // index to skip a sort; the (thread_id, status) index reads only matching runs.
+                      // index to skip a sort; a status index reads only matching runs.
                       sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
                     ORDER BY +ordinal ASC`
                     : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))

@@ -216,13 +216,34 @@ describe("orchestrator MCP toolkit", () => {
           },
           CodexOrchestratorReplayHarness,
         );
+        // SQL spans carry no bound parameters, so this records which thread each tool read.
+        const threadRecordReads: Array<{
+          readonly threadId: ThreadId;
+          readonly fields: ReadonlyArray<string>;
+        }> = [];
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
-          ThreadManagementService.layer.pipe(
-            Layer.provide(layerOrchestrator),
-            Layer.provide(ServerSettings.layerTest()),
+          Layer.effect(
+            ThreadManagementService.ThreadManagementService,
+            Effect.gen(function* () {
+              const service = yield* ThreadManagementService.ThreadManagementService;
+              return ThreadManagementService.ThreadManagementService.of({
+                ...service,
+                getThreadRecords: (threadId, fields, filter) =>
+                  Effect.sync(() => threadRecordReads.push({ threadId, fields })).pipe(
+                    Effect.andThen(service.getThreadRecords(threadId, fields, filter)),
+                  ),
+              });
+            }),
+          ).pipe(
             Layer.provide(
-              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+              ThreadManagementService.layer.pipe(
+                Layer.provide(layerOrchestrator),
+                Layer.provide(ServerSettings.layerTest()),
+                Layer.provide(
+                  CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+                ),
+              ),
             ),
           ),
         );
@@ -605,6 +626,7 @@ describe("orchestrator MCP toolkit", () => {
           const messageReads: Array<string> = [];
           const runReads: Array<string> = [];
           const projectionTableReads: Array<string> = [];
+          const acknowledgementReads: Array<string> = [];
           const tracer = Tracer.make({
             span(options) {
               const span = new Tracer.NativeSpan(options);
@@ -613,6 +635,16 @@ describe("orchestrator MCP toolkit", () => {
                 end(endTime, exit);
                 const query = span.attributes.get("db.query.text");
                 if (typeof query !== "string") return;
+                let parent = Option.getOrUndefined(span.parent);
+                while (parent?._tag === "Span") {
+                  if (
+                    parent.name === "Orchestrator.dispatchDelegatedTaskCompletionDeliveryResolution"
+                  ) {
+                    acknowledgementReads.push(query);
+                    break;
+                  }
+                  parent = Option.getOrUndefined(parent.parent);
+                }
                 for (const [, table] of query.matchAll(
                   /FROM orchestration_v2_projection_(\w+)/gi,
                 )) {
@@ -689,7 +721,6 @@ describe("orchestrator MCP toolkit", () => {
               ?.completionDelivery?.state,
           ).toBe("claimed");
 
-          const runReadsBeforeRead = runReads.length;
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
@@ -698,16 +729,18 @@ describe("orchestrator MCP toolkit", () => {
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
           expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
-          // The caller's runs are read by status alone, so SQLite can use the status index.
+          // The acknowledgement reads the task and its spawning run by id, not the parent's history.
+          expect(acknowledgementReads.length).toBeGreaterThan(0);
           expect(
-            runReads
-              .slice(runReadsBeforeRead)
-              .some((query) =>
-                /AND status IN \(SELECT value FROM json_each\(\?\)\)\s+ORDER BY \+ordinal/.test(
-                  query,
-                ),
-              ),
-          ).toBe(true);
+            acknowledgementReads.filter(
+              (query) =>
+                /FROM orchestration_v2_projection_(nodes|run_attempts)\b/.test(query) ||
+                (/FROM orchestration_v2_projection_runs\b/.test(query) &&
+                  !query.includes("AND run_id IN")) ||
+                (/FROM orchestration_v2_projection_subagents\b/.test(query) &&
+                  !query.includes("AND subagent_id IN")),
+            ),
+          ).toEqual([]);
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
@@ -721,12 +754,13 @@ describe("orchestrator MCP toolkit", () => {
           );
           expect(capabilities.isError).not.toBe(true);
           expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
-          // The caller check reads the thread row and its active runs, never its history.
+          // The caller check reads only the thread row, never its history.
           expect(new Set(projectionTableReads.slice(tableReadsBeforeCapabilities))).toEqual(
             new Set(["threads"]),
           );
           const runReadsBeforeStatus = runReads.length;
           const transferReadsBeforeStatus = transferReads.length;
+          const threadRecordReadsBeforeStatus = threadRecordReads.length;
           const statusAgain = yield* invoke("task_status", { taskId: delegated.taskId }).pipe(
             Effect.withTracer(tracer),
           );
@@ -734,6 +768,14 @@ describe("orchestrator MCP toolkit", () => {
           // A task wait reads result transfers and runs from the child; the parent's stay unread.
           expect(runReads).toHaveLength(runReadsBeforeStatus + 1);
           expect(transferReads).toHaveLength(transferReadsBeforeStatus + 1);
+          expect(
+            threadRecordReads
+              .slice(threadRecordReadsBeforeStatus)
+              .filter(
+                ({ fields }) => fields.includes("runs") || fields.includes("contextTransfers"),
+              )
+              .map(({ threadId }) => threadId),
+          ).toEqual([delegated.childThreadId]);
         }).pipe(Effect.provide(layerTest));
       }),
     ),
