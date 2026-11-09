@@ -1416,6 +1416,7 @@ export const layer: Layer.Layer<
           }
           return { event, accepted };
         });
+        // Per-event ingestion avoids adding a span for every provider snapshot.
         const ingestDelivered = Effect.fnUntraced(function* (
           event: ProviderAdapter.ProviderAdapterV2Event,
           deliveredEvent: ProviderAdapter.ProviderAdapterV2Event,
