@@ -14,6 +14,7 @@ import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
@@ -277,6 +278,26 @@ const make = Effect.gen(function* () {
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
+    }
+    if (watching) {
+      const pullRequests = yield* PullRequestService.PullRequestService;
+      yield* pullRequests
+        .summary(
+          {
+            projectId: thread.projectId,
+            host: target.host,
+            repository: target.repository,
+            number: target.number,
+            allowStale: false,
+          },
+          { recoverTransientFailure: false },
+        )
+        .pipe(
+          Effect.catchTags({
+            // Host and transport errors can recover while the watch is active.
+            PullRequestOperationError: () => Effect.void,
+          }),
+        );
     }
     yield* engine
       .dispatch({

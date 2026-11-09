@@ -5,6 +5,7 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   type OrchestrationProjectShell,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
@@ -26,6 +27,7 @@ import {
   v2PullRequestThread,
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -133,6 +135,7 @@ function makeLink(
 }
 
 interface HarnessOptions {
+  readonly readFailure?: PullRequestService.PullRequestError;
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   readonly reject?: (command: OrchestrationCommand) => string | null;
@@ -167,6 +170,21 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       return { sequence: 1, storedEvents: [] };
     });
   const layerDependencies = Layer.mergeAll(
+    Layer.mock(PullRequestService.PullRequestService)({
+      summary: (input) =>
+        options.readFailure !== undefined
+          ? Effect.fail(options.readFailure)
+          : Effect.succeed({
+              ...input,
+              provider: SourceControlProviderKind.make("github"),
+              title: "Pull request",
+              url: `https://github.com/${input.repository}/pull/${input.number}`,
+              state: "open" as const,
+              headBranch: "feature",
+              baseBranch: "main",
+              updatedAt: "2026-08-20T00:00:00.000Z",
+            }),
+    }),
     Layer.mock(ProjectService.ProjectService)({
       getShell: () => Effect.succeed(Option.fromNullishOr(project)),
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
@@ -278,20 +296,50 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("watching an unlinked pull request links it first", () =>
+  it.effect("links an unlinked watch even while the host has a transient read failure", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      const result = yield* harness.call("watch_pull_request", {
-        url: "https://github.com/t3tools/t3code/pull/9",
-      });
-      expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
-      expect(yield* Ref.get(harness.commands)).toMatchObject([
+      for (const options of [
+        {},
         {
-          type: "thread.pull-request.watch",
-          number: 9,
-          watching: true,
-          link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+          readFailure: new PullRequestOperationError({
+            operation: "summary",
+            detail: "The host is temporarily unavailable.",
+          }),
         },
+      ]) {
+        const harness = yield* makeHarness(options);
+        const result = yield* harness.call("watch_pull_request", {
+          url: "https://github.com/t3tools/t3code/pull/9",
+        });
+        expect(result).toMatchObject({ number: 9, watching: false, wasWatching: false });
+        expect(yield* Ref.get(harness.commands)).toMatchObject([
+          {
+            type: "thread.pull-request.watch",
+            number: 9,
+            watching: true,
+            link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
+          },
+        ]);
+      }
+    }),
+  );
+
+  it.effect("reports a missing hosting CLI before saving a watch and still allows unwatch", () =>
+    Effect.gen(function* () {
+      const missing = new PullRequestUnavailableError({
+        reason: "cli-missing",
+        provider: SourceControlProviderKind.make("gitlab"),
+        requirement: "Install glab on the T3 server's PATH.",
+      });
+      const harness = yield* makeHarness({ readFailure: missing });
+      const target = { url: "https://gitlab.example.com/team/project/-/merge_requests/42" };
+      const error = yield* harness.call("watch_pull_request", target).pipe(Effect.flip);
+      expect(error).toEqual(missing);
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
+
+      yield* harness.call("unwatch_pull_request", target);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", watching: false },
       ]);
     }),
   );

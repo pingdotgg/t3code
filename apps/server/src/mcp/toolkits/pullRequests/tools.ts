@@ -6,6 +6,7 @@ import {
   PullRequestReviewGuide,
   PullRequestReviewGuideRun,
   PullRequestState,
+  PullRequestUnavailableError,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
@@ -19,6 +20,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 
 const dependencies = [
@@ -32,6 +34,8 @@ const guideDependencies = [
   ...dependencies,
   PullRequestReviewGuideService.PullRequestReviewGuideService,
 ];
+
+const watchDependencies = [...dependencies, PullRequestService.PullRequestService];
 
 export const PullRequestTargetInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
@@ -188,6 +192,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestUnlinkFailedError,
   PullRequestListFailedError,
   PullRequestWatchFailedError,
+  PullRequestUnavailableError,
   PullRequestNotOpenError,
   PullRequestWatchFromSubagentError,
   PullRequestProjectNotFoundError,
@@ -378,7 +383,7 @@ const WatchPullRequestTool = Tool.make("watch_pull_request", {
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
-  dependencies,
+  dependencies: watchDependencies,
 })
   .annotate(Tool.Title, "Watch pull request")
   .annotate(Tool.Readonly, false)
@@ -392,7 +397,7 @@ const UnwatchPullRequestTool = Tool.make("unwatch_pull_request", {
   parameters: PullRequestTargetInput,
   success: WatchPullRequestResult,
   failure: PullRequestToolError,
-  dependencies,
+  dependencies: watchDependencies,
 })
   .annotate(Tool.Title, "Stop watching pull request")
   .annotate(Tool.Readonly, false)
