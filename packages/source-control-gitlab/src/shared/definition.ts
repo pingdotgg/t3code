@@ -64,7 +64,8 @@ export const definition = defineSourceControl({
   checkoutCommand: ({ number }) => `glab mr checkout ${number}`,
   // `accept` is glab's alias for `merge`.
   changeRequestCloseCommand: /\bglab\s+mr\s+(?:merge|accept|close)\b/u,
-  changeRequestCreateCommand: /\bglab\s+mr\s+create\b/u,
+  // `new` is glab's alias for `create`.
+  changeRequestCreateCommand: /\bglab\s+mr\s+(?:create|new)\b/u,
   // Bot users, unlike GitHub's, have real profile pages.
   authorProfileUrl: (login, repositoryUrl) =>
     new URL(`/${encodeURIComponent(login)}`, repositoryUrl).toString(),
