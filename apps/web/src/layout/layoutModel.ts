@@ -1200,6 +1200,7 @@ export function replaceLayoutTabContent(
   content: LayoutTabContent,
   ghostOf?: ScopedThreadRef | null,
 ): LayoutState {
+  if (!findLayoutTab(state, (tab) => tab.id === tabId)) return state;
   const key = layoutTabContentKey(content);
   const duplicate = findLayoutTab(
     state,
