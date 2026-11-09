@@ -17,14 +17,16 @@ import {
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
+  CircleDotIcon,
   FolderIcon,
   MessagesSquareIcon,
   PackageIcon,
   SettingsIcon,
+  TicketIcon,
   UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
-import { memo, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
@@ -35,6 +37,8 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { mentionIndexEnvironment } from "~/state/pullRequests";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 export type ComposerCommandItem =
   | {
@@ -80,6 +84,38 @@ export type ComposerCommandItem =
       id: string;
       type: "thread";
       thread: ScopedThreadRef;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "jira";
+      key: string;
+      url: string;
+      summary: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "figma";
+      fileKey: string;
+      url: string;
+      name: string;
+      hasThumbnail: boolean;
+      projectId: import("@t3tools/contracts").ProjectId;
+      environmentId: EnvironmentId;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "issue";
+      number: number;
+      title: string;
+      url: string;
+      repository: string;
+      state: "open" | "closed";
       label: string;
       description: string;
     }
@@ -142,26 +178,53 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         data-composer-command-drawer="true"
       >
         {props.items.length > 0 ? (
-          <CommandList
-            id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
-            className="max-h-72 min-h-0 scroll-pb-6"
-          >
-            <CommandGroup>
-              {props.items.map((item) => (
-                <ComposerCommandMenuItem
-                  key={item.id}
-                  optionId={composerSuggestionOptionId(props.listId, item.id)}
-                  item={item}
-                  triggerKind={props.triggerKind}
-                  resolvedTheme={props.resolvedTheme}
-                  isActive={props.activeItemId === item.id}
-                  onHighlight={props.onHighlightedItemChange}
-                  onSelect={props.onSelect}
-                />
-              ))}
-            </CommandGroup>
-          </CommandList>
+          props.triggerKind === "figma" ? (
+            <CommandList
+              id={props.listId}
+              aria-label={LISTBOX_LABEL_BY_TRIGGER.figma}
+              className="max-h-80 min-h-0 scroll-pb-6"
+            >
+              <CommandGroup>
+                <div className="grid grid-cols-2 gap-2 p-3 sm:grid-cols-3">
+                  {props.items.map((item) =>
+                    item.type === "figma" ? (
+                      <FigmaComposerCommandCard
+                        key={item.id}
+                        optionId={composerSuggestionOptionId(props.listId, item.id)}
+                        item={item}
+                        isActive={props.activeItemId === item.id}
+                        onHighlight={props.onHighlightedItemChange}
+                        onSelect={props.onSelect}
+                      />
+                    ) : null,
+                  )}
+                </div>
+              </CommandGroup>
+            </CommandList>
+          ) : (
+            <CommandList
+              id={props.listId}
+              aria-label={
+                props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined
+              }
+              className="max-h-72 min-h-0 scroll-pb-6"
+            >
+              <CommandGroup>
+                {props.items.map((item) => (
+                  <ComposerCommandMenuItem
+                    key={item.id}
+                    optionId={composerSuggestionOptionId(props.listId, item.id)}
+                    item={item}
+                    triggerKind={props.triggerKind}
+                    resolvedTheme={props.resolvedTheme}
+                    isActive={props.activeItemId === item.id}
+                    onHighlight={props.onHighlightedItemChange}
+                    onSelect={props.onSelect}
+                  />
+                ))}
+              </CommandGroup>
+            </CommandList>
+          )
         ) : (
           <div className="px-5 pt-3.5 pb-7">
             <p className="text-secondary-label text-xs">
@@ -170,13 +233,37 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   ? "Searching workspace skills..."
                   : props.triggerKind === "pull-request"
                     ? "Finding pull request..."
-                    : "Searching workspace files..."
+                    : props.triggerKind === "hash"
+                      ? "Finding pull requests and issues..."
+                      : props.triggerKind === "jira"
+                        ? "Finding Jira issues..."
+                        : props.triggerKind === "figma"
+                          ? "Finding Figma designs..."
+                          : props.triggerKind === "issue"
+                            ? "Finding GitHub issues..."
+                            : props.triggerKind === "thread"
+                              ? "Finding threads..."
+                              : props.triggerKind === "path"
+                                ? "Finding mentions..."
+                                : "Searching workspace files..."
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? "No skills found. Try / to browse provider commands."
                     : props.triggerKind === "path"
-                      ? "No matching files or folders."
-                      : "No matching command."))}
+                      ? "No matching threads, machines, or files."
+                      : props.triggerKind === "file"
+                        ? "No matching files or folders."
+                        : props.triggerKind === "thread"
+                          ? "No matching threads."
+                          : props.triggerKind === "jira"
+                            ? "No matching Jira issues."
+                            : props.triggerKind === "figma"
+                              ? "No matching Figma designs."
+                              : props.triggerKind === "issue"
+                                ? "No matching GitHub issues."
+                                : props.triggerKind === "hash"
+                                  ? "No matching pull requests or issues."
+                                  : "No matching command."))}
             </p>
           </div>
         )}
@@ -227,6 +314,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       ) : null}
       {props.item.type === "thread" ? (
         <MessagesSquareIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+      ) : null}
+      {props.item.type === "jira" ? (
+        <TicketIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
+      ) : null}
+      {props.item.type === "issue" ? (
+        <CircleDotIcon aria-hidden="true" className="size-4 shrink-0 text-secondary-label" />
       ) : null}
       {props.item.type === "environment" ? (
         <EnvironmentMachineIcon
@@ -282,9 +375,87 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
   return `${listId}-${encodeURIComponent(JSON.stringify(itemId))}`;
 }
 
+const FigmaComposerCommandCard = memo(function FigmaComposerCommandCard(props: {
+  optionId: string;
+  item: Extract<ComposerCommandItem, { type: "figma" }>;
+  isActive: boolean;
+  onHighlight: (itemId: string | null) => void;
+  onSelect: (item: ComposerCommandItem) => void;
+}) {
+  const fetchThumbnail = useAtomCommand(mentionIndexEnvironment.thumbnail, {
+    reportFailure: false,
+  });
+  const [src, setSrc] = useState<string | null>(null);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads a per-card thumbnail from the mention index once the menu shows the file
+  useEffect(() => {
+    if (!props.item.hasThumbnail) return;
+    let cancelled = false;
+    void fetchThumbnail({
+      environmentId: props.item.environmentId,
+      input: {
+        projectId: props.item.projectId,
+        providerId: "figma",
+        itemKey: props.item.fileKey,
+      },
+    }).then((result) => {
+      if (cancelled || result._tag !== "Success" || result.value._tag !== "Present") return;
+      setSrc(`data:${result.value.mimeType};base64,${result.value.dataBase64}`);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    fetchThumbnail,
+    props.item.environmentId,
+    props.item.fileKey,
+    props.item.hasThumbnail,
+    props.item.projectId,
+  ]);
+
+  return (
+    <CommandItem
+      render={<div id={props.optionId} />}
+      aria-selected={props.isActive}
+      value={props.item.id}
+      data-composer-item-id={props.item.id}
+      active={props.isActive}
+      className="flex h-auto flex-col items-stretch gap-1.5 overflow-hidden rounded-lg p-1.5!"
+      onMouseMove={() => {
+        if (!props.isActive) props.onHighlight(props.item.id);
+      }}
+      onMouseDown={(event) => {
+        event.preventDefault();
+      }}
+      onClick={() => {
+        props.onSelect(props.item);
+      }}
+    >
+      <div className="aspect-[4/3] w-full overflow-hidden rounded-md bg-muted">
+        {src ? (
+          <img src={src} alt="" className="size-full object-cover" />
+        ) : (
+          <div className="flex size-full items-center justify-center text-3xs text-secondary-label">
+            Figma
+          </div>
+        )}
+      </div>
+      <span className="w-full truncate px-0.5 text-left text-xs font-medium">
+        {props.item.label}
+      </span>
+    </CommandItem>
+  );
+});
+
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
+  path: "Threads, machines, and files",
+  file: "Files and folders",
+  thread: "Threads",
   "pull-request": "Pull requests",
+  jira: "Jira issues",
+  figma: "Figma designs",
+  issue: "GitHub issues",
+  hash: "Pull requests and issues",
   "slash-command": "Commands",
   skill: "Skills",
 };

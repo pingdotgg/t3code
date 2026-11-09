@@ -2747,7 +2747,11 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [embedded, toggleRightPanelStable, toggleRightPanelMaximizedStable]);
 
-  usePasteToFocusComposer(embedded ? null : activeThreadId, composerRef);
+  usePasteToFocusComposer(
+    embedded ? null : activeThreadId,
+    composerRef,
+    settings.mentionIndexEnabled,
+  );
   // A delegated task is a remote thread's subagent.
   const isSubagentThread =
     activeThread?.lineage.relationshipToParent === "subagent" || delegatedFrom !== null;

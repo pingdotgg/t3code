@@ -39,6 +39,7 @@ import {
   releaseDraftAttachments,
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
+import { collectInlineContextIds } from "../../lib/composerContextReferences";
 import { buildMessageContext } from "../../lib/composerContextRecords";
 import { readFileAsDataUrl } from "../../lib/imageCompression";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
@@ -83,6 +84,9 @@ interface QueuedRunEditContent {
   readonly previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly jiraContexts: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  readonly figmaContexts: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
+  readonly issueContexts: ReadonlyArray<import("@t3tools/contracts").IssueContextRecord>;
 }
 
 function queuedEditDraftTarget(routeThreadRef: ScopedThreadRef, runId: RunId) {
@@ -127,11 +131,16 @@ async function submitQueuedRunEdit(input: {
       readImage: readFileAsDataUrl,
       uploadFiles,
     });
-    const keptRecords = (editing.context?.records ?? []).filter(
-      (record) =>
-        !("attachmentId" in record) ||
-        editing.existingAttachments.some((attachment) => attachment.id === record.attachmentId),
-    );
+    const referencedIds = new Set(collectInlineContextIds(content.prompt));
+    const keptRecords = (editing.context?.records ?? []).filter((record) => {
+      if ("attachmentId" in record) {
+        return editing.existingAttachments.some(
+          (attachment) => attachment.id === record.attachmentId,
+        );
+      }
+      // Drop chip contexts the edit removed from the prompt (e.g. deleted Jira/Figma).
+      return referencedIds.has(record.contextId);
+    });
     const newRecords =
       buildMessageContext({
         terminalContexts: content.terminalContexts.filter(
@@ -141,6 +150,9 @@ async function submitQueuedRunEdit(input: {
         previewAnnotations: content.previewAnnotations,
         threadContexts: content.threadContexts,
         environmentContexts: content.environmentContexts,
+        jiraContexts: content.jiraContexts,
+        figmaContexts: content.figmaContexts,
+        issueContexts: content.issueContexts,
         attachments: newAttachments.map((attachment, index) => ({
           attachment,
           attachmentId: uploads[editing.existingAttachments.length + index]?.id ?? attachment.id,

@@ -545,9 +545,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const annotationRecordIds = resolvedContext.records
     .filter((record) => record.kind === "preview-annotation")
     .map((record) => record.contextId);
-  const plainText = replaceComposerContextReferences(
-    resolvedContext.text,
-    (reference) => reference.label,
+  const plainText = replaceComposerContextReferences(resolvedContext.text, (reference) =>
+    reference.url === undefined ? reference.label : reference.source,
   );
   const promptLink = promptLinkFor(plainText);
   const foldSummary =
@@ -1008,6 +1007,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                 <CollapsibleUserMessageBody
                   text={resolvedContext.text}
                   renderContextReference={renderContextReference}
+                  composerContextRecordIds={resolvedContext.recordsById}
                   skills={ctx.skills}
                   markdownCwd={ctx.markdownCwd}
                   collapsible={!folded}
@@ -1111,6 +1111,7 @@ const COLLAPSED_USER_MESSAGE_FADE_MASK = `linear-gradient(to bottom, black calc(
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
+  composerContextRecordIds: { readonly has: (contextId: string) => boolean };
   skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
   collapsible?: boolean;
@@ -1148,6 +1149,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
           <UserMessageBody
             text={props.text}
             renderContextReference={props.renderContextReference}
+            composerContextRecordIds={props.composerContextRecordIds}
             skills={props.skills}
             markdownCwd={props.markdownCwd}
           />
@@ -1177,6 +1179,7 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   renderContextReference?: (reference: ChatMarkdownContextReference) => ReactNode;
+  composerContextRecordIds?: { readonly has: (contextId: string) => boolean };
   skills: ReadonlyArray<ServerProviderSkill>;
   markdownCwd: string | undefined;
 }) {
@@ -1194,6 +1197,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
+      composerContextRecordIds={props.composerContextRecordIds}
       headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
   );

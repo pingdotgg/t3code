@@ -301,14 +301,19 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     const linkTextByUrl = Object.fromEntries(
       references.flatMap((reference) => {
         const record = fragment.records.find((entry) => entry.contextId === reference.contextId);
-        return record
-          ? [
-              [
-                formatComposerContextHref(reference.kind, reference.contextId),
-                formatComposerContextReference({ ...reference, label: record.label }),
-              ],
-            ]
-          : [];
+        if (!record) return [];
+        const href =
+          reference.url ?? formatComposerContextHref(reference.kind, reference.contextId);
+        return [
+          [
+            href,
+            formatComposerContextReference({
+              ...reference,
+              label: record.label,
+              ...("url" in record ? { url: record.url } : {}),
+            }),
+          ],
+        ];
       }),
     );
     return {

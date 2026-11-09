@@ -56,18 +56,31 @@ describe("resolveProjectSettings", () => {
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       defaultAutoPull: true,
       sidebarAutoSettleAfterDays: 3,
+      mentionIndex: { jira: { spaces: ["ENV"] } },
       projectSettingsOverrides: {
-        [projectId]: { defaultAutoPull: false, sidebarAutoSettleAfterDays: null },
+        [projectId]: {
+          defaultAutoPull: false,
+          sidebarAutoSettleAfterDays: null,
+          mentionIndex: { jira: { spaces: ["PROJ"] }, figma: { fileKeys: ["Abc"] } },
+        },
       },
     });
     const resolved = resolveProjectSettings(settings, projectId);
     expect(resolved.settings.defaultAutoPull).toBe(false);
     expect(resolved.settings.sidebarAutoSettleAfterDays).toBeNull();
     expect(resolved.settings.defaultThreadEnvMode).toBe(settings.defaultThreadEnvMode);
+    expect(resolved.settings.mentionIndex).toEqual({
+      jira: { spaces: ["PROJ"] },
+      figma: { fileKeys: ["Abc"] },
+    });
     expect(resolved.sources.defaultAutoPull).toBe("project");
     expect(resolved.sources.sidebarAutoSettleAfterDays).toBe("project");
+    expect(resolved.sources.mentionIndex).toBe("project");
     expect(resolved.sources.defaultThreadEnvMode).toBe("environment");
     expect(resolveProjectSettings(settings, otherProjectId).settings.defaultAutoPull).toBe(true);
+    expect(resolveProjectSettings(settings, otherProjectId).settings.mentionIndex).toEqual({
+      jira: { spaces: ["ENV"] },
+    });
   });
 
   it("honours the aggregate's own fields only until the server has folded them", () => {

@@ -15,14 +15,26 @@ import type {
 import {
   formatComposerContextHref,
   parseComposerContextHref,
+  parseExternalComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
 import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+
+function parseContextHref(href: string, records?: ReadonlyArray<ComposerContextRecord>) {
+  const opaque = parseComposerContextHref(href);
+  if (opaque) return opaque;
+  // Real-URL chips only when the message carries a matching context record.
+  if (!records || records.length === 0) return null;
+  const external = parseExternalComposerContextHref(href);
+  return external && records.some((record) => record.contextId === external.contextId)
+    ? external
+    : null;
+}
 
 export function enrichedContextLinkPresentation(
   href: string,
   records?: ReadonlyArray<ComposerContextRecord>,
 ): { accent?: string; icon: ContextChipIconRef; label?: string } | undefined {
-  const reference = parseComposerContextHref(href);
+  const reference = parseContextHref(href, records);
   if (!reference) return undefined;
   const record = records?.find((candidate) => candidate.contextId === reference.contextId);
   const presentation =

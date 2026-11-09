@@ -66,6 +66,7 @@ import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLin
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
+  parseExternalComposerContextHref,
   collectComposerContextReferences,
   replaceComposerContextReferences,
   formatComposerContextReference,
@@ -2345,10 +2346,22 @@ function UserMessageContent(props: UserMessageContentProps) {
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {
     const available = props.context?.records.some((record) => record.contextId === ref.contextId);
+    // Keep plain URL markdown when there is no matching record (not a chip).
+    if (!available && ref.url !== undefined) return ref.source;
     return `[${ref.label}${available ? "" : " (unavailable)"}](t3-context://v1/${ref.kind}/${ref.contextId})`;
   });
+  const parseContextHref = (href: string) => {
+    const opaque = parseComposerContextHref(href);
+    if (opaque) return opaque;
+    const records = props.context?.records;
+    if (!records || records.length === 0) return null;
+    const external = parseExternalComposerContextHref(href);
+    return external && records.some((record) => record.contextId === external.contextId)
+      ? external
+      : null;
+  };
   const onLinkPress = (href: string) => {
-    const reference = parseComposerContextHref(href);
+    const reference = parseContextHref(href);
     if (!reference) return props.linkHandlers.onLinkPress?.(href);
     const record = props.context?.records.find(
       (record) => record.contextId === reference.contextId,
@@ -2387,7 +2400,7 @@ function UserMessageContent(props: UserMessageContentProps) {
           ...props.linkHandlers,
           onLinkPress,
           fileContextMenu: (href) => {
-            const reference = parseComposerContextHref(href);
+            const reference = parseContextHref(href);
             if (!reference) return props.linkHandlers.fileContextMenu(href);
             const record = props.context?.records.find(
               (item) => item.contextId === reference.contextId,
@@ -2401,7 +2414,7 @@ function UserMessageContent(props: UserMessageContentProps) {
             };
           },
           onFileContextMenuAction: (href, actionId) => {
-            const reference = parseComposerContextHref(href);
+            const reference = parseContextHref(href);
             if (!reference) return props.linkHandlers.onFileContextMenuAction(href, actionId);
             if (actionId === "open-context") return onLinkPress(href);
             const record = props.context?.records.find(
@@ -2412,6 +2425,7 @@ function UserMessageContent(props: UserMessageContentProps) {
                 formatComposerContextReference({
                   ...reference,
                   label: record.label,
+                  ...("url" in record ? { url: record.url } : {}),
                 }),
                 {
                   version: 1,

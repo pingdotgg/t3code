@@ -1014,6 +1014,43 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const MentionIndexJiraSettings = Schema.Struct({
+  serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  spaces: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).check(Schema.isMaxLength(50)),
+  ),
+  jqlExtra: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(2_048))),
+});
+export type MentionIndexJiraSettings = typeof MentionIndexJiraSettings.Type;
+
+export const MentionIndexFigmaProjectRef = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+});
+export type MentionIndexFigmaProjectRef = typeof MentionIndexFigmaProjectRef.Type;
+
+/** Figma MCP + selected projects/files for `@figma:` indexing. */
+export const MentionIndexFigmaSettings = Schema.Struct({
+  serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+  /** Figma team projects whose files are expanded into the index on sync. */
+  projects: Schema.optionalKey(
+    Schema.Array(MentionIndexFigmaProjectRef).check(Schema.isMaxLength(50)),
+  ),
+  /** Extra file keys (from pasted design links) merged with project files. */
+  fileKeys: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+      Schema.isMaxLength(50),
+    ),
+  ),
+});
+export type MentionIndexFigmaSettings = typeof MentionIndexFigmaSettings.Type;
+
+export const MentionIndexSettings = Schema.Struct({
+  jira: Schema.optionalKey(MentionIndexJiraSettings),
+  figma: Schema.optionalKey(MentionIndexFigmaSettings),
+});
+export type MentionIndexSettings = typeof MentionIndexSettings.Type;
+
 export const SourceControlWritingStyleMode = Schema.Literals([
   "repo_conventions",
   "conventional_commits",
@@ -1169,6 +1206,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleKeepPullRequests",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  "mentionIndex",
   "speechProjectCustomWords",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
@@ -1207,6 +1245,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  mentionIndex: Schema.optionalKey(MentionIndexSettings),
   speechProjectCustomWords: Schema.optionalKey(SpeechCustomWords),
   providerInstances: Schema.optionalKey(
     Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
@@ -1443,6 +1482,11 @@ export const ServerSettings = Schema.Struct({
    * and tasks on another machine; tasks already running there finish.
    */
   linkedEnvironmentsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Beta: disk-backed mention index for `#` (PRs + issues), `@jira:` / `@figma:` / `@issue:` /
+   * `@thread:` filters, and pasted Jira/Figma/issue chips. Off keeps classic `@` / `#` menus.
+   */
+  mentionIndexEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Beta: Claude and Codex predict the next prompt after completed turns. Codex follows a change at once; open Claude threads after they restart. */
   promptSuggestionsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleKeepPullRequests: Schema.Boolean.pipe(
@@ -1526,6 +1570,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  mentionIndex: MentionIndexSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1862,6 +1907,7 @@ export const ServerSettingsPatch = Schema.Struct({
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),
   linkedEnvironmentsEnabled: Schema.optionalKey(Schema.Boolean),
+  mentionIndexEnabled: Schema.optionalKey(Schema.Boolean),
   promptSuggestionsEnabled: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
@@ -1903,6 +1949,39 @@ export const ServerSettingsPatch = Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),
       otlpMetricsUrl: Schema.optionalKey(TrimmedString),
       otlpLogsUrl: Schema.optionalKey(TrimmedString),
+    }),
+  ),
+  mentionIndex: Schema.optionalKey(
+    Schema.Struct({
+      jira: Schema.optionalKey(
+        Schema.Struct({
+          serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+          spaces: Schema.optionalKey(
+            Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(64))).check(
+              Schema.isMaxLength(50),
+            ),
+          ),
+          jqlExtra: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(2_048))),
+        }),
+      ),
+      figma: Schema.optionalKey(
+        Schema.Struct({
+          serverName: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(128))),
+          projects: Schema.optionalKey(
+            Schema.Array(
+              Schema.Struct({
+                id: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+                name: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+              }),
+            ).check(Schema.isMaxLength(50)),
+          ),
+          fileKeys: Schema.optionalKey(
+            Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(128))).check(
+              Schema.isMaxLength(50),
+            ),
+          ),
+        }),
+      ),
     }),
   ),
   /** Merges per host, replacing patched fields whole; redaction markers retain secrets, empty secrets remove them. A non-empty token map keeps the saved tokens of hosts it omits; an empty map clears them all. */

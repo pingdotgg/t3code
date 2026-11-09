@@ -1259,6 +1259,9 @@ export interface ComposerSendContents {
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
   readonly environmentContexts: ReadonlyArray<EnvironmentContextRecord>;
+  readonly jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  readonly figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
+  readonly issueContexts?: ReadonlyArray<import("@t3tools/contracts").IssueContextRecord>;
 }
 
 /**
@@ -1279,6 +1282,9 @@ export function snapshotComposerSend(contents: ComposerSendContents) {
     reviewComments: [...contents.reviewComments],
     threadContexts: [...contents.threadContexts],
     environmentContexts: [...contents.environmentContexts],
+    jiraContexts: [...(contents.jiraContexts ?? [])],
+    figmaContexts: [...(contents.figmaContexts ?? [])],
+    issueContexts: [...(contents.issueContexts ?? [])],
     messageText: contents.terminalContexts
       .filter((context) => !terminalContexts.includes(context))
       .reduce(

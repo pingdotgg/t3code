@@ -564,6 +564,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasCompactableConversation: props.hasCompactableConversation,
     onChangeDraftMessage: props.onChangeDraftMessage,
     offersUsageLimits: usageLimitsOffered,
+    mentionIndexEnabled: props.serverConfig?.settings.mentionIndexEnabled === true,
     onUsageLimits:
       usageLimitsOffered && draftAttachments.length === 0 ? openUsageLimits : undefined,
     modelOptions: mentionModelOptions,
@@ -843,7 +844,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         {props.draftControls}
         {!isSubmissionLocked &&
         composerMenu.trigger &&
-        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
+        (composerMenu.items.length > 0 ||
+          composerMenu.trigger.kind === "pull-request" ||
+          composerMenu.trigger.kind === "hash" ||
+          composerMenu.trigger.kind === "jira" ||
+          composerMenu.trigger.kind === "figma" ||
+          composerMenu.trigger.kind === "issue" ||
+          composerMenu.trigger.kind === "thread") ? (
           <ComposerPopoverAnchor>
             <ComposerCommandPopover
               items={composerMenu.items}

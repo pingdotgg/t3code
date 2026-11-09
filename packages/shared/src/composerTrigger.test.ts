@@ -74,6 +74,79 @@ describe("detectComposerTrigger", () => {
       query: text.slice(1),
     });
   });
+
+  it("keeps classic bare @ and # when the mention-index labs flag is off", () => {
+    expect(detectComposerTrigger("@jira:login", "@jira:login".length)).toEqual({
+      kind: "path",
+      query: "jira:login",
+      rangeStart: 0,
+      rangeEnd: "@jira:login".length,
+    });
+    expect(detectComposerTrigger("#12", "#12".length)).toEqual({
+      kind: "pull-request",
+      query: "12",
+      rangeStart: 0,
+      rangeEnd: "#12".length,
+    });
+  });
+
+  it("treats @kind: as type filters and # as PRs+issues when mention index is on", () => {
+    const on = { mentionIndexEnabled: true } as const;
+    expect(detectComposerTrigger("@jira:login", "@jira:login".length, on)).toEqual({
+      kind: "jira",
+      query: "login",
+      rangeStart: 0,
+      rangeEnd: "@jira:login".length,
+    });
+    expect(detectComposerTrigger("@figma:checkout", "@figma:checkout".length, on)).toEqual({
+      kind: "figma",
+      query: "checkout",
+      rangeStart: 0,
+      rangeEnd: "@figma:checkout".length,
+    });
+    expect(detectComposerTrigger("@file:src/", "@file:src/".length, on)).toEqual({
+      kind: "file",
+      query: "src/",
+      rangeStart: 0,
+      rangeEnd: "@file:src/".length,
+    });
+    expect(detectComposerTrigger("@thread:fix", "@thread:fix".length, on)).toEqual({
+      kind: "thread",
+      query: "fix",
+      rangeStart: 0,
+      rangeEnd: "@thread:fix".length,
+    });
+    expect(detectComposerTrigger("@pr:12", "@pr:12".length, on)).toEqual({
+      kind: "pull-request",
+      query: "12",
+      rangeStart: 0,
+      rangeEnd: "@pr:12".length,
+    });
+    expect(detectComposerTrigger("@issue:42", "@issue:42".length, on)).toEqual({
+      kind: "issue",
+      query: "42",
+      rangeStart: 0,
+      rangeEnd: "@issue:42".length,
+    });
+    expect(detectComposerTrigger("@src/", "@src/".length, on)).toEqual({
+      kind: "path",
+      query: "src/",
+      rangeStart: 0,
+      rangeEnd: "@src/".length,
+    });
+    expect(detectComposerTrigger("@", "@".length, on)).toEqual({
+      kind: "path",
+      query: "",
+      rangeStart: 0,
+      rangeEnd: 1,
+    });
+    expect(detectComposerTrigger("#12", "#12".length, on)).toEqual({
+      kind: "hash",
+      query: "12",
+      rangeStart: 0,
+      rangeEnd: "#12".length,
+    });
+  });
 });
 
 describe("serializeComposerFileLink", () => {

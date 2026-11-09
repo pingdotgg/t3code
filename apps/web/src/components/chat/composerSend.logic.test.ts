@@ -2,12 +2,14 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { describe, expect, it } from "vite-plus/test";
 import { formatInlineContextReference } from "../../lib/composerContextReferences";
-import { threadContextReference } from "../../lib/composerContextRecords";
+import { jiraContextReference, threadContextReference } from "../../lib/composerContextRecords";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
+import { jiraContextRecord } from "@t3tools/shared/composerContextExternalLinks";
 import {
   approvalRedirectNotice,
   loadBalancingSendWarning,
   multipleModelSendBlock,
+  referencedJiraContexts,
   referencedThreadContexts,
 } from "./composerSend.logic";
 
@@ -15,6 +17,16 @@ const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");
 const localThread = threadContextRecord(scopeThreadRef(local, ThreadId.make("a")), "Local");
 const remoteThread = threadContextRecord(scopeThreadRef(remote, ThreadId.make("b")), "Remote");
+const keepIssue = jiraContextRecord({
+  key: "KEEP-1",
+  summary: "Keep me",
+  url: "https://acme.atlassian.net/browse/KEEP-1",
+});
+const dropIssue = jiraContextRecord({
+  key: "DROP-1",
+  summary: "Drop me",
+  url: "https://acme.atlassian.net/browse/DROP-1",
+});
 
 describe("referencedThreadContexts", () => {
   it("keeps only the attached threads the prompt still links", () => {
@@ -22,6 +34,15 @@ describe("referencedThreadContexts", () => {
     expect(
       referencedThreadContexts({ prompt, threadContexts: [localThread, remoteThread] }),
     ).toEqual([remoteThread]);
+  });
+});
+
+describe("referencedJiraContexts", () => {
+  it("keeps only the attached Jira issues the prompt still links", () => {
+    const prompt = `see ${formatInlineContextReference(jiraContextReference(keepIssue))}`;
+    expect(referencedJiraContexts({ prompt, jiraContexts: [keepIssue, dropIssue] })).toEqual([
+      keepIssue,
+    ]);
   });
 });
 

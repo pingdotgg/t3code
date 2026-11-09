@@ -37,6 +37,10 @@ const DEFINITIONS = [
     capabilities: { details: "popover", expanded: "none", defaultDraftView: "compact" },
   },
   {
+    kind: "pull-request",
+    capabilities: { details: "popover", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
     kind: "mention",
     capabilities: { details: "none", expanded: "none", defaultDraftView: "compact" },
   },
@@ -50,6 +54,18 @@ const DEFINITIONS = [
   },
   {
     kind: "environment",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
+    kind: "jira",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
+    kind: "figma",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
+  {
+    kind: "issue",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;

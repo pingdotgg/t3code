@@ -800,7 +800,7 @@ function toDetail(raw: DetailFields): GitHubPullRequestDetail {
   };
 }
 
-const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
+export const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodeFileEntry = Schema.decodeUnknownExit(RawPullRequestFileSchema);
 const decodeRow = Schema.decodeUnknownExit(PullRequestRow);

@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { jiraContextRecord } from "@t3tools/shared/composerContextExternalLinks";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   DraftId,
@@ -7,6 +8,8 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
 } from "../../composerDraftStore";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
+import { jiraContextReference } from "../../lib/composerContextRecords";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -119,6 +122,25 @@ describe("queued message file edits", () => {
       "discarded",
     );
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Separate draft");
+    expect(store.getComposerDraft(editTarget)).toBeNull();
+  });
+
+  it("moves referenced Jira context with a kept queued edit", () => {
+    const store = useComposerDraftStore.getState();
+    const issue = jiraContextRecord({
+      key: "T3-9",
+      summary: "Carry me",
+      url: "https://acme.atlassian.net/browse/T3-9",
+    });
+    const prompt = `fix ${formatInlineContextReference(jiraContextReference(issue))}`;
+    store.setPrompt(editTarget, prompt);
+    store.addJiraContexts(editTarget, [issue]);
+    expect(
+      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
+    ).toBe("kept");
+    const recovered = store.getComposerDraft(threadTarget);
+    expect(recovered?.jiraContexts).toEqual([issue]);
+    expect(recovered?.prompt).toContain(issue.url);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 });

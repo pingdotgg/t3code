@@ -1,14 +1,51 @@
-import type { EnvironmentId, ThreadContextRecord } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  FigmaContextRecord,
+  IssueContextRecord,
+  JiraContextRecord,
+  ThreadContextRecord,
+} from "@t3tools/contracts";
 import { collectInlineContextIds } from "../../lib/composerContextReferences";
+
+function referencedContextRecords<T extends { readonly contextId: string }>(
+  prompt: string,
+  records: ReadonlyArray<T>,
+): ReadonlyArray<T> {
+  if (records.length === 0) return [];
+  const referenced = new Set(collectInlineContextIds(prompt));
+  return records.filter((record) => referenced.has(record.contextId));
+}
 
 /** Attached threads the prompt still links to; replacing linked text leaves stale records. */
 export function referencedThreadContexts(draft: {
   readonly prompt: string;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
 }): ReadonlyArray<ThreadContextRecord> {
-  if (draft.threadContexts.length === 0) return [];
-  const referenced = new Set(collectInlineContextIds(draft.prompt));
-  return draft.threadContexts.filter((record) => referenced.has(record.contextId));
+  return referencedContextRecords(draft.prompt, draft.threadContexts);
+}
+
+/** Attached Jira issues the prompt still links to. */
+export function referencedJiraContexts(draft: {
+  readonly prompt: string;
+  readonly jiraContexts: ReadonlyArray<JiraContextRecord>;
+}): ReadonlyArray<JiraContextRecord> {
+  return referencedContextRecords(draft.prompt, draft.jiraContexts);
+}
+
+/** Attached Figma files the prompt still links to. */
+export function referencedFigmaContexts(draft: {
+  readonly prompt: string;
+  readonly figmaContexts: ReadonlyArray<FigmaContextRecord>;
+}): ReadonlyArray<FigmaContextRecord> {
+  return referencedContextRecords(draft.prompt, draft.figmaContexts);
+}
+
+/** Attached GitHub issues the prompt still links to. */
+export function referencedIssueContexts(draft: {
+  readonly prompt: string;
+  readonly issueContexts: ReadonlyArray<IssueContextRecord>;
+}): ReadonlyArray<IssueContextRecord> {
+  return referencedContextRecords(draft.prompt, draft.issueContexts);
 }
 
 /** Why a send waits for the user to pick a machine when no machine was chosen automatically. */

@@ -19,6 +19,8 @@ import type {
   OrchestrationMessageContext,
   PreviewAnnotationContextRecord,
   PreviewAnnotationPayload,
+  PullRequestContextMetadata,
+  PullRequestContextRecord,
   ReviewCommentContextRecord,
   TerminalContextRecord,
   ThreadContextRecord,
@@ -81,7 +83,7 @@ export function reviewCommentContextLabel(comment: ReviewCommentPresentation): s
 }
 
 export function isPullRequestSummaryContext(comment: ReviewCommentPresentation): boolean {
-  if (comment.pullRequest !== undefined) return true;
+  // File-specific comments may carry pullRequest metadata; require the summary shape.
   return (
     comment.sectionId.startsWith("pull-request:") &&
     comment.diff.trim().length === 0 &&
@@ -135,8 +137,60 @@ export function terminalContextReference(context: TerminalContextDraft): Compose
   };
 }
 
-export function reviewCommentContextId(commentId: string): ComposerContextId {
+function reviewCommentContextId(commentId: string): ComposerContextId {
   return toKindScopedComposerContextId("review-comment", commentId);
+}
+
+function pullRequestContextId(producerId: string): ComposerContextId {
+  return toKindScopedComposerContextId("pull-request", producerId);
+}
+
+function pullRequestContextLabel(pullRequest: PullRequestContextMetadata): string {
+  return `#${pullRequest.number}`;
+}
+
+function pullRequestContextRecord(
+  pullRequest: PullRequestContextMetadata,
+  producerId: string = `pr-reference:${pullRequest.url}`,
+): PullRequestContextRecord {
+  return {
+    version: 1,
+    contextId: pullRequestContextId(producerId),
+    kind: "pull-request",
+    label: sanitizeComposerContextLabel(pullRequestContextLabel(pullRequest), "pull-request"),
+    number: pullRequest.number,
+    title: pullRequest.title,
+    url: pullRequest.url,
+    headBranch: pullRequest.headBranch,
+    baseBranch: pullRequest.baseBranch,
+    state: pullRequest.state,
+    isDraft: pullRequest.isDraft,
+  };
+}
+
+function pullRequestContextReference(
+  pullRequest: PullRequestContextMetadata,
+  producerId: string = `pr-reference:${pullRequest.url}`,
+): ComposerContextReference {
+  return {
+    kind: "pull-request",
+    contextId: pullRequestContextId(producerId),
+    label: pullRequestContextLabel(pullRequest),
+    url: pullRequest.url,
+  };
+}
+
+/** Upgrade legacy review-comment PR summaries to the first-class pull-request kind. */
+function upgradePullRequestSummaryRecord(record: ComposerContextRecord): ComposerContextRecord {
+  if (record.kind !== "review-comment") return record;
+  const comment = record as ReviewCommentContextRecord;
+  if (!isPullRequestSummaryContext(comment) || comment.pullRequest === undefined) return record;
+  // Keep contextId so existing t3-context:// links in message text still resolve.
+  return {
+    ...pullRequestContextRecord(comment.pullRequest),
+    contextId: comment.contextId,
+    label: comment.label,
+  };
 }
 
 export function previewAnnotationContextId(annotationId: string): ComposerContextId {
@@ -146,11 +200,22 @@ export function previewAnnotationContextId(annotationId: string): ComposerContex
 export function reviewCommentContextReference(
   comment: ReviewCommentContext,
 ): ComposerContextReference {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextReference(comment.pullRequest, comment.id);
+  }
   return {
     kind: "review-comment",
     contextId: reviewCommentContextId(comment.id),
     label: reviewCommentContextLabel(comment),
   };
+}
+
+/** Draft lookup id for a review comment, including pull-request summary chips. */
+export function reviewCommentDraftContextId(comment: ReviewCommentContext): ComposerContextId {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextId(comment.id);
+  }
+  return reviewCommentContextId(comment.id);
 }
 
 export function previewAnnotationContextReference(
@@ -172,6 +237,24 @@ export function environmentContextReference(
   record: EnvironmentContextRecord,
 ): ComposerContextReference {
   return { kind: "environment", contextId: record.contextId, label: record.label };
+}
+
+export function jiraContextReference(
+  record: import("@t3tools/contracts").JiraContextRecord,
+): ComposerContextReference {
+  return { kind: "jira", contextId: record.contextId, label: record.label, url: record.url };
+}
+
+export function figmaContextReference(
+  record: import("@t3tools/contracts").FigmaContextRecord,
+): ComposerContextReference {
+  return { kind: "figma", contextId: record.contextId, label: record.label, url: record.url };
+}
+
+export function issueContextReference(
+  record: import("@t3tools/contracts").IssueContextRecord,
+): ComposerContextReference {
+  return { kind: "issue", contextId: record.contextId, label: record.label, url: record.url };
 }
 
 export function environmentContextRecord(
@@ -206,7 +289,10 @@ export function terminalContextRecord(context: TerminalContextDraft): TerminalCo
 
 export function reviewCommentContextRecord(
   comment: ReviewCommentContext,
-): ReviewCommentContextRecord {
+): ReviewCommentContextRecord | PullRequestContextRecord {
+  if (isPullRequestSummaryContext(comment) && comment.pullRequest !== undefined) {
+    return pullRequestContextRecord(comment.pullRequest, comment.id);
+  }
   return {
     version: 1,
     contextId: reviewCommentContextId(comment.id),
@@ -331,6 +417,9 @@ export function buildMessageContext(input: {
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   threadContexts?: ReadonlyArray<ThreadContextRecord>;
   environmentContexts?: ReadonlyArray<EnvironmentContextRecord>;
+  jiraContexts?: ReadonlyArray<import("@t3tools/contracts").JiraContextRecord>;
+  figmaContexts?: ReadonlyArray<import("@t3tools/contracts").FigmaContextRecord>;
+  issueContexts?: ReadonlyArray<import("@t3tools/contracts").IssueContextRecord>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
   const screenshotAttachmentIds = new Set(
@@ -343,6 +432,9 @@ export function buildMessageContext(input: {
     ...input.reviewComments.map(reviewCommentContextRecord),
     ...(input.threadContexts ?? []),
     ...(input.environmentContexts ?? []),
+    ...(input.jiraContexts ?? []),
+    ...(input.figmaContexts ?? []),
+    ...(input.issueContexts ?? []),
     ...input.previewAnnotations.map((annotation) =>
       previewAnnotationContextRecord(annotation, {
         screenshotContextId: screenshotAttachmentIds.has(annotation.id) ? annotation.id : undefined,
@@ -408,10 +500,27 @@ export function resolveUserMessageContext(message: {
   const resolved = message.context
     ? { text: message.text, records: message.context.records }
     : upgradeLegacyContextMessage(message.text);
+  const upgradedIds = new Set<string>();
+  const records = resolved.records.map((record) => {
+    const upgraded = upgradePullRequestSummaryRecord(record);
+    if (upgraded !== record && upgraded.kind === "pull-request") {
+      upgradedIds.add(record.contextId);
+    }
+    return upgraded;
+  });
+  // Legacy PR summaries keep review-comment hrefs; rewrite kind so chips resolve.
+  const text =
+    upgradedIds.size === 0
+      ? resolved.text
+      : resolved.text.replace(
+          /\]\(t3-context:\/\/v1\/review-comment\/([^)\s]+)\)/g,
+          (match, contextId: string) =>
+            upgradedIds.has(contextId) ? `](t3-context://v1/pull-request/${contextId})` : match,
+        );
   return {
-    text: resolved.text,
-    records: resolved.records,
-    recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
+    text,
+    records,
+    recordsById: new Map(records.map((record) => [record.contextId, record])),
   };
 }
 

@@ -37,7 +37,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
   ProviderAuthCompleteInput,
@@ -216,6 +216,17 @@ import {
   PullRequestUnavailableError,
   PullRequestUpdateInput,
 } from "./pullRequest.ts";
+import {
+  MentionIndexFigmaBrowseInput,
+  MentionIndexFigmaBrowseTeamsResult,
+  MentionIndexFigmaListProjectsInput,
+  MentionIndexFigmaListProjectsResult,
+  MentionIndexProviderId,
+  MentionIndexSearchInput,
+  MentionIndexSearchResult,
+  MentionIndexThumbnailInput,
+  MentionIndexThumbnailResult,
+} from "./mentionIndex.ts";
 import {
   RelayClientInstallFailedError,
   RelayClientInstallProgressEventSchema,
@@ -564,6 +575,11 @@ export const WS_METHODS = {
 
   pullRequestsList: "pullRequests.list",
   pullRequestsListStats: "pullRequests.listStats",
+  mentionsSearch: "mentions.search",
+  mentionsEnsureIndexed: "mentions.ensureIndexed",
+  mentionsThumbnail: "mentions.thumbnail",
+  mentionsFigmaListTeams: "mentions.figmaListTeams",
+  mentionsFigmaListProjects: "mentions.figmaListProjects",
   pullRequestsFilterOptions: "pullRequests.filterOptions",
   pullRequestsSummary: "pullRequests.summary",
   pullRequestsRouting: "pullRequests.routing",
@@ -1035,6 +1051,45 @@ const WsPullRequestsListRpc = Rpc.make(WS_METHODS.pullRequestsList, {
   payload: PullRequestListInput,
   success: PullRequestListResult,
   error: PullRequestRpcError,
+});
+
+const MentionIndexRpcError = Schema.Union([EnvironmentAuthorizationError]);
+
+const WsMentionsSearchRpc = Rpc.make(WS_METHODS.mentionsSearch, {
+  payload: MentionIndexSearchInput,
+  success: MentionIndexSearchResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsEnsureIndexedRpc = Rpc.make(WS_METHODS.mentionsEnsureIndexed, {
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    /** When set, fetch this exact presence into the index (number, key, or URL). */
+    query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+    providers: Schema.optionalKey(
+      Schema.Array(MentionIndexProviderId).check(Schema.isMaxLength(8)),
+    ),
+  }),
+  success: MentionIndexSearchResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsThumbnailRpc = Rpc.make(WS_METHODS.mentionsThumbnail, {
+  payload: MentionIndexThumbnailInput,
+  success: MentionIndexThumbnailResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsFigmaListTeamsRpc = Rpc.make(WS_METHODS.mentionsFigmaListTeams, {
+  payload: MentionIndexFigmaBrowseInput,
+  success: MentionIndexFigmaBrowseTeamsResult,
+  error: MentionIndexRpcError,
+});
+
+const WsMentionsFigmaListProjectsRpc = Rpc.make(WS_METHODS.mentionsFigmaListProjects, {
+  payload: MentionIndexFigmaListProjectsInput,
+  success: MentionIndexFigmaListProjectsResult,
+  error: MentionIndexRpcError,
 });
 
 // GitHub line counts cost 40-60% of the listing read; fetch separately so rows arrive first.
@@ -2132,6 +2187,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsPullRequestsListRpc,
+  WsMentionsSearchRpc,
+  WsMentionsEnsureIndexedRpc,
+  WsMentionsThumbnailRpc,
+  WsMentionsFigmaListTeamsRpc,
+  WsMentionsFigmaListProjectsRpc,
   WsPullRequestsListStatsRpc,
   WsPullRequestsFilterOptionsRpc,
   WsPullRequestsSummaryRpc,

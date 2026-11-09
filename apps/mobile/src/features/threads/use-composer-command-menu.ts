@@ -21,7 +21,13 @@ import {
   formatComposerContextReference,
   threadContextRecord,
 } from "@t3tools/shared/composerContextReferences";
-import { environmentComposerContext, pullRequestComposerContext } from "../../lib/composerContext";
+import {
+  environmentComposerContext,
+  figmaComposerContext,
+  issueComposerContext,
+  jiraComposerContext,
+  pullRequestComposerContext,
+} from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
   getComposerDraftSnapshot,
@@ -35,6 +41,14 @@ import {
   serializeComposerFileLink,
   type ComposerTrigger,
 } from "@t3tools/shared/composerTrigger";
+import { mentionSearchInput } from "@t3tools/client-runtime/state/mentions";
+import {
+  composerPullRequestsFromLinks,
+  withLinkedComposerPullRequestsFirst,
+} from "@t3tools/shared/composerPullRequestMatches";
+import { composerPullRequests, mentionIndexEnvironment } from "../../state/pull-requests";
+import { useEnvironmentQuery } from "../../state/query";
+import { useDebouncedValue } from "../../state/queries";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -259,6 +273,7 @@ export function useComposerCommandMenu({
   hasCompactableConversation,
   offersUsageLimits = false,
   enabled = true,
+  mentionIndexEnabled = false,
   onChangeDraftMessage,
   onUsageLimits,
   modelOptions,
@@ -283,6 +298,7 @@ export function useComposerCommandMenu({
   readonly hasCompactableConversation: boolean;
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
+  readonly mentionIndexEnabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onUsageLimits?: () => void;
   readonly modelOptions?: ReadonlyArray<ModelOption>;
@@ -338,17 +354,22 @@ export function useComposerCommandMenu({
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return detectComposerTrigger(draftMessage, selection.end, { mentionIndexEnabled });
   })();
+  const wantsThreads = trigger?.kind === "path" || trigger?.kind === "thread";
+  const wantsFiles = trigger?.kind === "path" || trigger?.kind === "file";
+  const wantsPullRequests = trigger?.kind === "pull-request" || trigger?.kind === "hash";
+  const wantsIssues =
+    mentionIndexEnabled && (trigger?.kind === "issue" || trigger?.kind === "hash");
   const pathSearch = useComposerPathSearch({
     environmentId,
-    cwd: trigger?.kind === "path" ? projectCwd : null,
-    query: trigger?.kind === "path" ? trigger.query : null,
+    cwd: wantsFiles ? projectCwd : null,
+    query: wantsFiles ? (trigger?.query ?? null) : null,
   });
   // Mounts older settled threads matching the mention, which shells may leave out.
   useThreadSearch(
-    trigger?.kind === "path" && environmentId ? [environmentId] : [],
-    trigger?.kind === "path" ? trigger.query : "",
+    wantsThreads && environmentId ? [environmentId] : [],
+    wantsThreads ? (trigger?.query ?? "") : "",
     { titlesOnly: true },
   );
   const pullRequestSearch = useComposerPullRequestSearch({
@@ -356,16 +377,274 @@ export function useComposerCommandMenu({
     projectId: pullRequestProjectId,
     repository: pullRequestRepository,
     threadPullRequests,
-    query: trigger?.kind === "pull-request" ? trigger.query : null,
+    // Classic live list is empty when the mention index owns PR suggestions.
+    query: mentionIndexEnabled || !wantsPullRequests ? null : (trigger?.query ?? null),
   });
+  const pullRequestTriggerQuery = wantsPullRequests ? (trigger?.query ?? null) : null;
+  const debouncedPullRequestTriggerQuery = useDebouncedValue(pullRequestTriggerQuery, 180);
+  const prMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsPullRequests ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      pullRequestTriggerQuery !== debouncedPullRequestTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedPullRequestTriggerQuery ?? "",
+            limit: 12,
+            providers: ["pull-request"],
+          }),
+        }),
+  );
+  const pullRequestTriggerNumber = (() => {
+    if (!mentionIndexEnabled || !wantsPullRequests || (trigger?.query.length ?? 0) === 0) {
+      return null;
+    }
+    const number = Number(trigger?.query ?? "");
+    return Number.isSafeInteger(number) && number > 0 ? number : null;
+  })();
+  const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
+  const settledPullRequestNumber =
+    pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
+  const indexHasExactPullRequest =
+    settledPullRequestNumber !== null &&
+    prMentionIndexLookup.data?.hits.some(
+      (hit) =>
+        hit.pullRequest !== undefined &&
+        hit.pullRequest.projectId === pullRequestProjectId &&
+        hit.pullRequest.repository.trim().toLowerCase() ===
+          pullRequestRepository?.trim().toLowerCase() &&
+        hit.pullRequest.number === settledPullRequestNumber,
+    ) === true;
+  const exactPullRequestLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      settledPullRequestNumber === null ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      pullRequestRepository === null ||
+      indexHasExactPullRequest
+      ? null
+      : composerPullRequests.detail({
+          environmentId,
+          input: {
+            projectId: pullRequestProjectId,
+            repository: pullRequestRepository,
+            number: settledPullRequestNumber,
+          },
+        }),
+  );
+  const jiraTriggerQuery = trigger?.kind === "jira" ? trigger.query : null;
+  const debouncedJiraTriggerQuery = useDebouncedValue(jiraTriggerQuery, 180);
+  const jiraMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      trigger?.kind !== "jira" ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      jiraTriggerQuery !== debouncedJiraTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedJiraTriggerQuery ?? "",
+            limit: 12,
+            providers: ["jira"],
+          }),
+        }),
+  );
+  const figmaTriggerQuery = trigger?.kind === "figma" ? trigger.query : null;
+  const debouncedFigmaTriggerQuery = useDebouncedValue(figmaTriggerQuery, 180);
+  const figmaMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      trigger?.kind !== "figma" ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      figmaTriggerQuery !== debouncedFigmaTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedFigmaTriggerQuery ?? "",
+            limit: 24,
+            providers: ["figma"],
+          }),
+        }),
+  );
+  const issueTriggerQuery = wantsIssues ? (trigger?.query ?? null) : null;
+  const debouncedIssueTriggerQuery = useDebouncedValue(issueTriggerQuery, 180);
+  const issueMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsIssues ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      issueTriggerQuery !== debouncedIssueTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedIssueTriggerQuery ?? "",
+            limit: 12,
+            providers: ["issue"],
+          }),
+        }),
+  );
+  const threadTriggerQuery = wantsThreads ? (trigger?.query ?? null) : null;
+  const debouncedThreadTriggerQuery = useDebouncedValue(threadTriggerQuery, 180);
+  const threadMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsThreads ||
+      environmentId === null ||
+      pullRequestProjectId === null ||
+      threadTriggerQuery !== debouncedThreadTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedThreadTriggerQuery ?? "",
+            limit: 12,
+            providers: ["thread"],
+          }),
+        }),
+  );
 
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
 
-    if (trigger.kind === "pull-request") {
+    if (trigger.kind === "jira") {
+      return (jiraMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.jira === undefined) return [];
+        return [
+          {
+            id: `jira:${hit.jira.key}`,
+            type: "jira" as const,
+            key: hit.jira.key,
+            url: hit.jira.url,
+            summary: hit.jira.summary,
+            label: hit.label,
+            description:
+              hit.jira.status !== undefined
+                ? `${hit.jira.status} · ${hit.description}`
+                : hit.description,
+          },
+        ];
+      });
+    }
+
+    if (trigger.kind === "figma") {
+      return (figmaMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.figma === undefined) return [];
+        return [
+          {
+            id: `figma:${hit.figma.fileKey}`,
+            type: "figma" as const,
+            fileKey: hit.figma.fileKey,
+            url: hit.figma.url,
+            name: hit.figma.name,
+            hasThumbnail: hit.figma.hasThumbnail,
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
+    }
+
+    const issueItems = (): ComposerCommandItem[] =>
+      (issueMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.issue === undefined) return [];
+        return [
+          {
+            id: `issue:${hit.issue.repository.toLowerCase()}#${hit.issue.number}`,
+            type: "issue" as const,
+            number: hit.issue.number,
+            title: hit.issue.title,
+            url: hit.issue.url,
+            repository: hit.issue.repository,
+            state: hit.issue.state,
+            label: hit.label,
+            description: `${hit.issue.state} · ${hit.issue.repository} · ${hit.description}`,
+          },
+        ];
+      });
+
+    const pullRequestItems = (): ComposerCommandItem[] => {
+      if (mentionIndexEnabled) {
+        if (pullRequestProjectId === null || pullRequestRepository === null) return [];
+        const exactPullRequest =
+          exactPullRequestLookup.data?.number === pullRequestTriggerNumber
+            ? [
+                {
+                  projectId: pullRequestProjectId,
+                  repository: pullRequestRepository,
+                  number: exactPullRequestLookup.data.number,
+                  title: exactPullRequestLookup.data.title,
+                  url: exactPullRequestLookup.data.url,
+                  headBranch: exactPullRequestLookup.data.headBranch,
+                  baseBranch: exactPullRequestLookup.data.baseBranch,
+                  state: exactPullRequestLookup.data.state,
+                  isDraft: exactPullRequestLookup.data.isDraft ?? false,
+                  updatedAt: exactPullRequestLookup.data.updatedAt,
+                },
+              ]
+            : [];
+        const linked = composerPullRequestsFromLinks(
+          threadPullRequests ?? [],
+          pullRequestProjectId,
+        );
+        const matches = withLinkedComposerPullRequestsFirst({
+          matches: [
+            ...exactPullRequest,
+            ...(prMentionIndexLookup.data?.hits ?? []).flatMap((hit) =>
+              hit.pullRequest === undefined
+                ? []
+                : [
+                    {
+                      projectId: hit.pullRequest.projectId,
+                      repository: hit.pullRequest.repository,
+                      number: hit.pullRequest.number,
+                      title: hit.pullRequest.title,
+                      url: hit.pullRequest.url,
+                      headBranch: hit.pullRequest.headBranch,
+                      baseBranch: hit.pullRequest.baseBranch,
+                      state: hit.pullRequest.state,
+                      isDraft: hit.pullRequest.isDraft,
+                      updatedAt: "",
+                    },
+                  ],
+            ),
+          ],
+          linked,
+          query: trigger.query,
+          limit: 12,
+        });
+        return matches.map((pullRequest) => ({
+          id: `pr:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+          type: "pull-request" as const,
+          pullRequest: {
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: pullRequest.url,
+            headBranch: pullRequest.headBranch,
+            baseBranch: pullRequest.baseBranch,
+            state: pullRequest.state,
+            isDraft: pullRequest.isDraft,
+          },
+          label: `#${pullRequest.number}`,
+          description: `${pullRequest.isDraft ? "Draft" : pullRequest.state} · ${
+            pullRequest.repository.toLowerCase() === pullRequestRepository.toLowerCase()
+              ? ""
+              : `${pullRequest.repository} · `
+          }${pullRequest.title}`,
+        }));
+      }
       return pullRequestSearch.entries.map((entry) => ({
         id: `pr:${entry.projectId}:${entry.repository}:${entry.number}`,
-        type: "pull-request",
+        type: "pull-request" as const,
         pullRequest: {
           number: entry.number,
           title: entry.title,
@@ -382,7 +661,11 @@ export function useComposerCommandMenu({
             : `${entry.repository} · `
         }${entry.title}`,
       }));
-    }
+    };
+
+    if (trigger.kind === "issue") return issueItems();
+    if (trigger.kind === "pull-request") return pullRequestItems();
+    if (trigger.kind === "hash") return [...pullRequestItems(), ...issueItems()];
 
     if (trigger.kind === "slash-command") {
       const q = trigger.query.toLowerCase();
@@ -502,40 +785,61 @@ export function useComposerCommandMenu({
       }));
     }
 
-    if (trigger.kind === "path") {
-      const threadItems = environmentId
-        ? matchComposerThreadItems({
-            shells: threadShells,
-            environmentId,
-            linkedEnvironments,
-            excludeThreadId: currentThreadId,
-            query: trigger.query,
-            now,
-          })
-        : [];
-      const environmentItems = environmentId
+    const threadItems = (): ComposerCommandItem[] => {
+      if (!environmentId) return [];
+      const shellThreadItems = matchComposerThreadItems({
+        shells: threadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: currentThreadId,
+        query: trigger.query,
+        now,
+      });
+      const shellThreadIds = new Set(shellThreadItems.map((item) => item.thread.threadId));
+      const indexedThreadItems = (threadMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.thread === undefined) return [];
+        if (shellThreadIds.has(hit.thread.threadId)) return [];
+        if (currentThreadId !== null && hit.thread.threadId === currentThreadId) return [];
+        return [
+          {
+            id: `thread-index:${hit.thread.environmentId}:${hit.thread.threadId}`,
+            type: "thread" as const,
+            thread: {
+              environmentId: hit.thread.environmentId,
+              threadId: hit.thread.threadId,
+            },
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
+      return [...shellThreadItems, ...indexedThreadItems];
+    };
+    const fileItems = (): ComposerCommandItem[] =>
+      pathSearch.entries.map((entry) => {
+        const parts = entry.path.split("/");
+        return {
+          id: `path:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          kind: entry.kind,
+          label: parts[parts.length - 1] ?? entry.path,
+          description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
+        };
+      });
+    const machineItems = (): ComposerCommandItem[] =>
+      environmentId
         ? matchComposerEnvironmentItems({ environments, environmentId, query: trigger.query })
         : [];
+    if (trigger.kind === "thread") return threadItems();
+    if (trigger.kind === "file") return fileItems();
+    if (trigger.kind === "path") {
+      // Bare `@` keeps the classic mixed menu; `@thread:` / `@file:` filter by type.
       const modelItems =
         modelOptions && modelProviders
           ? buildComposerModelItems(modelOptions, trigger.query, modelProviders)
           : [];
-      return [
-        ...threadItems,
-        ...environmentItems,
-        ...modelItems,
-        ...pathSearch.entries.map((entry) => {
-          const parts = entry.path.split("/");
-          return {
-            id: `path:${entry.path}`,
-            type: "path" as const,
-            path: entry.path,
-            kind: entry.kind,
-            label: parts[parts.length - 1] ?? entry.path,
-            description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
-          };
-        }),
-      ];
+      return [...threadItems(), ...machineItems(), ...modelItems, ...fileItems()];
     }
 
     return [];
@@ -544,7 +848,7 @@ export function useComposerCommandMenu({
   const onSelect = (item: ComposerCommandItem) => {
     if (!trigger) return;
     if (item.type === "environment") {
-      if (!ownerKey || trigger.kind !== "path") return;
+      if (!ownerKey || trigger.kind !== "path") return; // machines stay on bare `@` only
       const record = environmentComposerContext(item.environmentId, item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
@@ -570,14 +874,13 @@ export function useComposerCommandMenu({
       return;
     }
     if (item.type === "thread") {
-      if (!ownerKey || trigger.kind !== "path") return;
+      if (!ownerKey || (trigger.kind !== "path" && trigger.kind !== "thread")) return;
       const shell = threadShells.find(
         (candidate) =>
           candidate.environmentId === item.thread.environmentId &&
           candidate.id === item.thread.threadId,
       );
-      if (!shell) return;
-      const record = threadContextRecord(item.thread, shell.title);
+      const record = threadContextRecord(item.thread, shell?.title ?? item.label);
       const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
       const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
       if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
@@ -604,15 +907,14 @@ export function useComposerCommandMenu({
     if (item.type === "pull-request") {
       if (
         !ownerKey ||
-        trigger.kind !== "pull-request" ||
+        (trigger.kind !== "pull-request" && trigger.kind !== "hash") ||
         !items.some((candidate) => candidate.id === item.id)
       )
         return;
       const record = pullRequestComposerContext(item.pullRequest, uuidv4());
-      if (
-        (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
-        COMPOSER_CONTEXT_MAX_RECORDS
-      ) {
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
         Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
         return;
       }
@@ -623,11 +925,123 @@ export function useComposerCommandMenu({
         `${formatComposerContextReference(record)} `,
       );
       onChangeDraftMessage(result.text);
-      const draft = getComposerDraftSnapshot(ownerKey);
-      setComposerDraftContext(ownerKey, {
-        version: 1,
-        records: [...(draft.context?.records ?? []), record],
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "jira") {
+      if (
+        !ownerKey ||
+        trigger.kind !== "jira" ||
+        !items.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = jiraComposerContext({
+        key: item.key,
+        url: item.url,
+        summary: item.summary,
       });
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        return;
+      }
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "figma") {
+      if (
+        !ownerKey ||
+        trigger.kind !== "figma" ||
+        !items.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = figmaComposerContext({
+        fileKey: item.fileKey,
+        url: item.url,
+        name: item.name,
+      });
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        return;
+      }
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
+      setSelection({ start: result.cursor, end: result.cursor });
+      return;
+    }
+    if (item.type === "issue") {
+      if (
+        !ownerKey ||
+        (trigger.kind !== "issue" && trigger.kind !== "hash") ||
+        !items.some((candidate) => candidate.id === item.id)
+      ) {
+        return;
+      }
+      const record = issueComposerContext({
+        number: item.number,
+        title: item.title,
+        url: item.url,
+        repository: item.repository,
+        state: item.state,
+      });
+      const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
+      const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
+      if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
+        Dialog.alert("Too many context items", "Remove some context from the draft and try again.");
+        return;
+      }
+      const result = replaceTextRange(
+        draftMessage,
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `${formatComposerContextReference(record)} `,
+      );
+      onChangeDraftMessage(result.text);
+      if (!alreadyAttached) {
+        const draft = getComposerDraftSnapshot(ownerKey);
+        setComposerDraftContext(ownerKey, {
+          version: 1,
+          records: [...(draft.context?.records ?? []), record],
+        });
+      }
       setSelection({ start: result.cursor, end: result.cursor });
       return;
     }
@@ -656,6 +1070,61 @@ export function useComposerCommandMenu({
     onChangeDraftMessage(result.text);
   };
 
+  const prMentionIndexSyncingEmpty =
+    prMentionIndexLookup.data?.status === "syncing" && prMentionIndexLookup.data.hits.length === 0;
+  const jiraMentionIndexSyncingEmpty =
+    jiraMentionIndexLookup.data?.status === "syncing" &&
+    jiraMentionIndexLookup.data.hits.length === 0;
+  const figmaMentionIndexSyncingEmpty =
+    figmaMentionIndexLookup.data?.status === "syncing" &&
+    figmaMentionIndexLookup.data.hits.length === 0;
+  const issueMentionIndexSyncingEmpty =
+    issueMentionIndexLookup.data?.status === "syncing" &&
+    issueMentionIndexLookup.data.hits.length === 0;
+  const threadMentionIndexSyncingEmpty =
+    threadMentionIndexLookup.data?.status === "syncing" &&
+    threadMentionIndexLookup.data.hits.length === 0;
+  // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
+  useEffect(() => {
+    const refreshers: Array<() => void> = [];
+    if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (prMentionIndexSyncingEmpty) refreshers.push(prMentionIndexLookup.refresh);
+    if (jiraMentionIndexSyncingEmpty) refreshers.push(jiraMentionIndexLookup.refresh);
+    if (figmaMentionIndexSyncingEmpty) refreshers.push(figmaMentionIndexLookup.refresh);
+    if (issueMentionIndexSyncingEmpty) refreshers.push(issueMentionIndexLookup.refresh);
+    if (refreshers.length === 0) return;
+    const interval = setInterval(() => {
+      for (const refresh of refreshers) refresh();
+    }, 750);
+    return () => clearInterval(interval);
+  }, [
+    threadMentionIndexSyncingEmpty,
+    prMentionIndexSyncingEmpty,
+    jiraMentionIndexSyncingEmpty,
+    figmaMentionIndexSyncingEmpty,
+    issueMentionIndexSyncingEmpty,
+    threadMentionIndexLookup.refresh,
+    prMentionIndexLookup.refresh,
+    jiraMentionIndexLookup.refresh,
+    figmaMentionIndexLookup.refresh,
+    issueMentionIndexLookup.refresh,
+  ]);
+
+  const pullRequestIndexPending =
+    mentionIndexEnabled &&
+    wantsPullRequests &&
+    (prMentionIndexLookup.isPending ||
+      prMentionIndexSyncingEmpty ||
+      pullRequestTriggerQuery !== debouncedPullRequestTriggerQuery ||
+      pullRequestTriggerNumber !== debouncedPullRequestNumber ||
+      exactPullRequestLookup.isPending);
+  const pullRequestIndexError =
+    mentionIndexEnabled &&
+    (prMentionIndexLookup.error !== null || prMentionIndexLookup.data?.status === "error")
+      ? "Pull requests could not be read for this project."
+      : null;
+
   return {
     selection,
     onSelectionChange,
@@ -663,13 +1132,72 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      wantsPullRequests || wantsIssues
+        ? (wantsPullRequests &&
+            (mentionIndexEnabled ? pullRequestIndexPending : pullRequestSearch.isPending)) ||
+          (wantsIssues &&
+            (issueMentionIndexLookup.isPending ||
+              issueMentionIndexSyncingEmpty ||
+              issueTriggerQuery !== debouncedIssueTriggerQuery))
+        : trigger?.kind === "jira"
+          ? jiraMentionIndexLookup.isPending ||
+            jiraMentionIndexSyncingEmpty ||
+            jiraTriggerQuery !== debouncedJiraTriggerQuery
+          : trigger?.kind === "figma"
+            ? figmaMentionIndexLookup.isPending ||
+              figmaMentionIndexSyncingEmpty ||
+              figmaTriggerQuery !== debouncedFigmaTriggerQuery
+            : wantsThreads
+              ? threadMentionIndexLookup.isPending ||
+                threadMentionIndexSyncingEmpty ||
+                threadTriggerQuery !== debouncedThreadTriggerQuery ||
+                (wantsFiles && pathSearch.isPending)
+              : wantsFiles
+                ? pathSearch.isPending
+                : false,
     error:
-      trigger?.kind === "pull-request"
+      trigger?.kind === "hash"
         ? pullRequestProjectId === null || pullRequestRepository === null
-          ? "Pull requests are unavailable for this project."
-          : pullRequestSearch.error
-        : null,
+          ? "Pull requests and issues are unavailable for this project."
+          : mentionIndexEnabled
+            ? (pullRequestIndexError ??
+              (issueMentionIndexLookup.error !== null ||
+              issueMentionIndexLookup.data?.status === "error"
+                ? (issueMentionIndexLookup.data?.detail ??
+                  "GitHub issues could not be read for this project.")
+                : null))
+            : pullRequestSearch.error
+        : trigger?.kind === "pull-request"
+          ? pullRequestProjectId === null || pullRequestRepository === null
+            ? "Pull requests are unavailable for this project."
+            : mentionIndexEnabled
+              ? pullRequestIndexError
+              : pullRequestSearch.error
+          : trigger?.kind === "jira"
+            ? pullRequestProjectId === null
+              ? "Jira search needs an open project."
+              : jiraMentionIndexLookup.error !== null ||
+                  jiraMentionIndexLookup.data?.status === "error"
+                ? (jiraMentionIndexLookup.data?.detail ??
+                  "Jira issues could not be read. Set Jira spaces in Settings → Chat and configure a Jira MCP server.")
+                : null
+            : trigger?.kind === "figma"
+              ? pullRequestProjectId === null
+                ? "Figma search needs an open project."
+                : figmaMentionIndexLookup.error !== null ||
+                    figmaMentionIndexLookup.data?.status === "error"
+                  ? (figmaMentionIndexLookup.data?.detail ??
+                    "Figma designs could not be read. Add Figma files in Settings → Chat.")
+                  : null
+              : trigger?.kind === "issue"
+                ? pullRequestProjectId === null
+                  ? "Issue search needs an open project."
+                  : issueMentionIndexLookup.error !== null ||
+                      issueMentionIndexLookup.data?.status === "error"
+                    ? (issueMentionIndexLookup.data?.detail ??
+                      "GitHub issues could not be read for this project.")
+                    : null
+                : null,
     onSelect,
   };
 }

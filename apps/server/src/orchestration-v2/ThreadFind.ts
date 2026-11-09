@@ -42,7 +42,7 @@ class TextKey extends Data.Class<{
   text: string;
   role: "user" | "assistant" | "plan";
   streaming: boolean;
-  hasContext: boolean;
+  contextIds: string | undefined;
   cwd: string | undefined;
   skills: NonNullable<OrchestrationV2SearchThreadInput["skills"]>;
 }> {}
@@ -62,7 +62,10 @@ function textKey(
     role:
       item.type === "proposed_plan" ? "plan" : item.type === "user_message" ? "user" : "assistant",
     streaming: item.type === "assistant_message" && item.streaming,
-    hasContext: item.type === "user_message" && item.context !== undefined,
+    contextIds:
+      item.type === "user_message" && item.context !== undefined
+        ? item.context.records.map((record) => record.contextId).join("\n")
+        : undefined,
     cwd,
     skills,
   });
@@ -76,7 +79,16 @@ function parseText(key: TextKey): readonly string[] {
           role: key.role,
           text: key.text,
           streaming: key.streaming,
-          context: key.hasContext ? { version: 1, records: [] } : undefined,
+          ...(key.contextIds === undefined
+            ? {}
+            : {
+                context: {
+                  records: key.contextIds
+                    .split("\n")
+                    .filter(Boolean)
+                    .map((contextId) => ({ contextId })),
+                },
+              }),
         },
         key.cwd,
         key.skills,

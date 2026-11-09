@@ -50,6 +50,7 @@ export function SettingsLabsRouteScreen() {
           setting="linkedEnvironmentsEnabled"
           description="Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish."
         />
+        <MentionIndexBetaSection />
         <MachineBetaSection
           title="Fast worktree checkout"
           icon="bolt.circle"
@@ -296,6 +297,50 @@ function MachineBetaSection({
         })}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">{description}</Text>
+    </View>
+  );
+}
+
+/** Mention index is per connected machine; it does not need a capability gate. */
+function MentionIndexBetaSection() {
+  const { environments } = useEnvironments();
+  const connected = environments.filter(
+    (environment) => environment.connection.phase === "connected",
+  );
+  const writable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "mentionIndexEnabled beta update",
+    reportFailure: true,
+  });
+  if (connected.length === 0) return null;
+  return (
+    <View className="gap-3">
+      <SettingsSection title="Beta: Mention index">
+        {connected.map((environment) => {
+          const policy = environment.serverConfig?.managedPolicy;
+          const managed = isManagedSettingPath(policy, "mentionIndexEnabled");
+          return (
+            <SettingsSwitchRow
+              key={environment.environmentId}
+              icon="magnifyingglass"
+              label={environment.label}
+              {...(managed ? { subtitle: `Managed by ${policy?.organization}.` } : {})}
+              value={environment.serverConfig?.settings.mentionIndexEnabled === true}
+              disabled={managed || !writable.has(environment.environmentId)}
+              onValueChange={(value) =>
+                void updateSettings({
+                  environmentId: environment.environmentId,
+                  input: { patch: { mentionIndexEnabled: value } },
+                })
+              }
+            />
+          );
+        })}
+      </SettingsSection>
+      <Text className="px-2 text-sm text-foreground-muted">
+        Index pull requests, issues, threads, Jira, and Figma for composer mentions. While it is
+        off, @ and # stay classic.
+      </Text>
     </View>
   );
 }

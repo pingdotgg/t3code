@@ -1032,6 +1032,33 @@ describe("synchronized model preferences", () => {
       }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
   });
+
+  it("replaces mentionIndex so cleared jira and figma keys stay cleared", () => {
+    const configured = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      mentionIndex: {
+        jira: { spaces: ["ENG"], serverName: "Atlassian", jqlExtra: 'status != "Done"' },
+        figma: { fileKeys: ["Abc"], serverName: "Figma" },
+      },
+    });
+    expect(configured.mentionIndex.jira?.serverName).toBe("Atlassian");
+    const clearedServer = applyServerSettingsPatch(configured, {
+      mentionIndex: {
+        jira: { spaces: ["ENG"] },
+        figma: { fileKeys: ["Abc"], serverName: "Figma" },
+      },
+    });
+    expect(clearedServer.mentionIndex).toEqual({
+      jira: { spaces: ["ENG"] },
+      figma: { fileKeys: ["Abc"], serverName: "Figma" },
+    });
+    const clearedJira = applyServerSettingsPatch(clearedServer, {
+      mentionIndex: { figma: { fileKeys: ["Abc"], serverName: "Figma" } },
+    });
+    expect(clearedJira.mentionIndex).toEqual({
+      figma: { fileKeys: ["Abc"], serverName: "Figma" },
+    });
+    expect(applyServerSettingsPatch(clearedJira, { mentionIndex: {} }).mentionIndex).toEqual({});
+  });
 });
 
 describe("resolveSpeechPostProcessingModelSelection", () => {

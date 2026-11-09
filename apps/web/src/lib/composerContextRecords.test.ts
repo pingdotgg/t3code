@@ -22,6 +22,7 @@ import {
   isSameComposerContextPayload,
   previewAnnotationContextRecord,
   previewAnnotationFromRecord,
+  isPullRequestSummaryContext,
   pullRequestContextKindLabel,
   resolveUserMessageContext,
   reviewCommentContextLabel,
@@ -279,8 +280,12 @@ describe("composerContextRecords", () => {
       });
 
     const atLimit = build(32_000);
+    expect(atLimit.kind).toBe("review-comment");
+    if (atLimit.kind !== "review-comment") throw new Error("expected review-comment");
     expect(atLimit.diff).toHaveLength(32_000);
     const overLimit = build(32_001);
+    expect(overLimit.kind).toBe("review-comment");
+    if (overLimit.kind !== "review-comment") throw new Error("expected review-comment");
     expect(overLimit.diff.length).toBeLessThanOrEqual(32_000);
     expect(overLimit.diff.endsWith("… truncated …")).toBe(true);
     expect(() => decodeMessageContext({ version: 1, records: [atLimit] })).not.toThrow();
@@ -399,6 +404,78 @@ describe("pullRequestContextKindLabel", () => {
     expect(
       pullRequestContextKindLabel(comment("https://gitlab.com/acme/app/-/merge_requests/7", true)),
     ).toBe("Draft merge request");
+  });
+});
+
+describe("isPullRequestSummaryContext", () => {
+  const pullRequest = {
+    number: 7,
+    title: "Title",
+    url: "https://github.com/acme/app/pull/7",
+    headBranch: "feature",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+  };
+
+  it("keeps file-specific review comments that carry pullRequest metadata", () => {
+    const fileComment = {
+      id: "rc-file",
+      sectionId: "file:src/a.ts",
+      sectionTitle: "File comment",
+      filePath: "src/a.ts",
+      startIndex: 0,
+      endIndex: 1,
+      rangeLabel: "L1",
+      text: "nit",
+      diff: "+const x = 1",
+      pullRequest,
+    };
+    expect(isPullRequestSummaryContext(fileComment)).toBe(false);
+    expect(reviewCommentContextRecord(fileComment).kind).toBe("review-comment");
+  });
+
+  it("upgrades PR summaries and rewrites legacy review-comment hrefs", () => {
+    const summary = {
+      id: "rc-pr",
+      sectionId: "pull-request:7",
+      sectionTitle: "PR #7",
+      filePath: "PR #7",
+      startIndex: 0,
+      endIndex: 0,
+      rangeLabel: "Title",
+      text: "",
+      diff: "",
+      pullRequest,
+    };
+    expect(isPullRequestSummaryContext(summary)).toBe(true);
+    const record = reviewCommentContextRecord(summary);
+    expect(record.kind).toBe("pull-request");
+    const resolved = resolveUserMessageContext({
+      text: "see [PR #7](t3-context://v1/review-comment/review-comment_rc-pr)",
+      context: {
+        version: 1,
+        records: [
+          {
+            version: 1,
+            kind: "review-comment",
+            contextId: "review-comment_rc-pr" as ComposerContextId,
+            label: "#7",
+            sectionId: summary.sectionId,
+            sectionTitle: summary.sectionTitle,
+            filePath: summary.filePath,
+            startIndex: 0,
+            endIndex: 0,
+            rangeLabel: summary.rangeLabel,
+            text: "",
+            diff: "",
+            pullRequest,
+          },
+        ],
+      },
+    });
+    expect(resolved.records[0]?.kind).toBe("pull-request");
+    expect(resolved.text).toBe("see [PR #7](t3-context://v1/pull-request/review-comment_rc-pr)");
   });
 });
 

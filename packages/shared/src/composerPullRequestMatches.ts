@@ -99,8 +99,11 @@ export function withLinkedComposerPullRequestsFirst<
     return words.every((word) => text.includes(word)) ? [entry] : [];
   });
   const linkedKeys = new Set(linked.map(keyOf));
-  return [...linked, ...input.matches.filter((entry) => !linkedKeys.has(keyOf(entry)))].slice(
-    0,
-    input.limit,
-  );
+  const merged = [...linked, ...input.matches.filter((entry) => !linkedKeys.has(keyOf(entry)))];
+  const query = input.query.trim();
+  const isExact = (entry: ComposerPullRequestMatch) => String(entry.number) === query;
+  // Exact numeric matches must survive the limit even when many linked PRs also match.
+  return [...merged]
+    .sort((left, right) => Number(isExact(right)) - Number(isExact(left)))
+    .slice(0, input.limit);
 }

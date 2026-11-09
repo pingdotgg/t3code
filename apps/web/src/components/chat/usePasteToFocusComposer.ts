@@ -15,6 +15,7 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 export function usePasteToFocusComposer(
   activeThreadId: ThreadId | null,
   composerRef: ComposerHandleRef,
+  mentionIndexEnabled = false,
 ) {
   const pasteAsTextShortcutUntilRef = useRef(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches window keydown and paste capture listeners that route stray pastes into the composer
@@ -38,7 +39,9 @@ export function usePasteToFocusComposer(
       const bypassAutoAttachment = Date.now() <= pasteAsTextShortcutUntilRef.current;
       pasteAsTextShortcutUntilRef.current = 0;
       if (
-        ((readPastedComposerContext(clipboardData)?.records.length ?? 0) === 0 &&
+        ((readPastedComposerContext(clipboardData, {
+          rewriteExternalLinks: mentionIndexEnabled,
+        })?.records.length ?? 0) === 0 &&
           composerRef.current?.pasteTextAtEnd(text, { bypassAutoAttachment })) ||
         composerRef.current?.insertTextAtEnd(text, { clipboardData })
       ) {
@@ -52,5 +55,5 @@ export function usePasteToFocusComposer(
       window.removeEventListener("keydown", keyHandler, true);
       window.removeEventListener("paste", handler, true);
     };
-  }, [activeThreadId, composerRef]);
+  }, [activeThreadId, composerRef, mentionIndexEnabled]);
 }

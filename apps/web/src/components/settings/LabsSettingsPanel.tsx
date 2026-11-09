@@ -22,6 +22,7 @@ export function LabsSettingsPanel() {
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
+        <MentionIndexRow />
         <PromptSuggestionsRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
@@ -161,6 +162,39 @@ function LinkedEnvironmentsRow() {
             updateSettings({ linkedEnvironmentsEnabled: Boolean(checked) })
           }
           aria-label="Linked environments"
+        />
+      }
+    />
+  );
+}
+
+function MentionIndexRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("mention-index-beta")}
+      settingKeys={["mentionIndexEnabled"]}
+      description={
+        <>
+          Index pull requests, GitHub issues, threads, Jira, and Figma for composer mentions (
+          <code className="text-xs">#</code>, <code className="text-xs">@jira:</code>,{" "}
+          <code className="text-xs">@figma:</code>, and pasted links). While it is off,{" "}
+          <code className="text-xs">@</code> and <code className="text-xs">#</code> stay classic.
+          Configure Jira and Figma under{" "}
+          <Link to="/settings/chat" className="underline underline-offset-2">
+            Chat
+          </Link>
+          .
+        </>
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["mentionIndexEnabled"]}
+          checked={settings.mentionIndexEnabled}
+          onCheckedChange={(checked) => updateSettings({ mentionIndexEnabled: Boolean(checked) })}
+          aria-label="Mention index"
         />
       }
     />

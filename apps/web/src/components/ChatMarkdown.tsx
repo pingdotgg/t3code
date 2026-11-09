@@ -92,7 +92,10 @@ import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import type { Pluggable, PluggableList } from "unified";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
-import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import {
+  parseComposerContextHref,
+  parseExternalComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
@@ -246,6 +249,11 @@ interface ChatMarkdownProps {
   /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
+  /**
+   * When set, http(s) Jira/Figma/issue/PR links with a matching record render as chips.
+   * Plain markdown links to those hosts stay normal anchors (favicon, menus).
+   */
+  composerContextRecordIds?: { readonly has: (contextId: string) => boolean } | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
@@ -395,6 +403,18 @@ const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
   rehypeChipPunctuation,
 ] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
 
+function resolveMarkdownContextReference(
+  href: string,
+  recordIds: { readonly has: (contextId: string) => boolean } | undefined,
+) {
+  const opaque = parseComposerContextHref(href);
+  if (opaque) return opaque;
+  // Real-URL chips only when the message carries a matching context record.
+  if (!recordIds) return null;
+  const external = parseExternalComposerContextHref(href);
+  return external && recordIds.has(external.contextId) ? external : null;
+}
+
 function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
   if (parseComposerContextHref(href)) return href;
@@ -496,6 +516,7 @@ function useChatMarkdownState({
   workspaceMutationId,
   onImageExpand,
   renderContextReference,
+  composerContextRecordIds,
   headingLevelOffset = 0,
   sourceControlMedia = false,
   sourceControlMediaRepository,
@@ -898,6 +919,7 @@ function useChatMarkdownState({
     sourceControlMedia,
     sourceControlMediaRepository,
     renderContextReference,
+    composerContextRecordIds,
     headingLevelOffset,
     imageBaseDir,
     workspaceMutationId,
@@ -1079,6 +1101,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
+      composerContextRecordIds,
     } = use(ChatMarkdownRendererContext);
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
@@ -1094,7 +1117,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
         <span>{label ?? "Thread"}</span>
       );
     }
-    const contextReference = href ? parseComposerContextHref(href) : null;
+    const contextReference = href
+      ? resolveMarkdownContextReference(href, composerContextRecordIds)
+      : null;
     if (contextReference) {
       const label = hastPlainTextDeep(node) || contextReference.contextId;
       return renderContextReference ? (
@@ -1380,11 +1405,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
       threadRef,
       workspaceMutationId,
       renderContextReference,
+      composerContextRecordIds,
       fileLinkChip,
       resolvedTheme,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
-    const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
+    const contextReference =
+      typeof src === "string"
+        ? resolveMarkdownContextReference(src, composerContextRecordIds)
+        : null;
     if (contextReference) {
       const label = alt || contextReference.contextId;
       return renderContextReference ? (

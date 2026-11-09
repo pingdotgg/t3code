@@ -105,4 +105,24 @@ describe("linked pull requests", () => {
     });
     expect(searched).toEqual([linked[0], entry(8, "2026-01-03"), entry(9, "2026-01-05")]);
   });
+
+  it("keeps an exact numeric match ahead of many linked substring matches", () => {
+    const linked = Array.from({ length: 12 }, (_, index) =>
+      entry(420 + index, `2026-01-${String(index + 1).padStart(2, "0")}`),
+    ).map((match) => ({
+      ...match,
+      title: `Linked ${match.number}`,
+      headBranch: "main",
+    }));
+    const exact = entry(42, "2026-02-01");
+    const ranked = withLinkedComposerPullRequestsFirst({
+      matches: [exact],
+      linked,
+      query: "42",
+      limit: 12,
+    });
+    expect(ranked[0]?.number).toBe(42);
+    expect(ranked.map((match) => match.number)).toContain(420);
+    expect(ranked.map((match) => match.number)).not.toContain(431);
+  });
 });

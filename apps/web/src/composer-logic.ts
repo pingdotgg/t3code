@@ -9,7 +9,12 @@ import {
   serializeAssistantCitation,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
-import { isCurrencyAmountQuery, isPathWord } from "@t3tools/shared/composerTrigger";
+import {
+  detectAtMentionTrigger,
+  isCurrencyAmountQuery,
+  isPathWord,
+  type ComposerTriggerKind as SharedComposerTriggerKind,
+} from "@t3tools/shared/composerTrigger";
 import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
@@ -17,8 +22,8 @@ import {
 
 import { resolveShortcutCommand, type ShortcutEventLike } from "./keybindings";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "side" | "btw" | "clear";
+export type ComposerTriggerKind = Exclude<SharedComposerTriggerKind, "slash-model">;
+export type ComposerSlashCommand = "model" | "plan" | "default" | "side" | "btw" | "clear";
 export type ComposerSubmissionIntent = "foreground" | "background" | "alternate";
 
 export interface ComposerTrigger {
@@ -35,7 +40,7 @@ export function isPathSuggestionCurrent(
   cwd: string | null,
 ) {
   return (
-    trigger?.kind === "path" &&
+    (trigger?.kind === "path" || trigger?.kind === "file") &&
     searchTarget.environmentId === environmentId &&
     searchTarget.cwd === cwd &&
     searchTarget.query === trigger.query.trim()
@@ -248,7 +253,12 @@ export function collapseExpandedComposerCursor(
   return collapsedCursor;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  options?: { readonly mentionIndexEnabled?: boolean },
+): ComposerTrigger | null {
+  const mentionIndexEnabled = options?.mentionIndexEnabled === true;
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
@@ -261,11 +271,11 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch) {
+  const hashMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (hashMatch) {
     return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
+      kind: mentionIndexEnabled ? "hash" : "pull-request",
+      query: hashMatch[1] ?? "",
       rangeStart: tokenStart,
       rangeEnd: cursor,
     };
@@ -280,16 +290,12 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  if (!token.startsWith("@")) {
-    return null;
-  }
-
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  return detectAtMentionTrigger(
+    token,
+    tokenStart,
+    cursor,
+    mentionIndexEnabled,
+  ) as ComposerTrigger | null;
 }
 
 export function pastedPathQueryLength(
@@ -298,13 +304,15 @@ export function pastedPathQueryLength(
   pathQueryActive = true,
 ): number {
   if (!pathQueryActive) return 0;
-  if (detectComposerTrigger(lineBefore, lineBefore.length)?.kind !== "path") return 0;
+  const triggerKind = detectComposerTrigger(lineBefore, lineBefore.length)?.kind;
+  if (triggerKind !== "path" && triggerKind !== "file") return 0;
   return /^\S*/.exec(pasted)![0].length;
 }
 
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  options?: { readonly mentionIndexEnabled?: boolean },
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -314,7 +322,7 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor), options),
   };
 }
 

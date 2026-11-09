@@ -5,6 +5,7 @@ import {
   createPullRequestEnvironmentAtoms,
   createPullRequestStackAtomFamily,
 } from "@t3tools/client-runtime/state/pull-requests";
+import { createMentionIndexAtoms } from "@t3tools/client-runtime/state/mentions";
 import {
   PullRequestListResult,
   type EnvironmentId,
@@ -365,6 +366,8 @@ export function restoredPullRequestList(
 ): MergedPullRequestList | null {
   return restorePullRequestList(snapshotStorage(), targets);
 }
+
+export const mentionIndexEnvironment = createMentionIndexAtoms(connectionAtomRuntime);
 
 // Answers are stamped on arrival: older servers leave no other ordering for same-dated reads.
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {

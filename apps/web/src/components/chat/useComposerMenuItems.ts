@@ -3,7 +3,7 @@ import {
   matchComposerThreadItems,
 } from "@t3tools/client-runtime/composerThreadItems";
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
@@ -14,6 +14,7 @@ import type {
   ThreadId,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { mentionSearchInput } from "@t3tools/client-runtime/state/mentions";
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
@@ -33,6 +34,7 @@ import { useVisibleThreadShells } from "~/state/entities";
 import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/environments";
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
+  mentionIndexEnvironment,
   pullRequestEnvironment,
   usePullRequestList,
   type EnvironmentQueryTarget,
@@ -52,8 +54,8 @@ import {
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 
-const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
+const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
 
@@ -77,6 +79,7 @@ export function useComposerMenuItems({
   showSkillsInSlashMenu,
   workspaceSkillsScanning,
   questionAttachmentTarget,
+  mentionIndexEnabled,
   modelMentions,
 }: {
   readonly composerTrigger: ComposerTrigger | null;
@@ -97,6 +100,7 @@ export function useComposerMenuItems({
   readonly showSkillsInSlashMenu: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
+  readonly mentionIndexEnabled: boolean;
   readonly modelMentions: {
     readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
     readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
@@ -105,11 +109,19 @@ export function useComposerMenuItems({
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
-  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
-  const pullRequestTriggerQuery =
-    composerTrigger?.kind === "pull-request" ? composerTrigger.query : "";
+  const wantsPullRequests =
+    composerTriggerKind === "pull-request" || composerTriggerKind === "hash";
+  const wantsIssues =
+    mentionIndexEnabled && (composerTriggerKind === "issue" || composerTriggerKind === "hash");
+  const wantsThreads = composerTriggerKind === "path" || composerTriggerKind === "thread";
+  const wantsFiles = composerTriggerKind === "path" || composerTriggerKind === "file";
+  const pathTriggerQuery =
+    composerTriggerKind === "path" || composerTriggerKind === "file"
+      ? (composerTrigger?.query ?? "")
+      : "";
+  const pullRequestTriggerQuery = wantsPullRequests ? (composerTrigger?.query ?? "") : "";
   const pullRequestTextQuery =
-    composerTriggerKind === "pull-request" &&
+    wantsPullRequests &&
     pullRequestTriggerQuery.length > 0 &&
     !/^\d+$/u.test(pullRequestTriggerQuery)
       ? pullRequestTriggerQuery
@@ -117,11 +129,13 @@ export function useComposerMenuItems({
   const debouncedPullRequestTextQuery = useDebouncedValue(pullRequestTextQuery, 180);
   const settledPullRequestTextQuery =
     pullRequestTextQuery === debouncedPullRequestTextQuery ? pullRequestTextQuery : null;
-  const isPathTrigger = composerTriggerKind === "path";
-  const environmentThreadShells = useVisibleThreadShells(isPathTrigger);
+  const threadTriggerQuery = wantsThreads ? (composerTrigger?.query ?? "") : "";
+  const environmentThreadShells = useVisibleThreadShells(wantsThreads);
   // Mounts older settled threads matching the mention, which shells may leave out.
-  useThreadSearch(isPathTrigger ? [environmentId] : [], pathTriggerQuery, { titlesOnly: true });
-  // The user's machines feed `@` machine matches; the catalog summary is cheap and stable.
+  useThreadSearch(wantsThreads ? [environmentId] : [], threadTriggerQuery, {
+    titlesOnly: true,
+  });
+  // The user's machines feed bare `@` machine matches; the catalog summary is cheap and stable.
   const environmentIdentities = useEnvironmentIdentities();
   const environmentMachines = useEnvironmentMachines();
   const offersMachines = useAtomValue(offersLinkedEnvironmentsAtom(environmentId));
@@ -131,11 +145,12 @@ export function useComposerMenuItems({
   }));
   const workspaceEntries = useComposerPathSearch({
     environmentId,
-    cwd: isPathTrigger ? gitCwd : null,
-    query: isPathTrigger ? pathTriggerQuery : null,
+    cwd: wantsFiles ? gitCwd : null,
+    query: wantsFiles ? pathTriggerQuery : null,
   });
 
-  const pullRequestListTargets =
+  const classicPullRequestListTargets =
+    mentionIndexEnabled ||
     composerTriggerKind !== "pull-request" ||
     pullRequestProjectId === null ||
     (pullRequestTextQuery !== null && settledPullRequestTextQuery === null)
@@ -153,30 +168,136 @@ export function useComposerMenuItems({
             },
           },
         ];
-  const pullRequestLookup = usePullRequestList(pullRequestListTargets);
+  const classicPullRequestLookup = usePullRequestList(classicPullRequestListTargets);
+
+  const mentionQueryForIndex = wantsPullRequests
+    ? (settledPullRequestTextQuery ??
+      (pullRequestTextQuery === null ? pullRequestTriggerQuery : null))
+    : null;
+  const mentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsPullRequests ||
+      pullRequestProjectId === null ||
+      mentionQueryForIndex === null
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: mentionQueryForIndex,
+            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+            providers: ["pull-request"],
+          }),
+        }),
+  );
+  const threadMentionQuery = wantsThreads ? threadTriggerQuery : null;
+  const debouncedThreadMentionQuery = useDebouncedValue(threadMentionQuery, 180);
+  const threadMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsThreads ||
+      pullRequestProjectId === null ||
+      threadMentionQuery !== debouncedThreadMentionQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedThreadMentionQuery ?? "",
+            limit: 12,
+            providers: ["thread"],
+          }),
+        }),
+  );
+  const jiraTriggerQuery = composerTrigger?.kind === "jira" ? composerTrigger.query : "";
+  const debouncedJiraTriggerQuery = useDebouncedValue(jiraTriggerQuery, 180);
+  const jiraMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      composerTriggerKind !== "jira" ||
+      pullRequestProjectId === null ||
+      jiraTriggerQuery !== debouncedJiraTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedJiraTriggerQuery,
+            limit: 12,
+            providers: ["jira"],
+          }),
+        }),
+  );
+  const figmaTriggerQuery = composerTrigger?.kind === "figma" ? composerTrigger.query : "";
+  const debouncedFigmaTriggerQuery = useDebouncedValue(figmaTriggerQuery, 180);
+  const figmaMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      composerTriggerKind !== "figma" ||
+      pullRequestProjectId === null ||
+      figmaTriggerQuery !== debouncedFigmaTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedFigmaTriggerQuery,
+            limit: 24,
+            providers: ["figma"],
+          }),
+        }),
+  );
+  const issueTriggerQuery = wantsIssues ? (composerTrigger?.query ?? "") : "";
+  const debouncedIssueTriggerQuery = useDebouncedValue(issueTriggerQuery, 180);
+  const issueMentionIndexLookup = useEnvironmentQuery(
+    !mentionIndexEnabled ||
+      !wantsIssues ||
+      pullRequestProjectId === null ||
+      issueTriggerQuery !== debouncedIssueTriggerQuery
+      ? null
+      : mentionIndexEnvironment.search({
+          environmentId,
+          input: mentionSearchInput({
+            projectId: pullRequestProjectId,
+            query: debouncedIssueTriggerQuery,
+            limit: 12,
+            providers: ["issue"],
+          }),
+        }),
+  );
   const pullRequestTriggerNumber = (() => {
-    if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
+    if (!wantsPullRequests || (composerTrigger?.query.length ?? 0) === 0) {
       return null;
     }
-    const number = Number(composerTrigger.query);
+    const number = Number(composerTrigger?.query ?? "");
     return Number.isSafeInteger(number) && number > 0 ? number : null;
   })();
   const debouncedPullRequestNumber = useDebouncedValue(pullRequestTriggerNumber, 180);
   const settledPullRequestNumber =
     pullRequestTriggerNumber === debouncedPullRequestNumber ? pullRequestTriggerNumber : null;
-  const recentHasExactPullRequest =
+  const classicHasExactPullRequest =
+    !mentionIndexEnabled &&
     settledPullRequestNumber !== null &&
-    pullRequestLookup.data?.entries.some(
+    classicPullRequestLookup.data?.entries.some(
       (entry) =>
         entry.projectId === pullRequestProjectId &&
         entry.repository.trim().toLowerCase() === pullRequestRepository?.trim().toLowerCase() &&
         entry.number === settledPullRequestNumber,
     ) === true;
+  const indexHasExactPullRequest =
+    mentionIndexEnabled &&
+    settledPullRequestNumber !== null &&
+    mentionIndexLookup.data?.hits.some(
+      (hit) =>
+        hit.pullRequest !== undefined &&
+        hit.pullRequest.projectId === pullRequestProjectId &&
+        hit.pullRequest.repository.trim().toLowerCase() ===
+          pullRequestRepository?.trim().toLowerCase() &&
+        hit.pullRequest.number === settledPullRequestNumber,
+    ) === true;
   const exactPullRequestLookup = useEnvironmentQuery(
     settledPullRequestNumber === null ||
       pullRequestProjectId === null ||
       pullRequestRepository === null ||
-      recentHasExactPullRequest
+      classicHasExactPullRequest ||
+      indexHasExactPullRequest
       ? null
       : pullRequestEnvironment.detail({
           environmentId,
@@ -195,39 +316,110 @@ export function useComposerMenuItems({
 
   const items = ((): ComposerCommandItem[] => {
     if (!composerTrigger) return [];
+    const threadItems = (): ComposerCommandItem[] => {
+      const shellThreadItems = matchComposerThreadItems({
+        shells: environmentThreadShells,
+        environmentId,
+        linkedEnvironments,
+        excludeThreadId: activeThreadId,
+        query: composerTrigger.query,
+        now,
+      });
+      const shellThreadIds = new Set(shellThreadItems.map((item) => item.thread.threadId));
+      const indexedThreadItems = (threadMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.thread === undefined) return [];
+        if (shellThreadIds.has(hit.thread.threadId)) return [];
+        if (activeThreadId !== null && hit.thread.threadId === activeThreadId) return [];
+        return [
+          {
+            id: `thread-index:${hit.thread.environmentId}:${hit.thread.threadId}`,
+            type: "thread" as const,
+            thread: {
+              environmentId: hit.thread.environmentId,
+              threadId: hit.thread.threadId,
+            },
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
+      return [...shellThreadItems, ...indexedThreadItems];
+    };
+    const fileItems = (): ComposerCommandItem[] =>
+      workspaceEntries.entries.map((entry) => ({
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path" as const,
+        path: entry.path,
+        pathKind: entry.kind,
+        searchTarget: workspaceEntries.searchedTarget,
+        label: basenameOfPath(entry.path),
+        description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+      }));
+    const machineItems = (): ComposerCommandItem[] =>
+      // An answer to an agent's question carries thread links, not machines.
+      questionAttachmentTarget === null && offersMachines
+        ? matchComposerEnvironmentItems({
+            environments: mentionableEnvironments,
+            environmentId,
+            query: composerTrigger.query,
+          })
+        : [];
+    if (composerTrigger.kind === "thread") return threadItems();
+    if (composerTrigger.kind === "file") return fileItems();
     if (composerTrigger.kind === "path") {
+      // Bare `@` keeps the classic mixed menu; `@thread:` / `@file:` filter by type.
       return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-        }),
-        // An answer to an agent's question carries thread links, not machines.
-        ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems({
-              environments: mentionableEnvironments,
-              environmentId,
-              query: composerTrigger.query,
-            })
-          : []),
+        ...threadItems(),
+        ...machineItems(),
         ...matchComposerModelItems({
           instanceEntries: modelMentions.instanceEntries,
           modelOptionsByInstance: modelMentions.modelOptionsByInstance,
           query: composerTrigger.query,
         }),
-        ...workspaceEntries.entries.map((entry) => ({
-          id: `path:${entry.kind}:${entry.path}`,
-          type: "path" as const,
-          path: entry.path,
-          pathKind: entry.kind,
-          searchTarget: workspaceEntries.searchedTarget,
-          label: basenameOfPath(entry.path),
-          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
-        })),
+        ...fileItems(),
       ];
+    }
+    if (composerTrigger.kind === "jira") {
+      // Question answers carry thread links, not Jira chips.
+      if (questionAttachmentTarget !== null) return [];
+      return (jiraMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.jira === undefined) return [];
+        return [
+          {
+            id: `jira:${hit.jira.key}`,
+            type: "jira" as const,
+            key: hit.jira.key,
+            url: hit.jira.url,
+            summary: hit.jira.summary,
+            label: hit.label,
+            description:
+              hit.jira.status !== undefined
+                ? `${hit.jira.status} · ${hit.description}`
+                : hit.description,
+          },
+        ];
+      });
+    }
+    if (composerTrigger.kind === "figma") {
+      // Question answers carry thread links, not Figma chips.
+      if (questionAttachmentTarget !== null || pullRequestProjectId === null) return [];
+      return (figmaMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.figma === undefined) return [];
+        return [
+          {
+            id: `figma:${hit.figma.fileKey}`,
+            type: "figma" as const,
+            fileKey: hit.figma.fileKey,
+            url: hit.figma.url,
+            name: hit.figma.name,
+            hasThumbnail: hit.figma.hasThumbnail,
+            projectId: pullRequestProjectId,
+            environmentId,
+            label: hit.label,
+            description: hit.description,
+          },
+        ];
+      });
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -320,51 +512,106 @@ export function useComposerMenuItems({
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
-    if (
-      composerTrigger.kind === "pull-request" &&
-      pullRequestProjectId !== null &&
-      pullRequestRepository !== null
-    ) {
+    const issueItems = (): ComposerCommandItem[] =>
+      (issueMentionIndexLookup.data?.hits ?? []).flatMap((hit) => {
+        if (hit.issue === undefined) return [];
+        return [
+          {
+            id: `issue:${hit.issue.repository.toLowerCase()}#${hit.issue.number}`,
+            type: "issue" as const,
+            number: hit.issue.number,
+            title: hit.issue.title,
+            url: hit.issue.url,
+            repository: hit.issue.repository,
+            state: hit.issue.state,
+            label: hit.label,
+            description: `${hit.issue.state} · ${hit.issue.repository} · ${hit.description}`,
+          },
+        ];
+      });
+
+    const pullRequestItems = (): ComposerCommandItem[] => {
+      if (pullRequestProjectId === null || pullRequestRepository === null) return [];
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
-          ? [exactPullRequestLookup.data]
+          ? [
+              {
+                projectId: pullRequestProjectId,
+                repository: pullRequestRepository,
+                number: exactPullRequestLookup.data.number,
+                title: exactPullRequestLookup.data.title,
+                url: exactPullRequestLookup.data.url,
+                headBranch: exactPullRequestLookup.data.headBranch,
+                baseBranch: exactPullRequestLookup.data.baseBranch,
+                state: exactPullRequestLookup.data.state,
+                isDraft: exactPullRequestLookup.data.isDraft ?? false,
+                updatedAt: exactPullRequestLookup.data.updatedAt,
+              },
+            ]
           : [];
-      const matches = /^\d*$/u.test(composerTrigger.query)
-        ? filterComposerPullRequestMatches({
-            entries: [...exactPullRequest, ...(pullRequestLookup.data?.entries ?? [])],
+      const matches = mentionIndexEnabled
+        ? withLinkedComposerPullRequestsFirst({
+            matches: [
+              ...exactPullRequest,
+              ...(mentionIndexLookup.data?.hits ?? []).flatMap((hit) =>
+                hit.pullRequest === undefined
+                  ? []
+                  : [
+                      {
+                        projectId: hit.pullRequest.projectId,
+                        repository: hit.pullRequest.repository,
+                        number: hit.pullRequest.number,
+                        title: hit.pullRequest.title,
+                        url: hit.pullRequest.url,
+                        headBranch: hit.pullRequest.headBranch,
+                        baseBranch: hit.pullRequest.baseBranch,
+                        state: hit.pullRequest.state,
+                        isDraft: hit.pullRequest.isDraft,
+                        updatedAt: "",
+                      },
+                    ],
+              ),
+            ],
             linked: linkedPullRequests,
-            projectId: pullRequestProjectId,
-            repository: pullRequestRepository,
             query: composerTrigger.query,
             limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
           })
-        : withLinkedComposerPullRequestsFirst({
-            matches: rankPullRequestMatches(
-              (pullRequestLookup.data?.entries ?? []).filter((entry) => {
-                if (
-                  entry.projectId !== pullRequestProjectId ||
-                  entry.repository.trim().toLowerCase() !==
-                    pullRequestRepository.trim().toLowerCase()
-                ) {
-                  return false;
-                }
-                const provider = pullRequestLookup.data?.providers.find(
-                  (candidate) => candidate.host === entry.host,
-                );
-                return (
-                  provider?.searchesOnHost === true ||
-                  matchesPullRequestQuery(entry, composerTrigger.query)
-                );
-              }),
-              composerTrigger.query,
-            ),
-            linked: linkedPullRequests,
-            query: composerTrigger.query,
-            limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
-          });
+        : /^\d*$/u.test(composerTrigger.query)
+          ? filterComposerPullRequestMatches({
+              entries: [...exactPullRequest, ...(classicPullRequestLookup.data?.entries ?? [])],
+              linked: linkedPullRequests,
+              projectId: pullRequestProjectId,
+              repository: pullRequestRepository,
+              query: composerTrigger.query,
+              limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+            })
+          : withLinkedComposerPullRequestsFirst({
+              matches: rankPullRequestMatches(
+                (classicPullRequestLookup.data?.entries ?? []).filter((entry) => {
+                  if (
+                    entry.projectId !== pullRequestProjectId ||
+                    entry.repository.trim().toLowerCase() !==
+                      pullRequestRepository.trim().toLowerCase()
+                  ) {
+                    return false;
+                  }
+                  const provider = classicPullRequestLookup.data?.providers.find(
+                    (candidate) => candidate.host === entry.host,
+                  );
+                  return (
+                    provider?.searchesOnHost === true ||
+                    matchesPullRequestQuery(entry, composerTrigger.query)
+                  );
+                }),
+                composerTrigger.query,
+              ),
+              linked: linkedPullRequests,
+              query: composerTrigger.query,
+              limit: COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+            });
       return matches.map((pullRequest) => ({
         id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
-        type: "pull-request",
+        type: "pull-request" as const,
         pullRequest: {
           number: pullRequest.number,
           title: pullRequest.title,
@@ -380,32 +627,199 @@ export function useComposerMenuItems({
             ? pullRequest.title
             : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
-    }
+    };
+
+    // Question answers carry thread links, not PR/issue chips.
+    if (questionAttachmentTarget !== null) return [];
+    if (composerTrigger.kind === "issue") return issueItems();
+    if (composerTrigger.kind === "pull-request") return pullRequestItems();
+    if (composerTrigger.kind === "hash") return [...pullRequestItems(), ...issueItems()];
     return [];
   })();
+  const mentionIndexSyncingEmpty =
+    mentionIndexLookup.data?.status === "syncing" && mentionIndexLookup.data.hits.length === 0;
+  const threadMentionIndexSyncingEmpty =
+    threadMentionIndexLookup.data?.status === "syncing" &&
+    threadMentionIndexLookup.data.hits.length === 0;
+  const jiraMentionIndexSyncingEmpty =
+    jiraMentionIndexLookup.data?.status === "syncing" &&
+    jiraMentionIndexLookup.data.hits.length === 0;
+  const figmaMentionIndexSyncingEmpty =
+    figmaMentionIndexLookup.data?.status === "syncing" &&
+    figmaMentionIndexLookup.data.hits.length === 0;
+  const issueMentionIndexSyncingEmpty =
+    issueMentionIndexLookup.data?.status === "syncing" &&
+    issueMentionIndexLookup.data.hits.length === 0;
+  // Cold index returns { hits: [], status: "syncing" }; keep querying until ready.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refreshes a stale SWR mention-index read while the server finishes its first sync
+  useEffect(() => {
+    const refreshers: Array<() => void> = [];
+    if (mentionIndexSyncingEmpty) refreshers.push(mentionIndexLookup.refresh);
+    if (threadMentionIndexSyncingEmpty) refreshers.push(threadMentionIndexLookup.refresh);
+    if (jiraMentionIndexSyncingEmpty) refreshers.push(jiraMentionIndexLookup.refresh);
+    if (figmaMentionIndexSyncingEmpty) refreshers.push(figmaMentionIndexLookup.refresh);
+    if (issueMentionIndexSyncingEmpty) refreshers.push(issueMentionIndexLookup.refresh);
+    if (refreshers.length === 0) return;
+    const interval = window.setInterval(() => {
+      for (const refresh of refreshers) refresh();
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [
+    mentionIndexSyncingEmpty,
+    threadMentionIndexSyncingEmpty,
+    jiraMentionIndexSyncingEmpty,
+    figmaMentionIndexSyncingEmpty,
+    issueMentionIndexSyncingEmpty,
+    mentionIndexLookup.refresh,
+    threadMentionIndexLookup.refresh,
+    jiraMentionIndexLookup.refresh,
+    figmaMentionIndexLookup.refresh,
+    issueMentionIndexLookup.refresh,
+  ]);
   const isLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (wantsFiles && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (mentionIndexEnabled &&
+      wantsThreads &&
+      (threadMentionIndexSyncingEmpty ||
+        threadMentionIndexLookup.isPending ||
+        threadMentionQuery !== debouncedThreadMentionQuery)) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
-    (composerTriggerKind === "pull-request" &&
+    (mentionIndexEnabled &&
+      composerTriggerKind === "jira" &&
+      pullRequestProjectId !== null &&
+      (jiraMentionIndexLookup.isPending ||
+        jiraMentionIndexSyncingEmpty ||
+        jiraTriggerQuery !== debouncedJiraTriggerQuery)) ||
+    (mentionIndexEnabled &&
+      composerTriggerKind === "figma" &&
+      pullRequestProjectId !== null &&
+      (figmaMentionIndexLookup.isPending ||
+        figmaMentionIndexSyncingEmpty ||
+        figmaTriggerQuery !== debouncedFigmaTriggerQuery)) ||
+    (wantsIssues &&
+      pullRequestProjectId !== null &&
+      (issueMentionIndexLookup.isPending ||
+        issueMentionIndexSyncingEmpty ||
+        issueTriggerQuery !== debouncedIssueTriggerQuery)) ||
+    (wantsPullRequests &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
-      (pullRequestLookup.isPending ||
-        pullRequestTextQuery !== debouncedPullRequestTextQuery ||
+      (pullRequestTextQuery !== debouncedPullRequestTextQuery ||
         pullRequestTriggerNumber !== debouncedPullRequestNumber ||
-        exactPullRequestLookup.isPending));
+        exactPullRequestLookup.isPending ||
+        (mentionIndexEnabled
+          ? mentionIndexLookup.isPending || mentionIndexSyncingEmpty
+          : classicPullRequestLookup.isPending)));
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
       return "No skills found. Try / to browse provider commands.";
+    }
+    if (composerTriggerKind === "thread") {
+      return composerTrigger?.query
+        ? `No thread matches ${composerTrigger.query}.`
+        : "No matching threads.";
+    }
+    if (composerTriggerKind === "file") {
+      return "No matching files or folders.";
+    }
+    if (composerTriggerKind === "jira") {
+      if (pullRequestProjectId === null) {
+        return "Jira search needs an open project.";
+      }
+      if (
+        jiraMentionIndexLookup.error !== null ||
+        jiraMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          jiraMentionIndexLookup.data?.detail ??
+          "Jira issues could not be read. Set Jira spaces in Settings → Chat and configure a Jira MCP server."
+        );
+      }
+      if (jiraMentionIndexLookup.data?.status === "empty") {
+        return (
+          jiraMentionIndexLookup.data.detail ??
+          "No Jira issues indexed. Set Jira spaces in Settings → Chat and configure a Jira MCP server."
+        );
+      }
+      return composerTrigger?.query
+        ? `No Jira issue matches ${composerTrigger.query}.`
+        : "No Jira issues found.";
+    }
+    if (composerTriggerKind === "figma") {
+      if (pullRequestProjectId === null) {
+        return "Figma search needs an open project.";
+      }
+      if (
+        figmaMentionIndexLookup.error !== null ||
+        figmaMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          figmaMentionIndexLookup.data?.detail ??
+          "Figma designs could not be read. Add Figma files in Settings → Chat."
+        );
+      }
+      if (figmaMentionIndexLookup.data?.status === "empty") {
+        return (
+          figmaMentionIndexLookup.data.detail ??
+          "No Figma files indexed. Paste design links in Settings → Chat → Mentions."
+        );
+      }
+      return composerTrigger?.query
+        ? `No Figma design matches ${composerTrigger.query}.`
+        : "No Figma designs found.";
+    }
+    if (composerTriggerKind === "issue") {
+      if (pullRequestProjectId === null) {
+        return "Issue search needs an open project.";
+      }
+      if (
+        issueMentionIndexLookup.error !== null ||
+        issueMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          issueMentionIndexLookup.data?.detail ??
+          "GitHub issues could not be read for this project."
+        );
+      }
+      if (issueMentionIndexLookup.data?.status === "empty") {
+        return issueMentionIndexLookup.data.detail ?? "No GitHub issues indexed for this project.";
+      }
+      return composerTrigger?.query
+        ? `No GitHub issue matches ${composerTrigger.query}.`
+        : "No GitHub issues found.";
+    }
+    if (composerTriggerKind === "hash") {
+      if (pullRequestProjectId === null || pullRequestRepository === null) {
+        return "Pull requests and issues are not available for this project.";
+      }
+      if (mentionIndexLookup.error !== null || mentionIndexLookup.data?.status === "error") {
+        return "Pull requests could not be read for this project.";
+      }
+      if (
+        issueMentionIndexLookup.error !== null ||
+        issueMentionIndexLookup.data?.status === "error"
+      ) {
+        return (
+          issueMentionIndexLookup.data?.detail ??
+          "GitHub issues could not be read for this project."
+        );
+      }
+      return composerTrigger?.query
+        ? `No pull request or issue matches ${composerTrigger.query}.`
+        : "No pull requests or issues found.";
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
         return "Pull requests are not available for this project.";
       }
       if (
-        pullRequestLookup.error !== null ||
-        pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
+        mentionIndexEnabled &&
+        (mentionIndexLookup.error !== null || mentionIndexLookup.data?.status === "error")
       ) {
+        return "Pull requests could not be read for this project.";
+      }
+      if (!mentionIndexEnabled && classicPullRequestLookup.error !== null) {
         return "Pull requests could not be read for this project.";
       }
       return composerTrigger?.query
@@ -413,7 +827,7 @@ export function useComposerMenuItems({
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? "No matching threads, machines, or files."
       : "No matching command.";
   })();
 
