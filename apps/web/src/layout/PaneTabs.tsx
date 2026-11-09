@@ -57,6 +57,8 @@ import {
   countLayoutTabs,
   findLayoutPane,
   findLayoutTab,
+  isLayoutGhostTab,
+  isLayoutGhostTabShown,
   isLayoutPageContent,
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
@@ -185,7 +187,7 @@ export function buildLayoutTabMenuItems(
   );
   const hasSiblings = location.pane.tabs.length > 1;
   const items: ContextMenuItem<LayoutTabMenuId>[] = [
-    ...(location.tab.ghostOf
+    ...(isLayoutGhostTab(location.tab)
       ? [{ id: "layout:keep", label: "Keep open", icon: "pin" } as const]
       : []),
     {
@@ -407,7 +409,10 @@ export const LayoutPaneTab = memo(function LayoutPaneTab({ tab }: { tab: LayoutT
         >
           <span className={LAYOUT_TAB_ICON_CLASS}>{label.icon}</span>
           <span
-            className={cn(PANE_INACTIVE_TAB_TITLE_CLASS, tab.ghostOf && PANE_GHOST_TAB_TITLE_CLASS)}
+            className={cn(
+              PANE_INACTIVE_TAB_TITLE_CLASS,
+              isLayoutGhostTab(tab) && PANE_GHOST_TAB_TITLE_CLASS,
+            )}
             dir={textDirection(label.title)}
           >
             {label.title}
@@ -598,21 +603,33 @@ export function useLayoutTabLabel(tab: LayoutTab): {
     ) : project ? (
       <ProjectFavicon project={project} className="size-3.5 shrink-0" />
     ) : null;
-  return { icon, title, tooltip: project ? `${project.title} / ${title}` : title };
+  const tooltip = project ? `${project.title} / ${title}` : title;
+  return {
+    icon,
+    title,
+    tooltip: isLayoutGhostTab(tab) ? ghostTabTooltip(tooltip, undefined) : tooltip,
+  };
 }
 
-/** A ghost tab names the thread it was opened from and how to keep it. */
+/** A ghost tab names the thread it was opened from, if any, and how to keep it. */
 export function ghostTabTooltip(title: string, parentTitle: string | undefined): string {
   return [title, parentTitle ? `Opened from ${parentTitle}` : null, "Double-click to keep open"]
     .filter(Boolean)
     .join("\n");
 }
 
-/** The thread a tab is a ghost of (`LayoutTab.ghostOf`), or null for an ordinary tab. */
+/** The thread a lineage ghost tab was opened from (`LayoutTab.ghostOf`), or null. */
 export function useLayoutTabGhostOf(tabId: string | null) {
   return useLayoutStore((state) =>
     tabId === null
       ? null
       : (findLayoutTab(state.layout, (tab) => tab.id === tabId)?.tab.ghostOf ?? null),
+  );
+}
+
+/** The tab draws as a ghost: italic, kept by a double-click (see `isLayoutGhostTabShown`). */
+export function useLayoutTabGhostShown(tabId: string | null): boolean {
+  return useLayoutStore((state) =>
+    tabId === null ? false : isLayoutGhostTabShown(state.layout, tabId),
   );
 }
