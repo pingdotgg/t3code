@@ -80,19 +80,14 @@ type DraftAccess = {
   ) => void;
 };
 
-type DetachedDraft = {
-  readonly ownerKey: string;
-  readonly revision: number;
-  readonly access: DraftAccess;
-};
+type DetachedDraft = { readonly snapshot: VoiceDraftSnapshot; readonly access: DraftAccess };
 
 /** Finishes an active recording into its owner's draft while the editor shows another owner, or is gone. */
 function detachRecording(
   controller: VoiceInputController,
   detachedRef: { current: DetachedDraft | null },
   snapshot: VoiceDraftSnapshot | null,
-  ownerKey: string,
-  detachDraft: (() => DraftAccess) | undefined,
+  { ownerKey, detachDraft }: HookInput,
 ): boolean {
   const phase = controller.currentState.phase;
   if (
@@ -101,9 +96,13 @@ function detachRecording(
     (phase !== "recording" && phase !== "transcribing" && phase !== "post-processing")
   )
     return false;
-  detachedRef.current = { ownerKey, revision: snapshot.revision, access: detachDraft() };
+  detachedRef.current = { snapshot, access: detachDraft() };
   void controller.stop();
   return true;
+}
+
+function failDetached(description: string | null) {
+  toastManager.add({ type: "error", title: "Dictation for the last thread failed", description });
 }
 
 function cleanupContext({ text, selection }: DraftInput): DraftInput {
@@ -210,7 +209,6 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     prepared,
     grantId,
     value: INITIAL_STATE,
-    ownerKey: null as string | null,
   });
   const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [level, setLevel] = useState(0);
@@ -221,7 +219,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     disabled: input.disabled,
   });
   if (controllerState.prepared !== prepared || controllerState.grantId !== grantId) {
-    setControllerState({ prepared, grantId, value: INITIAL_STATE, ownerKey: null });
+    setControllerState({ prepared, grantId, value: INITIAL_STATE });
     setSetup(INITIAL_SETUP);
     setQueuedStart(null);
     setPreview(null);
@@ -235,8 +233,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const state: VoiceInputState =
     queuedStart === prepared && prepared
       ? WAITING_STATE
-      : controllerState.prepared === prepared &&
-          (controllerState.ownerKey ?? input.ownerKey) === input.ownerKey
+      : controllerState.prepared === prepared
         ? controllerState.value
         : INITIAL_STATE;
 
@@ -256,9 +253,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   });
   const lastSnapshotRef = useRef<VoiceDraftSnapshot | null>(null);
   const detachedRef = useRef<DetachedDraft | null>(null);
-  // The owner whose detached recording failed; its retained audio waits for Retry there.
-  const failedOwnerRef = useRef<string | null>(null);
-  const controllerRunRef = useRef(0);
+  const unmountingRef = useRef(false);
   const draftRevisionRef = useRef({ ownerKey: input.ownerKey, text: input.draftText, revision: 0 });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks committed draft revisions so a late transcript cannot overwrite an edited draft
   useEffect(() => {
@@ -272,9 +267,18 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   }, [input.ownerKey, input.draftText]);
 
+  // Cleans up before the controller effect, and only on unmount; StrictMode's simulated
+  // unmount comes at mount, before any recording.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the controller cleanup whether the composer is unmounting
+  useEffect(() => {
+    unmountingRef.current = false;
+    return () => {
+      unmountingRef.current = true;
+    };
+  }, []);
+
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- owns the recording controller bound to the consented destination; it is disposed with the consent
   useEffect(() => {
-    const run = ++controllerRunRef.current;
     if (!prepared || !grantId || typeof navigator === "undefined") return;
     const hasAudioConsent = bindAudioGrant(grantId);
     let disposed = false;
@@ -292,7 +296,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       const detached = detachedRef.current;
       if (detached) {
         const draft = detached.access.readDraft();
-        return draft && { ...draft, ownerKey: detached.ownerKey, revision: detached.revision };
+        const { ownerKey, revision } = detached.snapshot;
+        return draft && { ...draft, ownerKey, revision };
       }
       const current = latestRef.current.input;
       const draft = current.readDraft();
@@ -375,7 +380,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         !hasAudioConsent() ||
         preferences.cleanupGrant !== readCleanupGrant() ||
         (detached
-          ? detached.ownerKey !== options.draft.ownerKey
+          ? detached.snapshot.ownerKey !== options.draft.ownerKey
           : current.cleanup === false ||
             current.environmentId !== preferences.environmentId ||
             current.ownerKey !== options.draft.ownerKey)
@@ -416,7 +421,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       readDraft,
       commitDraft: (text, selection) => {
         if (detachedRef.current) {
-          detachedRef.current.access.commitDraft(text, selection);
+          // Unmounted, consent changes no longer reach this controller through its effect.
+          const cleanupGrant = recordingPreferences?.cleanupGrant;
+          if (hasAudioConsent() && (!cleanupGrant || cleanupGrant === readCleanupGrant()))
+            detachedRef.current.access.commitDraft(text, selection);
+          else
+            failDetached("Voice input was turned off or changed before the transcript was ready.");
           return;
         }
         if (latestRef.current.input.disabled) return;
@@ -429,24 +439,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
           if (value.phase !== "idle" && value.phase !== "error") return;
           detachedRef.current = null;
           if (value.phase === "error") {
-            toastManager.add({
-              type: "error",
-              title: "Dictation for the previous thread failed",
-              description: value.error,
-            });
-            // Unmounted, nothing can offer Retry, so the retained audio is dropped.
-            if (disposed) controller.cancel();
-            else {
-              failedOwnerRef.current = detached.ownerKey;
-              setControllerState({ prepared, grantId, value, ownerKey: detached.ownerKey });
-            }
+            failDetached(value.error);
+            // Drops the audio kept for Retry; no editor shows this recording to offer it.
+            controller.cancel();
           }
           return;
         }
         if (disposed) return;
-        failedOwnerRef.current = null;
         if (value.phase === "error") pendingSubmissionRef.current = null;
-        setControllerState({ prepared, grantId, value, ownerKey: null });
+        setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
     });
@@ -457,27 +458,15 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       startRequestRef.current += 1;
       setQueuedStart(null);
       if (controllerRef.current === controller) controllerRef.current = null;
-      // Every cleanup of a commit runs before its setups, so by the microtask a re-run (new
-      // consent or destination, or a StrictMode remount) has advanced the counter; an unmount has not.
-      queueMicrotask(() => {
-        const unmounted = controllerRunRef.current === run;
-        if (unmounted && detachedRef.current) return;
-        const last = latestRef.current.input;
-        if (
-          unmounted &&
-          detachRecording(
-            controller,
-            detachedRef,
-            lastSnapshotRef.current,
-            last.ownerKey,
-            last.detachDraft,
-          )
-        )
-          return;
-        detachedRef.current = null;
-        failedOwnerRef.current = null;
-        controller.dispose();
-      });
+      const last = latestRef.current.input;
+      if (
+        unmountingRef.current &&
+        (detachedRef.current ||
+          detachRecording(controller, detachedRef, lastSnapshotRef.current, last))
+      )
+        return;
+      detachedRef.current = null;
+      controller.dispose();
     };
   }, [prepared, grantId, cloudProvider, cloudModel]);
 
@@ -533,23 +522,22 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     pendingSubmissionRef.current = null;
     startRequestRef.current += 1;
     const controller = controllerRef.current;
-    if (!controller || detachedRef.current || failedOwnerRef.current) return;
-    if (
-      previousOwner === input.ownerKey ||
-      !detachRecording(
-        controller,
-        detachedRef,
-        lastSnapshotRef.current,
-        previousOwner,
-        previousInputRef.current.detachDraft,
-      )
-    ) {
-      controller.ownerChanged();
+    const detached = detachedRef.current;
+    if (!controller) return;
+    if (detached) {
+      if (detached.snapshot.ownerKey !== input.ownerKey || input.disabled) return;
+      // Back on the recording's own draft: the editor shows it again and Send waits for it.
+      detachedRef.current = null;
+      draftRevisionRef.current = detached.snapshot;
+      setControllerState((current) => ({ ...current, value: controller.currentState }));
       return;
     }
-    setControllerState((current) => ({ ...current, value: INITIAL_STATE, ownerKey: null }));
-    setPreview(null);
-    setLevel(0);
+    if (
+      previousOwner === input.ownerKey ||
+      !detachRecording(controller, detachedRef, lastSnapshotRef.current, previousInputRef.current)
+    )
+      controller.ownerChanged();
+    else setControllerState((current) => ({ ...current, value: INITIAL_STATE }));
   }, [input.ownerKey, input.disabled]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- delivers a queued submission only after the transcript has committed to the draft
@@ -601,6 +589,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const start = useStableCallback(async () => {
     if (latestRef.current.input.disabled || (setup.open && setup.downloading)) return;
+    if (detachedRef.current) {
+      toastManager.add({
+        type: "info",
+        title: "Finishing dictation for the previous thread",
+        description: "Try again in a moment.",
+      });
+      return;
+    }
     if (!grantId) {
       if (destination.offerFirstRunSetup && latestRef.current.input.offerSetup !== false)
         await navigate({ to: "/settings/voice", hash: "voice-transcription-destination" });
@@ -714,6 +710,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     }
   });
 
+  // A detached recording belongs to another draft; this editor's controls must not reach it.
+  const attachedController = () => (detachedRef.current ? null : controllerRef.current);
+
   const destinationReady =
     grantId === null
       ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
@@ -751,14 +750,14 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     freezesEditor: voiceInputBlocksSubmission(state),
     start,
     submitAfterDictation,
-    stop: useStableCallback(() => controllerRef.current?.stop() ?? Promise.resolve()),
+    stop: useStableCallback(() => attachedController()?.stop() ?? Promise.resolve()),
     cancel: useStableCallback(() => {
       pendingSubmissionRef.current = null;
       startRequestRef.current += 1;
       setQueuedStart(null);
       setSetup(INITIAL_SETUP);
-      controllerRef.current?.cancel();
+      attachedController()?.cancel();
     }),
-    skipPostProcessing: useStableCallback(() => controllerRef.current?.skipPostProcessing()),
+    skipPostProcessing: useStableCallback(() => attachedController()?.skipPostProcessing()),
   };
 }
