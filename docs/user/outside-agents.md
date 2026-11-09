@@ -16,8 +16,9 @@ example:
 https://<environment-address>/mcp
 ```
 
-The copied URL uses the route this device is connected over, so an agent on the
-same device can reach it.
+When T3 Connect serves the environment, the copied URL is its T3 Connect
+address, which agents can reach from anywhere. Otherwise it uses the route this
+device is connected over, so an agent on the same device can reach it.
 
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as
@@ -45,9 +46,10 @@ Only approve a sign-in you just started. To approve, enter a pairing code from
 browser already signed in to the environment with permission to manage access
 can approve without a code.
 
-Then choose what the agent may do:
+Then choose what the agent may do. **Auto** is selected by default, or the
+closest lower mode allowed by your organization’s policy:
 
-- **Read only** is the default. The agent can read projects and threads and see
+- **Read only** lets the agent read projects and threads and see
   the available providers and models. It cannot change anything.
 - **Supervised** through **Full access** also let it start, message and stop
   threads in every project. A thread it starts or steers cannot run with more
