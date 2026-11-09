@@ -123,12 +123,13 @@ const refreshCountAtom = Atom.family((key: string) =>
 const textGeneratorModelsAtom = Atom.family((key: string) => {
   const [environmentId, id] = JSON.parse(key) as ModelsKey;
   return Atom.make((get) => {
-    const refresh = get(refreshCountAtom(`${environmentId}:${id}`)) > 0;
+    // Read again after a refresh; the server's cache already holds the new list by then.
+    get(refreshCountAtom(`${environmentId}:${id}`));
     return Effect.promise(() =>
       runAtomCommand(
         get.registry,
         serverEnvironment.listTextGeneratorModels,
-        { environmentId, input: refresh ? { id, refresh } : { id } },
+        { environmentId, input: { id } },
         { reportFailure: false },
       ),
     ).pipe(
@@ -147,10 +148,25 @@ const textGeneratorCatalogAtom = Atom.family((keys: string) =>
   ).pipe(Atom.withLabel(`text-generator-catalog:${keys}`)),
 );
 
-/** Asks the API for its model list again, skipping the server's cache. */
-export function refreshTextGeneratorModels(environmentId: EnvironmentId, id: ProviderInstanceId) {
+/**
+ * Asks the API for its model list again, skipping the server's cache, then has open pickers
+ * read it. Resolves to the model count, or the error to show.
+ */
+export async function refreshTextGeneratorModels(
+  environmentId: EnvironmentId,
+  id: ProviderInstanceId,
+): Promise<{ readonly count: number } | { readonly error: string }> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.listTextGeneratorModels,
+    { environmentId, input: { id, refresh: true } },
+    { reportFailure: false },
+  );
   const atom = refreshCountAtom(`${environmentId}:${id}`);
   appAtomRegistry.set(atom, appAtomRegistry.get(atom) + 1);
+  return result._tag === "Success"
+    ? { count: result.value.models.length }
+    : { error: formatEnvironmentQueryError(result.cause) };
 }
 
 function toProviderModel(model: TextGeneratorModel): ServerProviderModel {

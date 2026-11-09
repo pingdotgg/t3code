@@ -8,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { PlusIcon, RefreshCwIcon } from "lucide-react";
+import { PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -31,6 +31,9 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { RefreshIcon } from "../ui/refresh-icon";
+import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   Dialog,
   DialogDescription,
@@ -108,7 +111,6 @@ export function TextGeneratorsSettings({
                     driverKind={textGeneratorBrand(config)}
                     displayName={name}
                     badgeContent="none"
-                    size="compact"
                   />
                   {name}
                 </span>
@@ -122,15 +124,12 @@ export function TextGeneratorsSettings({
               control={
                 readOnly ? null : (
                   <div className="flex items-center gap-1.5">
-                    <Button
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label={`Refresh ${name} models`}
+                    <RefreshModelsButton
+                      environmentId={environmentId}
+                      id={id}
+                      name={name}
                       disabled={!config.enabled}
-                      onClick={() => refreshTextGeneratorModels(environmentId, id)}
-                    >
-                      <RefreshCwIcon aria-hidden />
-                    </Button>
+                    />
                     <Button size="xs" variant="ghost" onClick={() => setEditing({ id, config })}>
                       Edit
                     </Button>
@@ -347,5 +346,57 @@ function TextGeneratorDialog({
         </DialogFooter>
       </DialogPopup>
     </Dialog>
+  );
+}
+
+function RefreshModelsButton({
+  environmentId,
+  id,
+  name,
+  disabled,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly id: ProviderInstanceId;
+  readonly name: string;
+  readonly disabled: boolean;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const refresh = async () => {
+    setRefreshing(true);
+    const result = await refreshTextGeneratorModels(environmentId, id);
+    setRefreshing(false);
+    if ("error" in result) {
+      toastManager.add({
+        type: "error",
+        title: `Couldn't load ${name} models`,
+        description: result.error,
+      });
+      return;
+    }
+    toastManager.add({
+      type: "success",
+      title: `${name}: ${result.count} ${result.count === 1 ? "model" : "models"} available`,
+    });
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Refresh ${name} models`}
+            aria-busy={refreshing}
+            disabled={disabled || refreshing}
+            onClick={() => void refresh()}
+          >
+            <RefreshIcon refreshing={refreshing} />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">
+        {disabled ? "Turn it on to load models" : "Refresh model list"}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
