@@ -28,6 +28,40 @@ import * as ServerConfig from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
+// Clients send credentials to these and keep only the origin, so a path would name another app.
+const AdvertisedUrlsFromString = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.Array(Schema.String),
+    SchemaTransformation.transformEffect({
+      decode: (value) => {
+        const origins = new Set<string>();
+        for (const entry of value.split(",").map((part) => part.trim())) {
+          if (entry.length === 0) continue;
+          const url = URL.parse(entry);
+          if (
+            url?.protocol !== "https:" ||
+            url.pathname !== "/" ||
+            url.search !== "" ||
+            url.hash !== "" ||
+            url.username !== "" ||
+            url.password !== ""
+          ) {
+            return Effect.fail(
+              new SchemaIssue.InvalidValue({
+                // Credentials written into an address stay out of the error.
+                message: `"${entry.slice(entry.lastIndexOf("@") + 1)}" is not an https origin. An advertised address is https with no path, query or credentials, such as https://t3.example.com.`,
+              }),
+            );
+          }
+          origins.add(`${url.origin}/`);
+        }
+        return Effect.succeed<ReadonlyArray<string>>([...origins]);
+      },
+      encode: (urls) => Effect.succeed(urls.join(",")),
+    }),
+  ),
+);
+
 const modeFlag = Flag.Literals("mode", ServerConfig.RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
   Flag.optional,
@@ -84,6 +118,14 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
   Flag.withSchema(PortSchema),
   Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
   Flag.optional,
+);
+const advertiseUrlFlag = Flag.String("advertise-url").pipe(
+  Flag.withSchema(AdvertisedUrlsFromString),
+  Flag.withDescription(
+    "HTTPS address that clients and linked environments reach this server at, such as a reverse proxy in front of it. Repeat for several, most preferred first (equivalent to T3CODE_ADVERTISE_URL, comma-separated).",
+  ),
+  Flag.atLeast(0),
+  Flag.map((urls): ReadonlyArray<string> => [...new Set(urls.flat())]),
 );
 const lanFlag = Flag.Boolean("lan").pipe(
   Flag.withDescription(
@@ -171,6 +213,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  advertisedUrls: Config.schema(AdvertisedUrlsFromString, "T3CODE_ADVERTISE_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   lan: Config.Boolean("T3CODE_LAN").pipe(Config.option, Config.map(Option.getOrUndefined)),
 });
 
@@ -207,6 +253,7 @@ export interface CliServerFlags {
   readonly logWebSocketEvents: Option.Option<boolean>;
   readonly tailscaleServeEnabled: Option.Option<boolean>;
   readonly tailscaleServePort: Option.Option<number>;
+  readonly advertisedUrls: ReadonlyArray<string>;
   readonly lan: Option.Option<boolean>;
 }
 
@@ -242,6 +289,7 @@ export const sharedServerCommandFlags = {
   logWebSocketEvents: logWebSocketEventsFlag,
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
+  advertisedUrls: advertiseUrlFlag,
   lan: lanFlag,
 } as const;
 
@@ -290,6 +338,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
     tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
     tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
+    advertisedUrls: flags.advertisedUrls ?? [],
     lan: flags.lan ?? Option.none(),
   } satisfies CliServerFlags;
   const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
@@ -418,6 +467,10 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ),
     () => 443,
   );
+  const advertisedUrls =
+    normalizedFlags.advertisedUrls.length > 0
+      ? normalizedFlags.advertisedUrls
+      : (env.advertisedUrls ?? []);
   const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
   const explicitHost = resolveOptionPrecedence(
     normalizedFlags.host,
@@ -523,6 +576,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     logWebSocketEvents,
     tailscaleServeEnabled,
     tailscaleServePort,
+    ...(advertisedUrls.length > 0 ? { advertisedUrls } : {}),
   };
 
   return config;
@@ -547,6 +601,7 @@ export const resolveCliAuthConfig = (
       logWebSocketEvents: Option.none(),
       tailscaleServeEnabled: Option.none(),
       tailscaleServePort: Option.none(),
+      advertisedUrls: [],
       lan: Option.none(),
     },
     cliLogLevel,

@@ -258,7 +258,7 @@ const layerServeProbe = (status: number) =>
     ),
   );
 
-const layerServeConfig = (host = "127.0.0.1") =>
+const layerServeConfig = (host = "127.0.0.1", advertisedUrls: ReadonlyArray<string> = []) =>
   Layer.effect(
     ServerConfig.ServerConfig,
     Effect.map(ServerConfig.ServerConfig, (config) => ({
@@ -267,6 +267,7 @@ const layerServeConfig = (host = "127.0.0.1") =>
       port: 3773,
       tailscaleServeEnabled: true,
       tailscaleServePort: 443,
+      advertisedUrls,
     })),
   ).pipe(
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-direct-" })),
@@ -353,6 +354,40 @@ describe("DirectEndpoints Tailscale Serve", () => {
   effectIt.effect("leaves the tailnet name out when Serve is not forwarding", () =>
     Effect.gen(function* () {
       expect(yield* resolveWithServe(502)).toEqual([]);
+    }),
+  );
+});
+
+describe("DirectEndpoints advertised URLs", () => {
+  const resolveAdvertised = (host: string) =>
+    Effect.flatMap(DirectEndpoints.DirectEndpoints, (service) => service.resolve()).pipe(
+      Effect.provide(
+        DirectEndpoints.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerServeConfig(host, ["https://t3.example.test/", "https://t3.internal.test/"]),
+              layerTailscaleUp,
+              layerServeProbe(200),
+            ),
+          ),
+        ),
+      ),
+    );
+
+  effectIt.effect("lists them first, in the order given, whatever address the server binds", () =>
+    Effect.gen(function* () {
+      const configured = [
+        { kind: "configured", httpBaseUrl: "https://t3.example.test/" },
+        { kind: "configured", httpBaseUrl: "https://t3.internal.test/" },
+      ];
+      const served = { kind: "tailnet", httpBaseUrl: "https://bb-1.tail1234.ts.net/" };
+      expect(yield* resolveAdvertised("192.168.1.10")).toEqual([
+        ...configured,
+        { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        served,
+      ]);
+      // A reverse proxy on this machine forwards to a loopback bind.
+      expect(yield* resolveAdvertised("127.0.0.1")).toEqual([...configured, served]);
     }),
   );
 });

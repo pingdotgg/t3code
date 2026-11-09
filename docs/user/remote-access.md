@@ -120,7 +120,8 @@ Pairing again over an address the machine already has still works. A new route
 is placed by speed, in that order, and you can reorder routes at any time.
 
 While connected through T3 Connect or a paired address, T3 Code also learns the
-machine's current LAN and Tailscale addresses and adds them as routes, so
+machine's current LAN and Tailscale addresses, and any
+[address it advertises](#behind-a-reverse-proxy), and adds them as routes, so
 pairing once through T3 Connect is enough to use the LAN at home. When the
 machine's LAN address changes, for example after it joins another Wi-Fi network,
 the learned route follows it. The machine must allow network access for its LAN
@@ -194,6 +195,36 @@ tailscale serve --https=443 --set-path=/ off
 
 If that port is already in use, choose another with
 `--tailscale-serve-port`. See `t3 pair --help` for other pairing options.
+
+### Behind a reverse proxy
+
+A server in a container, a Kubernetes Pod, or a VM behind an ingress cannot see
+the address its proxy answers at. Tell it:
+
+```bash
+t3 serve --advertise-url https://t3.example.com
+```
+
+Repeat the flag for several addresses, most preferred first. Or set
+`T3CODE_ADVERTISE_URL` to a comma-separated list, for a background service in
+its [`service.env`](./background-service.md#configure-the-service-environment).
+Each address is `https` with no path, and the server does not start with
+anything else.
+
+Clients that are already connected add the address as a route, and
+[linking another environment](#link-another-environment) offers it when you pick
+this machine, so you do not type it. `t3 pair` and the pairing link printed at
+startup still use the address the server finds itself. For a pairing link at
+the advertised address, run
+`t3 auth pairing create --base-url https://t3.example.com`.
+
+Clients and linked environments send their credentials to an advertised
+address, and the server does not check it first. List only addresses you
+control, and remove one before you give up its domain.
+
+The setting does not set up the proxy or change where the server listens. The
+proxy must pass the original `Host` header, set `X-Forwarded-Proto: https`, and
+forward WebSocket connections.
 
 ### Hosted web app
 

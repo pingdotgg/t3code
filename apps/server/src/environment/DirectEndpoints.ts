@@ -133,6 +133,10 @@ export const make = Effect.gen(function* () {
   const servedEndpoint = yield* Ref.make<Option.Option<string>>(Option.none());
   const resolveAvailable = Effect.fn("DirectEndpoints.resolveAvailable")(function* () {
     const endpoints = [
+      ...(config.advertisedUrls ?? []).map((httpBaseUrl) => ({
+        kind: "configured" as const,
+        httpBaseUrl,
+      })),
       ...resolveBoundEndpoints({
         platform,
         host: config.host,

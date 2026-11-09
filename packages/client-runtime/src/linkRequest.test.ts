@@ -1,4 +1,10 @@
-import { EnvironmentId, type ServerConfig, ThreadId, TurnItemId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ServerConfig,
+  type ServerDirectEndpoint,
+  ThreadId,
+  TurnItemId,
+} from "@t3tools/contracts";
 import type { RelayEnvironmentStatusResponse } from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
@@ -97,7 +103,7 @@ const presentation = (
   label: string,
   options: {
     readonly saved?: ReadonlyArray<string>;
-    readonly reported?: ReadonlyArray<string>;
+    readonly reported?: ReadonlyArray<string | ServerDirectEndpoint>;
     readonly connected?: boolean;
   } = {},
 ): EnvironmentPresentation & { readonly environmentId: EnvironmentId } => {
@@ -137,10 +143,9 @@ const presentation = (
         ? null
         : ({
             environment: { platform: { machine: "laptop" } },
-            directEndpoints: options.reported.map((httpBaseUrl) => ({
-              kind: "tailnet",
-              httpBaseUrl,
-            })),
+            directEndpoints: options.reported.map((endpoint) =>
+              typeof endpoint === "string" ? { kind: "tailnet", httpBaseUrl: endpoint } : endpoint,
+            ),
           } as unknown as ServerConfig),
   };
 };
@@ -259,6 +264,24 @@ describe("linkableMachines", () => {
       "http://192.168.1.20:3773",
       "https://environment-vps.t3.example",
     ]);
+  });
+
+  it("offers a configured https address first, ahead of the address the machine binds", () => {
+    const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
+    const pod = presentation("environment-pod", "Pod", {
+      saved: ["http://10.42.0.17:3773/"],
+      reported: [
+        { kind: "configured", httpBaseUrl: "https://t3.example.test/" },
+        { kind: "lan", httpBaseUrl: "http://10.42.0.17:3773/" },
+      ],
+    });
+    const [listed] = linkableMachines({
+      environments: [here, pod],
+      threadEnvironmentId: here.environmentId,
+      links: [],
+      connect: new Map(),
+    });
+    expect(listed?.urls).toEqual(["https://t3.example.test/", "http://10.42.0.17:3773/"]);
   });
 
   it("no longer counts a machine as linked once its link expired", () => {

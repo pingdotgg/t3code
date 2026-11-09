@@ -584,8 +584,11 @@ export function environmentThemeFileHasColors(file: EnvironmentThemeFile): boole
   );
 }
 
-/** tailnet means this machine's Tailscale interface; other private addresses are lan. */
-export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet"]);
+/**
+ * tailnet means this machine's Tailscale interface; other private addresses are lan.
+ * configured is an https address its operator set, such as a reverse proxy in front of it.
+ */
+export const ServerDirectEndpointKind = Schema.Literals(["lan", "tailnet", "configured"]);
 export type ServerDirectEndpointKind = typeof ServerDirectEndpointKind.Type;
 
 export const ServerDirectEndpoint = Schema.Struct({

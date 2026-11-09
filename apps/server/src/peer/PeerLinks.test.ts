@@ -1,5 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - The HTTPS test server needs certificate bytes.
 import * as NodeFS from "node:fs";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - A proxy that sets the Host it forwards, which fetch cannot.
+import * as NodeHttp from "node:http";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - A peer with a certificate this machine does not trust.
 import * as NodeHttps from "node:https";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -645,6 +647,73 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         .pipe(Effect.flip);
       expect(refused.message).toContain("could not reach Box");
       expect(refused.message).toContain("plain http");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+/**
+ * A proxy in front of `target` that forwards what an ingress terminating TLS for
+ * `host` forwards: that Host, and X-Forwarded-Proto.
+ */
+const serveBehindProxy = (target: string, host: string) =>
+  Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server>((resume) => {
+      const server = NodeHttp.createServer((request, response) => {
+        request.pipe(
+          NodeHttp.request(
+            `${target}${request.url}`,
+            {
+              method: request.method,
+              headers: { ...request.headers, host, "x-forwarded-proto": "https" },
+            },
+            (answer) => {
+              response.writeHead(answer.statusCode ?? 502, answer.headers);
+              answer.pipe(response);
+            },
+          ),
+        );
+      });
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.sync(() => {
+        server.closeAllConnections();
+        server.close();
+      }),
+  ).pipe(
+    Effect.map((server) => {
+      const address = server.address();
+      if (address === null || typeof address === "string")
+        throw new Error("expected a TCP address");
+      return `http://127.0.0.1:${address.port}`;
+    }),
+  );
+
+it.effect("links a picked machine at the https address its proxy answers at", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const advertised = "https://t3.example.test";
+      const proxy = yield* serveBehindProxy(b.url, new URL(advertised).host);
+      // Stands in for DNS and TLS only: the proxy above decides what B sees.
+      const resolved = Effect.provideService(FetchHttpClient.Fetch, (input, init) =>
+        // @effect-diagnostics-next-line globalFetch:off - Forwards the client's own request.
+        globalThis.fetch(String(input).replace(advertised, proxy), init),
+      );
+      const pairing = yield* b.auth.issuePairingCredential();
+      const linked = yield* a.links
+        .link({
+          url: advertised,
+          alternateUrls: ["http://10.42.0.17:3773"],
+          pairingCode: pairing.credential,
+          access: "auto",
+          expectedEnvironmentId: box.environmentId,
+        })
+        .pipe(resolved);
+      expect(linked).toMatchObject({ environmentId: box.environmentId, urls: [advertised] });
+      expect(yield* probe(a).pipe(resolved)).toMatchObject({ caller: "T3 Code · Laptop" });
+      expect((yield* linkedSessions(b)).length).toBe(1);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
