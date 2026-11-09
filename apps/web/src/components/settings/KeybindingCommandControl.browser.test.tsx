@@ -112,7 +112,7 @@ it("replaces the saved rule on each selected environment and keeps its condition
   await expect
     .element(
       screen.getByRole("button", {
-        name: /Edit shortcut for Composer: Start or Finish Dictation: Ctrl\+K/,
+        name: /Edit shortcut for Composer: Start or Finish Dictation: (Ctrl\+K|⌘K)/,
       }),
     )
     .toBeVisible();
