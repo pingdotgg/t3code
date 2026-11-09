@@ -56,10 +56,11 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
-  // A new head without checks waits for them only where the host always reports some.
+  // A new head without checks waits for them only where the host always reports some. A watch with
+  // no answer yet (watched again, or saved before the field) waits only while the clock below runs.
   let checksPending = headMoved
     ? detail.capabilities.checksAlwaysReport === true
-    : (watch.checksPending ?? true);
+    : (watch.checksPending ?? watch.checksAwaitedSince != null);
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);

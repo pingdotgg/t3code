@@ -621,5 +621,12 @@ describe("evaluatePullRequestWatch", () => {
       ).next;
     }
     assert.isFalse(current.checksPending);
+
+    // Watched again after that notice, the watch keeps no answer and no clock, so it waits for none.
+    const rewatched = watch({ headSha: "bbbbbbbbbb", checksAwaitedSince: null });
+    assert.isFalse(
+      evaluatePullRequestWatch(rewatched, detail({ headSha: "bbbbbbbbbb", checks: [] }), noRemarks)
+        .next.checksPending,
+    );
   });
 });

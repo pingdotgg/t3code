@@ -341,7 +341,6 @@ A watched thread counts as working while the pull request still has checks runni
 the **Working** section and does not auto-settle. Once every check has finished, including review
 bots that report as checks, the thread returns to your inbox: what happens next is up to a person.
 The watch stays on and still wakes the agent on new comments, failed checks, conflicts or a merge.
-Agents stop watching when they hand the work back to you.
 
 Cross-repository links use a project on the same host. Azure DevOps reviews require a project checked
 out from the matching organization and repository.
