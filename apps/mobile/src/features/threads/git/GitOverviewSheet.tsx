@@ -227,6 +227,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     setIsRefreshing(false);
   };
 
+  // Android wraps a RefreshControl's list in a layout a bottom sheet reads as unable to scroll up,
+  // so dragging down collapsed the sheet; sheets refresh from the AppBar instead.
+  const inAndroidSheet =
+    Platform.OS === "android" && (!isInspector || closeInspectorSheet !== null);
+
   const content = (
     <NativeScrollView
       nestedScrollEnabled
@@ -240,12 +245,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         paddingTop: 8,
         gap: Platform.OS === "android" ? 8 : 14,
       }}
-      // Android wraps a RefreshControl's list in a layout the sheet takes for the list and reads
-      // as unable to scroll up, so dragging down collapsed the sheet; the AppBar refreshes there.
       refreshControl={
-        Platform.OS === "ios" ? (
+        inAndroidSheet ? undefined : (
           <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
-        ) : undefined
+        )
       }
     >
       <ListSection>
