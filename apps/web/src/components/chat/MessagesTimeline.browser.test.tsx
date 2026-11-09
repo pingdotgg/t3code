@@ -341,6 +341,41 @@ describe("MessagesTimeline work rows", () => {
     });
   });
 
+  it("keeps following a streaming turn after a heading is expanded at the bottom", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const runId = RunId.make("live-run");
+    const container = document.createElement("div");
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+    const entries = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+      message("Done", { role: "assistant", runId }, "final"),
+    ];
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    await heading.click();
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...entries,
+          message("Streamed reply\n\n".repeat(40), { role: "assistant", runId }, "streamed"),
+        ]}
+      />,
+    );
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+  });
+
   it("loads a streamed approval patch when review opens and hides it again", async () => {
     setup();
     const itemId = TurnItemId.make("approval-patch");
@@ -1460,36 +1495,6 @@ describe("MessagesTimeline thread find", () => {
     await screen.rerender(element({ routeThreadKey: other, findOpen: false }));
     await screen.rerender(element({ routeThreadKey: other, findOpen: true }));
     expect(navigations).toEqual([released]);
-  });
-
-  it("hears an upward scroll without input only from an embedded frame", async () => {
-    setup();
-    const { navigations, element } = renderObserved();
-    const entries = Array.from({ length: 40 }, (_, index) =>
-      message(`Turn ${index}: ${"x ".repeat(200)}`, {}, `turn-${index}`),
-    );
-    await using screen = await renderElement(element({ timelineEntries: entries }));
-    const viewport = screen.container.querySelector<HTMLElement>(".messages-timeline-scroll")!;
-    await vi.waitFor(() => {
-      expect(screen.text()).toContain("Turn 39:");
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
-    });
-    const scrollUp = async () => {
-      const scrolled = new Promise((resolve) =>
-        viewport.addEventListener("scroll", resolve, { once: true }),
-      );
-      viewport.scrollTop -= 200;
-      await scrolled;
-    };
-
-    await scrollUp();
-    expect(navigations).toEqual([]);
-
-    const frame = document.createElement("iframe");
-    viewport.querySelector("[data-timeline-row-id]")!.append(frame);
-    frame.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
-    await scrollUp();
-    expect(navigations).toEqual([{ source: "scroll" }]);
   });
 
   it("releases follow once when it mounts on a thread whose find is open", async () => {

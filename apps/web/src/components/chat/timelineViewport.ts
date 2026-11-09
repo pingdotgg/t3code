@@ -118,15 +118,10 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
     top: scrollNode.scrollTop,
     height: scrollNode.scrollHeight,
   });
-  let pointerOverFrame = false;
-  const handlePointerOver = (event: PointerEvent) => {
-    pointerOverFrame = event.target instanceof HTMLIFrameElement;
-  };
-  const handlePointerLeave = () => {
-    pointerOverFrame = false;
-  };
-  const frameMayScroll = () =>
-    pointerOverFrame ||
+  // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
+  // the reader's: the browser clamps scrollTop when content briefly shrinks.
+  const frameHasInput = () =>
+    scrollNode.querySelector("iframe:hover") !== null ||
     (document.activeElement instanceof HTMLIFrameElement &&
       scrollNode.contains(document.activeElement));
   const handleScroll = () => {
@@ -136,7 +131,7 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
         height: scrollNode.scrollHeight,
         programmatic: programmaticHolds > 0,
       }) &&
-      frameMayScroll() &&
+      frameHasInput() &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -151,8 +146,6 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
   scrollNode.addEventListener("wheel", handleWheel, { passive: true });
   scrollNode.addEventListener("touchmove", handleTouchMove, { passive: true });
   scrollNode.addEventListener("pointerdown", handlePointerDown, { passive: true });
-  scrollNode.addEventListener("pointerover", handlePointerOver, { passive: true });
-  scrollNode.addEventListener("pointerleave", handlePointerLeave, { passive: true });
   const unregisterKeyDown = registerCommands({}, { observe: handleKeyDown });
   return {
     scrollNode,
@@ -184,8 +177,6 @@ export function attachTimelineViewport(scrollNode: HTMLElement): TimelineViewpor
       scrollNode.removeEventListener("wheel", handleWheel);
       scrollNode.removeEventListener("touchmove", handleTouchMove);
       scrollNode.removeEventListener("pointerdown", handlePointerDown);
-      scrollNode.removeEventListener("pointerover", handlePointerOver);
-      scrollNode.removeEventListener("pointerleave", handlePointerLeave);
       unregisterKeyDown();
     },
   };
