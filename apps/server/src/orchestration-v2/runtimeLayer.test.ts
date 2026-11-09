@@ -8929,9 +8929,16 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
 );
 
 const watchCostScenarios = [
-  { name: "quiet PR", saves: 32 },
-  { name: "review comment edited", reviewCommentEdit: 40, saves: 16 },
-  { name: "noisy inbox", inboxEveryMinute: true, saves: 30 },
+  { name: "quiet PR", saves: 48 },
+  { name: "review comment edited", reviewCommentEdit: 40, saves: 48 },
+  {
+    name: "review comment edit missing from the inbox",
+    reviewCommentEdit: 40,
+    inboxMissesEdit: true,
+    ceilingWake: 120,
+    saves: 48,
+  },
+  { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
   { name: "notifications unavailable", notificationsReadable: false, saves: 0 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
@@ -8939,7 +8946,7 @@ const watchCostScenarios = [
 it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
   const MINUTE = 60_000;
   const number = 41;
-  const runWatchHour = (
+  const runWatch = (
     scenario: (typeof watchCostScenarios)[number],
     notificationsReadable: boolean,
     run: string,
@@ -8993,7 +9000,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         const bump = (thread: number, time: number) => {
           if (time <= now) times.set(thread, Math.max(times.get(thread) ?? 0, time));
         };
-        if (editAt !== null) bump(number, editAt + 3_000);
+        if (editAt !== null && !scenario.inboxMissesEdit) bump(number, editAt + 3_000);
         if (scenario.inboxEveryMinute) {
           for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
         }
@@ -9074,8 +9081,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
 
       const totals: Array<number> = [];
       const seen = new Set<string>();
-      const wakes: Array<string> = [];
-      for (let minute = 0; minute <= 60; minute += 2) {
+      const wakes: Array<readonly [number, string]> = [];
+      for (let minute = 0; minute <= 120; minute += 2) {
         if (minute > 0) yield* TestClock.adjust("2 minutes");
         cost.fingerprints = 0;
         yield* reactor.sweep;
@@ -9086,7 +9093,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
           const summary = message.notification?.summary;
           if (summary === undefined || seen.has(message.id)) continue;
           seen.add(message.id);
-          wakes.push(`${minute} ${summary}`);
+          wakes.push([minute, summary]);
         }
       }
       yield* watch(false);
@@ -9097,8 +9104,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
     "notifications never cost more than the reads they replace: $name",
     (scenario) =>
       Effect.gen(function* () {
-        const baseline = yield* runWatchHour(scenario, false, "baseline");
-        const branch = yield* runWatchHour(
+        const baseline = yield* runWatch(scenario, false, "baseline");
+        const branch = yield* runWatch(
           scenario,
           scenario.notificationsReadable ?? true,
           "notifications",
@@ -9107,7 +9114,12 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
           assert.isAtMost(total, baseline.totals[index]!);
         });
         assert.equal(baseline.totals.at(-1)! - branch.totals.at(-1)!, scenario.saves);
-        assert.deepEqual(branch.wakes, baseline.wakes);
+        assert.deepEqual(
+          branch.wakes,
+          scenario.ceilingWake === undefined
+            ? baseline.wakes
+            : [...baseline.wakes.slice(0, -1), [scenario.ceilingWake, baseline.wakes.at(-1)![1]]],
+        );
       }),
   );
 });

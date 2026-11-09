@@ -54,6 +54,8 @@ const QUIET_REREAD_MS = 10 * 60_000;
 const FINGERPRINT_REREAD_MS = 30 * 60_000;
 /** GitHub can list a notification minutes after the event it reports. */
 const NOTIFICATION_LAG_MS = 5 * 60_000;
+/** Notifications may not report review-thread comment edits, so reread at least this often. */
+const NOTIFIED_REREAD_CEILING_MS = 2 * 60 * 60_000;
 
 const isProviderError = Schema.is(PullRequestProviderError);
 
@@ -87,6 +89,7 @@ interface WatchGroup {
 
 interface LastRead {
   readonly at: number;
+  readonly checkedAt: number;
   readonly fingerprint: string;
   readonly inFlight: boolean;
   readonly remarksComplete: boolean;
@@ -167,7 +170,8 @@ function planRead(
     return { detail: read || checksDue, activity: read };
   }
   const remarksMoved = last.remarks !== fingerprint.remarks || !last.remarksComplete;
-  const activity = remarksMoved || (now - last.at >= FINGERPRINT_REREAD_MS && moved !== false);
+  const activity =
+    remarksMoved || (now - last.checkedAt >= FINGERPRINT_REREAD_MS && moved !== false);
   return {
     detail:
       last.status !== fingerprint.status ||
@@ -178,6 +182,9 @@ function planRead(
     activity,
   };
 }
+
+const notificationsCanGate = (last: LastRead, now: number) =>
+  now - last.checkedAt >= FINGERPRINT_REREAD_MS && now - last.at < NOTIFIED_REREAD_CEILING_MS;
 
 const gatesReread = (
   group: WatchGroup,
@@ -190,7 +197,7 @@ const gatesReread = (
   group.targets.every((target) => last.watches.has(watchKey(target))) &&
   last.remarks === fingerprint.remarks &&
   last.remarksComplete &&
-  now - last.at >= FINGERPRINT_REREAD_MS &&
+  notificationsCanGate(last, now) &&
   last.detail.viewer !== undefined &&
   last.detail.viewer.toLowerCase() === last.detail.author?.login.toLowerCase();
 
@@ -491,7 +498,9 @@ export const make = Effect.gen(function* () {
     const last = lastReads.get(group.key);
     const plan = planRead(group, last, fingerprint, now, moved);
     if (!plan.detail && !plan.activity) {
-      if (moved === false && last !== undefined) lastReads.set(group.key, { ...last, at: now });
+      if (moved === false && last !== undefined) {
+        lastReads.set(group.key, { ...last, checkedAt: now });
+      }
       return;
     }
     if (
@@ -577,13 +586,13 @@ export const make = Effect.gen(function* () {
           fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
         )
       : null;
+    const at =
+      plan.activity || last === undefined
+        ? (threadTails.get(group.key)?.fetchedAt ?? now)
+        : last.at;
     lastReads.set(group.key, {
-      at:
-        plan.activity || last === undefined
-          ? (threadTails.get(group.key)?.fetchedAt ?? now)
-          : moved === false
-            ? now
-            : last.at,
+      at,
+      checkedAt: plan.activity || last === undefined ? at : moved === false ? now : last.checkedAt,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
@@ -636,7 +645,7 @@ export const make = Effect.gen(function* () {
       const repository = repositoryOf(group);
       if (
         last === undefined ||
-        now - last.at < FINGERPRINT_REREAD_MS ||
+        !notificationsCanGate(last, now) ||
         notificationsUnreadable.has(repository)
       ) {
         continue;
