@@ -103,10 +103,35 @@ describe("queued run delivery order", () => {
     const requeued = {
       id: "run:prepared",
       ordinal: prepared.ordinal,
-      queuePosition: drainBlockedPreparedRunQueuePosition(prepared),
+      queuePosition: drainBlockedPreparedRunQueuePosition(prepared, [laterQueued]),
       status: "queued",
       userMessageId: "message:prepared",
     };
+    expect(
+      queuedRunsInDeliveryOrder({
+        messages: [{ id: "message:prepared" }, { id: "message:later" }],
+        runs: [laterQueued, requeued],
+      } as never).map((run) => run.id),
+    ).toEqual(["run:prepared", "run:later"]);
+  });
+
+  it("keeps a high-ordinal prepared run ahead of compact later queue positions", () => {
+    const prepared = { queuePosition: null, ordinal: 5 };
+    const laterQueued = {
+      id: "run:later",
+      ordinal: 6,
+      queuePosition: 1,
+      status: "queued",
+      userMessageId: "message:later",
+    };
+    const requeued = {
+      id: "run:prepared",
+      ordinal: prepared.ordinal,
+      queuePosition: drainBlockedPreparedRunQueuePosition(prepared, [laterQueued]),
+      status: "queued",
+      userMessageId: "message:prepared",
+    };
+    expect(requeued.queuePosition).toBe(1);
     expect(
       queuedRunsInDeliveryOrder({
         messages: [{ id: "message:prepared" }, { id: "message:later" }],

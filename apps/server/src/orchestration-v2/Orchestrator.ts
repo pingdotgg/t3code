@@ -10712,10 +10712,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           payload: {
             ...state.run,
             status: "queued",
-            queuePosition: drainBlockedPreparedRunQueuePosition({
-              queuePosition: state.run.queuePosition,
-              ordinal: state.run.ordinal,
-            }),
+            queuePosition: drainBlockedPreparedRunQueuePosition(
+              {
+                queuePosition: state.run.queuePosition,
+                ordinal: state.run.ordinal,
+              },
+              projection.runs.filter((candidate) => candidate.status === "queued"),
+            ),
             startedAt: null,
           },
         });

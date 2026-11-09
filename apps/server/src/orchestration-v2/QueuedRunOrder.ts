@@ -60,10 +60,25 @@ export function selectStartableQueuedRun(
   return undefined;
 }
 
-/** Keep prepare→queue during a drain in original delivery order, not at the tail. */
-export function drainBlockedPreparedRunQueuePosition(run: {
-  readonly queuePosition: number | null | undefined;
-  readonly ordinal: number;
-}): number {
-  return run.queuePosition ?? run.ordinal;
+/**
+ * Keep prepare→queue during a drain ahead of later ordinary turns. Later messages
+ * get compact queue positions while this run is still preparing, so falling back
+ * to ordinal alone can place it behind them.
+ */
+export function drainBlockedPreparedRunQueuePosition(
+  run: {
+    readonly queuePosition: number | null | undefined;
+    readonly ordinal: number;
+  },
+  queuedRuns: ReadonlyArray<{
+    readonly ordinal: number;
+    readonly queuePosition: number | null | undefined;
+  }>,
+): number {
+  if (run.queuePosition != null) return run.queuePosition;
+  const laterPositions = queuedRuns
+    .filter((candidate) => candidate.ordinal > run.ordinal)
+    .map((candidate) => candidate.queuePosition ?? candidate.ordinal);
+  if (laterPositions.length === 0) return run.ordinal;
+  return Math.min(run.ordinal, ...laterPositions);
 }
