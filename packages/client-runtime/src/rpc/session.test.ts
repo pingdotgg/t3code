@@ -8,7 +8,7 @@ import {
   WS_METHODS,
   UsageLimitSourceId,
 } from "@t3tools/contracts";
-import { splitSocketFrame } from "@t3tools/shared/socketFrameParts";
+import { splitDeflatedSocketFrame, splitSocketFrame } from "@t3tools/shared/socketFrameParts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
@@ -91,7 +91,7 @@ class TestWebSocket {
     this.emit("open", { type: "open" });
   }
 
-  serverMessage(data: string) {
+  serverMessage(data: string | ArrayBuffer) {
     this.emit("message", { data, type: "message" });
   }
 
@@ -277,34 +277,52 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
-  it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
-    Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
-      const session = yield* factory.connect(PREPARED);
-      const readyFiber = yield* Effect.forkChild(session.ready);
-      const socket = yield* awaitSocket(sockets);
-      socket.open();
-      const request = yield* awaitRequest(socket);
-      // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
-      const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
-      const frame = encodeJson({
-        _tag: "Chunk",
-        requestId: request.id,
-        values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
-      });
-      const parts = new URL(socket.url).searchParams.has("frameParts")
-        ? splitSocketFrame(frame)
-        : [frame];
+  it.effect.each([
+    { label: "text parts", deflated: false },
+    { label: "deflated binary parts", deflated: true },
+  ])(
+    "connects while a large config snapshot downloads at 4000 bytes per second as $label",
+    ({ deflated }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const readyFiber = yield* Effect.forkChild(session.ready);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        const request = yield* awaitRequest(socket);
+        // Multi-byte text, so parts must be sized in UTF-8 bytes and never split a surrogate pair.
+        const config = { ...SERVER_CONFIG, cwd: "/" + "é€😀x".repeat(32 * 1024) };
+        const frame = encodeJson({
+          _tag: "Chunk",
+          requestId: request.id,
+          values: [{ version: 1, type: "snapshot", config: encodeServerConfig(config) }],
+        });
+        const url = new URL(socket.url).searchParams;
+        expect(url.has("frameParts") && url.has("frameDeflate")).toBe(true);
+        const parts = deflated
+          ? splitDeflatedSocketFrame(
+              yield* Effect.promise(() =>
+                new Response(
+                  new Blob([frame]).stream().pipeThrough(new CompressionStream("deflate-raw")),
+                )
+                  .arrayBuffer()
+                  .then((buffer) => new Uint8Array(buffer)),
+              ),
+              // Repeated text deflates small, so a small part size forces several parts.
+              1024,
+            )
+          : splitSocketFrame(frame);
+        expect(parts.length).toBeGreaterThan(1);
 
-      for (const part of parts) {
-        const bytes = new TextEncoder().encode(part);
-        yield* TestClock.adjust((bytes.length / 4000) * 1000);
-        socket.serverMessage(new TextDecoder().decode(bytes));
-      }
-      yield* Fiber.join(readyFiber);
+        for (const part of parts) {
+          const bytes = typeof part === "string" ? new TextEncoder().encode(part) : part;
+          yield* TestClock.adjust((bytes.length / 4000) * 1000);
+          socket.serverMessage(typeof part === "string" ? part : bytes.slice().buffer);
+        }
+        yield* Fiber.join(readyFiber);
 
-      expect(yield* session.initialConfig).toEqual(config);
-    }),
+        expect(yield* session.initialConfig).toEqual(config);
+      }),
   );
 
   it.effect("owns one scoped websocket attempt and exposes readiness and closure", () =>
@@ -314,7 +332,7 @@ describe("RpcSessionFactory", () => {
       const readyFiber = yield* Effect.forkChild(session.ready);
       const socket = yield* awaitSocket(sockets);
 
-      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1`);
+      expect(socket.url).toBe(`${PREPARED.socketUrl}&frameParts=1&frameDeflate=1`);
       socket.open();
       yield* completeInitialConfig(socket);
       yield* Fiber.join(readyFiber);

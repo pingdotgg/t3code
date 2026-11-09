@@ -266,6 +266,7 @@ import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http
 import { isNetworkPath } from "@t3tools/shared/path";
 import * as RelayClient from "@t3tools/shared/relayClient";
 import {
+  SOCKET_FRAME_DEFLATE_QUERY_PARAM,
   SOCKET_FRAME_PARTS_QUERY_PARAM,
   splitLargeSocketFrames,
 } from "@t3tools/shared/socketFrameParts";
@@ -275,6 +276,7 @@ import {
   withUsageLimitsCommands,
 } from "@t3tools/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import { deflateSocketFrame } from "./socketFrameDeflate.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import { requestUrl } from "./requestUrl.ts";
@@ -3635,6 +3637,12 @@ export const layer = Layer.unwrap(
             ),
           ),
         );
+        // A socket with permessage-deflate is already compressed on the wire.
+        const deflateFrames =
+          url.value.searchParams.has(SOCKET_FRAME_DEFLATE_QUERY_PARAM) &&
+          !request.headers["sec-websocket-extensions"]?.includes("permessage-deflate")
+            ? deflateSocketFrame
+            : undefined;
         const framedRpcWebSocketHttpEffect = url.value.searchParams.has(
           SOCKET_FRAME_PARTS_QUERY_PARAM,
         )
@@ -3644,7 +3652,11 @@ export const layer = Layer.unwrap(
                 // The RPC server upgrades the request itself, so its socket is
                 // wrapped through the request it reads.
                 Object.create(request, {
-                  upgrade: { value: Effect.map(request.upgrade, splitLargeSocketFrames) },
+                  upgrade: {
+                    value: Effect.map(request.upgrade, (socket) =>
+                      splitLargeSocketFrames(socket, deflateFrames),
+                    ),
+                  },
                 }),
               ),
             )
