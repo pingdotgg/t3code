@@ -911,6 +911,8 @@ export function useThreadActions() {
               target,
               step.orderKey === undefined ? {} : { orderKey: step.orderKey },
             );
+          case "reorderActive":
+            return reorderActiveThread(target, step.orderKey);
           case "snooze":
             return snoozeThreadMutation({
               environmentId: target.environmentId,
