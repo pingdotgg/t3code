@@ -250,8 +250,8 @@ if ($binDir.Contains(";")) {
   # PATH would split the folder at the `;`, so name the command in full instead.
   Write-Host "  Run ${bold}& '$($shim.Replace("'", "''"))'$reset to get started.`n"
 } else {
-  # A PATH entry may end in a separator; $binDir does not.
-  $added = ($env:PATH -split ";" | ForEach-Object { $_.TrimEnd('\', '/') }) -notcontains $binDir
+  # Either side may end in a separator. Trim only here: a drive root keeps its `\` for Join-Path.
+  $added = ($env:PATH -split ";" | ForEach-Object { $_.TrimEnd('\', '/') }) -notcontains $binDir.TrimEnd('\', '/')
   # `irm | iex` runs in the user's own session, so t3 works in this window right away.
   # Last, so it never shadows another t3.
   if ($added) { $env:Path = "$env:Path;$binDir" }

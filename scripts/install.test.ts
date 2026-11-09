@@ -334,6 +334,15 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "win32")("install.ps1 t3
       });
       expect(slashed.code, slashed.output).toBe(0);
       expect(slashed.output).toContain("to use T3 Code here");
+      // The same when the install folder itself is given with a trailing separator.
+      const bothSlashed = await installOver({
+        script: "install.ps1",
+        home,
+        binDir: `${binDir}\\`,
+        env: { [pathKey]: `${binDir}\\;${process.env[pathKey] ?? ""}` },
+      });
+      expect(bothSlashed.code, bothSlashed.output).toBe(0);
+      expect(bothSlashed.output).toContain("to use T3 Code here");
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }
