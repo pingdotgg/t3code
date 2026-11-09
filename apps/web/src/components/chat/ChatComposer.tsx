@@ -46,6 +46,7 @@ import {
 } from "@t3tools/contracts";
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
@@ -250,7 +251,11 @@ import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
-import { readEnvironmentScope, readPreparedConnection } from "../../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  usePreparedConnection,
+} from "../../state/session";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
 import { useComposerRestingTransition } from "./useComposerRestingTransition";
 import { ComposerCommandMenuLayer } from "./ComposerCommandMenuLayer";
@@ -2580,14 +2585,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
 
-  const addComposerFolders = (folders: File[]) => {
-    const target = folderDropTarget({
+  // A synchronous IPC read on desktop; the setting only changes with a restart, so read it once.
+  const [localEnvironmentDisabledAtMount] = useState(isLocalEnvironmentDisabled);
+  const preparedConnection = usePreparedConnection(environmentId);
+  const resolveFolderTarget = () =>
+    folderDropTarget({
       localEnvironmentDisabled: isLocalEnvironmentDisabled(),
       environmentId,
       primaryEnvironmentId,
       connection: readPreparedConnection(environmentId),
       isDesktopRenderer: window.desktopBridge !== undefined,
     });
+  const insertFolderPathLink = (path: string): boolean => {
+    const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
+      ensureLeadingBoundary: true,
+    });
+    if (!inserted) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add folder",
+        description: "The composer is busy; try again once it is ready.",
+      });
+    }
+    return inserted;
+  };
+  const addComposerFolders = (folders: File[]) => {
+    const target = resolveFolderTarget();
     if (target === "remote") {
       toastManager.add({
         type: "error",
@@ -2605,21 +2628,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
         continue;
       }
-      const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
-        ensureLeadingBoundary: true,
-      });
-      if (!inserted) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add folder",
-          description: "The composer is busy; try again once it is ready.",
-        });
-        break;
-      }
+      if (!insertFolderPathLink(path)) break;
     }
     focusComposer();
   };
   const addComposerFoldersStable = useStableCallback(addComposerFolders);
+  // The desktop folder dialog returns a path on this computer, so it is only offered when the
+  // thread's server shares this filesystem, the same rule as dropped folders.
+  const pickFolder = window.desktopBridge?.pickFolder;
+  const canPickLocalFolder =
+    pickFolder !== undefined &&
+    folderDropTarget({
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
+      environmentId,
+      primaryEnvironmentId,
+      connection: Option.getOrNull(preparedConnection),
+      isDesktopRenderer: true,
+    }) === "local";
+  const attachLocalFolder = async () => {
+    if (!pickFolder) return;
+    let path: string | null;
+    try {
+      path = await pickFolder(gitCwd ? { initialPath: gitCwd } : undefined);
+    } catch {
+      toastManager.add({ type: "error", title: "Couldn't open the folder picker" });
+      return;
+    }
+    if (path !== null) insertFolderPathLink(path);
+    focusComposer();
+  };
+  const attachLocalFolderStable = useStableCallback(attachLocalFolder);
 
   const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
     const { files, folders } = splitTransferredFiles(event.clipboardData);
@@ -3187,6 +3225,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <ComposerAttachButton
       addComposerAttachments={addComposerAttachments}
       focusComposer={focusComposer}
+      attachFolder={canPickLocalFolder ? attachLocalFolderStable : undefined}
     />
   ) : null;
   return (

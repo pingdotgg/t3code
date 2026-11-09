@@ -6,7 +6,14 @@ import type {
   SnapShotSource,
 } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { CircleAlertIcon, PaperclipIcon, PlayIcon, XIcon } from "lucide-react";
+import {
+  CircleAlertIcon,
+  FileIcon,
+  FolderIcon,
+  PaperclipIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
 import { type ComponentProps, useLayoutEffect, useRef } from "react";
 
 import {
@@ -31,6 +38,7 @@ import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { AttachmentImage } from "../media/AttachmentImage";
 import { Button } from "../ui/button";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { composerFloatingLayerProps } from "./composerEventScope";
@@ -671,11 +679,27 @@ export function ComposerQueuedAttachmentRow({
 export function ComposerAttachButton({
   addComposerAttachments,
   focusComposer,
+  attachFolder,
 }: {
   readonly addComposerAttachments: (files: File[]) => Promise<boolean>;
   readonly focusComposer: () => void;
+  /** Present when a folder can be attached; the button then opens a Files / Folder menu. */
+  readonly attachFolder?: (() => void) | undefined;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const label = attachFolder ? "Attach files or a folder" : "Attach files";
+  const triggerButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      onPointerDown={(event) => event.preventDefault()}
+      aria-label={label}
+      {...(attachFolder ? {} : { onClick: () => inputRef.current?.click() })}
+    />
+  );
+  // The clip's weight sits in its upper loop; 1px down reads as centered on the row.
+  const icon = <PaperclipIcon className="translate-y-px" />;
   return (
     <>
       <input
@@ -694,24 +718,29 @@ export function ComposerAttachButton({
           });
         }}
       />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              onPointerDown={(event) => event.preventDefault()}
-              onClick={() => inputRef.current?.click()}
-              aria-label="Attach files"
-            />
-          }
-        >
-          {/* The clip's weight sits in its upper loop; 1px down reads as centered on the row. */}
-          <PaperclipIcon className="translate-y-px" />
-        </TooltipTrigger>
-        <TooltipPopup>Attach files</TooltipPopup>
-      </Tooltip>
+      {attachFolder ? (
+        <Menu>
+          <Tooltip>
+            <TooltipTrigger render={<MenuTrigger render={triggerButton} />}>{icon}</TooltipTrigger>
+            <TooltipPopup>{label}</TooltipPopup>
+          </Tooltip>
+          <MenuPopup align="start" {...composerFloatingLayerProps}>
+            <MenuItem onClick={() => inputRef.current?.click()}>
+              <FileIcon />
+              Files…
+            </MenuItem>
+            <MenuItem onClick={attachFolder}>
+              <FolderIcon />
+              Folder…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={triggerButton}>{icon}</TooltipTrigger>
+          <TooltipPopup>{label}</TooltipPopup>
+        </Tooltip>
+      )}
     </>
   );
 }
