@@ -155,7 +155,10 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
         index: location.tabIndex,
         ...(target.kind === "draft" ? { draftId: target.draftId } : {}),
       });
-    const lineage = threadRef && !options.bulk ? readThreadLineage(threadRef) : null;
+    const lineage =
+      threadRef && !options.bulk && selectFocusedTab(store.layout)?.id === tabId
+        ? readThreadLineage(threadRef)
+        : null;
     if (threadRef && lineage?.relationshipToParent === "subagent" && lineage.parentThreadId) {
       const parent: LayoutTabContent = {
         kind: "chat",
