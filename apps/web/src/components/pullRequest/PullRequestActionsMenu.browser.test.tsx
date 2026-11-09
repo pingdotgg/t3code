@@ -101,6 +101,8 @@ function setup() {
       onThreadPickerOpenChange={() => {}}
       refreshing={false}
       refreshFromHost={async () => {}}
+      timelineOrder={null}
+      onToggleTimelineOrder={() => {}}
       handoff={null}
       attachesToComposer={false}
       askAboutPullRequest={() => {}}
