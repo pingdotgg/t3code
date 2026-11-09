@@ -133,7 +133,7 @@ import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useBoringSidebarEnabled, useClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -989,8 +989,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
     },
   });
-  const boringSidebarEnabled = useBoringSidebarEnabled();
-  const legacySidebarEnabled = useClientSettings((settings) => settings.legacySidebarEnabled);
+  const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const folderRowsMultiline = useClientSettings((settings) => settings.boringSidebarMultilineRows);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
@@ -1710,7 +1709,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     };
   };
 
-  const isContextDrag = dragState?.contextDrag === true || dragState?.activeSection === "working";
+  // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
+  const isContextDrag =
+    projectFolders !== null ||
+    dragState?.contextDrag === true ||
+    dragState?.activeSection === "working";
   const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
   const finishThreadDrag = (started: boolean) => {
     dragSensorRef.current = null;
@@ -2075,6 +2078,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     );
   })();
   const handleThreadDragEnd = (event: DragEndEvent) => {
+    if (projectFolders !== null) return;
     const activeKey = String(event.active.id);
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
@@ -2949,7 +2953,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const handleNewThreadClick = (event?: ReactMouseEvent) => {
     if (
-      legacySidebarEnabled ||
       shouldCreateNewThreadInCurrentProject(
         event?.shiftKey ?? false,
         scopeGroups.length,
@@ -3196,7 +3199,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               newThreadShortcutLabel={newThreadShortcutLabel}
               newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
               showNewThreadInProjectHint={
-                !legacySidebarEnabled &&
                 !shouldCreateNewThreadInCurrentProject(
                   false,
                   scopeGroups.length,
@@ -3354,7 +3356,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sortableId={threadKey}
                             contextDrag={isContextDrag}
                             sortableDisabled={
-                              projectFolders !== null ||
                               renamingThreadKey === threadKey ||
                               !draggableThreadKeys.has(threadKey) ||
                               optimisticDrop !== null
