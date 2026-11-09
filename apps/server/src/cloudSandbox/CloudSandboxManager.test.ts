@@ -791,6 +791,19 @@ it.effect("refuses new allocations past the profile's concurrent sandbox limit",
       failure: { reason: "concurrency" },
     });
     expect(f.records.has("cap-three")).toBe(false);
+
+    const capOne = ManagedCloudSandboxResourceId.make("cap-one");
+    yield* manager.execute(capOne, { _tag: "stop" });
+    yield* provisionNew("cap-three");
+    expect(yield* manager.execute(capOne, { _tag: "resume" }).pipe(Effect.result)).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "concurrency" },
+    });
+    expect(yield* provisionNew("cap-one").pipe(Effect.result)).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "concurrency" },
+    });
+    expect(f.records.get(capOne)).toMatchObject({ power: "stopped" });
   }).pipe(Effect.scoped),
 );
 

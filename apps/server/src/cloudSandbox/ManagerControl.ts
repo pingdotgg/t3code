@@ -29,7 +29,7 @@ export const makeControl = (
     driverFor,
   } = rt;
   const { sourceContext, connectResuming, connectUnlocked, disconnectUnlocked } = connections;
-  const { fork, release } = allocation;
+  const { fork, release, reserveResume } = allocation;
   const executeUnlocked = Effect.fn("CloudSandboxManager.execute")(function* (
     id: ManagedCloudSandboxResourceId,
     operation: ManagedCloudSandboxControlOperation,
@@ -67,6 +67,7 @@ export const makeControl = (
       }
       case "resume": {
         yield* disconnectUnlocked(id);
+        yield* reserveResume(record);
         const status = yield* driver.get(sandboxId).pipe(Effect.mapError(toError));
         if (status.state === "stopped")
           yield* driver.resume(sandboxId).pipe(Effect.mapError(toError));
@@ -229,6 +230,7 @@ export const makeControl = (
       }
       case "connect": {
         yield* requireOwnedChild(operation.resourceId);
+        yield* reserveResume(yield* requireRecord(operation.resourceId));
         const connected = yield* connectResuming(operation.resourceId);
         return {
           _tag: "connection",

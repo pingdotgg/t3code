@@ -49,7 +49,10 @@ export const makeAllocation = (rt: ManagerRuntime, connections: ManagerConnectio
         const live = (yield* store.list).filter(
           (candidate) => candidate.profileId === profile.profileId && Store.isLiveRecord(candidate),
         );
-        const running = live.filter((candidate) => candidate.power === "running");
+        const running = live.filter(
+          (candidate) =>
+            candidate.power === "running" && candidate.resourceId !== record.resourceId,
+        );
         if (running.length >= profile.maxConcurrentSandboxes)
           return yield* new Store.CloudSandboxManagerError({ reason: "concurrency" });
         if (profile.monthlyBudgetUsd !== null) {
@@ -87,6 +90,19 @@ export const makeAllocation = (rt: ManagerRuntime, connections: ManagerConnectio
     );
   });
 
+  // A stopped record holds no running slot, so starting it again passes the same limits.
+  const reserveResume = Effect.fn("CloudSandboxManager.reserveResume")(function* (
+    record: Store.CloudSandboxRecord,
+  ) {
+    if (record.power !== "stopped") return;
+    const { profile } = yield* resolveProfile(record.profileId);
+    yield* reserveAllocation(profile, record.selection.size, record.selection.autoStopMinutes, {
+      ...record,
+      power: "running",
+      intent: "connected",
+    });
+  });
+
   const provision = Effect.fn("CloudSandboxManager.provision")(function* (
     input: ManagedCloudSandboxProvisionInput,
   ) {
@@ -109,6 +125,7 @@ export const makeAllocation = (rt: ManagerRuntime, connections: ManagerConnectio
           if (isDeletedOrDeleting(existing.value))
             return yield* new Store.CloudSandboxManagerError({ reason: "conflict" });
           if (existing.value.lifecycle !== "failed") {
+            yield* reserveResume(existing.value);
             const route = yield* connectUnlocked(input.operationId, true);
             return { ...route, pairingToken: yield* transport.pairingToken(input.operationId) };
           }
@@ -293,7 +310,7 @@ export const makeAllocation = (rt: ManagerRuntime, connections: ManagerConnectio
       .pipe(Effect.mapError(toError));
   });
 
-  return { reserveAllocation, provision, fork, release };
+  return { reserveAllocation, reserveResume, provision, fork, release };
 };
 
 export type ManagerAllocation = ReturnType<typeof makeAllocation>;
