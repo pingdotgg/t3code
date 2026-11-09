@@ -84,6 +84,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { connectPairing } from "../../connection/onboarding";
 import { getProviderSummary } from "../settings/providerStatus";
 import { providerClients } from "../settings/providerDriverMeta";
+import { useDesktopCliCommand } from "../settings/CliCommandSettingsRow";
 import { AddManagedCodexAccountDialog, CodexSetupSection } from "../settings/CodexSetupSection";
 import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { buildProviderInstanceUpdatePatch } from "../settings/SettingsPanels.logic";
@@ -94,7 +95,7 @@ import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { T3Wordmark } from "../T3Wordmark";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
-import { CommandBlock } from "../CommandBlock";
+import { InstallT3Commands } from "../InstallT3Commands";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { Input } from "../ui/input";
@@ -534,7 +535,7 @@ function ConnectAccountOption({
             <p className="text-body text-muted-foreground">
               Run this on each computer you want to connect.
             </p>
-            <CommandBlock command="npx t3 connect" className="mt-3" />
+            <InstallT3Commands command="t3 connect" className="mt-3" />
             <p className="mt-3 text-meta text-muted-foreground">
               Keep T3 Code running. Select the computers you want to set up above.
             </p>
@@ -645,13 +646,12 @@ function PairingForm({
             </Button>
           </div>
           <CollapsiblePanel>
-            <p className="pt-3 text-body text-muted-foreground">
-              On the computer with your code, start T3 Code or run{" "}
-              <code className="font-mono">npx t3 serve</code>, then run:
-            </p>
-            <CommandBlock command="npx t3 pair" className="mt-2" />
+            <p className="pt-3 text-body text-muted-foreground">On the computer with your code:</p>
+            <InstallT3Commands command="t3 pair" className="mt-2" />
             <p className="mt-2 text-meta leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">npx t3 pair --tailscale</code> instead.
+              Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
+              <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
+              <code className="font-mono">t3 pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>
@@ -696,6 +696,7 @@ function AgentsStep({
           ))}
         </div>
       </ScrollArea>
+      <CliPathSetup />
       <div className="mt-6 flex justify-end">
         <Button size="standard" autoFocus onClick={onContinue}>
           Continue
@@ -1846,6 +1847,34 @@ function ImportRowMeta({
       </span>
       <span className="text-caption text-dim-foreground">{age}</span>
     </span>
+  );
+}
+
+/** The desktop app links `t3` on a fresh install; this puts its folder on PATH when it is not. */
+function CliPathSetup() {
+  const { state, busy, run } = useDesktopCliCommand();
+  const setup = state?.pathSetup;
+  if (!setup) return null;
+  return (
+    <div className="mt-5 flex items-center justify-between gap-3">
+      <p className="text-body text-muted-foreground">
+        {setup.added ? (
+          <>
+            Added to {setup.file}. Open a new terminal to use <code className="font-mono">t3</code>.
+          </>
+        ) : (
+          <>
+            Use <code className="font-mono">t3</code> from any terminal. Adds one line to{" "}
+            {setup.file}.
+          </>
+        )}
+      </p>
+      {setup.added ? null : (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => run("addToPath")}>
+          Add to PATH
+        </Button>
+      )}
+    </div>
   );
 }
 
