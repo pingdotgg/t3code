@@ -4044,10 +4044,10 @@ describe("PiAdapterV2", () => {
         args: {
           questions: [
             {
-              header: "Area",
-              question: "Which area should we work on?",
+              header: "Ar\rea",
+              question: "Which area should we wo\rrk on?",
               options: [
-                { label: "Docker/Compose", description: "Review or edit Compose projects" },
+                { label: "Docker/Com\rpose", description: "Review or edit Com\rpose projects" },
                 { label: "Home Assistant", description: "Automations, dashboards or YAML" },
               ],
             },
@@ -4055,7 +4055,11 @@ describe("PiAdapterV2", () => {
               header: "Layout",
               question: "Which layout?",
               options: [
-                { label: "Stacked", description: "One column", preview: "A\n```\nB" },
+                {
+                  label: "Sta*cked",
+                  description: "One column",
+                  preview: "A\r\n```\r\nB" + "x".repeat(593) + "omitted",
+                },
                 { label: "Split", description: "Two columns" },
               ],
             },
@@ -4121,29 +4125,30 @@ describe("PiAdapterV2", () => {
         type: "extension_ui_request",
         id: "ui-layout",
         method: "select",
-        title: "[Layout] Which layout?\n\n--- 1. Stacked preview ---\nA\n```\nB",
-        options: ["1. Stacked — One column", "2. Split — Two columns", "3. Type something."],
+        title: "[Layout] Which layout?\n\n--- 1. Sta*cked preview ---\nA\n```\nB" + "x".repeat(593),
+        options: ["1. Sta*cked — One column", "2. Split — Two columns", "3. Schreibe etwas."],
       });
       const layout = yield* takeQuestion;
       assert.deepEqual(decodeUserInputQuestions(layout.questions), [
         {
           id: "ui-layout",
           header: "Layout",
-          question: "Which layout?\n\n**1. Stacked**\n\n````\nA\n```\nB\n````",
+          question:
+            "Which layout?\n\n**1. Sta\\*cked**\n\n````\nA\n```\nB" + "x".repeat(593) + "\n````",
           options: [
-            { label: "Stacked", description: "One column", value: "1. Stacked — One column" },
+            { label: "Sta*cked", description: "One column", value: "1. Sta*cked — One column" },
             { label: "Split", description: "Two columns", value: "2. Split — Two columns" },
           ],
         },
       ]);
       yield* runtime.respondToRuntimeRequest({
         requestId: layout.requestId,
-        answers: { "ui-layout": "  Both, stacked first  " },
+        answers: { "ui-layout": "  Both,\r\n stacked\r first  " },
       });
       assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
         type: "extension_ui_response",
         id: "ui-layout",
-        value: "  Both, stacked first  ",
+        value: "  Both,\r\n stacked\r first  ",
       });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -4195,7 +4200,7 @@ describe("PiAdapterV2", () => {
         const [question] = decodeUserInputQuestions(event.turnItem.questions);
         assert.deepEqual(
           [question?.header, question?.question, question?.options.map((option) => option.label)],
-          ["Question", title, options],
+          ["Question", title.trim(), options],
           id,
         );
         const answer = options.at(-1) ?? "";
@@ -4212,6 +4217,10 @@ describe("PiAdapterV2", () => {
 
       yield* startTool("call_area", { questions: [areaQuestion] });
       yield* expectFlattened("ui-unrelated", "Pick a tag", ["stable", "beta"]);
+      yield* expectFlattened("ui-unknown-sentinel", areaTitle, [
+        "1. Docker — Compose projects",
+        "2. Cancel",
+      ]);
 
       yield* startTool("call_other", { questions: [areaQuestion] }, "ask_question");
       yield* expectFlattened("ui-other-overlap", areaTitle, areaOptions);
@@ -4222,29 +4231,43 @@ describe("PiAdapterV2", () => {
       yield* expectFlattened("ui-malformed-overlap", areaTitle, areaOptions);
       yield* endTool("call_malformed");
 
-      // Both calls render the same select, so neither can claim it.
       yield* startTool("call_header", {
         questions: [
           { header: "Area", question: "Pick?", options: [{ label: "A", description: "x — y" }] },
         ],
       });
       yield* expectFlattened("ui-different-ask-overlap", areaTitle, areaOptions);
-      yield* startTool("call_label", {
-        questions: [{ question: "[Area] Pick?", options: [{ label: "A — x", description: "y" }] }],
+      yield* endTool("call_header");
+      yield* endTool("call_area");
+
+      // Distinct questions in one call can still render the same select.
+      yield* startTool("call_ambiguous", {
+        questions: [
+          { header: "Area", question: "Pick?", options: [{ label: "A", description: "x — y" }] },
+          { question: "[Area] Pick?", options: [{ label: "A — x", description: "y" }] },
+        ],
       });
       yield* expectFlattened("ui-overlap", "[Area] Pick?", ["1. A — x — y", "2. Type something."]);
-      yield* endTool("call_header");
-      yield* endTool("call_label");
+      yield* endTool("call_ambiguous");
 
       yield* startTool("call_blank", {
         questions: [
           { header: "Blank", question: "Which?", options: [{ label: " ", description: "b" }] },
         ],
       });
-      yield* expectFlattened("ui-blank", "[Blank] Which?", ["1.   — b", "2. Type something."]);
+      yield* expectFlattened("ui-blank-label", "[Blank] Which?", [
+        "1.   — b",
+        "2. Type something.",
+      ]);
       yield* endTool("call_blank");
+      yield* startTool("call_blank_question", {
+        questions: [
+          { header: "Blank", question: " ", options: [{ label: "A", description: "b" }] },
+        ],
+      });
+      yield* expectFlattened("ui-blank-question", "[Blank]  ", ["1. A — b", "2. Type something."]);
+      yield* endTool("call_blank_question");
 
-      yield* endTool("call_area");
       yield* expectFlattened("ui-ended", areaTitle, areaOptions);
       yield* fake.emit({
         type: "tool_execution_update",

@@ -1575,9 +1575,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 type: "user_input_request",
                 requestId,
                 questions: [
-                  // UI requests have no tool id; overlapping calls cannot safely claim a select.
-                  (method === "select" && turn !== null && turn.activeToolQuestions.size === 1
-                    ? piAskUserQuestion(turn.activeToolQuestions.values(), nativeRequestId, event)
+                  (method === "select" && turn !== null
+                    ? piAskUserQuestion(turn.activeToolQuestions, nativeRequestId, event)
                     : undefined) ?? piQuestion(nativeRequestId, method, title, event),
                 ],
               };
@@ -3652,6 +3651,22 @@ const PiAskUserQuestionArgs = Schema.Struct({
 type PiAskUserQuestion = (typeof PiAskUserQuestionArgs.Type)["questions"][number];
 const decodePiAskUserQuestionArgs = Schema.decodeUnknownOption(PiAskUserQuestionArgs);
 
+// sentinel.other in @juicesharp/rpiv-ask-user-question 2.15.0 locales/*.json.
+const PI_ASK_USER_QUESTION_OTHER_LABELS = [
+  "Type something.",
+  "Schreibe etwas.",
+  "Escribe algo.",
+  "Écrivez quelque chose.",
+  "Escreva algo.",
+  "Digite algo.",
+  "Введите что-нибудь.",
+  "Введіть щось.",
+  "输入内容",
+];
+
+// rpc-fallback.ts limits each preview in the native title to 600 characters.
+const PI_ASK_USER_QUESTION_MAX_PREVIEW_CHARS = 600;
+
 const piAskUserQuestionOptionLine = (option: PiAskUserQuestion["options"][number], index: number) =>
   // oxlint-disable-next-line t3code/no-em-dash-copy -- The extension's native option line, matched exactly.
   `${index + 1}. ${option.label} — ${option.description}`;
@@ -3668,7 +3683,9 @@ function piAskUserQuestionRendersAs(
 ): boolean {
   const previews = question.options.flatMap((option, index) =>
     option.preview
-      ? [`--- ${index + 1}. ${option.label} preview ---\n${option.preview.slice(0, 600)}`]
+      ? [
+          `--- ${index + 1}. ${option.label} preview ---\n${option.preview.slice(0, PI_ASK_USER_QUESTION_MAX_PREVIEW_CHARS)}`,
+        ]
       : [],
   );
   const header = question.header ? `[${question.header}] ` : "";
@@ -3686,7 +3703,9 @@ function piAskUserQuestionRendersAs(
         nativeOptions[index] === piAskUserQuestionOptionLine(option, index),
     ) &&
     typeof otherRow === "string" &&
-    otherRow.startsWith(`${question.options.length + 1}. `)
+    PI_ASK_USER_QUESTION_OTHER_LABELS.some(
+      (label) => otherRow === `${question.options.length + 1}. ${label}`,
+    )
   );
 }
 
@@ -3696,15 +3715,28 @@ function piAskUserQuestionRendersAs(
  * Returns undefined unless exactly one running question renders to this select.
  */
 function piAskUserQuestion(
-  runningQuestions: Iterable<ReadonlyArray<PiAskUserQuestion>>,
+  runningQuestions: ReadonlyMap<string, ReadonlyArray<PiAskUserQuestion>>,
   questionId: string,
   event: PiRpcRecord,
 ): OrchestrationV2UserInputQuestion | undefined {
+  // UI requests have no tool id; overlapping calls cannot safely claim a select.
+  if (runningQuestions.size !== 1) return undefined;
   const title = recordString(event, "title");
   const nativeOptions = event["options"];
   if (title === undefined || !Array.isArray(nativeOptions)) return undefined;
-  const matches = Array.from(runningQuestions)
+  const matches = Array.from(runningQuestions.values())
     .flat()
+    // Match tool/normalize-params.ts in @juicesharp/rpiv-ask-user-question 2.15.0.
+    .map((question) => ({
+      ...question,
+      question: question.question.replace(/\r/g, ""),
+      header: question.header?.replace(/\r/g, ""),
+      options: question.options.map((option) => ({
+        label: option.label.replace(/\r/g, ""),
+        description: option.description.replace(/\r/g, ""),
+        preview: option.preview?.replace(/\r/g, ""),
+      })),
+    }))
     .filter((question) => piAskUserQuestionRendersAs(question, title, nativeOptions));
   const [question] = matches;
   if (question === undefined || matches.length > 1) return undefined;
@@ -3728,12 +3760,14 @@ const piAskUserQuestionPreviews = (options: PiAskUserQuestion["options"]) =>
   options
     .flatMap((option, index) => {
       if (!option.preview) return [];
+      const preview = option.preview.slice(0, PI_ASK_USER_QUESTION_MAX_PREVIEW_CHARS);
+      const label = option.label.replace(/[\\`*_[\]{}()<>#+.!|~-]/g, "\\$&");
       const longestBacktickRun = Math.max(
         2,
-        ...Array.from(option.preview.matchAll(/`+/g), ([run]) => run.length),
+        ...Array.from(preview.matchAll(/`+/g), ([run]) => run.length),
       );
       const fence = "`".repeat(longestBacktickRun + 1);
-      return [`\n\n**${index + 1}. ${option.label}**\n\n${fence}\n${option.preview}\n${fence}`];
+      return [`\n\n**${index + 1}. ${label}**\n\n${fence}\n${preview}\n${fence}`];
     })
     .join("");
 
