@@ -143,6 +143,10 @@ export function scopedSettingsAreMixed(
   providersByEnvironment?: ProvidersByEnvironment,
 ): boolean {
   const first = targets[0];
+  const at = ({ environmentId, settings }: (typeof targets)[number]) => ({
+    providers: providersByEnvironment?.get(environmentId) ?? [],
+    settings,
+  });
   return (
     first !== undefined &&
     targets.some((candidate) =>
@@ -150,9 +154,9 @@ export function scopedSettingsAreMixed(
         providersByEnvironment && isScopedModelKey(key)
           ? !scopedModelSelectionsEqual(
               first.settings[key],
-              providersByEnvironment.get(first.environmentId) ?? [],
+              at(first),
               candidate.settings[key],
-              providersByEnvironment.get(candidate.environmentId) ?? [],
+              at(candidate),
             )
           : !Equal.equals(first.settings[key], candidate.settings[key]),
       ),
@@ -216,12 +220,8 @@ function projectOverrideWrites(
       continue;
     }
     const settings = environment.serverConfig.settings;
-    const entry = update(
-      settings.projectSettingsOverrides[member.id] ?? {},
-      settings,
-      member.id,
-      environment,
-    );
+    const current = settings.projectSettingsOverrides[member.id] ?? {};
+    const entry = update(current, settings, member.id, environment);
     const existing = writes.get(member.environmentId);
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
@@ -252,20 +252,20 @@ function forDestination(previous: ServerSettings, patch: ServerSettingsPatch): S
  */
 function forDestinationModels(
   patch: ServerSettingsPatch,
-  source: ScopedModelSource,
-  sourceSettings: ServerSettings | undefined,
+  modelSource: ScopedModelSource | null | undefined,
   destination: ScopedSettingsEnvironment,
 ): ServerSettingsPatch | null {
+  if (!modelSource || destination.environmentId === modelSource.target.environmentId) return patch;
+  const { target: source, providersByEnvironment } = modelSource;
+  const settings = destination.serverConfig?.settings;
+  const providers = providersByEnvironment.get(destination.environmentId);
   const next = { ...patch };
   for (const key of SCOPED_MODEL_SETTING_KEYS) {
     const selection = patch[key];
     if (selection?.instanceId === undefined) continue;
-    const shownGenerator = sourceSettings
-      ? textGeneratorForSelection(sourceSettings, selection.instanceId)
-      : undefined;
-    const generator = destination.serverConfig
-      ? textGeneratorForSelection(destination.serverConfig.settings, selection.instanceId)
-      : undefined;
+    if (!settings) return null;
+    const shownGenerator = textGeneratorForSelection(source.settings, selection.instanceId);
+    const generator = textGeneratorForSelection(settings, selection.instanceId);
     if (shownGenerator !== undefined || generator !== undefined) {
       if (
         !generator?.enabled ||
@@ -276,12 +276,11 @@ function forDestinationModels(
       }
       continue;
     }
-    const providers = source.providersByEnvironment.get(destination.environmentId);
     if (!providers) return null;
     const instanceId = resolveScopedModelInstanceId(
       selection.instanceId,
-      source.providersByEnvironment.get(source.sourceEnvironmentId) ?? [],
-      providers,
+      { providers: providersByEnvironment.get(source.environmentId) ?? [] },
+      { providers, settings },
     );
     if (instanceId === null) return null;
     Object.assign(next, { [key]: { ...selection, instanceId } });
@@ -290,8 +289,8 @@ function forDestinationModels(
 }
 
 export interface ScopedModelSource {
-  /** The environment whose provider instances the picker offered. */
-  readonly sourceEnvironmentId: EnvironmentId;
+  /** The target whose provider instances and text generators the picker offered. */
+  readonly target: Pick<ScopedSettingsTarget, "environmentId" | "settings">;
   readonly providersByEnvironment: ProvidersByEnvironment;
 }
 
@@ -299,30 +298,25 @@ export function planScopedSettingsPatch(
   scope: ResolvedSettingsScope,
   environments: readonly ScopedSettingsEnvironment[],
   patch: ScopedSettingsPatch,
-  modelSource?: ScopedModelSource,
+  modelSource?: ScopedModelSource | null,
 ) {
   const clientPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => CLIENT_KEYS.has(key) && !SERVER_KEYS.has(key)),
   ) as ClientSettingsPatch;
-  const rawServerPatch = Object.fromEntries(
+  const serverPatch = Object.fromEntries(
     Object.entries(patch).filter(([key]) => SERVER_KEYS.has(key)),
   ) as ServerSettingsPatch;
-  const serverKeys = Object.keys(rawServerPatch);
+  const serverKeys = Object.keys(serverPatch);
   const { connectedEnvironments } = selectScopedSettingsEnvironments(scope, environments, null);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
-  const unmatchedModelEnvironments = new Set<string>();
-  const sourceSettings = environments.find(
-    (environment) => environment.environmentId === modelSource?.sourceEnvironmentId,
-  )?.serverConfig?.settings;
+  const unmatched = new Set<string>();
   const serverPatchFor = (environment: ScopedSettingsEnvironment) => {
-    const mapped = modelSource
-      ? forDestinationModels(rawServerPatch, modelSource, sourceSettings, environment)
-      : rawServerPatch;
-    if (mapped === null) unmatchedModelEnvironments.add(environment.label);
-    return mapped ?? rawServerPatch;
+    const mapped = forDestinationModels(serverPatch, modelSource, environment);
+    if (mapped === null) unmatched.add(environment.label);
+    return mapped ?? serverPatch;
   };
   const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
@@ -411,12 +405,12 @@ export function planScopedSettingsPatch(
               ];
             })
           : [];
-  if (unmatchedModelEnvironments.size > 0) {
+  if (unmatched.size > 0) {
     return {
       clientPatch,
       hasClientWrite: false,
       serverWrites: [],
-      unavailableReason: `This model's account or text generator could not be matched on ${[...unmatchedModelEnvironments].join(", ")}. Select that environment to choose its model separately.`,
+      unavailableReason: `This model's account or text generator could not be matched on ${[...unmatched].join(", ")}. Select that environment to choose its model separately.`,
     };
   }
   const hasClientWrite = Object.keys(clientPatch).length > 0;

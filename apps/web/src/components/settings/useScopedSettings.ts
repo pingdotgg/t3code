@@ -110,7 +110,7 @@ export function useUpdateScopedSettings() {
         scope,
         environments,
         patch,
-        target ? { sourceEnvironmentId: target.environmentId, providersByEnvironment } : undefined,
+        target && { target, providersByEnvironment },
       ),
       options?.onFailed,
     );

@@ -15,6 +15,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
+  isProjectScopedSettingKey,
   persistScopedSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
@@ -787,7 +788,7 @@ describe("model selection patches at project scope", () => {
   });
 });
 
-describe("model selections for one account under distinct instance IDs", () => {
+describe("model selections across environments' provider instances", () => {
   const account = (
     instanceId: string,
     auth: Partial<ServerProvider["auth"]> = {},
@@ -819,10 +820,10 @@ describe("model selections for one account under distinct instance IDs", () => {
       [server.environmentId, serverProviders],
     ]);
   const matching = providers([laptopCodex], [serverCodex]);
-  const fromLaptop = (providersByEnvironment: ReturnType<typeof providers>) => ({
-    sourceEnvironmentId: laptop.environmentId,
-    providersByEnvironment,
-  });
+  const from = (
+    providersByEnvironment: ReadonlyMap<EnvironmentId, ServerProvider[]>,
+    { environmentId, serverConfig } = laptop,
+  ) => ({ target: { environmentId, settings: serverConfig!.settings }, providersByEnvironment });
   const luna = { instanceId: laptopCodex.instanceId, model: "gpt-6-luna" };
   const keys = [
     "defaultModelSelection",
@@ -832,100 +833,88 @@ describe("model selections for one account under distinct instance IDs", () => {
     "reviewGuideModelSelection",
     "speechPostProcessingModelSelection",
   ] as const;
+  const forKeys = <T>(value: T, only: readonly string[] = keys) =>
+    Object.fromEntries(only.map((key) => [key, value]));
 
   it("writes each environment's own instance for every model setting", () => {
-    const patch = Object.fromEntries(keys.map((key) => [key, luna]));
-    const plan = planScopedSettingsPatch(all, environments, patch, fromLaptop(matching));
-    expect(plan.unavailableReason).toBeNull();
+    const plan = planScopedSettingsPatch(all, environments, forKeys(luna), from(matching));
     expect(plan.serverWrites.map((write) => write.patch)).toEqual([
-      patch,
-      Object.fromEntries(keys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }])),
+      forKeys(luna),
+      forKeys({ ...luna, instanceId: serverCodex.instanceId }),
     ]);
-    const loading = new Map(matching);
-    loading.delete(server.environmentId);
-    const pending = planScopedSettingsPatch(all, environments, patch, fromLaptop(loading));
+    const pending = planScopedSettingsPatch(
+      all,
+      environments,
+      forKeys(luna),
+      from(new Map([[laptop.environmentId, [laptopCodex]]])),
+    );
     expect(pending.serverWrites).toEqual([]);
     expect(pending.unavailableReason).toContain("Server");
+    // The source environment's own selection needs no snapshot.
+    expect(
+      planScopedSettingsPatch(
+        named,
+        environments,
+        forKeys(luna),
+        from(new Map(), server),
+      ).serverWrites.map((write) => write.patch),
+    ).toEqual([forKeys(luna)]);
   });
 
   it("maps project overrides to each member's own instance", () => {
-    const projectKeys = [
-      "defaultModelSelection",
-      "textGenerationModelSelection",
-      "sourceControlWriterModelSelection",
-      "reviewGuideModelSelection",
-    ] as const;
+    const projectKeys = keys.filter(isProjectScopedSettingKey);
     const plan = planScopedSettingsPatch(
       project,
       environments,
-      Object.fromEntries(projectKeys.map((key) => [key, luna])),
-      fromLaptop(matching),
+      forKeys(luna, projectKeys),
+      from(matching),
     );
     expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toEqual([
-      {
-        [projectId]: Object.fromEntries(
-          projectKeys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }]),
-        ),
-      },
-      { [laptopProjectId]: Object.fromEntries(projectKeys.map((key) => [key, luna])) },
+      { [projectId]: forKeys({ ...luna, instanceId: serverCodex.instanceId }, projectKeys) },
+      { [laptopProjectId]: forKeys(luna, projectKeys) },
     ]);
   });
 
-  it("prefers the same instance ID and driver over account matching", () => {
-    const shared = account("codex_shared");
-    expect(
-      planScopedSettingsPatch(
-        all,
-        environments,
-        { defaultModelSelection: { instanceId: shared.instanceId, model: "gpt-6-luna" } },
-        fromLaptop(providers([shared, laptopCodex], [serverCodex, shared])),
-      ).serverWrites.map((write) => write.patch.defaultModelSelection?.instanceId),
-    ).toEqual([shared.instanceId, shared.instanceId]);
-  });
-
+  const a = account;
+  const other = { email: "other@example.test" };
+  const lower = { email: "gmail@example.test" };
+  const team = { workspaceId: "team" };
+  const apiKey = { type: "apiKey" };
+  const none = { type: undefined, email: undefined, workspaceId: undefined };
+  const nameOnly = (id: string) => ({ ...a(id, { workspaceId: undefined }), displayName: "Gmail" });
+  const claude = "claudeAgent";
+  const cursor = "cursor";
   it.each([
-    [
-      "an API key account",
-      [account("codex_laptop_key", { type: "apiKey" })],
-      [account("codex_server_key", { type: "apiKey" })],
-    ],
-    [
-      "a different workspace",
-      [laptopCodex],
-      [account("codex_server_gmail", { workspaceId: "team" })],
-    ],
-    [
-      "a matching display name with no workspace",
-      [{ ...account("codex_laptop_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
-      [{ ...account("codex_server_gmail", { workspaceId: undefined }), displayName: "Gmail" }],
-    ],
-    [
-      "an unauthenticated destination",
-      [laptopCodex],
-      [account("codex_server_gmail", { status: "unknown" })],
-    ],
-    [
-      "two matching destination accounts",
-      [laptopCodex],
-      [serverCodex, account("codex_server_other")],
-    ],
-    ["two matching source accounts", [laptopCodex, account("codex_laptop_other")], [serverCodex]],
-    ["missing from the source snapshot", [], [serverCodex]],
-    [
-      "the same ID and login on another driver",
-      [laptopCodex],
-      [account(laptopCodex.instanceId, { type: "chatgpt" }, "claudeAgent")],
-    ],
-  ])("refuses every write when the account is %s", (_name, laptopProviders, serverProviders) => {
-    const instanceId = laptopProviders[0]?.instanceId ?? laptopCodex.instanceId;
+    ["one ChatGPT account under another ID", [a("l")], [a("s", lower)], "s"],
+    ["the same ID before account matching", [a("x"), a("l")], [a("s"), a("x")], "x"],
+    ["the same ID with an email differing in case", [a("x")], [a("x", lower)], "x"],
+    ["the same ID with an unreported identity", [a("x", {}, cursor)], [a("x", none, cursor)], "x"],
+    ["a conflicting same ID beside the matching account", [a("l")], [a("l", other), a("s")], "s"],
+    ["the same ID on another account", [a("x")], [a("x", other)], null],
+    ["the same ID in another workspace", [a("x")], [a("x", team)], null],
+    ["the same ID with another login", [a("x")], [a("x", apiKey)], null],
+    ["the same ID on another driver", [a("x")], [a("x", {}, claude)], null],
+    ["the same Claude ID on another account", [a("x", {}, claude)], [a("x", other, claude)], null],
+    ["one Claude subscription under another ID", [a("l", {}, claude)], [a("s", {}, claude)], null],
+    ["an API key account", [a("l", apiKey)], [a("s", apiKey)], null],
+    ["another workspace", [a("l")], [a("s", team)], null],
+    ["a matching display name with no workspace", [nameOnly("l")], [nameOnly("s")], null],
+    ["an unauthenticated destination", [a("l")], [a("s", { status: "unknown" })], null],
+    ["two matching destination accounts", [a("l")], [a("s"), a("s2")], null],
+    ["two matching source accounts", [a("l"), a("l2")], [a("s")], null],
+    ["missing from the source snapshot", [], [a("s")], null],
+  ] as const)("resolves %s", (_name, laptopProviders, serverProviders, serverId) => {
+    const instanceId = laptopProviders[0]?.instanceId ?? ProviderInstanceId.make("l");
     const plan = planScopedSettingsPatch(
       all,
       environments,
       { textGenerationModelSelection: { instanceId, model: "gpt-6-luna" } },
-      fromLaptop(providers(laptopProviders, serverProviders)),
+      from(providers([...laptopProviders], [...serverProviders])),
     );
-    expect(plan.serverWrites).toEqual([]);
-    expect(plan.unavailableReason).toContain("Server");
+    expect(
+      plan.serverWrites.map((write) => write.patch.textGenerationModelSelection?.instanceId),
+    ).toEqual(serverId === null ? [] : [instanceId, serverId]);
+    if (serverId === null) expect(plan.unavailableReason).toContain("Server");
   });
 
   it("keeps a text generator's ID only where it reaches the same API", () => {
@@ -936,25 +925,22 @@ describe("model selections for one account under distinct instance IDs", () => {
       apiKey: "",
       enabled: true,
     };
-    const withGenerator = (
-      target: typeof laptop,
-      config: ServerSettings["textGenerators"][ProviderInstanceId] | undefined,
-    ) =>
-      config
-        ? environment(target.label, { settings: { textGenerators: { [id]: config } } })
-        : target;
-    const selection = { instanceId: id, model: "openai/gpt-6-mini" };
-    const patch = {
-      textGenerationModelSelection: selection,
-      speechPostProcessingModelSelection: selection,
-    };
+    const withGenerator = (target: typeof laptop, config?: typeof openrouter, generatorId = id) =>
+      environment(target.label, {
+        settings: { textGenerators: config ? { [generatorId]: config } : {} },
+      });
+    const patch = forKeys({ instanceId: id, model: "openai/gpt-6-mini" }, [
+      "textGenerationModelSelection",
+      "speechPostProcessingModelSelection",
+    ]);
     // Generators have no provider snapshots to match accounts through.
+    const source = withGenerator(laptop, openrouter);
     const plan = (serverGenerator?: typeof openrouter) =>
       planScopedSettingsPatch(
         all,
-        [withGenerator(laptop, openrouter), withGenerator(server, serverGenerator)],
+        [source, withGenerator(server, serverGenerator)],
         patch,
-        fromLaptop(providers([], [])),
+        from(providers([], []), source),
       );
     expect(plan(openrouter).serverWrites.map((write) => write.patch)).toEqual([patch, patch]);
     for (const serverGenerator of [
@@ -965,59 +951,33 @@ describe("model selections for one account under distinct instance IDs", () => {
       expect(plan(serverGenerator).serverWrites).toEqual([]);
       expect(plan(serverGenerator).unavailableReason).toContain("Server");
     }
+    // A generator wins over a provider instance with its ID, so it cannot receive a matched account.
+    expect(
+      planScopedSettingsPatch(
+        all,
+        [laptop, withGenerator(server, openrouter, serverCodex.instanceId)],
+        { textGenerationModelSelection: luna },
+        from(matching),
+      ).serverWrites,
+    ).toEqual([]);
   });
 
-  it("treats the same account and model as one value in either order", () => {
-    const targets = [
-      {
-        environmentId: laptop.environmentId,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          ...Object.fromEntries(keys.map((key) => [key, luna])),
-        },
-      },
-      {
-        environmentId: server.environmentId,
-        settings: {
-          ...DEFAULT_SERVER_SETTINGS,
-          ...Object.fromEntries(
-            keys.map((key) => [key, { ...luna, instanceId: serverCodex.instanceId }]),
-          ),
-        },
-      },
-    ];
-    for (const ordered of [targets, [...targets].reverse()]) {
-      expect(scopedSettingsAreMixed(ordered, keys, matching)).toBe(false);
-      expect(
-        scopedSettingsAreMixed(
-          ordered,
-          keys,
-          providers(
-            [laptopCodex],
-            [serverCodex, account(laptopCodex.instanceId, { email: "other@example.test" })],
-          ),
-        ),
-      ).toBe(true);
-      expect(
-        scopedSettingsAreMixed(
-          [
-            ordered[0]!,
-            {
-              ...ordered[1]!,
-              settings: {
-                ...ordered[1]!.settings,
-                reviewGuideModelSelection: {
-                  ...luna,
-                  instanceId: serverCodex.instanceId,
-                  model: "gpt-6-sol",
-                },
-              },
-            },
-          ],
-          ["reviewGuideModelSelection"],
-          matching,
-        ),
-      ).toBe(true);
-    }
+  it("compares selections by account in either order", () => {
+    const target = ({ environmentId }: typeof laptop, selection: object) => ({
+      environmentId,
+      settings: { ...DEFAULT_SERVER_SETTINGS, ...forKeys(selection) },
+    });
+    const x = { ...luna, instanceId: ProviderInstanceId.make("x") };
+    const onServer = { ...luna, instanceId: serverCodex.instanceId };
+    const mixed = (onLaptop: object, onServer: object, providersByEnvironment = matching) => {
+      const targets = [target(laptop, onLaptop), target(server, onServer)];
+      return [targets, [...targets].reverse()].map((ordered) =>
+        scopedSettingsAreMixed(ordered, keys, providersByEnvironment),
+      );
+    };
+    expect.soft(mixed(luna, onServer)).toEqual([false, false]);
+    expect.soft(mixed(luna, { ...onServer, model: "gpt-6-sol" })).toEqual([true, true]);
+    expect.soft(mixed(x, x, new Map())).toEqual([false, false]);
+    expect.soft(mixed(x, x, providers([a("x")], [a("x", other)]))).toEqual([true, true]);
   });
 });

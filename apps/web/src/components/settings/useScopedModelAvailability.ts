@@ -24,7 +24,9 @@ export function useScopedModelDisabledReason(
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
-    const sourceProviders = (source && providersByEnvironment.get(source.environmentId)) ?? [];
+    const sourceEnvironment = {
+      providers: (source && providersByEnvironment.get(source.environmentId)) ?? [],
+    };
     const shownGenerator = textGeneratorForSelection(settings, instanceId);
     for (const candidate of targets) {
       const environment = environments.find(
@@ -45,7 +47,10 @@ export function useScopedModelDisabledReason(
       }
       const providers = providersByEnvironment.get(candidate.environmentId);
       if (!environment?.serverConfig || !providers) continue;
-      const localId = resolveScopedModelInstanceId(instanceId, sourceProviders, providers);
+      const localId = resolveScopedModelInstanceId(instanceId, sourceEnvironment, {
+        providers,
+        settings: candidate.settings,
+      });
       if (localId === null) {
         return `A unique matching account could not be verified on ${environment.label}. Select that environment to choose its model separately.`;
       }
