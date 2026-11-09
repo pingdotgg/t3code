@@ -587,6 +587,57 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
+  it.effect("discovers inline plugins from CLAUDE_CODE_PLUGIN_DIRS without enabling them", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const platform = yield* HostProcess.Platform;
+      const workspace = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-skills-" });
+      const configDir = path.join(workspace, "config");
+      const named = path.join(workspace, "named");
+      const unnamed = path.join(workspace, "unnamed");
+      const inherited = path.join(workspace, "inherited");
+      yield* fs.makeDirectory(path.join(named, ".claude-plugin"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(named, ".claude-plugin", "plugin.json"),
+        '{"name":"ddm"}',
+      );
+      yield* writeSkill(path.join(named, "skills"), "qa", "---\ndescription: QA a ticket\n---\n");
+      yield* writeSkill(path.join(unnamed, "skills"), "lint", "# Lint");
+      yield* writeSkill(path.join(inherited, "skills"), "stale", "# Stale");
+      yield* writeSkill(path.join(workspace, "relative", "skills"), "skipped", "# Skipped");
+      yield* fs.makeDirectory(configDir);
+      yield* fs.writeFileString(
+        path.join(configDir, "settings.json"),
+        JSON.stringify({
+          env: {
+            CLAUDE_CODE_PLUGIN_DIRS: [named, "relative", ` ${unnamed} `].join(
+              platform === "win32" ? ";" : ":",
+            ),
+          },
+        }),
+      );
+
+      const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace, {
+        CLAUDE_CODE_PLUGIN_DIRS: inherited,
+      });
+      assert.deepEqual(
+        skills.map(({ name, scope, description }) => ({ name, scope, description })),
+        [
+          { name: "ddm:qa", scope: "user", description: "QA a ticket" },
+          { name: "unnamed:lint", scope: "user", description: undefined },
+        ],
+      );
+
+      assert.deepEqual(
+        (yield* discoverClaudeSkills({ homePath: path.join(workspace, "empty") }, workspace, {
+          CLAUDE_CODE_PLUGIN_DIRS: inherited,
+        })).map((skill) => skill.name),
+        ["inherited:stale"],
+      );
+    }),
+  );
+
   it.effect("discovers user and project skills with frontmatter metadata", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

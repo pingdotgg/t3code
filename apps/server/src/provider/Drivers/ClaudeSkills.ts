@@ -444,6 +444,29 @@ const resolveSyncedPluginBucket = Effect.fn("resolveSyncedPluginBucket")(functio
   return `${organizationId.toLowerCase()}_${accountId.toLowerCase()}`;
 });
 
+/** Plugin folders Claude Code loads inline from CLAUDE_CODE_PLUGIN_DIRS, always enabled. */
+const discoverInlinePluginSkillRoots = Effect.fn("discoverInlinePluginSkillRoots")(function* (
+  pluginDirectories: string | undefined,
+) {
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const platform = yield* HostProcess.Platform;
+  const roots: Array<ClaudeSkillRoot> = [];
+  const seen = new Set<string>();
+  for (const entry of (pluginDirectories ?? "").split(platform === "win32" ? ";" : ":")) {
+    const directory = expandHomePath(entry.trim(), home);
+    // Claude skips relative entries rather than resolving them against its cwd.
+    if (!directory || !path.isAbsolute(directory)) continue;
+    const installPath = path.resolve(directory);
+    if (seen.has(installPath)) continue;
+    seen.add(installPath);
+    const manifest = yield* readPluginManifest(installPath);
+    const prefix = manifest?.name ?? path.basename(installPath);
+    roots.push(...(yield* pluginSkillRoots(installPath, "user", prefix, manifest)));
+  }
+  return roots;
+});
+
 const discoverPluginSkillRoots = Effect.fn("discoverPluginSkillRoots")(function* (
   configDirPath: string,
   cwd: string | undefined,
@@ -571,6 +594,7 @@ const resolveClaudeConfigDirPath = Effect.fn("resolveClaudeConfigDirPath")(funct
 const SettingsEnv = Schema.Struct({
   ANTHROPIC_BASE_URL: Schema.optional(Schema.String),
   CLAUDE_CODE_ENTRYPOINT: Schema.optional(Schema.String),
+  CLAUDE_CODE_PLUGIN_DIRS: Schema.optional(Schema.String),
   // Unquoted JSON values must not fail the decode and drop ANTHROPIC_BASE_URL with them.
   CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: Schema.optional(Schema.Unknown),
   CLAUDE_CODE_GATEWAY_MODEL_DISCOVERY_TIMEOUT_MS: Schema.optional(Schema.Unknown),
@@ -663,6 +687,10 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
   const syncedBucket = hasSyncedPlugins
     ? yield* resolveSyncedPluginBucket(config, configDirPath, env)
     : undefined;
+  // Claude applies its settings `env` over the inherited environment.
+  const inlinePluginDirectories =
+    (yield* readClaudeSettingsEnv(config, cwd, env)).CLAUDE_CODE_PLUGIN_DIRS ??
+    env.CLAUDE_CODE_PLUGIN_DIRS;
 
   const roots: ReadonlyArray<ClaudeSkillRoot> = [
     ...(managedDirectory
@@ -676,6 +704,7 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
         directory: path.join(path.resolve(cwd ?? ".", directory), ".claude", "skills"),
         scope: "project" as const,
       })),
+    ...(yield* discoverInlinePluginSkillRoots(inlinePluginDirectories)),
     ...(yield* discoverPluginSkillRoots(configDirPath, cwd, enabledPlugins, syncedBucket, env)),
   ];
 
