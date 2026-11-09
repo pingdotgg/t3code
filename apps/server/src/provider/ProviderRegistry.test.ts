@@ -1574,9 +1574,9 @@ it.layer(
             ["codex_second-package", "1.0.0"],
           ]),
         );
-        const readCachedVersion = (key: string) =>
+        const readCachedVersion = (key: string, latest = "2.0.0") =>
           ProviderLatestVersions.ProviderLatestVersions.use((latestVersions) =>
-            latestVersions.cached(key, Effect.succeed("2.0.0")),
+            latestVersions.cached(key, Effect.succeed(latest)),
           );
 
         yield* Effect.gen(function* () {
@@ -1615,6 +1615,7 @@ it.layer(
           const probesBefore = yield* Ref.get(second.probes);
           yield* registry.refreshModelCatalog;
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore);
+          assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "2.0.0");
           yield* Ref.set(manifest, {
             ...ModelManifest.BUNDLED_MODEL_MANIFEST,
             updatedAt: "2999-01-01T00:00:00Z",
@@ -1622,6 +1623,8 @@ it.layer(
           yield* registry.refreshModelCatalog;
           yield* registry.refreshModelCatalog;
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore + 1);
+          // A changed manifest also rechecks latest CLI versions.
+          assert.strictEqual(yield* readCachedVersion("codex_second-package", "3.0.0"), "3.0.0");
         }).pipe(
           Effect.provide(
             ProviderRegistry.layer.pipe(
