@@ -136,6 +136,14 @@ describe("ServerBrowserSurface clipboard commands", () => {
     }
   });
 
+  it("offers an explicit takeover when another device controls the page", async () => {
+    setup();
+    const { screen } = await renderSurface("another-viewer");
+    await using _screen = screen;
+    await screen.getByRole("button", { name: "Take over control" }).click();
+    expect(mocks.sent).toEqual([{ type: "takeControl" }]);
+  });
+
   it("sends nothing when another viewer controls the page", async () => {
     setup();
     const { screen, input } = await renderSurface("another-viewer");

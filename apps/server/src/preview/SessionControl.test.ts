@@ -258,10 +258,9 @@ describe("SessionControl", () => {
     expect(events).toEqual(["agent started", "agent finished", "human typed"]);
   });
 
-  it("does not let a second viewer steal, type, release, or disconnect the owner", async () => {
+  it("does not let a second viewer type, release, or disconnect without taking control", async () => {
     const control = new SessionControl("agent");
     const takeover = control.take("viewer-a");
-    await expect(control.take("viewer-b")).rejects.toThrow("Another viewer");
     await takeover;
     await expect(control.human("viewer-b", async () => "wrong viewer")).rejects.toThrow(
       BrowserControlInterrupted,
@@ -272,6 +271,36 @@ describe("SessionControl", () => {
     await expect(control.human("viewer-a", async () => "still controlled")).resolves.toBe(
       "still controlled",
     );
+  });
+
+  it("transfers control between viewers, drains input and rejects the previous viewer", async () => {
+    const control = new SessionControl("agent");
+    await control.take("mac");
+    const finish = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const events: string[] = [];
+    const running = control.human("mac", async () => {
+      started.resolve();
+      await finish.promise;
+      events.push("mac finished");
+    });
+    await started.promise;
+    const stale = expect(
+      control.human("mac", async () => events.push("stale input")),
+    ).rejects.toThrow(BrowserControlInterrupted);
+    const takeover = control.take("phone", async () => {
+      events.push("release held input");
+    });
+    const typing = control.human("phone", async () => events.push("phone typed"));
+    expect(control.controller).toBe("phone");
+    await expect(control.release("mac")).rejects.toThrow("Only the controlling viewer");
+    await control.disconnect("mac");
+    expect(control.controller).toBe("phone");
+    finish.resolve();
+    await Promise.all([running, stale, takeover, typing]);
+    expect(events).toEqual(["mac finished", "release held input", "phone typed"]);
+    await expect(control.human("mac", async () => {})).rejects.toThrow(BrowserControlInterrupted);
+    await expect(control.agent("agent", async () => {})).rejects.toThrow("A human controls");
   });
 
   it("invalidates queued human actions and refs when a viewer disconnects", async () => {

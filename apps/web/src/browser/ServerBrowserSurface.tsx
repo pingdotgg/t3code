@@ -759,12 +759,15 @@ export function ServerBrowserSurface(props: {
           <Button
             variant="outline"
             size="xs"
-            disabled={control.controller === "another-viewer"}
             onClick={() =>
               send({ type: control.controller === "you" ? "releaseControl" : "takeControl" })
             }
           >
-            {control.controller === "you" ? "Release control" : "Take control"}
+            {control.controller === "you"
+              ? "Release control"
+              : control.controller === "another-viewer"
+                ? "Take over control"
+                : "Take control"}
           </Button>
         ) : null}
       </div>

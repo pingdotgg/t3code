@@ -2693,7 +2693,13 @@ const make = Effect.gen(function* () {
           if (!message) return;
           try {
             if (message.type === "takeControl") {
-              const taking = tab.control.take(viewer.id);
+              const previous = [...tab.viewers].find(
+                (candidate) =>
+                  candidate.id === tab.control.controller && candidate.id !== viewer.id,
+              );
+              const taking = tab.control.take(viewer.id, async () => {
+                if (previous) await releaseViewerInput(previous, session);
+              });
               broadcastControl(tab);
               await taking;
               pushFileChooser(tab);

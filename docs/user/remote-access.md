@@ -251,7 +251,8 @@ start.
 
 Agent tabs have separate storage and share a Chromium process. Take control before
 typing into an agent's tab, then release control when you want the agent to
-continue. Read-only connections can watch without changing the page.
+continue. If another device still has control, choose **Take over control** to
+transfer it to your current device. Read-only connections can watch without changing the page.
 
 While you have control, the tab works with your device: text the page copies or
 cuts goes to your clipboard, a file picker on the page opens your device's

@@ -1698,6 +1698,43 @@ it.live.each(["main", "iframe"])(
     ).pipe(Effect.provide(layer)),
 );
 
+it.live("a second device takes control and releases the previous viewer's held input", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const mac = yield* browser.attachViewer(viewerInput(tabId, true));
+      const phone = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* mac.input({ type: "takeControl" });
+      yield* mac.input({ type: "key", action: "down", key: "Shift", code: "ShiftLeft" });
+      yield* mac.input({ type: "mouse", action: "down", x: 10, y: 20, button: "left", buttons: 1 });
+      const session = contexts[0]!.sessions.at(-1)!;
+      session.send.mockClear();
+      yield* phone.input({ type: "takeControl" });
+      expect(session.send).toHaveBeenCalledWith(
+        "Input.dispatchKeyEvent",
+        expect.objectContaining({ type: "keyUp", key: "Shift" }),
+      );
+      expect(session.send).toHaveBeenCalledWith(
+        "Input.dispatchMouseEvent",
+        expect.objectContaining({ type: "mouseReleased", button: "left" }),
+      );
+      expect(yield* Queue.takeAll(mac.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control", controller: "another-viewer" }),
+      );
+      expect(yield* Queue.takeAll(phone.output)).toContainEqual(
+        expect.objectContaining({ _tag: "control", controller: "you" }),
+      );
+      session.send.mockClear();
+      yield* mac.input({ type: "text", text: "stale" });
+      yield* mac.input({ type: "releaseControl" });
+      yield* phone.input({ type: "text", text: "phone" });
+      expect(session.send.mock.calls.filter(([method]) => method === "Input.insertText")).toEqual([
+        ["Input.insertText", { text: "phone" }],
+      ]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a file picker closes when its page is replaced while control changes hands", () =>
   Effect.scoped(
     Effect.gen(function* () {
