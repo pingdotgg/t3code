@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn, isMacPlatform } from "~/lib/utils";
-import { useShortcutModifierState } from "../../shortcutModifierState";
+import { useShortcutModifierSelector } from "../../shortcutModifierState";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -146,15 +146,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
-  const shortcutModifiers = useShortcutModifierState();
-  const isQueuing =
-    !isEditingQueuedMessage &&
-    resolveComposerDispatchMode({
-      running: isRunning,
-      activeTurnDefault: followUpBehavior,
-      canSteer,
-      alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
-    }) === "queue";
+  const isQueuing = useShortcutModifierSelector(
+    (shortcutModifiers) =>
+      !isEditingQueuedMessage &&
+      resolveComposerDispatchMode({
+        running: isRunning,
+        activeTurnDefault: followUpBehavior,
+        canSteer,
+        alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
+      }) === "queue",
+  );
   const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = !canOperateThread || sendDisabledReason !== null;
 
