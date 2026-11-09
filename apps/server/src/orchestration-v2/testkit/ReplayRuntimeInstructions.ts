@@ -22,11 +22,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   // Grok's flavor sets `supportsCompaction`; Kiro compacts through its own request instead.
   const compactsThroughPrompt = runtime.driver === "grok";
-  // The ACP adapter resends these instructions until a prompt that carried them succeeds.
-  // Cancelled, refused, and failed prompts do not establish delivery. A new runtime and a
-  // compaction reset it. Copilot's compaction events and compactions routed to a child session
+  // The ACP adapter resends the runtime notes until a prompt that carried that exact text
+  // succeeds. Cancelled, refused, and failed prompts do not establish delivery. A new runtime and
+  // a compaction reset it. Copilot's compaction events and compactions routed to a child session
   // are not mirrored here; no recording has them yet.
-  const instructedSessionIds = new Set<unknown>();
+  const deliveredNotes = new Map<unknown, string>();
   // A prompt's success records delivery only if no compaction completed after it was sent.
   const compactionCounts = new Map<unknown, number>();
   const completedCompactionIds = new Set<string>();
@@ -38,13 +38,14 @@ export function materializeReplayTranscriptRuntimeInstructions(
       if (completedCompactionIds.has(key)) return;
       completedCompactionIds.add(key);
     }
-    instructedSessionIds.delete(sessionId);
+    deliveredNotes.delete(sessionId);
     compactionCounts.set(sessionId, (compactionCounts.get(sessionId) ?? 0) + 1);
   };
   let pendingPrompt:
     | {
         readonly sessionId: unknown;
-        readonly instructed: boolean;
+        /** The runtime notes the prompt carried, if any. */
+        readonly notes: string | undefined;
         readonly compact: boolean;
         readonly compactionsAtSend: number;
       }
@@ -72,10 +73,10 @@ export function materializeReplayTranscriptRuntimeInstructions(
             markCompacted(pendingPrompt.sessionId);
           } else if (
             delivered &&
-            pendingPrompt.instructed &&
+            pendingPrompt.notes !== undefined &&
             (compactionCounts.get(pendingPrompt.sessionId) ?? 0) === pendingPrompt.compactionsAtSend
           ) {
-            instructedSessionIds.add(pendingPrompt.sessionId);
+            deliveredNotes.set(pendingPrompt.sessionId, pendingPrompt.notes);
           }
           pendingPrompt = undefined;
         }
@@ -129,7 +130,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
         (frame.method === "session/close" || frame.method === "initialize")
       ) {
         // A closed or restarted session comes back in a new runtime, which resends the instructions.
-        instructedSessionIds.clear();
+        deliveredNotes.clear();
         completedCompactionIds.clear();
         openCompactions.clear();
         pendingPrompt = undefined;
@@ -165,29 +166,29 @@ export function materializeReplayTranscriptRuntimeInstructions(
         if (firstText?.startsWith("/") === true) {
           pendingPrompt = {
             sessionId: promptSessionId,
-            instructed: false,
+            notes: undefined,
             compact:
               compactsThroughPrompt && prompt.length === 1 && /^\/compact(?:\s|$)/.test(firstText),
             compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
           };
           return entry;
         }
-        if (instructedSessionIds.has(promptSessionId)) {
-          pendingPrompt = undefined;
-          return entry;
-        }
-        pendingPrompt = {
-          sessionId: promptSessionId,
-          instructed: true,
-          compact: false,
-          compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
-        };
         const lastText = promptPartText(prompt.at(-1));
         // A recording that switched models mid-thread already carries the
         // instructions for the model each prompt ran on.
-        if (lastText === instructions || lastText?.startsWith("<runtime_info>") === true) {
-          return entry;
-        }
+        const recordedNotes =
+          lastText === instructions || lastText?.startsWith("<runtime_info>") === true
+            ? lastText
+            : undefined;
+        const resend =
+          recordedNotes === undefined && deliveredNotes.get(promptSessionId) !== instructions;
+        pendingPrompt = {
+          sessionId: promptSessionId,
+          notes: recordedNotes ?? (resend ? instructions : undefined),
+          compact: false,
+          compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
+        };
+        if (!resend) return entry;
         return {
           ...entry,
           frame: {

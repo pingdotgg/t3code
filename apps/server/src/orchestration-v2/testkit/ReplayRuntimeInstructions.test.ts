@@ -4,12 +4,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { materializeReplayTranscriptRuntimeInstructions } from "./ReplayRuntimeInstructions.ts";
 
 const sessionId = "session-1";
-const prompt = (text: string) => ({
+const prompt = (...texts: ReadonlyArray<string>) => ({
   type: "expect_outbound" as const,
   frame: {
     kind: "request",
     method: "session/prompt",
-    params: { sessionId, prompt: [{ type: "text", text }] },
+    params: { sessionId, prompt: texts.map((text) => ({ type: "text", text })) },
   },
 });
 const promptAnswer = {
@@ -25,8 +25,8 @@ const update = (update: Record<string, unknown>) => ({
   frame: { kind: "notification", method: "session/update", params: { sessionId, update } },
 });
 
-/** Whether each prompt in the materialized transcript ends with T3's runtime notes. */
-const promptsWithNotes = (
+/** The last text block of each prompt in the materialized transcript. */
+const lastPromptBlocks = (
   entries: ProviderReplayTranscript["entries"],
   driver: "kiro" | "grok" = "kiro",
 ) =>
@@ -39,10 +39,14 @@ const promptsWithNotes = (
       readonly method?: string;
       readonly params?: { readonly prompt?: ReadonlyArray<{ readonly text?: string }> };
     };
-    return frame.method === "session/prompt"
-      ? [frame.params?.prompt?.at(-1)?.text?.startsWith("<runtime_info>") === true]
-      : [];
+    return frame.method === "session/prompt" ? [frame.params?.prompt?.at(-1)?.text ?? ""] : [];
   });
+
+/** Whether each prompt in the materialized transcript ends with T3's runtime notes. */
+const promptsWithNotes = (
+  entries: ProviderReplayTranscript["entries"],
+  driver: "kiro" | "grok" = "kiro",
+) => lastPromptBlocks(entries, driver).map((text) => text.startsWith("<runtime_info>"));
 
 describe("materializeReplayTranscriptRuntimeInstructions", () => {
   it.each([
@@ -175,5 +179,33 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
       promptAnswer,
     ]);
     expect(notes).toEqual([true, true, true]);
+  });
+
+  it("resends after a compaction that a later, note-free turn leaves open", () => {
+    const notes = promptsWithNotes([
+      prompt("first"),
+      promptAnswer,
+      prompt("second"),
+      update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "in_progress" }),
+      promptAnswer,
+      prompt("third"),
+      promptAnswer,
+    ]);
+    expect(notes).toEqual([true, false, true]);
+  });
+
+  it("resends the first model's notes after switching back from a recorded second model", () => {
+    const otherModel = "<runtime_info>Other model notes</runtime_info>";
+    const [onA, onB, backOnA] = lastPromptBlocks([
+      prompt("on A"),
+      promptAnswer,
+      prompt("on B", otherModel),
+      promptAnswer,
+      prompt("back on A"),
+      promptAnswer,
+    ]);
+    expect(onA).toMatch(/^<runtime_info>/);
+    expect(onB).toBe(otherModel);
+    expect(backOnA).toBe(onA);
   });
 });
