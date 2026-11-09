@@ -165,15 +165,10 @@ it("restores page, within-page offset and zoom after a remount", async () => {
 it("renews the URL and keeps the latest reading position through a page error and retry", async () => {
   const url = URL.createObjectURL(twoPagePdf());
   const renewed = URL.createObjectURL(twoPagePdf());
-  // Revoking makes the old URL really dead, so a retry that reuses it fails.
-  const refreshSrc = async () => {
-    URL.revokeObjectURL(url);
-    return renewed;
-  };
   try {
     await using screen = await render(
       <div className="flex h-[300px] w-[320px]">
-        <PdfViewer src={url} title="Retry PDF" refreshSrc={refreshSrc} />
+        <PdfViewer src={url} title="Retry PDF" refreshSrc={async () => renewed} />
       </div>,
     );
     await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
@@ -214,6 +209,8 @@ it("renews the URL and keeps the latest reading position through a page error an
     await collapsed;
     await expect.element(screen.getByRole("alert")).toBeVisible();
 
+    // Only a retry that renews the URL can load the document now.
+    URL.revokeObjectURL(url);
     await screen.getByRole("button", { name: "Try again", exact: true }).click();
     await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
     await vi.waitFor(() => expect(region().scrollTop).toBeCloseTo(top, 0));
