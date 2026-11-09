@@ -547,6 +547,51 @@ export const ProjectCreateFromThreadResult = Schema.Struct({
 });
 export type ProjectCreateFromThreadResult = typeof ProjectCreateFromThreadResult.Type;
 
+const ThreadMoveThread = Schema.Struct({ threadId: ThreadId, title: TrimmedNonEmptyString });
+const ThreadMoveProject = Schema.Struct({ projectId: ProjectId, title: TrimmedNonEmptyString });
+
+export const ThreadMoveInput = Schema.Struct({
+  threadId: ThreadId,
+  /** A path the server resolves against the thread's folder; null moves it to No project. */
+  destination: Schema.NullOr(Schema.NonEmptyString),
+  addProject: Schema.optional(Schema.Boolean),
+  confirm: Schema.optional(Schema.Boolean),
+});
+export type ThreadMoveInput = typeof ThreadMoveInput.Type;
+
+export const ThreadMoveResult = Schema.Union([
+  /** No members when the thread already works in `folder`. */
+  Schema.TaggedStruct("moved", {
+    folder: Schema.NonEmptyString,
+    members: Schema.Array(ThreadMoveThread),
+  }),
+  Schema.TaggedStruct("needs-project", {
+    folder: Schema.NonEmptyString,
+    nestedIn: Schema.optional(ThreadMoveProject),
+  }),
+  Schema.TaggedStruct("confirm", {
+    from: Schema.NonEmptyString,
+    /** Null for a new scratch folder. */
+    to: Schema.NullOr(Schema.NonEmptyString),
+    staysOnDisk: Schema.String,
+    wayBack: Schema.Literals(["cd", "add-project", "none"]),
+    /** Named instead of its root threads when `from` is its root. */
+    project: Schema.optional(ThreadMoveProject),
+    otherThreads: Schema.Array(ThreadMoveThread),
+  }),
+  Schema.TaggedStruct("refused", {
+    reason: Schema.String,
+    thread: Schema.optional(ThreadMoveThread),
+    projects: Schema.optional(Schema.Array(ThreadMoveProject)),
+  }),
+]);
+export type ThreadMoveResult = typeof ThreadMoveResult.Type;
+
+export class ThreadMoveError extends Schema.TaggedError<ThreadMoveError>()("ThreadMoveError", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
+
 export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
   "ProjectWriteFileError",
   {

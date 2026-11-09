@@ -404,6 +404,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: false,
     pendingRequestsSurviveRestart: false,
+    supportsFolderMove: true,
   },
   threads: {
     canCreateEmptyThread: true,

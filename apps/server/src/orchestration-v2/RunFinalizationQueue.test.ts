@@ -1,4 +1,6 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { CheckpointScopeId, CommandId, GitCommandError, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,6 +15,7 @@ import * as CheckpointCapture from "./CheckpointCaptureService.ts";
 import * as CheckpointRollback from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessions from "./ProviderSessionManager.ts";
 import * as ProviderTurnControl from "./ProviderTurnControlService.ts";
@@ -90,6 +93,9 @@ it.effect.each([
         Layer.mock(RuntimeRequests.RuntimeRequestServiceV2)({}),
         Layer.mock(ThreadTitles.ThreadTitleRegenerationService)({}),
         Layer.mock(ThreadManagement.ThreadManagementService)({}),
+        Layer.mock(EventSink.EventSinkV2)({}),
+        IdAllocator.layer,
+        NodeServices.layer,
         ServerSettings.layerTest(),
         Layer.mock(ProviderTurnStart.ProviderTurnStartServiceV2)({
           start: () => Effect.sync(() => calls.push("start")).pipe(Effect.asVoid),

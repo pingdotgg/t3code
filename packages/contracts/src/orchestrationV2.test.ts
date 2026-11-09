@@ -229,7 +229,7 @@ describe("orchestration V2 contracts", () => {
     ).toThrow();
   });
 
-  it("decodes persisted capability snapshots that predate runtimePolicy", () => {
+  it("decodes persisted capability snapshots that predate runtimePolicy and supportsFolderMove", () => {
     const legacyCapabilities = {
       sessions: {
         supportsMultipleProviderThreadsPerSession: false,
@@ -326,9 +326,11 @@ describe("orchestration V2 contracts", () => {
 
     const explicit = decodeOrchestrationV2ProviderCapabilities({
       ...legacyCapabilities,
+      sessions: { ...legacyCapabilities.sessions, supportsFolderMove: true },
       runtimePolicy: { enforcement: "native" },
     });
     expect(explicit.runtimePolicy).toEqual({ enforcement: "native" });
+    expect(explicit.sessions.supportsFolderMove).toBe(true);
   });
 
   it.each(["  indented prompt\n", "\n \t\n"])(

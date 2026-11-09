@@ -383,6 +383,7 @@ export interface ThreadManagementServiceShape {
     readonly itemId: TurnItemId;
   }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
+  readonly threadHasBackgroundWork: Orchestrator.OrchestratorV2["Service"]["threadHasBackgroundWork"];
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, Orchestrator.OrchestratorV2Error>;
@@ -1588,6 +1589,7 @@ const make = Effect.gen(function* () {
         );
       },
     ),
+    threadHasBackgroundWork: orchestrator.threadHasBackgroundWork,
     getThreadProjection,
     getCheckpointContext,
     getThreadSnapshot,

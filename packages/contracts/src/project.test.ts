@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ProjectId, ThreadId } from "./baseSchemas.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 
 import {
@@ -16,11 +17,17 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ThreadMoveInput,
+  ThreadMoveResult,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
 const decodeProjectUpdatePayload = Schema.decodeUnknownSync(ProjectUpdatePayload);
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
+const encodeThreadMoveInput = Schema.encodeSync(ThreadMoveInput);
+const decodeThreadMoveInput = Schema.decodeUnknownSync(ThreadMoveInput);
+const encodeThreadMoveResult = Schema.encodeSync(ThreadMoveResult);
+const decodeThreadMoveResult = Schema.decodeUnknownSync(ThreadMoveResult);
 
 describe("project RPC errors", () => {
   it("derives stable messages from structured request context while retaining causes", () => {
@@ -125,6 +132,36 @@ describe("shared project payloads", () => {
     expect(
       decodeProjectMutation({ type: "project.update", ...envelope, title: undefined }),
     ).toHaveProperty("title", undefined);
+  });
+
+  it("round-trips thread moves, keeping a quoted path's spaces, and each of their results", () => {
+    const threadId = ThreadId.make("thread");
+    const thread = { threadId, title: "Fix links" };
+    const project = { projectId: ProjectId.make("project"), title: "App" };
+    const inputs: ReadonlyArray<ThreadMoveInput> = [
+      { threadId, destination: " ../my app ", addProject: true, confirm: true },
+      { threadId, destination: null },
+    ];
+    const results: ReadonlyArray<ThreadMoveResult> = [
+      { _tag: "moved", folder: "/repo/b", members: [thread] },
+      { _tag: "needs-project", folder: "/repo/a/docs", nestedIn: project },
+      {
+        _tag: "confirm",
+        from: "/w",
+        to: null,
+        staysOnDisk: "The folder /w stays on disk with all its files until you remove it.",
+        wayBack: "add-project",
+        project,
+        otherThreads: [thread],
+      },
+      { _tag: "refused", reason: "Move the parent instead.", thread, projects: [project] },
+    ];
+    for (const input of inputs) {
+      expect(decodeThreadMoveInput(encodeThreadMoveInput(input))).toEqual(input);
+    }
+    for (const result of results) {
+      expect(decodeThreadMoveResult(encodeThreadMoveResult(result))).toEqual(result);
+    }
   });
 });
 

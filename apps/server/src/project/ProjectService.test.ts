@@ -34,6 +34,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import * as ProjectLock from "./ProjectLock.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -198,6 +199,7 @@ const layerProjectServiceDependencies = Layer.mergeAll(
   ProjectionStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
+  ProjectLock.layer,
 ).pipe(
   Layer.provideMerge(LegacyV1ThreadImporter.layer.pipe(Layer.provide(RuntimeLayer.layerEventSink))),
   Layer.provideMerge(ProjectEnrichmentService.layer),

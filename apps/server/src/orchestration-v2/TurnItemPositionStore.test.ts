@@ -54,5 +54,17 @@ it.effect("reuses an item's position without attempting another allocation inser
       yield* positions.allocate({ ...input, threadId: ThreadId.make("thread:other") }),
       1,
     );
+
+    const inRun = yield* positions.allocate({
+      ...input,
+      turnItemId: TurnItemId.make("item:in-run"),
+      runId: RunId.make("run:second"),
+      runOrdinal: 2,
+    });
+    const afterRun = yield* positions.allocate({
+      ...input,
+      turnItemId: TurnItemId.make("item:after-run"),
+    });
+    assert.equal(afterRun, inRun + 1);
   }).pipe(Effect.provide(layerTest)),
 );

@@ -62,7 +62,13 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
               `;
           const runOrdinal = suppliedRunOrdinal ?? runRows[0]?.ordinal ?? null;
           const lowerBound = runOrdinal === null ? 0 : runOrdinal * 1_000_000;
-          const upperBound = runOrdinal === null ? 999_999 : lowerBound + 999_999;
+          // An item with no run goes after everything the thread already holds.
+          const upperBound =
+            runId === null
+              ? Number.MAX_SAFE_INTEGER
+              : runOrdinal === null
+                ? 999_999
+                : lowerBound + 999_999;
           yield* sql`
           INSERT INTO orchestration_v2_turn_item_positions (thread_id, turn_item_id, ordinal)
           SELECT

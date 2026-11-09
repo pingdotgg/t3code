@@ -20,6 +20,7 @@ import {
   RunId,
   ThreadId,
   ProjectId,
+  TurnItemId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
@@ -35,6 +36,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
@@ -42,10 +44,12 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { moveReceiptTurnItem } from "../project/ThreadMoveReceipt.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { withInlineContext } from "./ContextHandoffDelivery.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -57,6 +61,8 @@ import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 const isDomainEvent = Schema.is(OrchestrationV2DomainEvent);
 
@@ -140,6 +146,7 @@ function startWithMissingWorktree(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         Layer.mock(EventStore.EventStoreV2)({}),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({}),
         IdAllocator.layer,
         Layer.succeed(FileSystem.FileSystem, {
           exists: () => Effect.succeed(false),
@@ -309,6 +316,8 @@ function makeLocalCommandHarness(input: {
     readonly switchedProvider?: boolean;
     readonly threadRuntimeMode?: OrchestrationV2ThreadProjection["thread"]["runtimeMode"];
     readonly parentRunCwd?: string;
+    readonly relocation?: Deferred.Deferred<void>;
+    readonly moveDuringFork?: boolean;
     readonly parentStorageFolder?: string;
   };
 }) {
@@ -500,6 +509,14 @@ function makeLocalCommandHarness(input: {
       ? {}
       : { nativeStorageFolder: input.sideChat.parentStorageFolder }),
   };
+  const movedParent = {
+    ...parentProviderThread,
+    nativeStorageFolder: "/repo/side-chat-parent-moved",
+  };
+  const movedAgainParent = {
+    ...parentProviderThread,
+    nativeStorageFolder: "/repo/side-chat-parent-moved-again",
+  };
   const parentProviderTurn = (ordinal: number, attemptRunId: RunId) => ({
     attempt: {
       ...projection.attempts[0]!,
@@ -530,7 +547,7 @@ function makeLocalCommandHarness(input: {
     parentProviderTurn(1, parentRunId),
     parentProviderTurn(2, parentRolledBackRunId),
   ];
-  const parentRecords = {
+  let parentRecords = {
     ...projection,
     thread: { ...projection.thread, id: parentThreadId },
     runs: [
@@ -598,6 +615,31 @@ function makeLocalCommandHarness(input: {
   const readEvents = vi.fn<EventStore.EventStoreV2["Service"]["read"]>((request) =>
     Stream.fromIterable(request?.threadId === parentThreadId ? parentScopeEvents : []),
   );
+  const relocation = input.sideChat?.relocation;
+  const relocationAwaited = Deferred.makeUnsafe<void>();
+  // A second move, committed on the parent while the fork waits for the first relocation.
+  const relocationAgain = Deferred.makeUnsafe<void>();
+  const relocationAgainAwaited = Deferred.makeUnsafe<void>();
+  let pendingRelocations: ReadonlyArray<string> =
+    relocation === undefined ? [] : ["relocate-parent"];
+  const relocationsAtFork: Array<ReadonlyArray<string>> = [];
+  // The thread locks the service runs under, so a test can take the parent's lock itself.
+  let locks: KeyedLock.KeyedLock<ThreadId> | undefined;
+  const threadLocks = Effect.suspend(() =>
+    locks === undefined
+      ? Effect.die("the service has not built its thread locks")
+      : Effect.succeed(locks),
+  );
+  // A move commits under the source thread's lock and leaves a relocation to settle.
+  const commitMove = Effect.flatMap(threadLocks, (held) =>
+    held.withLock(
+      parentThreadId,
+      Effect.sync(() => {
+        pendingRelocations = [...pendingRelocations, "relocate-parent-again"];
+      }),
+    ),
+  );
+  let moveAttempted = false;
   if (input.sideChat !== undefined) {
     const earlierRunId = RunId.make("side-chat-earlier-run");
     projection = {
@@ -830,7 +872,10 @@ function makeLocalCommandHarness(input: {
     },
   };
   const forkThread = vi.fn((_fork: ProviderAdapter.ProviderAdapterV2ForkThreadInput) =>
-    Effect.succeed(sideChatThread),
+    Effect.sync(() => {
+      relocationsAtFork.push(pendingRelocations);
+      return sideChatThread;
+    }),
   );
   const sideChatSession = {
     driver: providerThread.driver,
@@ -950,7 +995,16 @@ function makeLocalCommandHarness(input: {
       ),
     }),
   );
-  const layer = ProviderTurnStart.layer.pipe(
+  const layer = Layer.merge(
+    ProviderTurnStart.layer,
+    Layer.effect(
+      ThreadCommandExecutor.ThreadCommandExecutor,
+      Effect.map(KeyedLock.make<ThreadId>(), (made) => {
+        locks = made;
+        return made;
+      }),
+    ),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
@@ -979,6 +1033,46 @@ function makeLocalCommandHarness(input: {
             }),
         }),
         Layer.mock(EventStore.EventStoreV2)({ read: readEvents }),
+        Layer.mock(EffectOutbox.EffectOutboxV2)({
+          unsettledEffectIds: () =>
+            Effect.gen(function* () {
+              const ids = pendingRelocations;
+              // The move tries to commit while the fork holds the source lock, so it lands after.
+              if (
+                input.sideChat?.moveDuringFork === true &&
+                !moveAttempted &&
+                (yield* Effect.flatMap(threadLocks, (held) => held.activeKeys)).includes(
+                  parentThreadId,
+                )
+              ) {
+                moveAttempted = true;
+                yield* Effect.forkChild(commitMove);
+              }
+              return ids;
+            }),
+          awaitSettled: (effectId) => {
+            const settle = (
+              relocated: Deferred.Deferred<void>,
+              moved: (typeof parentRecords)["providerThreads"][number],
+            ) =>
+              Deferred.await(relocated).pipe(
+                Effect.map(() => {
+                  pendingRelocations = pendingRelocations.filter((id) => id !== effectId);
+                  parentRecords = { ...parentRecords, providerThreads: [moved] };
+                }),
+              );
+            if (effectId === "relocate-parent-again") {
+              return Deferred.succeed(relocationAgainAwaited, undefined).pipe(
+                Effect.andThen(settle(relocationAgain, movedAgainParent)),
+              );
+            }
+            return relocation === undefined
+              ? Effect.void
+              : Deferred.succeed(relocationAwaited, undefined).pipe(
+                  Effect.andThen(settle(relocation, movedParent)),
+                );
+          },
+        }),
         IdAllocator.layer,
         layerWorktreeLocation(input.worktreesDir),
         input.fileSystem === undefined
@@ -1061,6 +1155,11 @@ function makeLocalCommandHarness(input: {
     startTurn,
     forkThread,
     readEvents,
+    relocationAwaited,
+    relocationAgain,
+    relocationAgainAwaited,
+    commitMove,
+    relocationsAtFork,
     interruptTurn,
     tryHandlePromptCommand,
     events,
@@ -1391,26 +1490,75 @@ effectIt.effect.each([
 effectIt.effect.each([
   { folder: "/repo/side-chat-parent", eventReads: 1 },
   { sideChat: { parentRunCwd: "/repo/parent-run" }, folder: "/repo/parent-run" },
+  { relocation: "settles", folder: "/repo/side-chat-parent-moved", recorded: true },
   {
-    sideChat: { parentStorageFolder: "/repo/parent-recorded" },
+    relocation: "settles",
+    moveDuringWait: true,
+    folder: "/repo/side-chat-parent-moved-again",
+    recorded: true,
+  },
+  { driver: "codex", relocation: "settles" },
+  {
+    sideChat: { moveDuringFork: true, parentStorageFolder: "/repo/parent-recorded" },
     folder: "/repo/parent-recorded",
     recorded: true,
   },
-  { driver: "codex" },
+  { sideChat: { moveDuringFork: true }, folder: "/repo/side-chat-parent", eventReads: 1 },
+  { relocation: "hangs", willRetry: true },
+  { relocation: "hangs" },
 ])("forks a Claude parent from its session's storage folder: %j", (row) =>
   Effect.gen(function* () {
-    const harness = forkHarness(row.sideChat ?? {}, row.driver ?? "claudeAgent");
+    const settled = yield* Deferred.make<void>();
+    const harness = forkHarness(
+      { ...row.sideChat, ...(row.relocation === undefined ? {} : { relocation: settled }) },
+      row.driver ?? "claudeAgent",
+    );
 
-    yield* harness.start;
+    const start = yield* Effect.forkChild(
+      Effect.exit(row.willRetry === true ? harness.startWithRetry : harness.start),
+    );
+    if (row.relocation !== undefined) {
+      yield* Effect.race(Deferred.await(harness.relocationAwaited), Fiber.await(start));
+      expect(harness.relocationsAtFork).toEqual(
+        row.driver === "codex" ? [["relocate-parent"]] : [],
+      );
+      // The wait holds no lock, so a move on the source thread commits meanwhile.
+      if (row.moveDuringWait === true) yield* harness.commitMove;
+      yield* row.relocation === "settles"
+        ? Deferred.succeed(settled, undefined)
+        : TestClock.adjust("30 seconds");
+      if (row.moveDuringWait === true) {
+        // Under the lock the fork finds the new move and waits for that one too.
+        yield* Deferred.await(harness.relocationAgainAwaited);
+        expect(harness.forkThread).not.toHaveBeenCalled();
+        yield* Deferred.succeed(harness.relocationAgain, undefined);
+      }
+    }
 
+    const hangs = row.relocation === "hangs";
+    expect((yield* Fiber.join(start))._tag).toBe(row.willRetry === true ? "Failure" : "Success");
     expect(
       harness.forkThread.mock.calls.map(([fork]) => [
         fork.sourceNativeStorageFolder,
         fork.sourceProviderThread.nativeStorageFolder,
       ]),
-    ).toEqual([[row.folder, row.recorded === true ? row.folder : undefined]]);
+    ).toEqual(hangs ? [] : [[row.folder, row.recorded === true ? row.folder : undefined]]);
+    expect(harness.relocationsAtFork.at(-1)).toEqual(
+      hangs ? undefined : row.driver === "codex" ? ["relocate-parent"] : [],
+    );
     expect(harness.readEvents).toHaveBeenCalledTimes(row.eventReads ?? 0);
-    expect(harness.projection().runs.at(-1)?.status).toBe("running");
+    expect(harness.projection().runs.at(-1)?.status).toBe(
+      hangs ? (row.willRetry === true ? "starting" : "failed") : "running",
+    );
+    expect(
+      harness
+        .projection()
+        .turnItems.flatMap((item) => (item.type === "error" ? [item.failure.message] : [])),
+    ).toEqual(
+      hangs && row.willRetry !== true
+        ? ["The source thread's Claude session is still being moved. Try again in a moment."]
+        : [],
+    );
   }),
 );
 
@@ -1435,7 +1583,8 @@ effectIt.effect.each([
   { text: "Continue", line: true },
   { text: "/goal ship it", line: false },
   { text: "Continue", restartContinuation: true, line: false },
-])("tells the model the working folder changed: %j", ({ text, line, restartContinuation }) =>
+  { text: "Continue", moved: true, line: true },
+])("tells the model the working folder changed: %j", ({ text, line, restartContinuation, moved }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text,
@@ -1446,7 +1595,9 @@ effectIt.effect.each([
     harness.setProjection({
       ...projection,
       runs: [
-        { ...previous!, cwd: "/tmp/folder-a" },
+        moved
+          ? { ...previous!, cwd: "/tmp/folder-b", status: "rolled_back" }
+          : { ...previous!, cwd: "/tmp/folder-a" },
         restartContinuation ? { ...current!, restartContinuationOfRunId: previous!.id } : current!,
       ],
       attempts: [
@@ -1454,12 +1605,30 @@ effectIt.effect.each([
         { ...projection.attempts[0]!, id: previous!.activeAttemptId!, runId: previous!.id },
       ],
     });
+    if (moved) {
+      const receipts = ["/tmp/folder-a", "/tmp/folder-b"].map((previousFolder, index) =>
+        moveReceiptTurnItem({
+          id: TurnItemId.make(`move-receipt-${index}`),
+          threadId: projection.thread.id,
+          ordinal: index + 1,
+          movedAt: DateTime.makeUnsafe(0),
+          previousFolder,
+          message: "Moved.",
+        }),
+      );
+      harness.getThreadRecords.mockImplementation(() =>
+        Effect.succeed({ ...harness.projection(), turnItems: receipts }),
+      );
+    }
     harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
 
     yield* harness.start;
     const turn = harness.startRootRun.mock.calls[0]![0];
     yield* turn.session.startTurn(turn as never);
 
+    expect(
+      harness.getThreadRecords.mock.calls.some(([, fields]) => fields.includes("turnItems")),
+    ).toBe(moved === true);
     expect(harness.startTurn.mock.calls.map(([sent]) => sent.message.text)).toEqual([
       withInlineContext(
         line

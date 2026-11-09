@@ -33,6 +33,7 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import * as ProjectLock from "./ProjectLock.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -173,7 +174,7 @@ export const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const projectLocks = yield* KeyedLock.make<ProjectId>();
+  const projectLocks = yield* ProjectLock.ProjectLock;
   const workspaceLocks = yield* KeyedLock.make<string>();
 
   const toProject = (
@@ -278,14 +279,16 @@ export const make = Effect.gen(function* () {
         error: encodeProjectCommandRejection(planned.failure),
       });
     });
-    const receipt = yield* projectLocks
-      .withLock(
-        projectId,
-        workspaceRoot === undefined
-          ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
-      )
-      .pipe(Effect.mapError(dispatchError));
+    const receipt = yield* (
+      command.type === "project.delete"
+        ? planAndCommit
+        : projectLocks.withLock(
+            projectId,
+            workspaceRoot === undefined
+              ? planAndCommit
+              : workspaceLocks.withLock(workspaceRoot, planAndCommit),
+          )
+    ).pipe(Effect.mapError(dispatchError));
     if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
       return yield* dispatchError(
         `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
@@ -522,10 +525,15 @@ export const make = Effect.gen(function* () {
       }
 
       const isFirstDelete = existing.value.deletedAt === null;
-      if (isFirstDelete) {
-        yield* deleteChildThreads(input);
-      }
-      yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+      yield* projectLocks.withLock(
+        projectId,
+        Effect.gen(function* () {
+          if (isFirstDelete) {
+            yield* deleteChildThreads(input);
+          }
+          yield* commit({ type: "project.delete", commandId: input.commandId, projectId });
+        }),
+      );
       if (isFirstDelete) {
         yield* clearProjectSettingsOverrides(projectId);
       }
@@ -620,4 +628,5 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(ProjectService, make).pipe(
   Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(ProjectLock.layer),
 );

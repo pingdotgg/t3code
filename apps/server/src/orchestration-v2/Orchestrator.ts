@@ -412,6 +412,9 @@ export interface OrchestratorV2Shape {
     fields: ReadonlyArray<K>,
     filter?: ProjectionRecordFilter,
   ) => Effect.Effect<ProjectionRecords<K>, OrchestratorV2Error>;
+  readonly threadHasBackgroundWork: (
+    threadId: ThreadId,
+  ) => Effect.Effect<boolean, OrchestratorV2Error>;
   readonly listAppOwnedChildThreadIds: (
     threadId: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ThreadId>, OrchestratorV2Error>;
@@ -1249,15 +1252,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // Detaching kills background work running inside the provider process.
   // Probe even with an empty roster: Claude's native subagents never reach
   // pendingBackgroundTasks. Sessions shared across threads probe per thread.
-  const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
+  const runtimeHasBackgroundWork = Effect.fn("Orchestrator.runtimeHasBackgroundWork")(function* (
     detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
+    runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
   ) {
-    const session = yield* providerSessions
-      .get(detaching.id)
-      .pipe(Effect.orElseSucceed(() => Option.none()));
-    if (Option.isNone(session)) return false;
-    const runtime = session.value;
     const probes =
       !detaching.capabilities.sessions.supportsMultipleProviderThreadsPerSession &&
       runtime.hasPendingBackgroundWork !== undefined
@@ -1273,6 +1272,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (yield* probe.pipe(Effect.catchCause(() => Effect.succeed(true)))) return true;
     }
     return false;
+  });
+
+  // Dispatch treats a session the manager cannot find as gone: a lookup failure here must not
+  // refuse the user's message.
+  const sessionHasBackgroundWork = Effect.fn("Orchestrator.sessionHasBackgroundWork")(function* (
+    detaching: OrchestrationV2ThreadProjection["providerSessions"][number],
+    providerThreads: OrchestrationV2ThreadProjection["providerThreads"],
+  ) {
+    const session = yield* providerSessions
+      .get(detaching.id)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    if (Option.isNone(session)) return false;
+    return yield* runtimeHasBackgroundWork(detaching, session.value, providerThreads);
   });
 
   // Runs in every command transaction; avoid reading thousands of finished leaf nodes.
@@ -14526,6 +14538,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return projectionStore
           .getThreadRecords(threadId, fields, filter)
           .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+      },
+    ),
+    threadHasBackgroundWork: Effect.fn("OrchestratorV2.threadHasBackgroundWork")(
+      function* (threadId) {
+        const records = yield* projectionStore
+          .getThreadRecords(threadId, ["providerSessions", "providerThreads"])
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        for (const session of records.providerSessions) {
+          // A failed lookup cannot tell a gone session from a live one, so the caller refuses.
+          const runtime = yield* providerSessions
+            .get(session.id)
+            .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+          if (Option.isNone(runtime)) continue;
+          if (yield* runtimeHasBackgroundWork(session, runtime.value, records.providerThreads)) {
+            return true;
+          }
+        }
+        return false;
       },
     ),
     listAppOwnedChildThreadIds: Effect.fn("OrchestratorV2.listAppOwnedChildThreadIds")(

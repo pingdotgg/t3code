@@ -29,10 +29,12 @@ import * as ServerConfig from "../config.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { previousFolderAfter } from "../project/ThreadMoveReceipt.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { findRepositoryRoot } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
@@ -54,6 +56,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   ContextHandoffBackgroundWorkError,
   knownProviderFailureMessage,
@@ -135,6 +138,7 @@ export class ProviderTurnStartServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
   | EventStore.EventStoreV2
   | ContextHandoffService.ContextHandoffServiceV2
@@ -153,6 +157,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
     const eventSink = yield* EventSink.EventSinkV2;
     const eventStore = yield* EventStore.EventStoreV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
@@ -165,6 +170,7 @@ export const layer: Layer.Layer<
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const threadLocks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
     const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
@@ -905,7 +911,14 @@ export const layer: Layer.Layer<
           ? ""
           : yield* folderChangeNote(
               fileSystem,
-              latestCountedRunFolder(projection),
+              latestCountedRunFolder(projection) ??
+                previousFolderAfter(
+                  (yield* projectionStore.getThreadRecords(projection.thread.id, ["turnItems"], {
+                    turnItemTypes: ["system_notice"],
+                    turnItemRunIds: [null],
+                  })).turnItems,
+                  0,
+                ),
               resolvedRuntimePolicy.cwd,
             );
       const tokenCap = yield* handoffTokenCapConfig.pipe(
@@ -1149,7 +1162,7 @@ export const layer: Layer.Layer<
       let resumedRetryHandoff: ReadonlyArray<OrchestrationV2ContextHandoff> | undefined;
       let resumedHandoffContext: ReturnType<typeof handoffContextForThread> | undefined;
       let portableForkFallback: OrchestrationV2ContextHandoff | undefined;
-      const loadedProviderThread = yield* Effect.gen(function* () {
+      const loadProviderThread = Effect.gen(function* () {
         if (nativeForkTransfer !== undefined) {
           const sourceProjection = yield* projectionStore.getThreadRecords(
             nativeForkTransfer.sourceThreadId,
@@ -1450,6 +1463,49 @@ export const layer: Layer.Layer<
         });
         return replacement;
       });
+      // A move relocates the source's Claude transcript before its row records the new folder.
+      // The wait holds no lock, so the source thread keeps taking commands meanwhile. Moves
+      // commit under the source's lock, so a recheck under it sees any move that landed during
+      // the wait, and none lands between that recheck and the fork.
+      const loadForkedProviderThread = Effect.fn(
+        "ProviderTurnStartService.loadForkedProviderThread",
+      )(function* (sourceThreadId: ThreadId) {
+        const unsettledRelocations = outbox.unsettledEffectIds({
+          threadIds: [sourceThreadId],
+          effectType: "provider-session.relocate-storage",
+        });
+        while (true) {
+          const settled = yield* Effect.forEach(yield* unsettledRelocations, outbox.awaitSettled, {
+            discard: true,
+          }).pipe(Effect.timeoutOption("30 seconds"));
+          if (Option.isNone(settled)) {
+            const error = new ProviderTurnStartError({
+              runId,
+              cause:
+                "The source thread's Claude session is still being moved. Try again in a moment.",
+            });
+            if (input.willRetry === true) return yield* error;
+            yield* settleStartFailure({
+              signal: "provider-thread-load-failure",
+              title: "Provider turn failed to start",
+              error,
+            });
+            return undefined;
+          }
+          const loaded = yield* threadLocks.withLock(
+            sourceThreadId,
+            Effect.gen(function* () {
+              if ((yield* unsettledRelocations).length > 0) return "relocating" as const;
+              return yield* loadProviderThread;
+            }),
+          );
+          if (loaded !== "relocating") return loaded;
+        }
+      });
+      const loadedProviderThread = yield* nativeForkTransfer === undefined ||
+      session.driver !== "claudeAgent"
+        ? loadProviderThread
+        : loadForkedProviderThread(nativeForkTransfer.sourceThreadId);
       if (loadedProviderThread === undefined) return;
       if (!(yield* isCurrentAttemptInStatus("starting"))) {
         return;
@@ -1825,4 +1881,4 @@ export const layer: Layer.Layer<
       ),
     });
   }),
-);
+).pipe(Layer.provide(ThreadCommandExecutor.layer));

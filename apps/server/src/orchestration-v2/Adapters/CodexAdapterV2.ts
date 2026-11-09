@@ -249,6 +249,7 @@ export const CodexProviderCapabilitiesV2 = {
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: true,
     pendingRequestsSurviveRestart: false,
+    supportsFolderMove: true,
   },
   threads: {
     canCreateEmptyThread: true,

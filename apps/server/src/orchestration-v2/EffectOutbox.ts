@@ -4,6 +4,9 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProviderSessionId,
   RunAttemptId,
   ProviderApprovalDecision,
@@ -39,6 +42,15 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     detail: Schema.optional(Schema.String),
     revokeMcpCredential: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-session.relocate-storage"),
+    driver: ProviderDriverKind,
+    providerInstanceId: ProviderInstanceId,
+    providerThreadId: ProviderThreadId,
+    nativeSessionId: Schema.String,
+    oldFolder: Schema.String,
+    newFolder: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.start"),
@@ -99,6 +111,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("scheduled-tasks.cleanup"),
   }),
   Schema.Struct({
+    type: Schema.Literal("scheduled-tasks.move"),
+    threadIds: Schema.Array(ThreadId),
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     type: Schema.Literal("terminal.cleanup"),
   }),
   Schema.Struct({
@@ -125,9 +142,11 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-runtime.continue",
   "provider-session.detach",
+  "provider-session.relocate-storage",
   "provider-thread.rollback",
   "checkpoint.capture",
   "scheduled-tasks.cleanup",
+  "scheduled-tasks.move",
   "terminal.cleanup",
   "preview.cleanup",
   "attachment.cleanup",
@@ -211,6 +230,14 @@ export interface EffectOutboxV2Shape {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
     readonly reason: string;
+  }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
+  readonly hasUnsettled: (input: {
+    readonly threadIds: ReadonlyArray<ThreadId>;
+    readonly effectType: OrchestrationEffectRequestV2["type"];
+  }) => Effect.Effect<boolean, EffectOutboxError>;
+  readonly unsettledEffectIds: (input: {
+    readonly threadIds: ReadonlyArray<ThreadId>;
+    readonly effectType: OrchestrationEffectRequestV2["type"];
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
@@ -365,6 +392,25 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         Effect.mapError((cause) => new EffectOutboxError({ operation, cause })),
       );
 
+    const unsettledEffectIds: EffectOutboxV2Shape["unsettledEffectIds"] = ({
+      threadIds,
+      effectType,
+    }) =>
+      threadIds.length === 0
+        ? Effect.succeed([])
+        : sql<{ readonly effect_id: string }>`
+            SELECT effect_id
+            FROM orchestration_v2_effect_outbox
+            WHERE thread_id IN ${sql.in(threadIds)}
+              AND effect_type = ${effectType}
+              AND status IN ('pending', 'running')
+          `.pipe(
+            NodeSqliteClient.readOnly,
+            Effect.map((rows) => rows.map(({ effect_id }) => effect_id)),
+            Effect.mapError(
+              (cause) => new EffectOutboxError({ operation: "unsettled-effect-ids", cause }),
+            ),
+          );
     const service: EffectOutboxV2Shape = {
       enqueue: Effect.fn("EffectOutbox.enqueue")(
         function* (effects) {
@@ -457,6 +503,8 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         },
         Effect.mapError((cause) => new EffectOutboxError({ operation: "cancel-unsettled", cause })),
       ),
+      hasUnsettled: (input) => Effect.map(unsettledEffectIds(input), (ids) => ids.length > 0),
+      unsettledEffectIds,
       signalCancellations: Effect.fn("EffectOutbox.signalCancellations")(function* (effectIds) {
         yield* Effect.forEach(
           effectIds,

@@ -264,6 +264,7 @@ export const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsProviderSwitchingViaHandoff: Schema.Boolean,
   supportsRuntimeModeSwitchInSession: Schema.Boolean,
   pendingRequestsSurviveRestart: Schema.Boolean,
+  supportsFolderMove: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
 
@@ -3617,6 +3618,17 @@ const OrchestrationV2InternalCommand = Schema.Union([
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
+
+// The move service records it through the event sink; the orchestrator never dispatches it.
+export const OrchestrationV2ThreadProjectMoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.project.move"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  projectId: ProjectId,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type OrchestrationV2ThreadProjectMoveCommand =
+  typeof OrchestrationV2ThreadProjectMoveCommand.Type;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",

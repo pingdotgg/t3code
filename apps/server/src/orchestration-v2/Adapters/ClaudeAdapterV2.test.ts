@@ -3541,7 +3541,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       providerTurnOrdinal,
       ...extra,
     });
-
   const turnRecords = (
     events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
     attempt?: string,

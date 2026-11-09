@@ -1,20 +1,26 @@
+import { expect } from "@effect/vitest";
 import {
   EventId,
   MessageId,
   type NodeId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
   type ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
-const createdAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
-const claudeDriver = ProviderDriverKind.make("claudeAgent");
+import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
+
+export const createdAt = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+export const codexDriver = ProviderDriverKind.make("codex");
+export const claudeDriver = ProviderDriverKind.make("claudeAgent");
 
 export function threadCreated(input: {
   readonly threadId: ThreadId;
@@ -103,6 +109,25 @@ export function providerThread(input: {
   };
 }
 
+export function codexSession(input: {
+  readonly id: string;
+  readonly status: OrchestrationV2ProviderSession["status"];
+  readonly cwd: string;
+}): OrchestrationV2ProviderSession {
+  return {
+    id: ProviderSessionId.make(input.id),
+    driver: codexDriver,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    status: input.status,
+    cwd: input.cwd,
+    model: null,
+    capabilities: CodexProviderCapabilitiesV2,
+    createdAt,
+    updatedAt: createdAt,
+    lastError: null,
+  };
+}
+
 export function runCreated(input: {
   readonly id: RunId;
   readonly threadId: ThreadId;
@@ -140,3 +165,24 @@ export function runCreated(input: {
     },
   };
 }
+
+export const namedProject = (id: string) => ({ projectId: id, title: id });
+export const namedThread = (id: string) => ({ threadId: id, title: id });
+export const refusal = (reason?: string | RegExp, named?: Record<string, unknown>) => ({
+  _tag: "refused",
+  ...(typeof reason === "string" ? { reason: expect.stringContaining(reason) } : {}),
+  ...(reason instanceof RegExp ? { reason: expect.stringMatching(reason) } : {}),
+  ...named,
+});
+export const member = (id: string, reason?: string | RegExp) =>
+  refusal(reason, { thread: namedThread(id) });
+export const moved = (folder: string, members: ReadonlyArray<string> = []) => ({
+  _tag: "moved",
+  folder,
+  members: members.map(namedThread),
+});
+export const needsProject = (folder: string, nestedIn?: string) => ({
+  _tag: "needs-project",
+  folder,
+  ...(nestedIn === undefined ? {} : { nestedIn: namedProject(nestedIn) }),
+});
