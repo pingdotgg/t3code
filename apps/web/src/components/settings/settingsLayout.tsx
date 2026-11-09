@@ -686,7 +686,7 @@ export function SettingsRow({
             {description ? (
               <p
                 data-settings-description
-                className="text-body text-muted-foreground [--type-body:var(--type-meta)]"
+                className="text-pretty text-body text-muted-foreground [--type-body:var(--type-meta)]"
               >
                 {description}
               </p>
@@ -700,7 +700,7 @@ export function SettingsRow({
           {trailing}
         </div>
         {renderedControl ? (
-          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[26rem]/settings-row:w-auto @min-[26rem]/settings-row:justify-end">
+          <div className="flex w-full min-w-0 shrink-0 items-center gap-2 @min-[26rem]/settings-row:w-auto @min-[26rem]/settings-row:justify-end @min-[26rem]/settings-row:[&_[data-slot=select-trigger]]:min-w-40">
             {renderedControl}
           </div>
         ) : null}

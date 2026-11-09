@@ -12,6 +12,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
+  AuthProvidersManageScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -149,6 +150,32 @@ describe("command permissions", () => {
         expect((yield* close.authorize(registry, other).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
+      }),
+    ),
+  );
+
+  it.effect("requires the destination provider grant to remove an incomplete connection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const remove = createCommandPermissions(runtime, WS_METHODS.providerAuthRemoveMethod);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(remove.permissionAtom(env))).toBe(false);
+        expect((yield* remove.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthProvidersManageScope],
+            permissions: [AuthProvidersManageScope],
+          }),
+        );
+        expect(registry.get(remove.permissionAtom(env))).toBe(true);
+        yield* remove.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(remove.permissionAtom(other))).toBe(false);
       }),
     ),
   );

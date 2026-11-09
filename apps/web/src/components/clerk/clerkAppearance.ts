@@ -60,7 +60,7 @@ export const clerkAppearance = {
   },
   elements: {
     // Modal shells: the dialog surface on the flat scrim.
-    modalBackdrop: "dialog-backdrop",
+    modalBackdrop: "dialog-backdrop z-50",
     cardBox: "surface-dialog rounded-pane",
     card: "border-0 bg-transparent shadow-none",
     footer: "border-t border-hairline bg-none bg-transparent",

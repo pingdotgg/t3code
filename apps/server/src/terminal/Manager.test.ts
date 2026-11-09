@@ -773,34 +773,52 @@ it.layer(
     }),
   );
 
-  it.effect("closes only a thread's idle shells, ignoring a helper forked from the shell", () =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        processTable: Effect.succeed([
-          { pid: 9000, ppid: 1, name: "zsh" },
-          { pid: 100, ppid: 9000, name: "zsh" },
-          { pid: 9001, ppid: 1, name: "zsh" },
-          { pid: 200, ppid: 9001, name: "node" },
-          { pid: 9002, ppid: 1, name: "zsh" },
-          { pid: 300, ppid: 9002, name: "zsh" },
-          { pid: 301, ppid: 300, name: "sleep" },
-          { pid: 9003, ppid: 1, name: "zsh" },
-        ]),
-      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
-      yield* manager.open(openInput({ terminalId: "idle" }));
-      yield* manager.open(openInput({ terminalId: "dev-server" }));
-      yield* manager.open(openInput({ terminalId: "subshell" }));
-      yield* manager.open(openInput({ threadId: "thread-2" }));
+  it.effect(
+    "closes idle shells and opted-in actions on settlement without stopping other commands",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          processTable: Effect.succeed([
+            { pid: 9000, ppid: 1, name: "zsh" },
+            { pid: 100, ppid: 9000, name: "zsh" },
+            { pid: 9001, ppid: 1, name: "zsh" },
+            { pid: 200, ppid: 9001, name: "node" },
+            { pid: 9002, ppid: 1, name: "zsh" },
+            { pid: 300, ppid: 9002, name: "zsh" },
+            { pid: 301, ppid: 300, name: "sleep" },
+            { pid: 9003, ppid: 1, name: "zsh" },
+            { pid: 9004, ppid: 1, name: "zsh" },
+            { pid: 400, ppid: 9004, name: "node" },
+          ]),
+        }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+        yield* manager.open(openInput({ terminalId: "idle" }));
+        yield* manager.open(openInput({ terminalId: "dev-server" }));
+        yield* manager.open(openInput({ terminalId: "subshell" }));
+        yield* manager.open(openInput({ threadId: "thread-2", stopOnSettle: true }));
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
 
-      yield* manager.closeIdle({ threadId: "thread-1" });
+        yield* manager.closeIdle({ threadId: "thread-1" });
 
-      expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
-        true,
-        false,
-        false,
-        false,
-      ]);
-    }),
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          false,
+        ]);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: false }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes[4]?.killed).toBe(false);
+        yield* manager.open(openInput({ terminalId: "managed-dev", stopOnSettle: true }));
+        yield* manager.closeOnSettle({ threadId: "thread-1" });
+        expect(ptyAdapter.processes.map((process) => process.killed)).toEqual([
+          true,
+          false,
+          false,
+          false,
+          true,
+        ]);
+      }),
   );
 
   it.effect("labels a running command by its whole process name, spaces included", () =>
@@ -2079,6 +2097,25 @@ it.layer(
     }),
   );
 
+  it.effect("starts bash as a login shell on macOS only", () =>
+    Effect.gen(function* () {
+      for (const [platform, shell, args] of [
+        ["darwin", "/bin/bash", ["-l"]],
+        ["darwin", "/opt/homebrew/bin/bash", ["-l"]],
+        ["linux", "/bin/bash", undefined],
+        ["win32", "C:\\Program Files\\Git\\bin\\bash.exe", undefined],
+        ["darwin", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["linux", "/bin/zsh", ["-o", "nopromptsp"]],
+        ["win32", "pwsh.exe", ["-NoLogo"]],
+      ] as const) {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => shell,
+        }).pipe(Effect.provide(layerWithHostPlatform(platform)));
+        yield* manager.open(openInput());
+        expect.soft(ptyAdapter.spawnInputs[0]?.args, `${platform} ${shell}`).toEqual(args);
+      }
+    }),
+  );
   it.effect("removes terminal metadata subscriptions when initial delivery fails", () =>
     Effect.gen(function* () {
       const { manager } = yield* createManager();

@@ -33,6 +33,7 @@ export function useTextFieldSpeech(input: {
     ownerKey: input.ownerKey,
     draftText: input.text,
     disabled: input.disabled,
+    offerSetup: false,
     readDraft: () => {
       const field = latest.current.textareaRef.current;
       const cursor = field?.selectionStart ?? latest.current.text.length;
@@ -107,9 +108,11 @@ export function TextFieldSpeechControls({
         step={speech.setup.step}
         status={speech.status}
         model={speech.setup.model}
+        language={speech.setup.language}
         downloading={speech.setup.downloading}
         error={speech.setup.error}
         onOpenChange={speech.setup.setOpen}
+        onRetryCatalog={speech.setup.retryCatalog}
         onDownload={() => void speech.setup.download()}
         onCancelDownload={() => void speech.setup.cancelDownload()}
         onStartRecording={() => void speech.setup.startRecording()}
