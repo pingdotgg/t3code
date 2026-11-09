@@ -218,6 +218,10 @@ const canonicalUrl = new URL(Astro.url.pathname, Astro.site);
           picker.open = false;
           picker.querySelector("summary")?.focus();
         });
+        picker.addEventListener("focusout", (event) => {
+          const next = event.relatedTarget as Node | null;
+          if (next && !picker.contains(next)) picker.open = false;
+        });
       }
     </script>
   </body>
