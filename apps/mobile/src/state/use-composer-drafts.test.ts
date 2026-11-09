@@ -541,7 +541,7 @@ describe("mobile composer drafts", () => {
       modelSelection: { instanceId: codex, model: "gpt-5.4" },
     };
     const pick = { instanceId: codex, model: "gpt-5.5" };
-    selectThreadModel({ environmentId, threadId }, pick, []);
+    selectThreadModel({ environmentId, threadId }, pick);
     expect(modelCommandMocks.runs).toEqual([
       { environmentId, input: { threadId, modelSelection: pick } },
     ]);
@@ -558,8 +558,8 @@ describe("mobile composer drafts", () => {
     expect(getComposerDraftSnapshot(key).modelSelection).toBeUndefined();
     expect(getComposerDraftSnapshot(key).text).toBe("keep this prompt");
 
-    selectThreadModel({ environmentId, threadId }, pick, []);
-    selectThreadModel({ environmentId, threadId }, pick, []);
+    selectThreadModel({ environmentId, threadId }, pick);
+    selectThreadModel({ environmentId, threadId }, pick);
     const latest = getComposerDraftSnapshot(key).modelSelection;
     modelCommandMocks.replies[1]!.resolve({ _tag: "Success" });
     await modelCommandMocks.replies[1]!.promise;
@@ -571,9 +571,9 @@ describe("mobile composer drafts", () => {
     // Another instance would replace the live session, and a read-only connection cannot
     // change the thread: both picks wait for a sent message.
     const claude = { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" };
-    selectThreadModel({ environmentId, threadId }, claude, []);
+    selectThreadModel({ environmentId, threadId }, claude);
     modelCommandMocks.canOperate = false;
-    selectThreadModel({ environmentId, threadId }, pick, []);
+    selectThreadModel({ environmentId, threadId }, pick);
     expect(modelCommandMocks.runs).toHaveLength(3);
     expect(getComposerDraftSnapshot(key).modelSelection).toEqual(pick);
   });
