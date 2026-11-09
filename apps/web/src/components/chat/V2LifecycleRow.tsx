@@ -78,7 +78,6 @@ export function V2LifecycleRow(props: {
   readonly runs: ReadonlyArray<HandoffTimelineRun>;
   readonly onOpenThread: (threadId: ThreadId) => void;
   /** Subagent members listed inside a group header render as flat one-line rows. */
-  readonly subagentLayout?: "card" | "flat";
 }) {
   const { item } = props;
   if (item.type === "run_interrupt_result") {
@@ -173,7 +172,6 @@ export function V2LifecycleRow(props: {
         threadId={item.childThreadId}
         remote={item.remoteChild}
         onOpenThread={props.onOpenThread}
-        layout={props.subagentLayout ?? "card"}
       />
     );
   }
@@ -499,7 +497,6 @@ function SubagentTimelineLink(props: {
   /** The thread in a linked environment that runs this task, when it runs there. */
   readonly remote?: OrchestrationV2RemoteTaskChild | undefined;
   readonly onOpenThread: (threadId: ThreadId) => void;
-  readonly layout?: "card" | "flat";
   readonly event?: {
     readonly status: OrchestrationV2TurnItem["status"] | null;
     readonly label: string;
@@ -540,7 +537,6 @@ function SubagentTimelineLink(props: {
     startedAt: isoOrNull(agent?.startedAt ?? props.startedAt),
     completedAt: isoOrNull(agent?.completedAt ?? props.completedAt),
   };
-  const flat = props.layout === "flat";
   // One quiet line: logo, title, what it is doing, model, time, state.
   const content = (
     <>
@@ -592,9 +588,8 @@ function SubagentTimelineLink(props: {
     </>
   );
   // Timeline rows share the tool rows' columns: avatar on the text line, title on the label line.
-  const className = flat
-    ? "group/subagent flex h-[30px] w-full min-w-0 items-center gap-2 rounded-row px-2.5 text-left"
-    : "group/subagent flex h-7.5 w-full min-w-0 items-center gap-2 rounded-row px-1.5 text-left";
+  const className =
+    "group/subagent flex h-7.5 w-full min-w-0 items-center gap-2 rounded-row px-1.5 text-left";
   return (
     <Tooltip>
       <TooltipTrigger
