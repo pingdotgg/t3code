@@ -114,6 +114,20 @@ function callAt(index: number) {
   return call[0];
 }
 
+function graphqlListNode(number: number) {
+  return {
+    iid: String(number),
+    title: `Merge request ${number}`,
+    webUrl: `https://gitlab.com/acme/web/-/merge_requests/${number}`,
+    createdAt: "2026-07-01T00:00:00Z",
+    updatedAt: "2026-07-02T00:00:00Z",
+    sourceBranch: "feat/page",
+    targetBranch: "main",
+    approved: true,
+    approvedBy: { nodes: [{ username: "julius" }] },
+  };
+}
+
 function graphqlListPage(
   numbers: ReadonlyArray<number>,
   pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null },
@@ -121,22 +135,7 @@ function graphqlListPage(
   return JSON.stringify({
     data: {
       metadata: { enterprise: true },
-      project: {
-        mergeRequests: {
-          pageInfo,
-          nodes: numbers.map((number) => ({
-            iid: String(number),
-            title: `Merge request ${number}`,
-            webUrl: `https://gitlab.com/acme/web/-/merge_requests/${number}`,
-            createdAt: "2026-07-01T00:00:00Z",
-            updatedAt: "2026-07-02T00:00:00Z",
-            sourceBranch: "feat/page",
-            targetBranch: "main",
-            approved: true,
-            approvedBy: { nodes: [{ username: "julius" }] },
-          })),
-        },
-      },
+      project: { mergeRequests: { pageInfo, nodes: numbers.map(graphqlListNode) } },
     },
   });
 }
@@ -407,6 +406,49 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect([0, 1].map((call) => graphqlRequestOf(call).variables)).toMatchObject([
         { first: 3, after: null, approvedBy: ["Any"] },
         { first: 1, after: "c1" },
+      ]);
+    }),
+  );
+
+  it.effect("leaves out a project whose batched page is null or loses rows before more", () =>
+    Effect.gen(function* () {
+      const page = (nodes: ReadonlyArray<unknown>, hasNextPage: boolean) => ({
+        pageInfo: { hasNextPage, endCursor: hasNextPage ? "c1" : null },
+        nodes,
+      });
+      mockedExecute.mockReturnValue(
+        Effect.succeed(
+          output(
+            JSON.stringify({
+              data: {
+                metadata: { enterprise: true },
+                projects: {
+                  nodes: [
+                    { fullPath: "acme/web", mergeRequests: page([graphqlListNode(1)], true) },
+                    { fullPath: "acme/docs", mergeRequests: null },
+                    { fullPath: "acme/api", mergeRequests: page([null, graphqlListNode(3)], true) },
+                    { fullPath: "acme/ops", mergeRequests: page([null], false) },
+                  ],
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const pages = yield* cli.listMergeRequestsInProjects({
+        cwd: "/w",
+        repositories: ["acme/web", "acme/docs", "acme/api", "acme/ops"],
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        first: 2,
+      });
+
+      expect(pages.map(({ repository, batch }) => [repository, batch.items.length])).toEqual([
+        ["acme/web", 1],
+        ["acme/ops", 0],
       ]);
     }),
   );

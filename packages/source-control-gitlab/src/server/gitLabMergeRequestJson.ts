@@ -1667,13 +1667,17 @@ const RawGraphqlListSchema = Schema.Struct({
   }),
 });
 
-// A path the reader cannot see, or that does not exist, is left out of `nodes`.
+// A path the reader cannot see, or that does not exist, is left out of `nodes`; a project whose
+// merge requests are off or hidden from the reader answers `mergeRequests: null`.
 const RawGraphqlProjectsListSchema = Schema.Struct({
   data: Schema.Struct({
     metadata: RawMetadataSchema,
     projects: Schema.Struct({
       nodes: Schema.Array(
-        Schema.Struct({ fullPath: Schema.String, mergeRequests: RawGraphqlListPageSchema }),
+        Schema.Struct({
+          fullPath: Schema.String,
+          mergeRequests: Schema.NullOr(RawGraphqlListPageSchema),
+        }),
       ),
     }),
   }),
@@ -1756,7 +1760,7 @@ export function decodeMergeRequestGraphqlListJson(
 
 export interface GitLabProjectMergeRequestGraphqlPage {
   readonly repository: string;
-  readonly page: GitLabMergeRequestGraphqlPage;
+  readonly page: GitLabMergeRequestGraphqlPage | null;
 }
 
 export function decodeMergeRequestGraphqlProjectsListJson(
@@ -1765,7 +1769,10 @@ export function decodeMergeRequestGraphqlProjectsListJson(
   return Result.map(decodeGraphqlProjectsList(raw), ({ data }) =>
     data.projects.nodes.map((project) => ({
       repository: project.fullPath,
-      page: toGraphqlListPage(project.mergeRequests, data.metadata?.enterprise),
+      page:
+        project.mergeRequests === null
+          ? null
+          : toGraphqlListPage(project.mergeRequests, data.metadata?.enterprise),
     })),
   );
 }

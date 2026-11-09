@@ -373,8 +373,9 @@ export class GitLabPullRequestCli extends Context.Service<
 
     /**
      * One GraphQL read of each project's first page of `first` merge requests, as
-     * `listMergeRequests` reads it. Projects the reader cannot see, or that do not exist, are
-     * absent from the answer. Needs `supportsGraphqlList`.
+     * `listMergeRequests` reads it. A project is absent from the answer when the reader cannot
+     * see it or its merge requests, or when its page lost rows to decoding before more rows.
+     * Needs `supportsGraphqlList`.
      */
     readonly listMergeRequestsInProjects: (input: {
       readonly cwd: string;
@@ -2069,15 +2070,22 @@ export const make = Effect.gen(function* () {
           decode: decodeMergeRequestGraphqlProjectsListJson,
         }).pipe(
           Effect.map((projects) =>
-            projects.map(({ repository, page }) => ({
-              repository,
-              batch: graphqlListBatch({
-                items: page.items,
-                states: page.states,
-                cursorAdvance: page.rawCount,
-                page,
-              }),
-            })),
+            projects.flatMap(({ repository, page }) =>
+              // Left out, the project is read on its own, which also reads past rows lost to decoding.
+              page === null || (page.hasNextPage && page.items.length < page.rawCount)
+                ? []
+                : [
+                    {
+                      repository,
+                      batch: graphqlListBatch({
+                        items: page.items,
+                        states: page.states,
+                        cursorAdvance: page.rawCount,
+                        page,
+                      }),
+                    },
+                  ],
+            ),
           ),
         ),
     ),
