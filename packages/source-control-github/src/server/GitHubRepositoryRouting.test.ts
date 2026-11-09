@@ -36,6 +36,7 @@ function harness(
     readonly fallbackGh?: boolean;
     readonly sameToken?: boolean;
     readonly rateLimited?: boolean;
+    readonly restAnswers?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const requests: HttpClientRequest.HttpClientRequest[] = [];
@@ -55,7 +56,9 @@ function harness(
         pins.push(pin?.repository);
         requests.push(request);
         const token = request.headers.authorization ?? "";
-        const pathname = new URL(request.url).pathname;
+        const url = new URL(request.url);
+        const pathname = url.pathname;
+        const restAnswer = options.restAnswers?.[pathname + url.search];
         const result = refused.has(token)
           ? json(
               { message: options.rateLimited ? "API rate limit exceeded" : "Bad credentials" },
@@ -63,24 +66,26 @@ function harness(
             )
           : pathname === "/user"
             ? json({ id: 123, login: "Chinoman10" })
-            : pathname.startsWith("/repos/")
-              ? json({
-                  full_name: pathname.slice("/repos/".length),
-                  html_url: `https://github.com/${pathname.slice(7)}`,
-                  ssh_url: `git@github.com:${pathname.slice(7)}.git`,
-                })
-              : successfulGraphql
+            : restAnswer !== undefined
+              ? new Response(restAnswer)
+              : pathname.startsWith("/repos/")
                 ? json({
-                    data: {
-                      repository: { pullRequest: { id: "PR_1" }, pullRequests: { nodes: [] } },
-                      addComment: { clientMutationId: null },
-                      addReaction: { reaction: { content: "THUMBS_UP" } },
-                      _0_markFileAsViewed: { clientMutationId: null },
-                      _1_unmarkFileAsViewed: { clientMutationId: null },
-                      _0_repository: { pullRequests: { nodes: [] } },
-                    },
+                    full_name: pathname.slice("/repos/".length),
+                    html_url: `https://github.com/${pathname.slice(7)}`,
+                    ssh_url: `git@github.com:${pathname.slice(7)}.git`,
                   })
-                : json({ message: "Not Found" }, 404);
+                : successfulGraphql
+                  ? json({
+                      data: {
+                        repository: { pullRequest: { id: "PR_1" }, pullRequests: { nodes: [] } },
+                        addComment: { clientMutationId: null },
+                        addReaction: { reaction: { content: "THUMBS_UP" } },
+                        _0_markFileAsViewed: { clientMutationId: null },
+                        _1_unmarkFileAsViewed: { clientMutationId: null },
+                        _0_repository: { pullRequests: { nodes: [] } },
+                      },
+                    })
+                  : json({ message: "Not Found" }, 404);
         return Effect.succeed(HttpClientResponse.fromWeb(request, result));
       }),
     ),
@@ -156,7 +161,14 @@ describe("native GitHub repository routing", () => {
       const { layer, requests, pins, helperPaths } = harness();
       return Effect.gen(function* () {
         const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        for (const kind of ["labels", "authors", "references", "pullRequests"]) {
+        for (const kind of [
+          "labels",
+          "authors",
+          "references",
+          "pullRequests",
+          "detail",
+          "threads",
+        ]) {
           for (const repository of ["OwnerA/Repo", "OwnerB/Repo"]) {
             const input = { cwd: "/w", host: "github.com", repository, query: "needle" };
             const read =
@@ -166,30 +178,34 @@ describe("native GitHub repository routing", () => {
                   ? api.searchRepositoryAuthors(input).pipe(Effect.asVoid)
                   : kind === "references"
                     ? api.searchRepositoryReferences(input).pipe(Effect.asVoid)
-                    : api
-                        .listPullRequests({
-                          ...input,
-                          state: "open",
-                          involvement: "all",
-                          viewer: "Chinoman10",
-                          limit: 10,
-                        })
-                        .pipe(Effect.asVoid);
+                    : kind === "detail"
+                      ? api.getPullRequestDetail({ ...input, number: 1 }).pipe(Effect.asVoid)
+                      : kind === "threads"
+                        ? api.listReviewThreadComments({ ...input, number: 1 }).pipe(Effect.asVoid)
+                        : api
+                            .listPullRequests({
+                              ...input,
+                              state: "open",
+                              involvement: "all",
+                              viewer: "Chinoman10",
+                              limit: 10,
+                            })
+                            .pipe(Effect.asVoid);
             const error = yield* read.pipe(Effect.flip);
             expect(error).toMatchObject({ _tag: "GitHubApiNotFoundError", credential: "git" });
           }
         }
         expect(pins).toEqual(
-          Array.from({ length: 8 }, (_, index) =>
+          Array.from({ length: 12 }, (_, index) =>
             index % 2 === 0 ? "ownera/repo" : "ownerb/repo",
           ),
         );
         expect(helperPaths).toEqual(["OwnerA/Repo.git", "OwnerB/Repo.git"]);
         expect(requests.map((request) => new URL(request.url).pathname)).toEqual(
-          Array(8).fill("/graphql"),
+          Array(12).fill("/graphql"),
         );
         expect(requests.map((request) => request.headers.authorization)).toEqual(
-          Array.from({ length: 8 }, (_, index) =>
+          Array.from({ length: 12 }, (_, index) =>
             index % 2 === 0 ? "Bearer fake-OwnerA-1" : "Bearer fake-OwnerB-1",
           ),
         );
@@ -206,6 +222,44 @@ describe("native GitHub repository routing", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("keeps repository context when expanding a file from its merge base", () => {
+    const prefix = "/repos/OwnerA/Repo";
+    const { layer, requests, pins, helperPaths } = harness(401, false, {
+      restAnswers: {
+        [`${prefix}/pulls/7`]: JSON.stringify({
+          base: { sha: "a1b2c3d" },
+          head: { sha: "b1c2d3e" },
+        }),
+        [`${prefix}/compare/a1b2c3d...b1c2d3e?per_page=1&page=2`]: JSON.stringify({
+          merge_base_commit: { sha: "c1d2e3f" },
+        }),
+        [`${prefix}/contents/src/a.ts?ref=a1b2c3d`]: "base tip\n",
+        [`${prefix}/contents/src/a.ts?ref=c1d2e3f`]: "merge base\n",
+        [`${prefix}/contents/src/a.ts?ref=b1c2d3e`]: "head\n",
+      },
+    });
+    return Effect.gen(function* () {
+      const api = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      expect(
+        yield* api.getPullRequestDiffFileContents({
+          cwd: "/w",
+          host: "github.com",
+          repository: "OwnerA/Repo",
+          number: 7,
+          changeType: "change",
+          oldPath: "src/a.ts",
+          newPath: "src/a.ts",
+        }),
+      ).toEqual({ oldContents: "merge base\n", newContents: "head\n" });
+      expect(requests).toHaveLength(4);
+      expect(pins).toEqual(Array(4).fill("ownera/repo"));
+      expect(requests.map((request) => request.headers.authorization)).toEqual(
+        Array(4).fill("Bearer fake-OwnerA-1"),
+      );
+      expect(helperPaths).toEqual(["OwnerA/Repo.git"]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect("forwards the repository to every conditional checks endpoint", () =>
     Effect.gen(function* () {

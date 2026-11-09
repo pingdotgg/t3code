@@ -1421,6 +1421,7 @@ export const make = Effect.gen(function* () {
           ? yield* api
               .rest({
                 host: input.host,
+                repository: input.repository,
                 operation: "getPullRequestDiffFileContents",
                 path: `repos/${owner}/${name}/compare/${baseRef}...${headRef}?per_page=1&page=2`,
                 timeout: DIFF_TIMEOUT,
@@ -1531,7 +1532,7 @@ export const make = Effect.gen(function* () {
       read: (requestedReviewers: number) => Effect.Effect<A, E, R>,
     ) {
       const host = normalizeHost(input.host);
-      const { fingerprint } = yield* api.credential(host);
+      const { fingerprint } = yield* api.credential(host, { repository: input.repository });
       const key = `${fingerprint}\0${host}\0${input.repository.toLowerCase()}\0${input.number}`;
       if (yield* Cache.has(refusedReviewers, key)) return yield* read(0);
       return yield* read(wanted).pipe(
