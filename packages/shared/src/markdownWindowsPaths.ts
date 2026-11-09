@@ -26,6 +26,8 @@ interface EscapeCompileContext {
   }>;
 }
 
+const WHITESPACE_LOOKBACK = 64;
+
 function isAsciiWhitespace(code: number) {
   return code === 32 || (code >= 9 && code <= 13);
 }
@@ -35,10 +37,13 @@ function keepWindowsPathEscape(this: EscapeCompileContext) {
   if (text?.type !== "text" || text.value === undefined) return;
   // A drive path cannot cross whitespace, so only the run this escape ends can hold one.
   // ASCII whitespace bounds it; a run spanning other spaces is longer but matches the same.
+  // Runs longer than the lookback test the whole text, which is never slower than scanning it twice.
   const { value } = text;
   const end = value.length - 1;
+  const floor = Math.max(0, end - WHITESPACE_LOOKBACK);
   let start = end;
-  while (start > 0 && !isAsciiWhitespace(value.charCodeAt(start - 1))) start -= 1;
+  while (start > floor && !isAsciiWhitespace(value.charCodeAt(start - 1))) start -= 1;
+  if (start === floor) start = 0;
   if (UNFINISHED_DRIVE_PATH.test(value.slice(start, end))) {
     text.value = `${value.slice(0, end)}\\${value.slice(end)}`;
   }
