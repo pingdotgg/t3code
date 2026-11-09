@@ -6,7 +6,9 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
-import { selectLayoutThreadKeys } from "../layout/layoutModel";
+import { selectFocusedTab, selectLayoutThreadKeys } from "../layout/layoutModel";
+import { followLayoutCompanions } from "../layout/openRules";
+import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import { useLayoutStore } from "../layout/layoutStore";
 import {
   cancelLayoutDrag,
@@ -1137,6 +1139,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeDraftRedirect,
   );
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
+  // The URL stays on the last chat while a surface has focus; the current row is the surface's.
+  const focusedSurfaceThreadRef = useLayoutStore((state) => {
+    const content = selectFocusedTab(state.layout)?.content;
+    return content?.kind === "surface" && !isThreadlessSurfacesRef(content.threadRef)
+      ? content.threadRef
+      : null;
+  });
+  const currentThreadRef = focusedSurfaceThreadRef ?? routeThreadRef;
 
   // A selection made under one scope can hold threads the next scope hides.
   // The viewport outlives the scope and does not anchor, so a new list starts at the top.
@@ -1182,9 +1192,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             : thread,
         );
   const routeRowThreadKey =
-    routeThreadRef === null
+    currentThreadRef === null
       ? null
-      : scopedThreadKey(resolveListedAncestorThreadRef(routeThreadRef, threads));
+      : scopedThreadKey(resolveListedAncestorThreadRef(currentThreadRef, threads));
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   // The open draft's first send names its thread in place; a finalized draft reached by
   // navigation resolves through its redirect instead, and still reveals.
@@ -1559,7 +1569,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       setOpenMobile(false);
     }
     // A tab already open in the layout takes focus even if its URL is current.
-    useLayoutStore.getState().focusChat({ kind: "server", threadRef });
+    followLayoutCompanions(() =>
+      useLayoutStore.getState().focusChat({ kind: "server", threadRef }),
+    );
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
@@ -1690,6 +1702,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return;
     }
     if (isTrailingDoubleClick(event.detail)) {
+      return;
+    }
+    if (event.button === 1) {
+      // Middle click keeps the thread open as a tab; the URL follows the focused tab.
+      event.preventDefault();
+      followLayoutCompanions(() =>
+        useLayoutStore
+          .getState()
+          .openKeptTab({ kind: "chat", target: { kind: "server", threadRef } }),
+      );
+      return;
+    }
+    if (event.altKey) {
+      event.preventDefault();
+      openThreadToTheSide(threadRef);
       return;
     }
     navigateToThread(threadRef);
