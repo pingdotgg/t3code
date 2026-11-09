@@ -261,6 +261,7 @@ import {
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -1173,6 +1174,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
+  const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
@@ -1189,6 +1191,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       onUseArtifactTemplate={props.onUseArtifactTemplate}
       renderImage={props.renderImage}
       skills={props.skills}
+      models={models}
     />
   );
 });
@@ -1201,6 +1204,7 @@ function AssistantMarkdownBlocks(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly models: ReturnType<typeof useModelMentions>;
 }) {
   const blocks = useMemo(
     () =>
@@ -1240,6 +1244,7 @@ function AssistantMarkdownBlocks(props: {
           key={`markdown:${offset}`}
           markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
           skills={props.skills}
+          models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
           renderImage={props.renderImage}
@@ -2469,6 +2474,7 @@ function UserMessageContent(props: UserMessageContentProps) {
 
 function UserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
+  const models = useModelMentions(props.environmentId, text);
   const segments = parseReviewCommentMessageSegments(text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
   const contextClipboardFragment = props.context
@@ -2484,6 +2490,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
         markdown={text}
         contextClipboardFragment={contextClipboardFragment}
         skills={props.skills}
+        models={models}
         textStyle={props.markdownStyles.nativeTextStyle}
         preserveSoftBreaks
         {...props.linkHandlers}
@@ -2516,6 +2523,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
             markdown={text}
             contextClipboardFragment={contextClipboardFragment}
             skills={props.skills}
+            models={models}
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             {...props.linkHandlers}
