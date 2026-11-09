@@ -19,6 +19,7 @@ import {
   pickableProjectGroups,
   selectProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
+import { DEFAULT_SIDEBAR_PROJECT_SORT_ORDER } from "@t3tools/contracts/settings";
 import { ChevronRightIcon, GripVerticalIcon } from "lucide-react";
 
 import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
@@ -31,13 +32,36 @@ import {
 import { useProjects } from "../../state/entities";
 import { useUiStateStore } from "../../uiStateStore";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { Switch } from "../ui/switch";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
 import { SettingsGroup } from "./SettingsGroup";
-import { SettingsPageContainer } from "./settingsLayout";
+import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
 
 const memberKeys = (group: SidebarProjectSnapshot) =>
   group.memberProjects.map((member) => member.physicalProjectKey);
+
+export function ManualProjectOrderSection({ enabled }: { readonly enabled: boolean }) {
+  return (
+    <SettingsSection title="Project order" hideTitle>
+      <SettingsRow
+        title="Manual project order"
+        description="Number your projects and drag them into the order you want in the sidebar."
+        control={
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked) =>
+              void updateClientSettings({
+                sidebarProjectSortOrder: checked ? "manual" : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+              })
+            }
+            aria-label="Manual project order"
+          />
+        }
+      />
+    </SettingsSection>
+  );
+}
 
 export function ProjectOrderList() {
   const groups = useSidebarProjectGroups();
@@ -57,46 +81,43 @@ export function ProjectOrderList() {
     // Pinned projects always sort first, so a drop across that line could not stick.
     if (!dragged || !target || dragged === target || dragged.pinned !== target.pinned) return;
     reorderProjects(groups.flatMap(memberKeys), memberKeys(dragged), memberKeys(target));
-    void updateClientSettings({ sidebarProjectSortOrder: "manual" });
   };
 
   return (
-    <SettingsPageContainer>
-      <div className="space-y-3">
-        <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
-          Choose a project to manage its name, icon, checkouts and actions. Drag a project to set
-          its place in the sidebar.
-        </p>
-        <SettingsGroup>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-            onDragEnd={handleDragEnd}
+    <div className="space-y-3">
+      <p role="status" className="px-3 text-sm text-muted-foreground sm:px-4">
+        Choose a project to manage its name, icon, checkouts and actions. Drag a project to set its
+        place in the sidebar.
+      </p>
+      <SettingsGroup>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext
+            items={shown.map((group) => group.projectKey)}
+            strategy={verticalListSortingStrategy}
           >
-            <SortableContext
-              items={shown.map((group) => group.projectKey)}
-              strategy={verticalListSortingStrategy}
-            >
-              <ol aria-label="Projects, in sidebar order">
-                {shown.map((group, index) => (
-                  <SortableProjectRow
-                    key={group.projectKey}
-                    group={group}
-                    position={index + 1}
-                    onOpen={() =>
-                      selectScope({
-                        project: getSidebarProjectSettingsKey(group, groupingSettings, projects),
-                      })
-                    }
-                  />
-                ))}
-              </ol>
-            </SortableContext>
-          </DndContext>
-        </SettingsGroup>
-      </div>
-    </SettingsPageContainer>
+            <ol aria-label="Projects, in sidebar order">
+              {shown.map((group, index) => (
+                <SortableProjectRow
+                  key={group.projectKey}
+                  group={group}
+                  position={index + 1}
+                  onOpen={() =>
+                    selectScope({
+                      project: getSidebarProjectSettingsKey(group, groupingSettings, projects),
+                    })
+                  }
+                />
+              ))}
+            </ol>
+          </SortableContext>
+        </DndContext>
+      </SettingsGroup>
+    </div>
   );
 }
 
@@ -139,6 +160,12 @@ function SortableProjectRow({
       >
         <GripVerticalIcon className="size-3.5" />
       </button>
+      <span
+        aria-hidden
+        className="w-5 shrink-0 text-right text-xs text-muted-foreground tabular-nums"
+      >
+        {position}
+      </span>
       <button
         type="button"
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"

@@ -3,7 +3,7 @@ import { LayersIcon } from "lucide-react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
-import { ProjectOrderList } from "./ProjectOrderList";
+import { ManualProjectOrderSection, ProjectOrderList } from "./ProjectOrderList";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -12,8 +12,8 @@ import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAx
 
 export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
-  const canReorderProjects = useClientSettings(
-    (settings) => settings.boringSidebarEnabled || settings.sidebarProjectSortOrder === "manual",
+  const manualOrder = useClientSettings(
+    (settings) => settings.sidebarProjectSortOrder === "manual",
   );
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -50,12 +50,17 @@ export function ProjectsSettings() {
         />
       ) : unavailable ? (
         unavailable
-      ) : canReorderProjects ? (
-        <ProjectOrderList />
       ) : (
-        <SettingsScopeNotice target="project">
-          Choose a project to manage its name, icon, checkouts and actions.
-        </SettingsScopeNotice>
+        <SettingsPageContainer>
+          <ManualProjectOrderSection enabled={manualOrder} />
+          {manualOrder ? (
+            <ProjectOrderList />
+          ) : (
+            <SettingsScopeNotice inline target="project">
+              Choose a project to manage its name, icon, checkouts and actions.
+            </SettingsScopeNotice>
+          )}
+        </SettingsPageContainer>
       )}
     </div>
   );
