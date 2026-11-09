@@ -63,6 +63,19 @@ export function foldCardReply(reply: string, source: string) {
   const trimmedSource = source.trim();
   return trimmedSource === "" ? reply.trim() : `${reply.trim()}\n\nSource: ${trimmedSource}`;
 }
+
+export function replyCoverage(text: string, reply: string): number {
+  const tokens = (value: string) =>
+    [...value.toLocaleLowerCase().matchAll(/[\p{L}\p{N}]+(?:['.][\p{L}\p{N}]+)*/gu)]
+      .map(([token]) => token)
+      .filter((token) => token.length >= 4 || /\d/u.test(token))
+      .map((token) => (/\d/u.test(token) ? token : token.replace(/s$/u, "")));
+  const replyTokens = new Set(tokens(reply));
+  const textTokens = tokens(text);
+  return (
+    textTokens.filter((token) => replyTokens.has(token)).length / Math.max(1, textTokens.length)
+  );
+}
 // Tool output metadata sent to clients is capped at 8 KB (toolOutput.ts).
 const fitsCardBytes = (card: object) =>
   new TextEncoder().encode(JSON.stringify(card)).byteLength <= MAX_CARD_BYTES;

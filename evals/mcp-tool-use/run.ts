@@ -54,6 +54,7 @@ import {
   type CardPurpose,
   cardReplyProblem,
   foldCardReply,
+  replyCoverage,
   quizCardProblem,
   readQuestionCard,
   readQuizCard,
@@ -880,6 +881,7 @@ type Sample = {
   /** Root Claude text held until the next tool in lesson cases. */
   readonly heldLessonText: Array<string>;
   lessonCardSeen: boolean;
+  readonly lessonCardReplies: Array<string>;
 };
 
 const SHELL_TOOLS = new Set(["Bash", "Read", "Edit", "Write", "WebFetch"]);
@@ -928,6 +930,7 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shownSinceLastUser: 0,
     heldLessonText: [],
     lessonCardSeen: false,
+    lessonCardReplies: [],
   };
 };
 
@@ -2279,17 +2282,14 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       testCase.id.startsWith("learn-") ||
       testCase.setup.sideChat !== undefined ||
       testCase.setup.sideChatOpening !== undefined;
-    const words = (value: string) => value.replace(/\s+/gu, " ").trim();
     const opening = (value: string) =>
       /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
-    // Mirrors the adapter's cardReplyRepeats, plus leadRepeatsCardReply for lesson lead text.
-    const repeats = (use: typeof ToolUse.Type, text: string, lead = false) => {
+    const repeats = (use: typeof ToolUse.Type, text: string) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return false;
-      if (words(reply).includes(words(text))) return true;
-      return (
-        lead && text.length <= 300 && opening(text).length >= 40 && opening(text) === opening(reply)
-      );
+      if (reply.replace(/\s+/gu, " ").trim().includes(text.replace(/\s+/gu, " ").trim()))
+        return true;
+      return replyCoverage(text, reply) >= 0.6 && replyCoverage(opening(text), reply) >= 0.5;
     };
     const texts: Array<string> = [];
     for (const [index, block] of response.content.entries()) {
@@ -2306,9 +2306,14 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
         if (isT3Mcp || held.join("").length > 300) {
-          texts.push(...(isCard ? held.filter((text) => !repeats(block, text, true)) : held));
+          texts.push(...(isCard ? held.filter((text) => !repeats(block, text)) : held));
         }
-        if (isCard) sample.lessonCardSeen = true;
+        if (isCard) {
+          sample.lessonCardSeen = true;
+          sample.lessonCardReplies.push(
+            isRecord(block.input) && typeof block.input.reply === "string" ? block.input.reply : "",
+          );
+        }
         continue;
       }
       if (lesson || !isThinking(block) || !isThinking(response.content[index - 1])) continue;
@@ -2317,7 +2322,12 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       if (!repeats(next, block.thinking)) texts.push(block.thinking);
     }
     if (lesson && response.stop_reason !== "tool_use" && sample.heldLessonText.length > 0) {
-      if (!sample.lessonCardSeen) texts.push(...sample.heldLessonText);
+      const joined = sample.heldLessonText.join("\n");
+      if (
+        !sample.lessonCardSeen ||
+        (joined.length > 150 && replyCoverage(joined, sample.lessonCardReplies.join("\n")) < 0.85)
+      )
+        texts.push(...sample.heldLessonText);
       sample.heldLessonText.length = 0;
     }
     said.push(...texts);

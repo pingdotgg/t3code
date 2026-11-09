@@ -3697,6 +3697,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       reply: "Right. Which line prints 3?",
       expected: "assistant_message",
     },
+    {
+      lead: "That's wrong. The wrong idea behind 0.9 is that the cap sits exactly on the pass mark. The cap is pass mark − 0.001, so 0.899. This is deliberate. A reward of exactly 0.9 would look like a pass, and the −0.001 keeps a failed run strictly below the line. The cap only ever lowers a score: the code takes `min(shaped, pass_mark − 0.001)`. The uncapped number stays in `shaped_raw`. Try the same rule with different numbers.",
+      reply:
+        "That's wrong. The wrong idea behind 0.9 is that the cap sits exactly on the pass mark. The cap is pass mark minus 0.001, so 0.899. This is deliberate: a reward of exactly 0.9 would look like a pass, and the minus 0.001 keeps a failed run strictly below the line. The cap also only ever lowers a score: the code takes min(shaped, pass_mark − 0.001), and the uncapped number stays in shaped_raw. Try the same rule with different numbers.",
+      expected: "reasoning",
+    },
+    {
+      lead: "Right. A closure preserves captured variables.",
+      reply: "A closure preserves captured variables.",
+      expected: "assistant_message",
+    },
   ] as const)(
     "lesson card lead sharing the reply's opening shows as $expected",
     ({ lead, reply, expected }) =>
@@ -3873,6 +3884,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected: ["reasoning"],
     },
     {
+      name: "v3 table after the last card stays visible",
+      tools: ["mcp__t3-code__quiz_card"],
+      replies: [
+        "Yes, your memory is right, and I taught you the older scheme. The gates, required checks and pass mark minus 0.001 I described are compose in cw/verify/core.py, which stays only for the v2.1 tasks. The current v3 tasks use the composer in cw/verify/bank/compose.py (approved as D13): every check has a class, dead, degraded or cosmetic, with weights 1, 1 and 0.1; Q is the weighted mean of the checks' own scores; and the reward depends on the worst class that failed. No evaluable board gives 0. A dead-class failure gives 0.01 + 0.24·Q. Only degraded failures give 0.25 + 0.25·Q. No failure gives 0.50 + 0.50·Q. The pass mark is 0.5 and the checks' own flags decide the verdict. Please ignore the card I posted before this, which used the old rules. Here is a v3 version.",
+      ],
+      texts: [
+        "Yes, your memory is right, and I taught you the older scheme. I should have caught that, because the Grading role doc says the old composition is being replaced.\n\nWhat I described earlier (gates, required checks, pass mark − 0.001) is `compose` in `cw/verify/core.py`. A comment in `cw/verify/bank/compose.py` says that composer \"stays for the v2.1 tasks\". The current CW2 (v3) tasks use `ScoredVerifier` in `cw/verify/bank/compose.py`. `v3/spec.py`, `v3/route.py`, `v3/errata.py` and `v3/i2c.py` all call it. I haven't checked which composer each individual task uses.\n\n**How v3 scores (approved as D13):**\n\n| Board | Reward |\n|---|---|\n| No evaluable board (gate) | 0 |\n| A dead-class check failed | 0.01 + 0.24·Q, so 0.01 to 0.25 |\n| Only degraded checks failed, past their fail limit | 0.25 + 0.25·Q, so 0.25 to 0.50 |\n| Nothing failed | 0.50 + 0.50·Q, so 0.50 to 1 |\n\n- **Q:** the weighted mean of every check's own score. Class weights are dead 1, degraded 1, cosmetic 0.1.\n- **Classes:** dead means the board can't do its job or can't be built. Degraded means it works with less margin. Cosmetic means no effect on function or yield.\n- **Pass mark:** 0.5 for every task. It only marks where the pass band starts, and each check's own flag decides the verdict.\n- **Degraded checks:** credit falls linearly from an ideal to 0 at a fail limit. That is the 5 mm capacitor case from earlier.\n- **Old machinery:** the required list and the pass mark − 0.001 cap are gone.\n\nTwo things carry over: gates only mean \"no board\", and grading is deterministic.\n\nIgnore the card I posted before this one, since it used the old rules. The card above is the v3 version.",
+      ],
+      expected: ["assistant_message"],
+    },
+    {
+      name: "trailing copy after the last card is reasoning",
+      tools: ["mcp__t3-code__quiz_card"],
+      replies: [
+        "That's wrong. The wrong idea behind 0.9 is that the cap sits exactly on the pass mark. The cap is pass mark minus 0.001, so 0.899. This is deliberate: a reward of exactly 0.9 would look like a pass, and the minus 0.001 keeps a failed run strictly below the line. The cap also only ever lowers a score: the code takes min(shaped, pass mark minus 0.001), and the uncapped number stays in shaped_raw. Try the same rule with different numbers.",
+      ],
+      texts: [
+        "That's wrong. The wrong idea behind 0.9 is that the cap sits exactly on the pass mark. The cap is pass mark − 0.001, so the answer is 0.899. This is deliberate. A reward of exactly 0.9 would look like a pass, and the −0.001 keeps a failed run strictly below the line.\n\nThe cap also only ever lowers a score. The code takes `min(shaped, pass_mark − 0.001)`, and the uncapped number stays in `shaped_raw`. Try the same rule with different numbers.",
+      ],
+      expected: ["reasoning"],
+    },
+    {
       name: "text after Bash stays visible",
       tools: ["Bash"],
       texts: ["The command completed."],
@@ -3903,7 +3936,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       for (const [index, tool] of testCase.tools.entries()) {
         frames.push(
           snapshot(`trailing-card-tool-${index}`, [
-            { type: "tool_use", id: `tool-${index}`, name: tool, input: {} },
+            {
+              type: "tool_use",
+              id: `tool-${index}`,
+              name: tool,
+              input:
+                !("replies" in testCase) || testCase.replies?.[index] === undefined
+                  ? {}
+                  : { reply: testCase.replies[index] },
+            },
           ]),
         );
         const text = testCase.texts[index];
@@ -12647,6 +12688,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: RunAttemptId.make("attempt-claude-wake-init-2"),
             text: "Background task completed.",
             attachments: [],
+            lesson: true,
             providerTurnOrdinal: 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
@@ -12654,7 +12696,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.terminalEvents(), 1);
 
-        yield* harness.offerAndWait(wakeAssistant);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "provider-continuation-status",
+            text: "That notification is just the broad file search I started earlier... I didn't change any files.",
+          }),
+        );
         yield* harness.offerAndWait(wakeResult);
         yield* harness.awaitTerminal(2);
         assert.equal(harness.terminalEvents()[1]?.status, "completed");
@@ -12663,6 +12710,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.events.some(
             (event) => event.type === "message.updated" && event.message.text === WAKE_RESULT_TEXT,
           ),
+        );
+        assert.deepEqual(
+          harness.events
+            .filter(
+              (event) =>
+                event.type === "turn_item.updated" && event.turnItem.text.includes("notification"),
+            )
+            .map((event) => event.turnItem.type),
+          ["reasoning"],
         );
       }).pipe(
         Effect.provide(

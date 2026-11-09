@@ -16,6 +16,7 @@ import {
   readQuizCard,
   readQuestionCard,
   parseNumberAnswer,
+  replyCoverage,
   shuffledQuizOptions,
   type QuizCard,
 } from "./quizCard.ts";
@@ -33,6 +34,22 @@ const card: QuizCard = {
 };
 
 describe("quiz cards", () => {
+  it.each([
+    [
+      "That's wrong. The cap is pass mark minus 0.001, so a failed run stays below the line.",
+      "That's wrong. The cap is pass mark minus 0.001, so a failed run stays below the line.",
+      true,
+    ],
+    [
+      "A cosmetic warning lowers Q but keeps the pass band.",
+      "The board passes every required check.",
+      false,
+    ],
+  ] as const)("measures reply coverage", (text, reply, high) => {
+    const coverage = replyCoverage(text, reply);
+    if (high) expect(coverage).toBeGreaterThanOrEqual(0.85);
+    else expect(coverage).toBeLessThan(0.6);
+  });
   it("requires teaching in the visible reply unless a purpose permits framing", () => {
     expect(MIN_CARD_REPLY_CHARS).toBe(250);
     expect(cardReplyProblem({ reply: "Short.", shownBefore: 0 })).toBeDefined();
