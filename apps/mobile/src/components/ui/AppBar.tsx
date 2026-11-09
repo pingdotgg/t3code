@@ -23,7 +23,7 @@ import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
 import { Menu } from "./Menu";
-import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
+import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -75,9 +75,9 @@ function AppBarTitleMenu(props: {
       <Menu
         shouldOpenOnLongPress
         title={props.titleMenu.status ?? props.titleMenu.title}
-        actions={androidHeaderMenuActions(props.titleMenu.items)}
+        actions={menuActionsFromAppBarItems(props.titleMenu.items)}
         onPressAction={({ nativeEvent }) => {
-          const action = findHeaderMenuAction(props.titleMenu.items, nativeEvent.event);
+          const action = findAppBarMenuItem(props.titleMenu.items, nativeEvent.event);
           if (action && !action.disabled) action.onPress();
         }}
         style={{ width }}
@@ -171,7 +171,9 @@ export function AppBar(props: AppBarProps) {
   const titleMenu = props.titleMenu;
   const titleLeadingButtons = Math.max(
     1,
-    (props.onClose || rootBack || splitBack || showsSidebarToggle ? 1 : 0) + (compose ? 1 : 0),
+    props.onClose
+      ? 1
+      : (rootBack ? 1 : 0) + (splitBack ? 1 : 0) + (sidebarToggle ? 1 : 0) + (compose ? 1 : 0),
   );
   const titleTrailingButtons =
     (props.actions?.length ?? 0) +

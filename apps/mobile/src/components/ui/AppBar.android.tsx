@@ -188,7 +188,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
         titleMenu
           ? {
               title: titleMenu.status ?? titleMenu.title,
-              actions: androidHeaderMenuActions(titleMenu.items),
+              actions: menuActionsFromAppBarItems(titleMenu.items),
               onSelect: (id) => selectMenuItem(titleMenu.items, id),
             }
           : undefined
