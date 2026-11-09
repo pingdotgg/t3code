@@ -2,7 +2,8 @@ import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it, vi } from "@effect/vitest";
+import { assert, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -297,10 +298,8 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
 
 const STOCK_LFS_CONFIG = { "filter.lfs.process": "git-lfs filter-process" };
 // `canDeferLfs` reads these, and the shell running the suite may set them.
-const stubLfsEnv = (skipSmudge = "") => {
-  vi.stubEnv("GIT_LFS_SKIP_SMUDGE", skipSmudge);
-  vi.stubEnv("GIT_LFS_SKIP_DOWNLOAD_ERRORS", "");
-};
+const lfsEnv = (skipSmudge?: string) =>
+  ConfigProvider.fromEnv({ env: skipSmudge ? { GIT_LFS_SKIP_SMUDGE: skipSmudge } : {} });
 
 it.effect.each([
   ["tracks LFS files", STOCK_LFS_CONFIG, "lfs", undefined, true, undefined],
@@ -362,12 +361,11 @@ it.effect.each([
     }
 
     const commands: Array<GitVcsDriver.ExecuteGitInput> = [];
-    stubLfsEnv(skipSmudge);
     yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       yield* service.cloneRepository({ remoteUrl: source, destinationPath });
     }).pipe(
-      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      Effect.provideService(ConfigProvider.ConfigProvider, lfsEnv(skipSmudge)),
       Effect.provide(
         layer({
           git: {
@@ -398,7 +396,7 @@ it.effect.each([
     Effect.provide(
       GitVcsDriver.layer.pipe(
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-clone-lfs-config-" })),
-        Layer.provideMerge(NodeServices.layer),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
       ),
     ),
   ),
@@ -412,7 +410,6 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
     const progress: Array<GitCloneProgressLine> = [];
     let pullEnv: NodeJS.ProcessEnv | undefined;
 
-    stubLfsEnv();
     const error = yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       return yield* Effect.flip(
@@ -422,7 +419,7 @@ it.effect("reports LFS download progress at git's pace and keeps its error text 
         ),
       );
     }).pipe(
-      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+      Effect.provideService(ConfigProvider.ConfigProvider, lfsEnv()),
       Effect.provide(
         layer({
           git: {

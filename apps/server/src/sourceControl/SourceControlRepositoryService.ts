@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -401,7 +402,11 @@ export const make = Effect.gen(function* () {
   // `git lfs pull` reports bytes as they arrive, which keeps stall detection honest.
   const canDeferLfs = Effect.fn("SourceControlRepositoryService.canDeferLfs")(
     function* (cwd: string) {
-      if (process.env.GIT_LFS_SKIP_SMUDGE || process.env.GIT_LFS_SKIP_DOWNLOAD_ERRORS) return false;
+      const lfsSkipEnv = yield* Config.String("GIT_LFS_SKIP_SMUDGE").pipe(
+        Config.orElse(() => Config.String("GIT_LFS_SKIP_DOWNLOAD_ERRORS")),
+        Config.withDefault(""),
+      );
+      if (lfsSkipEnv) return false;
       const filter = yield* git.readConfigValue(cwd, "filter.lfs.process");
       const toleratesErrors = yield* git.readConfigValue(cwd, "lfs.skipdownloaderrors");
       return filter === STOCK_LFS_FILTER && toleratesErrors === null;
