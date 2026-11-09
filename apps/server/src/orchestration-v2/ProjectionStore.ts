@@ -101,6 +101,7 @@ import {
   isConversationHistoryItem,
   THREAD_HISTORY_MAX_RAW_TURNS,
   missingInterruptRequests,
+  DEFERRED_WORK_ITEM_TYPES,
   deferWorkHistoryRows,
   selectDeferredWorkPage,
   encodeThreadHistoryCursor,
@@ -734,16 +735,6 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 ) {}
 
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
-
-// Completed items of these types can fold into one deferred-work row in snapshot windows.
-const DEFERRABLE_WORK_TYPES = [
-  "command_execution",
-  "reasoning",
-  "file_change",
-  "file_search",
-  "web_search",
-  "dynamic_tool",
-] as const;
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -3042,21 +3033,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT ordinal, (SELECT MAX(ordinal) FROM user_anchors) AS latest FROM boundary
               `;
       const boundary = anchors[0]!;
-      // Folding work needs whole segments, so the window would otherwise walk every item
-      // since the boundary. Types outside the deferrable set always keep their own row,
-      // so the window cannot reach below the newest `tailRows` of them; start at the
-      // latest segment of each run that reaches that point so its groups stay whole.
+      // Folding needs whole segments, so the window would walk every item since the boundary.
+      // Non-deferrable types always keep their own row, so the window stays above the newest
+      // `tailRows` of them. Start at the latest segment start of each run that reaches that
+      // point, clamped to it so runless rows below stay in the scan.
       const tailRows = Math.max(window.rowLimit, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT);
-      const workStart =
-        window.deferWork !== true || boundary.latest === null
-          ? boundary.ordinal
-          : Math.max(
-              boundary.ordinal,
-              (yield* sql<{ readonly ordinal: number | null }>`
+      const tailWorkStart = sql<{ readonly ordinal: number | null }>`
                 ${eligible}, visible_tail AS (
                   SELECT ordinal FROM eligible
                   WHERE ordinal >= ${boundary.ordinal}
-                    AND type NOT IN ${sql.in(DEFERRABLE_WORK_TYPES)}
+                    AND type NOT IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
                   ORDER BY ordinal DESC
                   LIMIT ${tailRows}
                 ), tail AS (
@@ -3066,7 +3052,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM tail CROSS JOIN eligible AS item
                   WHERE item.ordinal >= tail.ordinal AND item.run_id IS NOT NULL
                 )
-                SELECT MIN(COALESCE(
+                SELECT MIN(MIN(COALESCE(
                   (
                     SELECT start.ordinal FROM eligible AS start
                     WHERE start.run_id = tail_runs.run_id AND start.type = 'user_message'
@@ -3075,13 +3061,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ),
                   (
                     SELECT MIN(first.ordinal) FROM orchestration_v2_projection_turn_items AS first
-                    WHERE first.run_id = tail_runs.run_id
+                    WHERE first.thread_id = ${threadId} AND first.run_id = tail_runs.run_id
                   ),
                   tail.ordinal
-                )) AS ordinal
+                ), tail.ordinal)) AS ordinal
                 FROM tail LEFT JOIN tail_runs
-              `)[0]?.ordinal ?? 0,
-            );
+              `;
+      const workStart =
+        window.deferWork === true && boundary.latest !== null
+          ? Math.max(boundary.ordinal, (yield* tailWorkStart)[0]?.ordinal ?? 0)
+          : boundary.ordinal;
       return sql`
                 ${eligible}, blocked_runs AS MATERIALIZED (
                   SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
@@ -3098,7 +3087,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
-                      AND type IN ${sql.in(DEFERRABLE_WORK_TYPES)}
+                      AND type IN ${sql.in(DEFERRED_WORK_ITEM_TYPES)}
                       AND NOT (${inlineWorkOutput})
                       AND run_id NOT IN (SELECT run_id FROM blocked_runs)
                       THEN 1 ELSE 0 END AS can_defer
@@ -3140,6 +3129,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM window_items
                   WHERE ordinal >= ${boundary.ordinal}
                   ORDER BY ordinal DESC, turn_item_id DESC
+                  -- Every branch must stay <= tailRows, or rows below workStart go missing.
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
                     WHEN (SELECT row_count FROM latest_user_turn)
