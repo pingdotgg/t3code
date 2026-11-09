@@ -78,6 +78,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         headRef: null,
         author: null,
         autoMergeRequest: null,
+        lastMergeQueueRemoval: { nodes: [] },
         headRefName: "feature",
         baseRefName: "main",
         headRefOid: "abc123",
