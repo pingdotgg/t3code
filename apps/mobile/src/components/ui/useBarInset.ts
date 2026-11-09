@@ -48,6 +48,13 @@ export function useContentTopInset(): number {
   return Platform.OS === "ios" ? (columnMetrics?.safeArea.top ?? insets.top) : 0;
 }
 
+/** The content's bottom safe area on iOS, which a list with manual insets must add itself. */
+export function useContentBottomInset(): number {
+  const insets = useSafeAreaInsets();
+  const columnMetrics = useNativeColumnLayoutMetrics();
+  return Platform.OS === "ios" ? (columnMetrics?.safeArea.bottom ?? insets.bottom) : 0;
+}
+
 /** How much of the screen's bottom edge an AppBar `search` covers: iOS's bottom search toolbar. */
 export function useSearchToolbarInset(search: AppBarSearch | undefined): number {
   const { layout } = useAdaptiveWorkspaceLayout();
