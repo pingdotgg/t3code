@@ -163,8 +163,7 @@ export function hasComposerModelOptions(input: TraitsSelectionInput | null) {
   if (!input) return false;
   const visibility = getTraitsSectionVisibility(input);
   return (
-    columnControls(input.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
-      .others.length > 0
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).others.length > 0
   );
 }
 
