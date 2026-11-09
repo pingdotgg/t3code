@@ -78,7 +78,8 @@ export function ThreadFileNavigatorPane(props: {
   );
 
   return (
-    <View className="flex-1 ios:bg-sheet android:bg-header">
+    <View className="flex-1 ios:bg-sheet android:bg-header android:flex-col-reverse">
+      <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
       <AppBar
         title="Files"
         subtitle={props.projectName}
@@ -89,7 +90,6 @@ export function ThreadFileNavigatorPane(props: {
         }}
         refresh={{ accessibilityLabel: "Refresh files", onPress: entriesQuery.refresh }}
       />
-      <ScreenContent insetHorizontal>{fileTree}</ScreenContent>
     </View>
   );
 }
