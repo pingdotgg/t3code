@@ -547,6 +547,34 @@ describe("OrchestratorMcpService", () => {
           ],
           subagents: [],
         } as unknown as OrchestrationV2ThreadProjection;
+        // An approval in the wake turn is the follow-up's own approval.
+        const settledProjection = childProjection;
+        const wakeNodeId = NodeId.make("node:mcp-followup-wake-root");
+        childProjection = {
+          ...childProjection,
+          runs: childProjection.runs.map((run) =>
+            run.id === wakeRunId ? { ...run, status: "running", completedAt: null } : run,
+          ),
+          nodes: [{ id: wakeNodeId, runId: wakeRunId }],
+          runtimeRequests: [
+            {
+              id: "request:mcp-followup-wake-approval",
+              nodeId: wakeNodeId,
+              kind: "command",
+              status: "pending",
+              responseCapability: { type: "live" },
+              createdAt: DateTime.makeUnsafe("2026-10-03T10:04:30Z"),
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection;
+        const approving = yield* service.taskStatus(scope, followupTaskId);
+        assert.deepEqual(approving.pendingApproval, {
+          requestId: "request:mcp-followup-wake-approval",
+          kind: "command",
+          runId: wakeRunId,
+        });
+        childProjection = settledProjection;
+
         const settled = yield* service.taskStatus(scope, followupTaskId);
         assert.equal(settled.workState, "result_available");
         assert.equal(settled.status, "completed");

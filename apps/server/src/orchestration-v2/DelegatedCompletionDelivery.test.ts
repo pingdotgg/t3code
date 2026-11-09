@@ -2980,6 +2980,209 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       }),
     );
 
+    it.effect(
+      "settles a follow-up on its own reply when its subagent's wake is cancelled unstarted",
+      () =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const parentThreadId = ThreadId.make("thread:followup-wake-cancelled-parent");
+          const projectId = ProjectId.make("project:followup-wake-cancelled");
+          const parentRunId = RunId.make("run:followup-wake-cancelled-parent");
+          const rootNodeId = NodeId.make("node:followup-wake-cancelled-parent");
+          yield* seedParentWithTerminalTask({
+            threadId: parentThreadId,
+            projectId,
+            runId: parentRunId,
+            rootNodeId,
+            taskId: NodeId.make("node:followup-wake-cancelled-seed"),
+            deliveryState: "acknowledged",
+            now,
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: "followup-wake-cancelled-child",
+            completionWake: "always",
+            continuationPending: false,
+            runStatus: "completed",
+            now,
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+
+          const followupMessageId = MessageId.make("message:followup-wake-cancelled-send");
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "agent",
+            creationSource: "mcp",
+            commandId: CommandId.make("command:followup-wake-cancelled-send"),
+            threadId: child.childThreadId,
+            senderThreadId: parentThreadId,
+            messageId: followupMessageId,
+            text: "Now delegate the next step.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          });
+          const followupRun = (yield* orchestrator.getThreadProjection(
+            child.childThreadId,
+          )).runs.find((run) => run.userMessageId === followupMessageId)!;
+          const followupTaskId = followupRun.delegatedTaskId!;
+
+          const grandchildId = NodeId.make("node:followup-wake-cancelled-grandchild");
+          const grandchild = {
+            id: grandchildId,
+            threadId: child.childThreadId,
+            runId: followupRun.id,
+            parentNodeId: NodeId.make("node:followup-wake-cancelled-child-root"),
+            origin: "app_owned" as const,
+            createdBy: "agent" as const,
+            driver,
+            providerInstanceId: modelSelection.instanceId,
+            providerThreadId: null,
+            childThreadId: ThreadId.make("thread:followup-wake-cancelled-grandchild"),
+            nativeTaskRef: null,
+            prompt: "Do the next step.",
+            title: null,
+            model: null,
+            completionWake: "always" as const,
+            status: "running" as const,
+            result: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+          };
+          yield* eventSink.write({
+            commandId: reconcileCommandId("followup-wake-cancelled-turn-ended"),
+            events: [
+              {
+                id: EventId.make("event:followup-wake-cancelled-started"),
+                type: "subagent.updated",
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                nodeId: grandchildId,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: grandchild,
+              },
+              {
+                id: EventId.make("event:followup-wake-cancelled-reply"),
+                type: "message.updated",
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make("message:followup-wake-cancelled-reply"),
+                  threadId: child.childThreadId,
+                  runId: followupRun.id,
+                  nodeId: null,
+                  role: "assistant",
+                  text: "Delegated the next step.",
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent",
+                  creationSource: "server",
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              {
+                id: EventId.make("event:followup-wake-cancelled-run-completed"),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                occurredAt: now,
+                payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+              },
+            ],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+
+          // The grandchild's wake is queued, then cancelled before it starts (a read acknowledged it).
+          const wakeRunId = RunId.make("run:followup-wake-cancelled-wake");
+          const wakeRun = (status: "queued" | "cancelled") => {
+            const event = runEvent({
+              threadId: child.childThreadId,
+              runId: wakeRunId,
+              ordinal: followupRun.ordinal + 1,
+              status,
+              now,
+            });
+            return { ...event, payload: { ...event.payload, startedAt: null } };
+          };
+          yield* eventSink.write({
+            commandId: reconcileCommandId("followup-wake-cancelled-settled"),
+            events: [
+              {
+                id: EventId.make("event:followup-wake-cancelled-completed"),
+                type: "subagent.updated",
+                threadId: child.childThreadId,
+                runId: followupRun.id,
+                nodeId: grandchildId,
+                driver,
+                providerInstanceId: modelSelection.instanceId,
+                occurredAt: now,
+                payload: {
+                  ...grandchild,
+                  status: "completed",
+                  result: "grandchild finished",
+                  completionDelivery: { state: "acknowledged", observedByRunId: wakeRunId },
+                  completedAt: now,
+                },
+              },
+              {
+                id: EventId.make("event:followup-wake-cancelled-wake-message"),
+                type: "message.updated",
+                threadId: child.childThreadId,
+                runId: wakeRunId,
+                occurredAt: now,
+                payload: {
+                  id: MessageId.make(`message:${wakeRunId}`),
+                  threadId: child.childThreadId,
+                  runId: wakeRunId,
+                  nodeId: null,
+                  role: "user",
+                  text: "Delegated task finished.",
+                  attachments: [],
+                  streaming: false,
+                  createdBy: "agent",
+                  creationSource: "server",
+                  delegatedCompletion: {
+                    parentRunId: followupRun.id,
+                    generation: 1,
+                    taskIds: [grandchildId],
+                  },
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
+              wakeRun("queued"),
+            ],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          assert.isNull(
+            (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+              (task) => task.id === followupTaskId,
+            )?.result ?? null,
+            "the follow-up closed while its subagent's wake was queued",
+          );
+
+          yield* eventSink.write({
+            commandId: reconcileCommandId("followup-wake-cancelled-wake-cancelled"),
+            events: [wakeRun("cancelled")],
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          const settled = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === followupTaskId,
+          );
+          assert.equal(settled?.status, "completed");
+          assert.equal(settled?.result, "Delegated the next step.");
+        }),
+    );
+
     it.effect("settles a follow-up on a held older run that received its subagent's wake", () =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
