@@ -139,3 +139,82 @@ it.effect("continues whole-word searches after a filtered grep page", () =>
     }),
   ),
 );
+
+const contentQuery = {
+  query: "needle",
+  limit: 1,
+  caseSensitive: true,
+  wholeWord: false,
+  useRegex: false,
+};
+
+it.effect("keeps reporting the timeout when the first scan ends without a content index", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const grep = vi.fn();
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+        getScanProgress: vi.fn(() => ({
+          ok: true as const,
+          value: {
+            scannedFilesCount: 0,
+            isScanning: false,
+            isWatcherReady: false,
+            isWarmupComplete: false,
+          },
+        })),
+        grep,
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const error = yield* searchIndex.searchContents(contentQuery).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "WorkspaceSearchIndexScanTimedOut" });
+      expect(grep).not.toHaveBeenCalled();
+    }),
+  ),
+);
+
+it.effect("reports the finder's error when scan progress cannot be read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: true as const, value: false })),
+        getScanProgress: vi.fn(() => ({ ok: false as const, error: "picker is gone" })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const searchIndex = yield* WorkspaceSearchIndex.make("/workspace/project", "content");
+      const error = yield* searchIndex.searchContents(contentQuery).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "WorkspaceSearchIndexSearchFailed",
+        reason: "picker is gone",
+      });
+    }),
+  ),
+);
+
+it.effect("still fails index creation when the first scan reports a real error", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const finder = {
+        destroy: vi.fn(),
+        waitForIndexReady: vi.fn(async () => ({ ok: false as const, error: "walk failed" })),
+      } as unknown as FileFinder;
+      vi.spyOn(FileFinder, "create").mockReturnValueOnce({ ok: true, value: finder });
+
+      const error = yield* WorkspaceSearchIndex.make("/workspace/project", "content").pipe(
+        Effect.flip,
+      );
+
+      expect(error).toMatchObject({
+        _tag: "WorkspaceSearchIndexCreateFailed",
+        reason: "walk failed",
+      });
+    }),
+  ),
+);

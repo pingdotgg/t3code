@@ -1,5 +1,11 @@
-import { AuthFilesystemReadScope, EnvironmentId, type AuthSessionState } from "@t3tools/contracts";
-import { beforeEach, expect, it, vi } from "vite-plus/test";
+import {
+  AuthFilesystemReadScope,
+  EnvironmentId,
+  ProjectSearchContentsError,
+  type AuthSessionState,
+  type ProjectEntriesFailure,
+} from "@t3tools/contracts";
+import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   session: null as Pick<AuthSessionState, "authenticated" | "scopes"> | null,
@@ -10,6 +16,10 @@ const state = vi.hoisted(() => ({
   searchAtom: {},
   contentAtom: {},
   contentRequests: vi.fn(),
+  contentRefresh: vi.fn(),
+  contentPending: false,
+  contentFailure: null as ProjectSearchContentsError | null,
+  effects: [] as Array<() => void | (() => void)>,
   contentError: null as string | null,
   contentData: {
     matches: [{ path: "src/index.ts", lineNumber: 3, lineContent: "a match", matchRanges: [] }],
@@ -20,7 +30,9 @@ const state = vi.hoisted(() => ({
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: <A>(callback: A) => callback,
-  useEffect: () => {},
+  useEffect: (effect: () => void | (() => void)) => {
+    state.effects.push(effect);
+  },
   useMemo: <A>(factory: () => A) => factory(),
   useState: <A>(value: A) => [value, vi.fn()],
 }));
@@ -60,10 +72,12 @@ vi.mock("./query", () => ({
         : atom === state.contentAtom
           ? state.contentError
           : null,
+    failure: atom === state.contentAtom ? state.contentFailure : null,
     isPending:
-      atom === state.sessionAtom &&
-      (state.sessionWaiting || (state.session === null && state.sessionError === null)),
-    refresh: vi.fn(),
+      (atom === state.contentAtom && state.contentPending) ||
+      (atom === state.sessionAtom &&
+        (state.sessionWaiting || (state.session === null && state.sessionError === null))),
+    refresh: atom === state.contentAtom ? state.contentRefresh : vi.fn(),
   }),
 }));
 
@@ -81,7 +95,16 @@ beforeEach(() => {
   state.sessionWaiting = false;
   state.phase = "connected";
   state.contentRequests.mockClear();
+  state.contentRefresh.mockClear();
+  state.contentPending = false;
+  state.contentFailure = null;
+  state.effects.length = 0;
   state.contentError = null;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 const contentTarget = {
@@ -142,4 +165,49 @@ it("fails closed after a session check fails, even with a cached grant and match
     isPending: false,
   });
   expect(state.contentRequests).not.toHaveBeenCalled();
+});
+
+it("asks again only after a scan timeout has come back, and stops when that changes", () => {
+  vi.useFakeTimers();
+  vi.stubGlobal("window", globalThis);
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  const searchFailure = (failure: ProjectEntriesFailure) =>
+    new ProjectSearchContentsError({ cwd: "/repo", queryLength: 7, limit: 500, failure });
+  // The react mock records effects; this runs one render's effects and returns their cleanup.
+  const commit = () => {
+    state.effects.length = 0;
+    useProjectContentSearch(contentTarget);
+    const cleanups = state.effects.map((effect) => effect());
+    return () => {
+      for (const cleanup of cleanups) cleanup?.();
+    };
+  };
+
+  state.contentFailure = searchFailure("search_index_scan_timed_out");
+  state.contentPending = true;
+  let release = commit();
+  vi.advanceTimersByTime(60_000);
+  expect(state.contentRefresh).not.toHaveBeenCalled();
+  release();
+
+  state.contentPending = false;
+  release = commit();
+  vi.advanceTimersByTime(29_999);
+  expect(state.contentRefresh).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(1);
+  expect(state.contentRefresh).toHaveBeenCalledTimes(1);
+  release();
+
+  release = commit();
+  release();
+  vi.advanceTimersByTime(60_000);
+  expect(state.contentRefresh).toHaveBeenCalledTimes(1);
+
+  for (const failure of [null, searchFailure("search_index_search_failed")]) {
+    state.contentFailure = failure;
+    release = commit();
+    vi.advanceTimersByTime(60_000);
+    release();
+  }
+  expect(state.contentRefresh).toHaveBeenCalledTimes(1);
 });

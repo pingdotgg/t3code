@@ -789,6 +789,126 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         expect({ finders, rescans }).toEqual({ finders: 1, rescans: 1 });
       }),
     );
+
+    // Real finders; only the 15 second wait and the progress it reads are held back.
+    const stubSlowFirstScan = () => {
+      const scan = {
+        running: true,
+        finders: 0,
+        rescans: 0,
+        settle: (): Promise<void> => Promise.resolve(),
+      };
+      const createFinder = FileFinder.create.bind(FileFinder);
+      vi.spyOn(FileFinder, "create").mockImplementation((options) => {
+        const created = createFinder(options);
+        if (created.ok) {
+          const finder = created.value;
+          scan.finders += 1;
+          const scanFiles = finder.scanFiles.bind(finder);
+          finder.scanFiles = () => {
+            scan.rescans += 1;
+            return scanFiles();
+          };
+          const waitForIndexReady = finder.waitForIndexReady.bind(finder);
+          scan.settle = async () => {
+            const { running } = scan;
+            scan.running = false;
+            await waitForIndexReady(15_000);
+            scan.running = running;
+          };
+          finder.waitForIndexReady = (timeoutMs) =>
+            scan.running
+              ? Promise.resolve({ ok: true, value: false })
+              : waitForIndexReady(timeoutMs);
+          const getScanProgress = finder.getScanProgress.bind(finder);
+          finder.getScanProgress = () => {
+            const progress = getScanProgress();
+            return scan.running && progress.ok
+              ? {
+                  ok: true,
+                  value: { ...progress.value, isScanning: true, isWarmupComplete: false },
+                }
+              : progress;
+          };
+        }
+        return created;
+      });
+      return scan;
+    };
+
+    const searchNeedleOutcome = (
+      workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"],
+      cwd: string,
+    ) =>
+      workspaceEntries
+        .searchContents({
+          cwd,
+          query: "needle",
+          limit: 100,
+          caseSensitive: true,
+          wholeWord: false,
+          useRegex: false,
+        })
+        .pipe(
+          Effect.map((result): unknown => result.matches.map((match) => match.path)),
+          Effect.catchTags({
+            WorkspaceSearchIndexScanTimedOut: (error) => Effect.succeed<unknown>(error._tag),
+          }),
+        );
+
+    it.effect("serves content search once a first scan that outlasted the wait finishes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-slow-scan-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        const scan = stubSlowFirstScan();
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = searchNeedleOutcome(workspaceEntries, cwd);
+
+        const whileScanning = yield* Effect.all([searchNeedle, searchNeedle, searchNeedle], {
+          concurrency: "unbounded",
+        });
+        yield* Effect.promise(() => scan.settle());
+        scan.running = false;
+        const afterScan = yield* Effect.all([searchNeedle, searchNeedle], {
+          concurrency: "unbounded",
+        });
+
+        expect({ whileScanning, afterScan, finders: scan.finders }).toEqual({
+          whileScanning: Array.from({ length: 3 }, () => "WorkspaceSearchIndexScanTimedOut"),
+          afterScan: [["src/notes.ts"], ["src/notes.ts"]],
+          finders: 1,
+        });
+      }),
+    );
+
+    it.effect("keeps the same finder when a refresh arrives during a slow first scan", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-content-slow-refresh-" });
+        yield* writeTextFile(cwd, "src/notes.ts", "const needle = 1;\n");
+        const scan = stubSlowFirstScan();
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const searchNeedle = searchNeedleOutcome(workspaceEntries, cwd);
+
+        const whileScanning = yield* searchNeedle;
+        yield* Effect.promise(() => scan.settle());
+        yield* workspaceEntries.refresh(cwd);
+        yield* Effect.promise(() => scan.settle());
+        scan.running = false;
+        const afterScan = yield* searchNeedle;
+
+        expect({
+          whileScanning,
+          afterScan,
+          finders: scan.finders,
+          rescans: scan.rescans,
+        }).toEqual({
+          whileScanning: "WorkspaceSearchIndexScanTimedOut",
+          afterScan: ["src/notes.ts"],
+          finders: 1,
+          rescans: 1,
+        });
+      }),
+    );
   });
 
   describe("browse", () => {
