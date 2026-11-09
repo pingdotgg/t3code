@@ -2137,7 +2137,7 @@ code {
 }
 
 .chat-markdown strong {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chat-markdown pre {
@@ -2268,6 +2268,15 @@ code {
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
+}
+
+/* Keep overflow discoverable when the edge fade falls between columns. */
+.chat-markdown
+  .chat-markdown-table-container
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+  opacity: 1;
+  --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
 }
 
 :root {
