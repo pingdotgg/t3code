@@ -7,6 +7,7 @@ import {
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -127,7 +128,7 @@ const prepareFailureReason = (targetVersion: string, error: PinnedRuntimeInstall
   const failed = `Could not prepare t3@${targetVersion} while ${error.step}`;
   const cause = error.cause;
   if (!HttpClientError.isHttpClientError(cause)) {
-    return error.step.endsWith("(timed out)") ? `${failed}. Try again.` : `${failed}.`;
+    return Cause.isTimeoutError(cause) ? `${failed}. Try again.` : `${failed}.`;
   }
   const host = URL.parse(cause.request.url)?.host ?? "the release host";
   switch (cause.reason._tag) {
