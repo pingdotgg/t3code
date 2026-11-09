@@ -202,16 +202,22 @@ describe("CLIProxyAPI hub failures", () => {
 });
 
 describe("CLIProxyAPI built-in management API", () => {
-  it.effect.each([429, 503])(
+  it.effect.each([
+    { status: 429, retry: 420 },
+    { status: 503, retry: 420 },
+    { status: 429, retry: 1 },
+    { status: 503, retry: 1 },
+  ])(
     "paces filtered Claude accounts, caches responses, and shares HTTP %s cooldowns",
-    (status) =>
+    ({ status, retry }) =>
       Effect.gen(function* () {
+        const deadline = 300_000 + Math.max(300_000, retry * 1000);
         let limited = false;
         const test = fixture({
           accounts: accounts.map((account) => ({ ...account, provider: "claude" })),
           upstream: () =>
             limited
-              ? { status, body: {}, headers: { "Retry-After": ["420"] } }
+              ? { status, body: {}, headers: { "Retry-After": [String(retry)] } }
               : { status: 200, body: { five_hour: { utilization: 25, resets_at: null } } },
         });
         const api = yield* test.api;
@@ -239,18 +245,20 @@ describe("CLIProxyAPI built-in management API", () => {
           "probeFailed",
         ]);
         expect(stale.map((account) => account.usageLimits.refreshAfter)).toEqual([
-          720_000, 720_000,
+          deadline,
+          deadline,
         ]);
-        yield* TestClock.adjust("5 minutes");
+        yield* TestClock.adjust("4 minutes");
         const cooling = yield* api.readAccounts(config, ["claudeAgent"]);
         expect(cooling.map((account) => account.usageLimits.refreshAfter)).toEqual([
-          720_000, 720_000,
+          deadline,
+          deadline,
         ]);
         expect(
           test.requests.filter((request) => request.body?.url?.endsWith("/api/oauth/usage")),
         ).toHaveLength(4);
         limited = false;
-        yield* TestClock.adjust("2 minutes");
+        yield* TestClock.adjust(deadline - 540_000);
         const recovered = yield* api.readAccounts(config, ["claudeAgent"]);
         expect(recovered.map((account) => account.usageLimits.windows[0]?.usedPercent)).toEqual([
           25, 25,

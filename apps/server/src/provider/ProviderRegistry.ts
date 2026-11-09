@@ -4,10 +4,12 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ModelSelection,
+  type ServerSettings,
+  type ProjectId,
   type ServerProvider,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { exhaustedUsageWindow, isNewThreadFallbackEligible } from "@t3tools/shared/usageLimits";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -69,6 +71,7 @@ export class ProviderRegistry extends Context.Service<
     readonly refreshUsageForModelSelection: (
       primary: ModelSelection | null,
       fallback: ModelSelection | null,
+      context?: { readonly settings: ServerSettings; readonly projectId?: ProjectId | null },
     ) => Effect.Effect<ReadonlyArray<ServerProvider>>;
 
     /** Unknown instance ids return the cached list without error. */
@@ -655,14 +658,23 @@ export const layer = Layer.effect(
 
     const refreshUsageForModelSelection = Effect.fn(
       "ProviderRegistry.refreshUsageForModelSelection",
-    )(function* (primary: ModelSelection | null, fallback: ModelSelection | null) {
+    )(function* (
+      primary: ModelSelection | null,
+      fallback: ModelSelection | null,
+      context?: { readonly settings: ServerSettings; readonly projectId?: ProjectId | null },
+    ) {
       if (!primary || !fallback) return yield* Ref.get(providersRef);
       const providers = yield* refreshUsage(primary.instanceId);
       return exhaustedUsageWindow(
         providers.find((provider) => provider.instanceId === primary.instanceId),
         DateTime.toEpochMillis(yield* DateTime.now),
         primary.model,
-      )
+      ) &&
+        isNewThreadFallbackEligible(
+          providers.find((provider) => provider.instanceId === fallback.instanceId),
+          context?.settings,
+          context?.projectId,
+        )
         ? yield* refreshUsage(fallback.instanceId)
         : providers;
     });
@@ -1119,8 +1131,8 @@ export const layer = Layer.effect(
 
     return {
       getProviders: Ref.get(providersRef),
-      refreshUsageForModelSelection: (primary, fallback) =>
-        refreshUsageForModelSelection(primary, fallback).pipe(
+      refreshUsageForModelSelection: (primary, fallback, context) =>
+        refreshUsageForModelSelection(primary, fallback, context).pipe(
           Effect.catchCause(recoverRefreshFailure),
           // Launches wait at most as long as the client's new-thread bound, then use current snapshots.
           Effect.timeoutOption(5_000),

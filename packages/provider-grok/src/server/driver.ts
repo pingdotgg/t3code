@@ -209,6 +209,16 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
               })),
             ),
         ),
+        Effect.filterOrElse(
+          (snapshot) =>
+            !effectiveConfig.enabled ||
+            (snapshot.installed && snapshot.auth.status === "authenticated"),
+          (snapshot) =>
+            Effect.map(getUsageRefreshKey, (usageRefreshKey) => ({
+              ...snapshot,
+              auth: { ...snapshot.auth, usageRefreshKey },
+            })),
+        ),
         Effect.map(stampIdentity),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

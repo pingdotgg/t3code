@@ -284,9 +284,12 @@ export const makeCliproxyApi = Effect.gen(function* () {
       cooldowns.set(
         accountKey,
         (yield* Clock.currentTimeMillis) +
-          usageRetryDelay(
-            typeof value === "string" ? value : value?.[0],
-            yield* Clock.currentTimeMillis,
+          Math.max(
+            300_000,
+            usageRetryDelay(
+              typeof value === "string" ? value : value?.[0],
+              yield* Clock.currentTimeMillis,
+            ),
           ),
       );
     }

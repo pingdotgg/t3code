@@ -328,6 +328,22 @@ it.layer(layerTest)("GrokDriver", (it) => {
             expect(unsupported.usageLimits?.windows).toEqual([]);
             expect(unsupported.usageLimits?.unavailable?.reason).toBe("unsupported");
             expect(requests).toBe(expectedRequests);
+            for (const installed of [true, false]) {
+              _status.mockReturnValue(
+                Effect.succeed({
+                  ...initial,
+                  enabled: true,
+                  installed,
+                  auth: { status: "unauthenticated" },
+                }),
+              );
+              yield* instance.snapshot.refresh;
+              yield* instance.snapshot.refreshUsage!;
+              const checks = _status.mock.calls.length;
+              yield* instance.snapshot.refreshUsage!;
+              expect(_status.mock.calls.length).toBe(checks);
+              expect(requests).toBe(expectedRequests);
+            }
           }
         }),
       ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),

@@ -200,6 +200,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                     registry.refreshUsageForModelSelection(
                       projectDefaults.defaultModelSelection,
                       projectDefaults.fallbackModelSelection,
+                      { settings: projectDefaults, projectId },
                     ),
                   ),
                 ),

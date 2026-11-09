@@ -1628,6 +1628,25 @@ it.layer(
           assert.strictEqual(yield* Ref.get(first.usageReads), 2);
           assert.strictEqual(yield* Ref.get(second.usageReads), 1);
           assert.strictEqual(yield* Ref.get(other.usageReads), 1);
+          const previousReads = yield* Ref.get(first.usageReads);
+          yield* registry.refreshUsageForModelSelection(
+            { instanceId: first.instance.instanceId, model: "gpt-6.1-sol" },
+            { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
+            {
+              settings: {
+                ...DEFAULT_SERVER_SETTINGS,
+                providerInstances: {
+                  [other.instance.instanceId]: {
+                    driver: other.instance.driverKind,
+                    enabled: false,
+                    config: {},
+                  },
+                },
+              },
+            },
+          );
+          assert.strictEqual(yield* Ref.get(first.usageReads), previousReads + 1);
+          assert.strictEqual(yield* Ref.get(other.usageReads), 1);
           yield* registry.refreshUsageForModelSelection(
             { instanceId: second.instance.instanceId, model: "gpt-6.1-sol" },
             { instanceId: other.instance.instanceId, model: "claude-haiku-5-5" },
