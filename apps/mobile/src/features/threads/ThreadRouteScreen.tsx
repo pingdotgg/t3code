@@ -252,7 +252,7 @@ function ThreadOpenShell(props: {
   readonly threadId: string | null;
   readonly hideHeader: boolean;
 }) {
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const environmentId =
     props.environmentId !== null ? EnvironmentId.make(props.environmentId) : null;
   const threadRef =
@@ -546,6 +546,7 @@ function ThreadRouteContent(
   },
 ) {
   const { layout, showInspector, toggleAuxiliaryPane } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const { connectionState } = useRemoteConnectionStatus();
   const { onReconnectEnvironment } = useRemoteConnections();
   const {

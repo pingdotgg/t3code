@@ -3317,9 +3317,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
-  // Thread identity only: empty→filled remounts remeasured the list on every cold open.
-  // Seed overlay inset on attach; Android's declarative contentInset covers the same window.
-  const listMountKey = feedThreadKey;
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
