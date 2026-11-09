@@ -467,12 +467,18 @@ const make = Effect.gen(function* () {
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
       if (reused === undefined) {
+        // Launches that name no branch record the checkout's, as the composer does.
+        const recordedBranch =
+          branch ??
+          (yield* git
+            .currentBranch(worktreePath ?? project.workspaceRoot)
+            .pipe(Effect.orElseSucceed(() => null)));
         yield* threads
           .dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make(`${input.commandId}:workspace`),
             threadId,
-            branch,
+            branch: recordedBranch,
             worktreePath,
           })
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));

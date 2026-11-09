@@ -208,6 +208,7 @@ function makeHarness(options: HarnessOptions = {}) {
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      currentBranch: () => Effect.succeed(null),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
@@ -1062,6 +1063,36 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
     });
     assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder-1");
     assert.equal(harness.createWorktree.mock.calls.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  {
+    name: "an existing worktree",
+    workspace: { type: "existing_worktree", worktreePath: "/wt/task" },
+  },
+  { name: "the project root", workspace: { type: "root" } },
+] as const)("records the branch checked out in $name when the launch names none", (testCase) => {
+  const harness = makeHarness({
+    git: {
+      currentBranch: (cwd) => Effect.succeed(cwd === "/wt/task" ? "task-branch" : "main"),
+    },
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:checkout-branch",
+        thread: "thread:launch:checkout-branch",
+        message: "Adopt the task",
+        workspace: testCase.workspace,
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(
+      projection.thread.branch,
+      testCase.workspace.type === "root" ? "main" : "task-branch",
+    );
   }).pipe(Effect.provide(harness.layer));
 });
 
