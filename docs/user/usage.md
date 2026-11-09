@@ -10,6 +10,7 @@ Providers appear in the order you set in **Settings → Providers**. Drag a prov
 focus the grip and use Space and the arrow keys. The order is saved on the server, so usage, limits,
 and the model picker match on every device connected to it. With several environments, the primary
 environment's order applies. Until you reorder providers, usage ranks them by the selected metric.
+When no model is remembered for a new conversation, it starts with the first provider in this order.
 
 ## Understand your usage
 
