@@ -7,7 +7,7 @@ import { View } from "react-native";
 import type { AppSymbolName } from "./AppSymbol";
 import { NativeAppBar } from "./NativeAppBar.android";
 import { IconButton } from "./IconButton";
-import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu";
+import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 import { useToolbarLayout } from "./useToolbarLayout";

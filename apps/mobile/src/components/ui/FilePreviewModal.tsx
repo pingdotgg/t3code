@@ -1,8 +1,19 @@
-import * as Dialog from "./ui/Dialog";
+import * as Dialog from "./Dialog";
 import { requireNativeModule } from "expo";
 import { useEffect, useEffectEvent, useId, useRef, useState } from "react";
 
-import type { FilePreviewImage, ResolvedFilePreviewSource } from "./FilePreviewModal.types";
+import type {
+  FilePreviewImage,
+  FilePreviewModalProps,
+  FilePreviewViewerProps,
+} from "./FilePreviewModal.types";
+import { FilePreviewSession } from "./FilePreviewSession";
+
+export type {
+  FilePreviewItem,
+  FilePreviewSource,
+  ResolvedFilePreviewSource,
+} from "./FilePreviewModal.types";
 
 const NativeControls = requireNativeModule<{
   presentFile(
@@ -25,11 +36,7 @@ const NativeControls = requireNativeModule<{
 // Null tells the viewer an image failed; undefined means its URL has not arrived yet.
 const nativeUri = (image: FilePreviewImage) => (image.failed ? null : image.uri);
 
-function NativeFilePreview(props: {
-  readonly source: ResolvedFilePreviewSource;
-  readonly onRequestClose: () => void;
-  readonly onOpenError?: (error: unknown) => void;
-}) {
+function NativeFilePreview(props: FilePreviewViewerProps) {
   const identifier = useId();
   // Later URLs reach the open viewer through updateFile instead of presenting again.
   const [presented] = useState(props.source);
@@ -91,10 +98,7 @@ function NativeFilePreview(props: {
   return null;
 }
 
-export function FilePreview(props: {
-  readonly source: ResolvedFilePreviewSource;
-  readonly onRequestClose: () => void;
-  readonly onOpenError?: (error: unknown) => void;
-}) {
-  return <NativeFilePreview {...props} />;
+/** Shows images, PDFs and documents full screen in the native viewer (Android: FilePreviewModal.android.tsx). */
+export function FilePreviewModal(props: FilePreviewModalProps) {
+  return <FilePreviewSession {...props} progressiveGallery Viewer={NativeFilePreview} />;
 }

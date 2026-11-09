@@ -8,7 +8,7 @@ import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
 import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
 import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader.android";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { Menu } from "./Menu";
 import { Button } from "./Button";

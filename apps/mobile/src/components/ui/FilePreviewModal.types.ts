@@ -1,7 +1,7 @@
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 
-import type { FileBackedComposerAttachment } from "../lib/composerImages";
-import type { MediaActionsSource } from "../lib/mediaActionsSource";
+import type { FileBackedComposerAttachment } from "../../lib/composerImages";
+import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 
 interface FilePreviewMetadata {
   readonly kind: "image" | "pdf" | "document";
@@ -42,3 +42,16 @@ export interface FilePreviewImages {
 }
 
 export type ResolvedFilePreviewSource = ResolvedFilePreviewDocument | FilePreviewImages;
+
+export interface FilePreviewModalProps {
+  readonly source: FilePreviewSource | null;
+  readonly onRequestClose: () => void;
+  readonly onOpenError?: (error: unknown) => void;
+}
+
+/** A platform's viewer for one presentation, once FilePreviewSession has resolved it. */
+export interface FilePreviewViewerProps {
+  readonly source: ResolvedFilePreviewSource;
+  readonly onRequestClose: () => void;
+  readonly onOpenError?: (error: unknown) => void;
+}
