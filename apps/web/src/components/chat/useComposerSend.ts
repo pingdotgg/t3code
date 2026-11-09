@@ -426,10 +426,7 @@ export function useComposerSend(input: ComposerSendInput) {
       dictatedPrompt = text;
       if (
         !stillHere() &&
-        (activePendingProgress ||
-          queuedRunEdit.isEditing ||
-          parseSideChatCommand(text) ||
-          isUsageLimitsCommand(text))
+        (queuedRunEdit.isEditing || parseSideChatCommand(text) || isUsageLimitsCommand(text))
       ) {
         toastManager.add({
           type: "info",
@@ -1207,7 +1204,7 @@ export function useComposerSend(input: ComposerSendInput) {
       }
     }
     if (sendQueuesBehindSetup) {
-      if (stillHere()) setSetupQueueSendThreadKey(activeThreadKey);
+      setSetupQueueSendThreadKey(activeThreadKey);
     } else if (stillHere()) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
@@ -1399,7 +1396,7 @@ export function useComposerSend(input: ComposerSendInput) {
             }
           : undefined;
       const backgroundThreadRef =
-        submissionIntent === "background" && isLocalDraftThread
+        submissionIntent === "background" && isLocalDraftThread && stillHere()
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       // Read the live session, not the render snapshot: the draft is finalized away once the
