@@ -2943,12 +2943,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     if (deliveryRun?.status === "queued") {
       if (remainingTaskIds.length === 0) {
+        const rootNodeFilter = {
+          nodeIds: deliveryRun.rootNodeId === null ? [] : [deliveryRun.rootNodeId],
+        };
         yield* emitQueuedRunCancellation({
           command,
           events,
-          projection: yield* loadProjectionForCommand(command, ["nodes", "attempts"], {
-            nodeIds: deliveryRun.rootNodeId === null ? [] : [deliveryRun.rootNodeId],
-          }),
+          // Attempts have no id filter; a wake that never started has no attempt to cancel.
+          projection:
+            deliveryRun.activeAttemptId === null
+              ? {
+                  attempts: [],
+                  ...(yield* loadProjectionForCommand(command, ["nodes"], rootNodeFilter)),
+                }
+              : yield* loadProjectionForCommand(command, ["nodes", "attempts"], rootNodeFilter),
           run: deliveryRun,
           now,
         });
