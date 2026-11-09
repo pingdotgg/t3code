@@ -356,6 +356,8 @@ interface ActivePiTurn {
   messageOrdinal: number;
   readonly streamItems: Map<string, PiStreamItemState>;
   readonly toolArgs: Map<string, unknown>;
+  /** Arguments of ask_user_question calls that have started and not ended, by tool call id. */
+  readonly askUserQuestionArgs: Map<string, unknown>;
   readonly toolStartedAt: Map<string, DateTime.Utc>;
   interrupted: boolean;
   nativeAborted: boolean;
@@ -1170,7 +1172,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (toolCallId === undefined) return;
         if (phase === "start") {
           turn.toolArgs.set(toolCallId, event["args"]);
+          if (toolName === PI_ASK_USER_QUESTION_TOOL) {
+            turn.askUserQuestionArgs.set(toolCallId, event["args"]);
+          }
         }
+        if (phase === "end") turn.askUserQuestionArgs.delete(toolCallId);
         const args = event["args"] ?? turn.toolArgs.get(toolCallId);
         const emittedAt = yield* DateTime.now;
         const startedAt = turn.toolStartedAt.get(toolCallId) ?? emittedAt;
@@ -1566,7 +1572,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ...itemBase,
                 type: "user_input_request",
                 requestId,
-                questions: [piQuestion(nativeRequestId, method, title, event)],
+                questions: [
+                  (method === "select" && turn !== null
+                    ? piAskUserQuestion(turn.askUserQuestionArgs.values(), nativeRequestId, event)
+                    : undefined) ?? piQuestion(nativeRequestId, method, title, event),
+                ],
               };
         const pending: PendingPiPrompt = {
           nativeRequestId,
@@ -2778,6 +2788,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               messageOrdinal: 0,
               streamItems: new Map(),
               toolArgs: new Map(),
+              askUserQuestionArgs: new Map(),
               toolStartedAt: new Map(),
               interrupted: false,
               nativeAborted: false,
@@ -3614,6 +3625,99 @@ function piQuestion(
     question: detail ?? title,
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
+  };
+}
+
+const PI_ASK_USER_QUESTION_TOOL = "ask_user_question";
+
+const PiAskUserQuestionArgs = Schema.Struct({
+  questions: Schema.Array(
+    Schema.Struct({
+      question: Schema.String,
+      header: Schema.optional(Schema.String),
+      multiSelect: Schema.optional(Schema.Boolean),
+      options: Schema.Array(
+        Schema.Struct({
+          label: Schema.String,
+          description: Schema.String,
+          preview: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+});
+type PiAskUserQuestion = (typeof PiAskUserQuestionArgs.Type)["questions"][number];
+const decodePiAskUserQuestionArgs = Schema.decodeUnknownOption(PiAskUserQuestionArgs);
+
+const piAskUserQuestionOptionLine = (option: PiAskUserQuestion["options"][number], index: number) =>
+  // oxlint-disable-next-line t3code/no-em-dash-copy -- The extension's native option line, matched exactly.
+  `${index + 1}. ${option.label} — ${option.description}`;
+
+/**
+ * Whether @juicesharp/rpiv-ask-user-question (2.15.0, rpc-fallback.ts) asks this single-select
+ * question with exactly this select: `[header] question` plus folded previews as the title, one
+ * line per option, then its own "Type something." row.
+ */
+function piAskUserQuestionRendersAs(
+  question: PiAskUserQuestion,
+  title: string,
+  nativeOptions: ReadonlyArray<unknown>,
+): boolean {
+  const previews = question.options.flatMap((option, index) =>
+    option.preview
+      ? [`--- ${index + 1}. ${option.label} preview ---\n${option.preview.slice(0, 600)}`]
+      : [],
+  );
+  const header = question.header ? `[${question.header}] ` : "";
+  const previewBlock = previews.length > 0 ? `\n\n${previews.join("\n\n")}` : "";
+  const otherRow = nativeOptions[question.options.length];
+  return (
+    question.multiSelect !== true &&
+    question.question.trim().length > 0 &&
+    title === `${header}${question.question}${previewBlock}` &&
+    nativeOptions.length === question.options.length + 1 &&
+    question.options.every(
+      (option, index) =>
+        option.label.trim().length > 0 &&
+        nativeOptions[index] === piAskUserQuestionOptionLine(option, index),
+    ) &&
+    typeof otherRow === "string" &&
+    otherRow.startsWith(`${question.options.length + 1}. `)
+  );
+}
+
+/**
+ * Rebuilds a select from a running ask_user_question call as its structured question. Each option's
+ * value is its native line, so answers reach the extension exactly as its own dialog would send them.
+ * Returns undefined unless exactly one running question renders to this select.
+ */
+function piAskUserQuestion(
+  runningCallArgs: Iterable<unknown>,
+  questionId: string,
+  event: PiRpcRecord,
+): OrchestrationV2UserInputQuestion | undefined {
+  const title = recordString(event, "title");
+  const nativeOptions = event["options"];
+  if (title === undefined || !Array.isArray(nativeOptions)) return undefined;
+  const matches = Array.from(runningCallArgs).flatMap((args) =>
+    Option.match(decodePiAskUserQuestionArgs(args), {
+      onNone: () => [],
+      onSome: ({ questions }) =>
+        questions.filter((question) => piAskUserQuestionRendersAs(question, title, nativeOptions)),
+    }),
+  );
+  const [question] = matches;
+  if (question === undefined || matches.length > 1) return undefined;
+  return {
+    id: questionId,
+    header: question.header?.trim() ? question.header : "Question",
+    question: question.question,
+    options: question.options.map((option, index) => ({
+      label: option.label,
+      description: option.description.trim().length > 0 ? option.description : option.label,
+      value: piAskUserQuestionOptionLine(option, index),
+      ...(option.preview ? { preview: option.preview } : {}),
+    })),
   };
 }
 

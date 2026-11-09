@@ -4025,6 +4025,311 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("asks an ask_user_question select as its structured question", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            {
+              header: "Area",
+              question: "Which area should we work on?",
+              options: [
+                { label: "Docker/Compose", description: "Review or edit Compose projects" },
+                { label: "Home Assistant", description: "Automations, dashboards or YAML" },
+              ],
+            },
+          ],
+        },
+      });
+      // What @juicesharp/rpiv-ask-user-question 2.15.0 sends through ctx.ui.select in RPC mode.
+      const nativeOptions = [
+        "1. Docker/Compose — Review or edit Compose projects",
+        "2. Home Assistant — Automations, dashboards or YAML",
+        "3. Type something.",
+      ];
+      const ask = (id: string) =>
+        fake.emit({
+          type: "extension_ui_request",
+          id,
+          method: "select",
+          title: "[Area] Which area should we work on?",
+          options: nativeOptions,
+        });
+      const takeQuestion = takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_input_request" &&
+          event.turnItem.status === "waiting",
+      ).pipe(
+        Effect.map((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
+            ? event.turnItem
+            : assert.fail("expected a user input request"),
+        ),
+      );
+
+      yield* ask("ui-pick");
+      const picked = yield* takeQuestion;
+      assert.deepEqual(decodeUserInputQuestions(picked.questions), [
+        {
+          id: "ui-pick",
+          header: "Area",
+          question: "Which area should we work on?",
+          options: [
+            {
+              label: "Docker/Compose",
+              description: "Review or edit Compose projects",
+              value: "1. Docker/Compose — Review or edit Compose projects",
+            },
+            {
+              label: "Home Assistant",
+              description: "Automations, dashboards or YAML",
+              value: "2. Home Assistant — Automations, dashboards or YAML",
+            },
+          ],
+        },
+      ]);
+      yield* runtime.respondToRuntimeRequest({
+        requestId: picked.requestId,
+        answers: { "ui-pick": "2. Home Assistant — Automations, dashboards or YAML" },
+      });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "ui-pick",
+        value: "2. Home Assistant — Automations, dashboards or YAML",
+      });
+
+      yield* ask("ui-custom");
+      const custom = yield* takeQuestion;
+      yield* runtime.respondToRuntimeRequest({
+        requestId: custom.requestId,
+        answers: { "ui-custom": "  Both, Compose first  " },
+      });
+      assert.deepEqual(yield* fake.takeRequest("extension_ui_response"), {
+        type: "extension_ui_response",
+        id: "ui-custom",
+        value: "  Both, Compose first  ",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("asks each question of an ask_user_question call from its own select", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_ask",
+        toolName: "ask_user_question",
+        args: {
+          questions: [
+            {
+              header: "Scope",
+              question: "What should the fix touch?",
+              options: [
+                { label: "Adapter", description: "Pi adapter only" },
+                { label: "Everything", description: "Adapter and clients" },
+              ],
+            },
+            {
+              header: "Layout",
+              question: "Which layout?",
+              options: [
+                { label: "Stacked", description: "One column", preview: "A\nB" },
+                { label: "Split", description: "Two columns" },
+              ],
+            },
+          ],
+        },
+      });
+      const takeQuestion = takeEvent(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "user_input_request" &&
+          event.turnItem.status === "waiting",
+      ).pipe(
+        Effect.map((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request"
+            ? event.turnItem
+            : assert.fail("expected a user input request"),
+        ),
+      );
+
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-scope",
+        method: "select",
+        title: "[Scope] What should the fix touch?",
+        options: [
+          "1. Adapter — Pi adapter only",
+          "2. Everything — Adapter and clients",
+          "3. Type something.",
+        ],
+      });
+      const scope = yield* takeQuestion;
+      assert.equal(
+        decodeUserInputQuestions(scope.questions)[0]?.question,
+        "What should the fix touch?",
+      );
+      yield* runtime.respondToRuntimeRequest({
+        requestId: scope.requestId,
+        answers: { "ui-scope": "1. Adapter — Pi adapter only" },
+      });
+      assert.equal(
+        (yield* fake.takeRequest("extension_ui_response"))["value"],
+        "1. Adapter — Pi adapter only",
+      );
+
+      yield* fake.emit({
+        type: "extension_ui_request",
+        id: "ui-layout",
+        method: "select",
+        title: "[Layout] Which layout?\n\n--- 1. Stacked preview ---\nA\nB",
+        options: ["1. Stacked — One column", "2. Split — Two columns", "3. Type something."],
+      });
+      const layout = yield* takeQuestion;
+      assert.deepEqual(decodeUserInputQuestions(layout.questions), [
+        {
+          id: "ui-layout",
+          header: "Layout",
+          question: "Which layout?",
+          options: [
+            {
+              label: "Stacked",
+              description: "One column",
+              value: "1. Stacked — One column",
+              preview: "A\nB",
+            },
+            { label: "Split", description: "Two columns", value: "2. Split — Two columns" },
+          ],
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a select flattened unless one running ask_user_question renders it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const areaQuestion = {
+        header: "Area",
+        question: "Which area?",
+        options: [{ label: "Docker", description: "Compose projects" }],
+      };
+      const areaTitle = "[Area] Which area?";
+      const areaOptions = ["1. Docker — Compose projects", "2. Type something."];
+      const startTool = (toolCallId: string, args: unknown, toolName = "ask_user_question") =>
+        fake.emit({ type: "tool_execution_start", toolCallId, toolName, args });
+      const endTool = (toolCallId: string) =>
+        fake.emit({
+          type: "tool_execution_end",
+          toolCallId,
+          toolName: "ask_user_question",
+          isError: false,
+          result: { content: [] },
+        });
+      const expectFlattened = Effect.fnUntraced(function* (
+        id: string,
+        title: string,
+        options: ReadonlyArray<string>,
+      ) {
+        yield* fake.emit({ type: "extension_ui_request", id, method: "select", title, options });
+        const event = yield* takeEvent(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "user_input_request" &&
+            event.turnItem.requestId.includes(id),
+        );
+        if (event.type !== "turn_item.updated" || event.turnItem.type !== "user_input_request") {
+          return assert.fail("expected a user input request");
+        }
+        const [question] = decodeUserInputQuestions(event.turnItem.questions);
+        assert.deepEqual(
+          [question?.header, question?.question, question?.options.map((option) => option.label)],
+          ["Question", title, options],
+          id,
+        );
+      });
+
+      yield* startTool("call_area", { questions: [areaQuestion] });
+      yield* expectFlattened("ui-unrelated", "Pick a tag", ["stable", "beta"]);
+
+      // Both calls render the same select, so neither can claim it.
+      yield* startTool("call_header", {
+        questions: [
+          { header: "Area", question: "Pick?", options: [{ label: "A", description: "x — y" }] },
+        ],
+      });
+      yield* startTool("call_label", {
+        questions: [{ question: "[Area] Pick?", options: [{ label: "A — x", description: "y" }] }],
+      });
+      yield* expectFlattened("ui-overlap", "[Area] Pick?", ["1. A — x — y", "2. Type something."]);
+      yield* endTool("call_header");
+      yield* endTool("call_label");
+
+      yield* startTool("call_encoded", {
+        questions: JSON.stringify([
+          {
+            header: "Scope",
+            question: "Which scope?",
+            options: [{ label: "A", description: "a" }],
+          },
+        ]),
+      });
+      yield* startTool("call_blank", {
+        questions: [
+          { header: "Blank", question: "Which?", options: [{ label: " ", description: "b" }] },
+        ],
+      });
+      yield* expectFlattened("ui-encoded", "[Scope] Which scope?", [
+        "1. A — a",
+        "2. Type something.",
+      ]);
+      yield* expectFlattened("ui-blank", "[Blank] Which?", ["1.   — b", "2. Type something."]);
+
+      yield* endTool("call_area");
+      yield* fake.emit({
+        type: "tool_execution_update",
+        toolCallId: "call_area",
+        toolName: "ask_user_question",
+        args: { questions: [areaQuestion] },
+      });
+      yield* expectFlattened("ui-stale", areaTitle, areaOptions);
+
+      yield* startTool("call_other", { questions: [areaQuestion] }, "ask_question");
+      yield* expectFlattened("ui-other-tool", areaTitle, areaOptions);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("asks an input dialog's title when its placeholder is blank", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
