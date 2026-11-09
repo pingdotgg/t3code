@@ -50,3 +50,12 @@ it("drops in-flight row motion when the document becomes hidden", () => {
   document.dispatchEvent(new Event("visibilitychange"));
   expect(fixture.list.getAnimations({ subtree: true })).toHaveLength(0);
 });
+
+it("does not slide rows from positions measured before a window resize", () => {
+  using fixture = mountList(["a", "b"]);
+  using _visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  fixture.rows.get("a")!.style.height = "60px";
+  window.dispatchEvent(new Event("resize"));
+  fixture.motion.update(true);
+  expect(fixture.list.getAnimations({ subtree: true })).toHaveLength(0);
+});
