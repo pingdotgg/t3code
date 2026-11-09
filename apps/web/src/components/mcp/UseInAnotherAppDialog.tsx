@@ -241,11 +241,11 @@ function useGate(environment: EnvironmentPresentation) {
   const runCheck = useAtomCommand(checkReachability, { reportFailure: false });
   const readState = useAtomCommand(readLinkState, { reportFailure: false });
   // The gate opens on a check it ran, or on a newer one the link state reports. A failed run
-  // has no result, and counts only results newer than what the link state had then.
+  // has no result and counts only server checks newer than `since`; null waits for a retry.
   const [check, setCheck] = useState<
     | "idle"
     | "running"
-    | { readonly result: EnvironmentConnectReachability | null; readonly since: string }
+    | { readonly result: EnvironmentConnectReachability | null; readonly since: string | null }
   >("idle");
   const [connecting, setConnecting] = useState(false);
   const linkState = controller.linkState.data;
@@ -274,7 +274,7 @@ function useGate(environment: EnvironmentPresentation) {
     reachability:
       typeof check === "string"
         ? "checking"
-        : reported !== undefined && reported.checkedAt > check.since
+        : reported !== undefined && check.since !== null && reported.checkedAt > check.since
           ? reported
           : check.result,
   });
@@ -282,19 +282,21 @@ function useGate(environment: EnvironmentPresentation) {
     setCheck("running");
     // A saved machine's address comes from T3 Connect's list, which can be stale.
     if (!thisMachine) void refreshDiscovery();
+    const before = readCachedCloudLinkState({ environmentId })?.reachability;
     const result = await runCheck({ target: { environmentId } });
     controller.linkState.refresh();
     if (result._tag === "Success") {
       setCheck({ result: result.value, since: result.value.checkedAt });
       return;
     }
-    // Only a check newer than the server's latest, read after this failure, counts.
+    // The request failed, but the server may still have checked: a newer result counts.
     const fresh = await readState({ target: { environmentId } });
-    const latest =
-      fresh._tag === "Success"
-        ? fresh.value?.reachability
-        : readCachedCloudLinkState({ environmentId })?.reachability;
-    setCheck({ result: null, since: latest?.checkedAt ?? "" });
+    const after = fresh._tag === "Success" ? fresh.value?.reachability : undefined;
+    setCheck(
+      after !== undefined && after.checkedAt > (before?.checkedAt ?? "")
+        ? { result: after, since: after.checkedAt }
+        : { result: null, since: after?.checkedAt ?? before?.checkedAt ?? null },
+    );
   };
   const turnOn = async () => {
     setConnecting(true);

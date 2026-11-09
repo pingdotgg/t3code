@@ -143,7 +143,11 @@ export const MCP_APPS: readonly McpApp[] = [
         "openclaw gateway start",
       ],
     },
-    steps: ["Open the Control UI, then + and Plugins.", "Choose Add MCP server and paste the URL."],
+    steps: [
+      "Open the Control UI, then + and Plugins, and choose Add MCP server.",
+      "Paste the URL, and choose Streamable HTTP and OAuth.",
+      "Select Sign in for it under Settings → MCP.",
+    ],
     docs: "https://docs.openclaw.ai/tools/mcp",
   },
   {
@@ -153,8 +157,9 @@ export const MCP_APPS: readonly McpApp[] = [
     handoff: {
       kind: "commands",
       commands: (url) => [
-        // `add` signs in on its first connection; `login` would clear that and need a new code.
-        `hermes mcp add t3code --url ${url} --auth oauth`,
+        // `add` signs in on its first connection (30 s by default, too short to get a code);
+        // `login` would clear that sign-in and need a second code.
+        `hermes mcp add t3code --url ${url} --auth oauth --connect-timeout 315`,
       ],
     },
     steps: [
