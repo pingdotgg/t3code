@@ -1,11 +1,10 @@
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AssistantCitation } from "@t3tools/contracts";
 import {
   assistantCitationLabel,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
+import { ArrowUpRightIcon, PencilIcon, QuoteIcon, ReplyIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
@@ -18,11 +17,10 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
+  assistantCitationHash,
   assistantCitationNavigation,
-  assistantCitationRoute,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
-import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
@@ -34,6 +32,70 @@ import { observeAssistantCitationCommentSource } from "./AssistantCitationSource
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
 import { textDirection } from "~/textDirection";
+
+function citationSourceLinkProps(
+  citation: AssistantCitation,
+  navigate: ReturnType<typeof useNavigate>,
+) {
+  return {
+    to: "/$environmentId/$threadId" as const,
+    params: { environmentId: citation.environmentId, threadId: citation.threadId },
+    hash: assistantCitationHash(citation),
+    "data-markdown-copy": serializeAssistantCitation(citation),
+    resetScroll: false,
+    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      void navigate(assistantCitationNavigation(citation));
+    },
+  };
+}
+
+/** A quoted response at the top of a sent message, like a chat app's reply preview. */
+export function AssistantCitationEmbed({ citation }: { citation: AssistantCitation }) {
+  const navigate = useNavigate();
+  const wholeResponse = citation.prefix === "" && citation.suffix === "";
+  const flat = (text: string) => text.replace(/\s+/g, " ");
+  const { comment: _comment, ...quoted } = citation;
+  const card = (
+    <Link
+      {...citationSourceLinkProps(citation, navigate)}
+      data-thread-find-ignore
+      aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+      className="flex min-w-0 flex-col gap-0.5 rounded-lg border-s-2 border-primary bg-black/5 px-2.5 py-1.5 text-start text-inherit no-underline hover:bg-black/8 focus-visible:outline-2 focus-visible:outline-ring dark:bg-white/6 dark:hover:bg-white/10"
+    >
+      <span className="flex items-center gap-1 text-xs font-medium text-primary">
+        {wholeResponse ? <ReplyIcon className="size-3" /> : <QuoteIcon className="size-3" />}
+        {wholeResponse ? "Response" : "Quote"}
+      </span>
+      <span
+        className="line-clamp-3 text-sm text-muted-foreground wrap-break-word"
+        dir={textDirection(citation.text)}
+      >
+        {wholeResponse ? (
+          flat(citation.text)
+        ) : (
+          <>
+            {citation.prefix ? `…${flat(citation.prefix)}` : null}
+            <mark className="rounded-sm bg-primary/15 text-foreground">{flat(citation.text)}</mark>
+            {citation.suffix ? `${flat(citation.suffix)}…` : null}
+          </>
+        )}
+      </span>
+    </Link>
+  );
+  if (!citation.comment) return card;
+  return (
+    <>
+      {card}
+      <p className="text-sm" dir={textDirection(citation.comment)}>
+        {citation.comment}
+      </p>
+    </>
+  );
+}
 
 export function AssistantCitationChip({
   citation,
@@ -54,9 +116,6 @@ export function AssistantCitationChip({
   };
 }) {
   const navigate = useNavigate();
-  const sourceThread = useQuietThreadShell(
-    scopeThreadRef(citation.environmentId, citation.threadId),
-  );
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -116,17 +175,7 @@ export function AssistantCitationChip({
       }
     : undefined;
   const label = assistantCitationLabel(citation);
-  const sourceLinkProps = {
-    ...assistantCitationRoute(citation, sourceThread),
-    "data-markdown-copy": serializeAssistantCitation(citation),
-    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-      event.preventDefault();
-      void navigate(assistantCitationNavigation(citation, sourceThread));
-    },
-  };
+  const sourceLinkProps = citationSourceLinkProps(citation, navigate);
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}

@@ -15,6 +15,8 @@ import { useQuietThreadShell } from "../../state/entities";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
+import { AssistantCitationEmbed } from "./AssistantCitationChip";
 import { memo, use, useState, type ReactNode } from "react";
 import {
   createMessageAttachmentPreviewProjector,
@@ -466,6 +468,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const senderLabel = senderShell?.title.trim() || "Agent";
   const resolvedContext = resolveUserMessageContext({ ...row.message, text: userMessage.text });
+  const citations = collectAssistantCitations(resolvedContext.text);
+  const bodyText = withoutCitations(resolvedContext.text, citations);
   const previewImages = userImages.filter((image) => image.name.startsWith("preview-annotation-"));
   const revertTurnCount = row.revertTurnCount;
   const attachmentReferences = collectComposerContextReferences(resolvedContext.text).flatMap(
@@ -904,6 +908,13 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               folded && !ctx.findActive && "max-h-96 overflow-auto",
             )}
           >
+            {citations.length > 0 ? (
+              <div className={cn("flex flex-col gap-1", bodyText && "mb-2")}>
+                {citations.map((match) => (
+                  <AssistantCitationEmbed key={match.start} citation={match.citation} />
+                ))}
+              </div>
+            ) : null}
             {!mediaAboveText && mediaBlock}
             {userAudio.length > 0 ? (
               <div className={cn("flex max-w-full flex-col gap-1", !audioOnly && "mb-2")}>
@@ -1013,7 +1024,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             {fileCardsOnly || audioOnly ? null : (
               <div onCopyCapture={onBodyCopyCapture}>
                 <CollapsibleUserMessageBody
-                  text={resolvedContext.text}
+                  text={bodyText}
                   renderContextReference={renderContextReference}
                   skills={ctx.skills}
                   markdownCwd={ctx.markdownCwd}
@@ -1212,3 +1223,18 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     />
   );
 });
+
+/** The text around quoted responses, which show as embeds above it. */
+function withoutCitations(
+  text: string,
+  citations: ReadonlyArray<{ readonly start: number; readonly end: number }>,
+): string {
+  if (citations.length === 0) return text;
+  let body = "";
+  let cursor = 0;
+  for (const match of citations) {
+    body += text.slice(cursor, match.start);
+    cursor = text[match.end] === " " ? match.end + 1 : match.end;
+  }
+  return (body + text.slice(cursor)).trim();
+}
