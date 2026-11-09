@@ -1,6 +1,10 @@
 package expo.modules.t3reviewdiff
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
 import android.view.View
 import kotlin.math.ceil
 import expo.modules.kotlin.AppContext
@@ -175,6 +179,57 @@ class ReviewDiffGeometryTest {
         assertEquals(false, drawing.tokensChangeWidth(tokens, recolored, style))
       }
     }
+  }
+
+  @Test
+  fun unwrappedWordDiffHighlightsCoverTheTextDrawCodeDraws() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val boxes = mutableListOf<RectF>()
+    val texts = mutableMapOf<String, Float>()
+    val bitmap = Bitmap.createBitmap(1000, 60, Bitmap.Config.ARGB_8888)
+    val canvas = object : Canvas(bitmap) {
+      override fun drawRoundRect(rect: RectF, rx: Float, ry: Float, paint: Paint) {
+        boxes += RectF(rect)
+      }
+
+      override fun drawText(
+        text: String,
+        start: Int,
+        end: Int,
+        x: Float,
+        y: Float,
+        paint: Paint
+      ) {
+        texts[text.substring(start, end)] = x
+      }
+    }
+    val lines = CodeLines(intArrayOf(0), 0)
+    for (weight in listOf("medium", "regular")) {
+      val style = DiffStyle.defaults(1f).copy(codeFontWeight = weight, codeFontSizePx = 17f)
+      for (prefix in listOf("if ", "说明 ", "😀 ")) {
+        val tokens = listOf(
+          DiffToken(prefix, Color.RED, 2),
+          DiffToken("go ", Color.BLUE, 0),
+          DiffToken("1.27.3", Color.GREEN, 0),
+          DiffToken(";", Color.BLUE, 0),
+        )
+        val content = tokens.joinToString("") { it.content }
+        val start = content.indexOf("1.27.3")
+        val row = row("line", content).copy(
+          wordDiffRanges = listOf(DiffWordDiffRange(start, start + "1.27.3".length)),
+        )
+        boxes.clear()
+        texts.clear()
+        drawing.configureCodePaint(Color.BLACK, 0, style)
+        drawing.drawWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
+        drawing.drawCode(canvas, content, tokens, 10f, 28f, style, lines)
+        val box = boxes.single()
+        val case = "weight=$weight prefix=$prefix"
+        assertEquals("$case left", requireNotNull(texts["1.27.3"]), box.left, 0.5f)
+        assertEquals("$case right", requireNotNull(texts[";"]), box.right, 0.5f)
+      }
+    }
+    bitmap.recycle()
   }
 
   @Test

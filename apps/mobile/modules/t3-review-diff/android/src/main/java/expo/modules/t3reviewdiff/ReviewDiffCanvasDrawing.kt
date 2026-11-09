@@ -332,12 +332,29 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       configureMonospacePaint(theme.hunkText, style.hunkFontSizePx, style.hunkFontWeight)
       return textPaint.measureText(row.text.ifEmpty { row.content })
     }
-    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(row.content, null, 0)) else tokens
+    return codeWidth(row.content, tokens, 0, Int.MAX_VALUE, style)
+  }
+
+  /** Width of code columns [from, to), measured with drawCode's run boundaries and fonts. */
+  private fun codeWidth(
+    content: String,
+    tokens: List<DiffToken>?,
+    from: Int,
+    to: Int,
+    style: DiffStyle
+  ): Float {
+    val runs = if (tokens.isNullOrEmpty()) listOf(DiffToken(content, null, 0)) else tokens
     var width = 0f
-    // Match drawCode's run boundaries and fonts, including fallback glyphs and tabs.
+    var column = 0
     for (run in runs) {
-      configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
-      width += textPaint.measureText(run.content)
+      val start = max(from, column) - column
+      val end = min(to, column + run.content.length) - column
+      if (start < end) {
+        configureCodePaint(run.color ?: theme.text, run.fontStyle, style)
+        width += textPaint.measureText(run.content, start, end)
+      }
+      column += run.content.length
+      if (column >= to) break
     }
     return width
   }
@@ -368,16 +385,17 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
   fun drawWordDiffRanges(
     canvas: Canvas,
     row: DiffRow,
+    tokens: List<DiffToken>?,
     codeX: Float,
     top: Int,
     bottom: Int,
-    lines: CodeLines
+    lines: CodeLines,
+    style: DiffStyle
   ) {
     if (lines.nativeLayout != null) return
     if (row.wordDiffRanges.isEmpty() || (row.change != "add" && row.change != "delete")) return
     val color = if (row.change == "add") theme.addBar else theme.deleteBar
     backgroundPaint.color = withAlpha(color, 71)
-    val characterWidth = textPaint.measureText("M")
     val fontHeight = textPaint.fontMetrics.run { descent - ascent }
     val highlightHeight = max(4f * density, min(bottom - top - 4f * density, fontHeight))
     val highlightTop = (top + bottom - highlightHeight) / 2f
@@ -386,8 +404,9 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         val start = max(range.start, lineStart)
         val end = min(range.end, lines.end(line, Int.MAX_VALUE))
         if (end <= start) return@forEachIndexed
-        val left = codeX + (start - lineStart) * characterWidth
-        val right = max(left + 2f * density, left + (end - start) * characterWidth)
+        val left = codeX + codeWidth(row.content, tokens, lineStart, start, style)
+        val width = codeWidth(row.content, tokens, start, end, style)
+        val right = left + max(2f * density, width)
         val lineTop = highlightTop + line * lines.height
         canvas.drawRoundRect(
           RectF(left, lineTop, right, lineTop + highlightHeight),
