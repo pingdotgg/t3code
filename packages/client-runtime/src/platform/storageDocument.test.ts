@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ManagedCloudSandboxResourceId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
@@ -9,12 +9,16 @@ import {
   BearerConnectionCredential,
   BearerConnectionProfile,
   BearerConnectionRegistration,
+  CloudSandboxConnectionCredential,
+  CloudSandboxConnectionProfile,
+  CloudSandboxConnectionRegistration,
   RelayConnectionRegistration,
   SshConnectionProfile,
   SshConnectionRegistration,
 } from "../connection/catalog.ts";
 import {
   BearerConnectionTarget,
+  CloudSandboxConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
@@ -71,6 +75,21 @@ const REMOTE_TOKEN = new TokenStore.RemoteDpopAccessToken({
   expiresAtEpochMs: 1_000_000,
   dpopThumbprint: "thumbprint",
 });
+
+// The catalog schema as clients without sandbox support decode it.
+const PreSandboxCatalogDocument = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  targets: Schema.Array(
+    Schema.Union([BearerConnectionTarget, RelayConnectionTarget, SshConnectionTarget]),
+  ),
+  profiles: Schema.Array(Schema.Union([BearerConnectionProfile, SshConnectionProfile])),
+  credentials: Schema.Array(
+    Schema.Struct({ connectionId: Schema.String, credential: BearerConnectionCredential }),
+  ),
+  remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
+});
+const decodePreSandboxCatalogDocument = Schema.decodeSync(PreSandboxCatalogDocument);
+const encodeCatalogDocument = Schema.encodeSync(ConnectionCatalogDocument);
 
 describe("ConnectionCatalogDocument", () => {
   it.effect("persists explicit GitHub trust and forgets it when a connection is removed", () =>
@@ -297,6 +316,44 @@ describe("ConnectionCatalogDocument", () => {
     });
 
     expect(decoded.disabledEnvironmentIds).toEqual([]);
+  });
+
+  it("stores sandbox records where a client without sandbox support still decodes the catalog", () => {
+    const sandboxEnvironmentId = EnvironmentId.make("sandbox-1");
+    const sandboxTarget = new CloudSandboxConnectionTarget({
+      environmentId: sandboxEnvironmentId,
+      label: "Sandbox",
+      connectionId: "cloud-sandbox:controller:sandbox-1",
+      driverKind: "boat",
+      sandboxId: "sandbox-1",
+    });
+    const document = registerConnectionInCatalog(
+      registerConnectionInCatalog(
+        EMPTY_CONNECTION_CATALOG_DOCUMENT,
+        new BearerConnectionRegistration({
+          target: BEARER_TARGET,
+          profile: BEARER_PROFILE,
+          credential: BEARER_CREDENTIAL,
+        }),
+      ),
+      new CloudSandboxConnectionRegistration({
+        target: sandboxTarget,
+        profile: new CloudSandboxConnectionProfile({
+          connectionId: sandboxTarget.connectionId,
+          environmentId: sandboxEnvironmentId,
+          label: "Sandbox",
+          driverKind: "boat",
+          sandboxId: "sandbox-1",
+          resourceId: ManagedCloudSandboxResourceId.make("sandbox-1"),
+          controller: BEARER_TARGET,
+        }),
+        credential: new CloudSandboxConnectionCredential({ token: "sandbox-token" }),
+      }),
+    );
+    const encoded = encodeCatalogDocument(document);
+
+    expect(decodePreSandboxCatalogDocument(encoded).targets).toEqual([BEARER_TARGET]);
+    expect(decodeCatalogDocument(encoded)).toEqual(document);
   });
 
   it("switches a saved environment off and back on without touching its records", () => {

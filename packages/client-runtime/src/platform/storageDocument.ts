@@ -2,12 +2,26 @@ import { EnvironmentId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import * as SchemaTransformation from "effect/SchemaTransformation";
+
 import {
   type ConnectionRegistration,
+  BearerConnectionCredential,
+  BearerConnectionProfile,
+  CloudSandboxConnectionCredential,
+  CloudSandboxConnectionProfile,
   ConnectionCredential,
   ConnectionProfile,
+  SshConnectionProfile,
 } from "../connection/catalog.ts";
-import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
+import {
+  type ConnectionTarget,
+  BearerConnectionTarget,
+  CloudSandboxConnectionTarget,
+  PersistedConnectionTarget,
+  RelayConnectionTarget,
+  SshConnectionTarget,
+} from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredPullRequestRoutingPermission } from "../connection/pullRequestRoutingPermissions.ts";
 
@@ -17,11 +31,8 @@ export const StoredConnectionCredential = Schema.Struct({
 });
 export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
-export const ConnectionCatalogDocument = Schema.Struct({
+const catalogDocumentFields = {
   schemaVersion: Schema.Literal(1),
-  targets: Schema.Array(PersistedConnectionTarget),
-  profiles: Schema.Array(ConnectionProfile),
-  credentials: Schema.Array(StoredConnectionCredential),
   remoteDpopTokens: Schema.Array(TokenStore.RemoteDpopAccessToken),
   // Pull request routing grants. The field name predates the rename and stays, so older and
   // newer clients sharing this document keep reading and revoking the same grants.
@@ -29,7 +40,81 @@ export const ConnectionCatalogDocument = Schema.Struct({
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+};
+
+const StoredCloudSandboxCredential = Schema.Struct({
+  connectionId: Schema.String,
+  credential: CloudSandboxConnectionCredential,
 });
+
+// Older clients reject unknown tags in `targets`, `profiles` and `credentials` and then reset
+// the whole catalog, so sandbox records are stored under keys those clients ignore.
+const StoredConnectionCatalogDocument = Schema.Struct({
+  ...catalogDocumentFields,
+  targets: Schema.Array(
+    Schema.Union([BearerConnectionTarget, RelayConnectionTarget, SshConnectionTarget]),
+  ),
+  profiles: Schema.Array(Schema.Union([BearerConnectionProfile, SshConnectionProfile])),
+  credentials: Schema.Array(
+    Schema.Struct({ connectionId: Schema.String, credential: BearerConnectionCredential }),
+  ),
+  cloudSandboxTargets: Schema.optionalKey(Schema.Array(CloudSandboxConnectionTarget)),
+  cloudSandboxProfiles: Schema.optionalKey(Schema.Array(CloudSandboxConnectionProfile)),
+  cloudSandboxCredentials: Schema.optionalKey(Schema.Array(StoredCloudSandboxCredential)),
+});
+
+const CatalogDocumentType = Schema.Struct({
+  ...catalogDocumentFields,
+  targets: Schema.Array(PersistedConnectionTarget),
+  profiles: Schema.Array(ConnectionProfile),
+  credentials: Schema.Array(StoredConnectionCredential),
+});
+
+export const ConnectionCatalogDocument = StoredConnectionCatalogDocument.pipe(
+  Schema.decodeTo(
+    Schema.toType(CatalogDocumentType),
+    SchemaTransformation.transform<
+      typeof CatalogDocumentType.Type,
+      typeof StoredConnectionCatalogDocument.Type
+    >({
+      decode: ({
+        cloudSandboxTargets,
+        cloudSandboxProfiles,
+        cloudSandboxCredentials,
+        ...stored
+      }) => ({
+        ...stored,
+        targets: [...stored.targets, ...(cloudSandboxTargets ?? [])],
+        profiles: [...stored.profiles, ...(cloudSandboxProfiles ?? [])],
+        credentials: [...stored.credentials, ...(cloudSandboxCredentials ?? [])],
+      }),
+      encode: ({ targets, profiles, credentials, ...document }) => {
+        const cloudSandboxTargets = targets.filter(
+          (value) => value._tag === "CloudSandboxConnectionTarget",
+        );
+        const cloudSandboxProfiles = profiles.filter(
+          (value) => value._tag === "CloudSandboxConnectionProfile",
+        );
+        const cloudSandboxCredentials = credentials.flatMap(({ connectionId, credential }) =>
+          credential._tag === "CloudSandboxConnectionCredential"
+            ? [{ connectionId, credential }]
+            : [],
+        );
+        return {
+          ...document,
+          targets: targets.filter((value) => value._tag !== "CloudSandboxConnectionTarget"),
+          profiles: profiles.filter((value) => value._tag !== "CloudSandboxConnectionProfile"),
+          credentials: credentials.flatMap(({ connectionId, credential }) =>
+            credential._tag === "BearerConnectionCredential" ? [{ connectionId, credential }] : [],
+          ),
+          ...(cloudSandboxTargets.length === 0 ? {} : { cloudSandboxTargets }),
+          ...(cloudSandboxProfiles.length === 0 ? {} : { cloudSandboxProfiles }),
+          ...(cloudSandboxCredentials.length === 0 ? {} : { cloudSandboxCredentials }),
+        };
+      },
+    }),
+  ),
+);
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 
 export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Object.freeze({
