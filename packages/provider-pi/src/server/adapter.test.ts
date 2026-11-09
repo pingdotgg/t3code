@@ -176,6 +176,10 @@ interface FakePi {
   readonly promptModels: ReadonlyArray<string>;
   /** T3 extension's service tier as each prompt was sent; Pi resets it with each session. */
   readonly promptServiceTiers: ReadonlyArray<string | null>;
+  /** Pi reloads extensions without the adapter seeing it, e.g. a user extension's ctx.newSession(). */
+  readonly reloadExtensions: () => void;
+  /** Pi before 0.99 acknowledges prompts without a disposition. */
+  readonly omitPromptDisposition: () => void;
   readonly queueStats: (data: unknown) => void;
   /** Pi before 0.84.4 answers clear_queue as an unknown command. */
   readonly setClearQueue: (
@@ -235,6 +239,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
   const promptModels: Array<string> = [];
   const promptServiceTiers: Array<string | null> = [];
   let serviceTier: string | null = null;
+  let promptDisposition = true;
   let currentModel = "default";
   const serviceTierCommand = `/${PI_T3_SERVICE_TIER_COMMAND}`;
 
@@ -288,7 +293,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "prompt":
         if (String(record["message"]).startsWith(serviceTierCommand)) {
           serviceTier = String(record["message"]).slice(serviceTierCommand.length).trim() || null;
-          return { ...base, data: { disposition: "handled" } };
+          return promptDisposition ? { ...base, data: { disposition: "handled" } } : base;
         }
         if (isCompacting) {
           return { ...base, success: false, error: PI_COMPACTING_PROMPT_ERROR };
@@ -326,6 +331,7 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
       case "get_session_stats":
         return { ...base, data: statsQueue.shift() ?? {} };
       case "fork":
+        serviceTier = null;
         return { ...base, data: { text: "Hello pi", cancelled: false } };
       case "clear_queue":
         return clearQueue === "unknown_command"
@@ -414,6 +420,12 @@ const makeFakePi: Effect.Effect<FakePi> = Effect.gen(function* () {
     promptThinkingLevels,
     promptModels,
     promptServiceTiers,
+    reloadExtensions: () => {
+      serviceTier = null;
+    },
+    omitPromptDisposition: () => {
+      promptDisposition = false;
+    },
     emit,
     takeRequest,
     queueEntries: (data) => entriesQueue.push(data),
@@ -2339,7 +2351,7 @@ describe("PiAdapterV2", () => {
             },
             ordinal,
           );
-          yield* fake.takeRequest("prompt");
+          while (String((yield* fake.takeRequest("prompt"))["message"]).startsWith("/")) {}
           yield* fake.emit({ type: "agent_start" });
           yield* fake.emit({ type: "agent_end", messages: [], willRetry: false });
           yield* fake.emit({ type: "agent_settled" });
@@ -2347,20 +2359,29 @@ describe("PiAdapterV2", () => {
         });
 
       yield* turn("Fast", "priority", 1);
+      fake.reloadExtensions();
       yield* turn("Still fast", "priority", 2);
       yield* turn("Ultrafast", "ultrafast", 3);
+      fake.omitPromptDisposition();
       yield* turn("Standard", "default", 4);
       yield* turn("Unset", undefined, 5);
 
       assert.deepEqual(fake.promptServiceTiers, ["priority", "priority", "ultrafast", null, null]);
       assert.deepEqual(fake.promptThinkingLevels, ["high", "high", "high", "high", "high"]);
-      assert.equal(
+      assert.deepEqual(
         fake
           .allRequests()
-          .filter((request) =>
-            String(request["message"]).startsWith(`/${PI_T3_SERVICE_TIER_COMMAND}`),
-          ).length,
-        3,
+          .flatMap((request) =>
+            String(request["message"]).startsWith(`/${PI_T3_SERVICE_TIER_COMMAND}`)
+              ? [request["message"]]
+              : [],
+          ),
+        [
+          `/${PI_T3_SERVICE_TIER_COMMAND} priority`,
+          `/${PI_T3_SERVICE_TIER_COMMAND} priority`,
+          `/${PI_T3_SERVICE_TIER_COMMAND} ultrafast`,
+          `/${PI_T3_SERVICE_TIER_COMMAND}`,
+        ],
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

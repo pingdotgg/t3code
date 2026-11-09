@@ -1,8 +1,4 @@
-import type {
-  ModelSelection,
-  ProviderDriverKind,
-  ProviderOptionDescriptor,
-} from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentLabel,
@@ -110,7 +106,6 @@ export function getTraitSelectChange(
 }
 
 export function buildTraitsTriggerDisplay(input: {
-  provider: ProviderDriverKind;
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;

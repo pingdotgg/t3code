@@ -95,7 +95,6 @@ export function describeComposerEffort(
       : null;
   const primary = visibility.primarySelectDescriptor;
   const display = buildTraitsTriggerDisplay({
-    provider: traits.provider,
     descriptors: visibility.descriptors,
     primarySelectDescriptorId: primary?.id ?? null,
     ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
