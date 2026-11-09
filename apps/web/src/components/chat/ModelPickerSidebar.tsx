@@ -49,6 +49,8 @@ const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedInstanceId: ProviderInstanceId | "favorites";
+  /** The instance the thread runs on; it stays marked while another one is browsed. */
+  activeInstanceId?: ProviderInstanceId;
   onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
   onFocusSearch: () => void;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -150,6 +152,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const isDisabled =
               (isUnavailable && !unavailableSelectionIsReachable) || isContextDisabled;
             const isSelected = props.selectedInstanceId === entry.instanceId;
+            const isActive = props.activeInstanceId === entry.instanceId;
             const isHovered = hoveredInstanceId === entry.instanceId;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
 
@@ -157,7 +160,9 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
               ? describeUnavailableInstance(entry, m)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
-                : entry.displayName;
+                : isActive
+                  ? m(msg("{label} · Active", { label: entry.displayName }))
+                  : entry.displayName;
 
             const button = (
               <Toolbar.Button
@@ -178,6 +183,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled={isDisabled}
                 focusableWhenDisabled={!isDisabled}
                 aria-pressed={isSelected}
+                aria-current={isActive ? "true" : undefined}
                 type="button"
                 aria-label={isUnavailable || isContextDisabled ? tooltip : entry.displayName}
               >
@@ -199,6 +205,13 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   }
                   {...(entry.accentColor ? { badgeClassName: "h-3 min-w-3 px-0.5 text-5xs" } : {})}
                 />
+                {isActive ? (
+                  <span
+                    aria-hidden
+                    data-model-picker-active-instance
+                    className="absolute top-1 right-1 z-40 size-2 rounded-full bg-success ring-2 ring-popover"
+                  />
+                ) : null}
               </Toolbar.Button>
             );
 

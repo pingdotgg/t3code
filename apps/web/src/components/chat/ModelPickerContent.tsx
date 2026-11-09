@@ -875,6 +875,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         {showSidebar && (
           <ModelPickerSidebar
             selectedInstanceId={selectedInstanceId}
+            activeInstanceId={props.activeInstanceId}
             onSelectInstance={handleSelectInstance}
             onFocusSearch={focusSearchInput}
             instanceEntries={sidebarInstanceEntries}
