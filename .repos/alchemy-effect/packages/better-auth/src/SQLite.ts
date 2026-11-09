@@ -1,9 +1,9 @@
-import { dotAlchemyDirectory } from "alchemy/AlchemyContext";
-import path from "pathe";
 import type { Database as BunDatabase } from "bun:sqlite";
+import { dotAlchemyDirectory } from "alchemy/AlchemyContext";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Scope from "effect/Scope";
+import path from "pathe";
 import { Database } from "./Database.ts";
 import { BetterAuthMigrationError } from "./Errors.ts";
 
@@ -49,8 +49,7 @@ export const SQLite = (filename?: string): Layer.Layer<Database> =>
   Layer.effect(
     Database,
     Effect.gen(function* () {
-      const resolved =
-        filename ?? path.join(yield* dotAlchemyDirectory, "better-auth.sqlite");
+      const resolved = filename ?? path.join(yield* dotAlchemyDirectory, "better-auth.sqlite");
       return {
         provider: "sqlite",
         runtime: open(resolved),
