@@ -502,11 +502,12 @@ export function usePaneMotion(
       const owed = inherited.run.value();
       return { ...was, x: was.x + inherited.dx * owed, y: was.y + inherited.dy * owed };
     };
+    const wasBy = new Map([...boxes].map(([tabId, box]) => [tabId, wasOf(tabId, box)]));
     // Where each pane shows now against its new place, before any slide
     // below retargets it: its move plus what a running slide still owes.
     const shows = new Map<string, { dx: number; dy: number }>();
     for (const [tabId, box] of boxes) {
-      const was = wasOf(tabId, box);
+      const was = wasBy.get(tabId);
       const running = slides.get(box.element);
       const owed = running ? running.run.value() : 0;
       shows.set(tabId, {
@@ -569,7 +570,7 @@ export function usePaneMotion(
       }
     };
     for (const [tabId, box] of boxes) {
-      const was = wasOf(tabId, box);
+      const was = wasBy.get(tabId);
       if (!was) {
         if (previousBoxes.size === 0) continue;
         const donor = findDonor(
