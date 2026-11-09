@@ -260,13 +260,14 @@ const make = Effect.gen(function* () {
       // the forwarder scopes the launch's, and the record's names it.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
+      const title = input.title ?? parent.thread.title;
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,
         target.environmentId,
         {
           projectId,
-          title: input.title ?? parent.thread.title,
+          title,
           modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
@@ -291,6 +292,7 @@ const make = Effect.gen(function* () {
         environmentId: target.environmentId,
         threadId: launched.threadId,
         label: link?.label ?? target.environmentId,
+        title,
         ...(launched.runId === null ? {} : { runId: launched.runId }),
       };
       const recorded = yield* threads
