@@ -150,7 +150,7 @@ describe("Codex MCP elicitation approvals", () => {
     });
   });
 
-  it("does not approve URL elicitations without opening their requested URL", () => {
+  it("accepts URL elicitation only for an explicit one-time decision", () => {
     const urlRequest = {
       mode: "url",
       message: "Finish signing in to continue.",
@@ -162,8 +162,32 @@ describe("Codex MCP elicitation approvals", () => {
     } satisfies EffectCodexSchema.McpServerElicitationRequestParams;
 
     NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, "accept"), {
-      action: "decline",
+      action: "accept",
     });
+    for (const decision of ["acceptAlways", "acceptForSession"] as const) {
+      NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, decision), {
+        action: "decline",
+      });
+    }
+    for (const action of ["decline", "cancel"] as const) {
+      NodeAssert.deepStrictEqual(toMcpElicitationResponse(urlRequest, action), { action });
+    }
+    for (const url of ["javascript:alert(1)", "file:///tmp/login", "invalid", ""]) {
+      NodeAssert.deepStrictEqual(toMcpElicitationResponse({ ...urlRequest, url }, "accept"), {
+        action: "decline",
+      });
+    }
+    NodeAssert.deepStrictEqual(
+      describeMcpElicitation({
+        ...urlRequest,
+        _meta: { allowPersistentApproval: true, persist: ["session", "always"] },
+      }).options,
+      [
+        { decision: "cancel", label: "Cancel" },
+        { decision: "decline", label: "Decline" },
+        { decision: "accept", label: "Continue" },
+      ],
+    );
   });
 
   it("omits persistence choices that cannot satisfy required form fields", () => {

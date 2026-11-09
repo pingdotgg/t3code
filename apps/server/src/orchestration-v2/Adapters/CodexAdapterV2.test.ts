@@ -9727,6 +9727,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
+    it.effect("shows MCP URL elicitation on its owning turn and accepts without form content", () =>
+      Effect.gen(function* () {
+        const url = "https://example.com/authorize?transfer=one-time";
+        const { harness, answerNext } = yield* startApprovalTurn("url-elicitation", [
+          {
+            type: "emit_inbound",
+            label: "MCP URL request",
+            frame: {
+              id: 0,
+              method: "mcpServer/elicitation/request",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                serverName: "review-service",
+                mode: "url",
+                message: "Sign in to continue.",
+                elicitationId: "login-1",
+                url,
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "MCP URL accepted",
+            frame: { id: 0, result: { action: "accept" } },
+          },
+          turnCompleted(nativeTurnId),
+        ]);
+        const request = yield* answerNext;
+        yield* harness.firstTerminal;
+        assert.equal(request.kind, "mcp-elicitation");
+        assert.equal(request.nativeRequestRef?.nativeId, "login-1");
+        assert.deepInclude(approvalItem(harness.events, request), {
+          elicitationUrl: url,
+          appName: "review-service",
+          prompt: "Sign in to continue.",
+          options: [
+            { decision: "cancel", label: "Cancel" },
+            { decision: "decline", label: "Decline" },
+            { decision: "accept", label: "Continue" },
+          ],
+        });
+        const late = yield* Effect.flip(
+          harness.runtime.respondToRuntimeRequest({
+            requestId: request.id,
+            decision: "accept",
+          }),
+        );
+        assert.include(String(late.cause), "No pending Codex runtime request");
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+    );
+
     it.effect("classifies permission requests that only list sandbox entries", () =>
       Effect.gen(function* () {
         const permissionRequest = (

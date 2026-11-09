@@ -58,3 +58,12 @@ Kiro offers only **Supervised** and **Full access**. In **Supervised** Kiro also
 review a turn's file changes. See [Kiro permissions](./providers-kiro.md#permission-modes).
 
 See the [provider guides](./install.md#providers) for setup and provider-specific limits.
+
+## MCP browser requests
+
+When an MCP server in a Claude or Codex thread asks you to complete steps in a browser, open the link
+in its approval request, complete the steps in your browser, then choose **Continue**.
+The link opens on the device you are using, including when the agent runs remotely.
+A localhost link points to your current device; a remotely running MCP server must provide a link reachable from that device.
+You can decline or cancel instead. Browser requests still need your response in
+Full access mode.

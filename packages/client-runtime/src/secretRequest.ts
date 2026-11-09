@@ -1,6 +1,6 @@
 import {
   SecretReference,
-  secretRequestPageUrl,
+  httpPageUrl,
   type OrchestrationV2TurnItem,
   type SecretProviderId,
   type SecretRequestAnswerInput,
@@ -65,14 +65,14 @@ function reasonLink(reason: string): string | undefined {
     return link;
   });
   // Two spellings of one page (`https://a.dev` and `https://a.dev/`) count once.
-  const links = new Set(raw.map((link) => secretRequestPageUrl(link)?.href ?? link));
+  const links = new Set(raw.map((link) => httpPageUrl(link)?.href ?? link));
   return links.size === 1 ? [...links][0] : undefined;
 }
 
 /** Only http(s), so an agent cannot make the card open another scheme. */
 export function secretRequestLink(item: Pick<SecretRequestItem, "url" | "reason">) {
   const raw = item.url ?? reasonLink(item.reason);
-  const url = raw === undefined ? null : secretRequestPageUrl(raw);
+  const url = raw === undefined ? null : httpPageUrl(raw);
   return url === null ? null : { href: url.href, host: url.host };
 }
 

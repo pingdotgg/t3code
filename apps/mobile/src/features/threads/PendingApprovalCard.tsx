@@ -1,17 +1,20 @@
 import { Button } from "../../components/ui/Button";
-import type {
-  ProviderApprovalDecision,
-  ProviderApprovalOption,
-  RuntimeRequestId,
+import {
+  httpPageUrl,
+  type ProviderApprovalDecision,
+  type ProviderApprovalOption,
+  type RuntimeRequestId,
 } from "@t3tools/contracts";
 import {
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
+  MCP_URL_ELICITATION_HINT,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import type { PendingApproval } from "../../lib/threadActivity";
 
 export interface PendingApprovalCardProps {
@@ -37,6 +40,10 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
   const canRespond = props.approval.responseCapability === "live";
   const disabled = !canRespond || props.respondingApprovalId === props.approval.requestId;
   const [explanationOpen, setExplanationOpen] = useState(false);
+  const [linkError, setLinkError] = useState(false);
+  const elicitationUrl = props.approval.elicitationUrl
+    ? httpPageUrl(props.approval.elicitationUrl)
+    : null;
   return (
     <View className="gap-2.5 rounded-[20px] border border-border bg-card-alt p-4">
       <Text className="font-t3-bold text-2xs uppercase tracking-[1.1px] text-foreground-secondary">
@@ -49,6 +56,33 @@ export function PendingApprovalCard(props: PendingApprovalCardProps) {
         <Text className="font-sans text-sm leading-normal text-foreground-secondary">
           {props.approval.detail}
         </Text>
+      ) : null}
+      {elicitationUrl ? (
+        <View className="gap-2">
+          <Text className="font-sans text-sm text-foreground-secondary">
+            {MCP_URL_ELICITATION_HINT}
+          </Text>
+          <Text selectable className="font-mono text-xs text-foreground-secondary">
+            {elicitationUrl.href}
+          </Text>
+          <Button
+            label={`Open ${elicitationUrl.host}`}
+            fullWidth
+            tone="secondary"
+            disabled={disabled || !props.canOperateThread}
+            onPress={() => {
+              setLinkError(false);
+              void tryOpenExternalUrl(elicitationUrl.href, "mcp-elicitation").then((opened) =>
+                setLinkError(!opened),
+              );
+            }}
+          />
+          {linkError ? (
+            <Text accessibilityRole="alert" className="font-sans text-xs text-danger-foreground">
+              Could not open the link. Copy it into your browser to continue.
+            </Text>
+          ) : null}
+        </View>
       ) : null}
       {props.approval.reason ? (
         <Text className="font-sans text-xs leading-normal text-warning-foreground">

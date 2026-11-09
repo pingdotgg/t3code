@@ -57,10 +57,13 @@ export interface ThreadPendingApproval {
   readonly reason?: string;
   readonly fullAccessOverride?: ProviderApprovalFullAccessOverride;
   readonly appName?: string;
+  readonly elicitationUrl?: string;
   readonly options?: ReadonlyArray<ProviderApprovalOption>;
   readonly responseCapability: "live" | "not_resumable";
   readonly supportsFeedback?: boolean;
 }
+
+export const MCP_URL_ELICITATION_HINT = "Complete the steps in your browser, then choose Continue.";
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = "Why am I being asked this?";
 
@@ -268,6 +271,9 @@ export function derivePendingThreadRequests(
         ? { fullAccessOverride: item.fullAccessOverride }
         : {}),
       ...(item?.type === "approval_request" && item.appName ? { appName: item.appName } : {}),
+      ...(item?.type === "approval_request" && item.elicitationUrl
+        ? { elicitationUrl: item.elicitationUrl }
+        : {}),
       ...(item?.type === "approval_request" && item.options !== undefined
         ? { options: item.options }
         : {}),
