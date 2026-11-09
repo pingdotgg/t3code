@@ -141,7 +141,7 @@ function ComboboxSearchInput({
       <div
         className={cn(
           "relative -translate-y-px border-b pb-1.5 transition-colors",
-          separator ? "border-border/70 focus-within:border-ring" : "border-transparent",
+          separator ? "surface-search-separator focus-within:border-ring" : "border-transparent",
         )}
       >
         <SearchIcon
