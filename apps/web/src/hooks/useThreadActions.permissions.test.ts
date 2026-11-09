@@ -359,21 +359,15 @@ describe("thread action permissions", () => {
     expect(state.requests).toEqual([
       expect.objectContaining({ action: "delete", environmentId: secondary }),
     ]);
+    expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
     expect(state.localEffects).toEqual([
+      "release-uploads:thread",
+      "clear-draft:thread",
+      "release-uploads:side-chat",
+      "clear-draft:side-chat",
       "refresh-archive",
-      "release-uploads",
-      "clear-draft",
       "clear-terminal-ui",
     ]);
-    expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
-    expect(state.localEffects).toEqual(
-      expect.arrayContaining([
-        "release-uploads:thread",
-        "clear-draft:thread",
-        "release-uploads:side-chat",
-        "clear-draft:side-chat",
-      ]),
-    );
     expect(state.localEffects).not.toContain("clear-draft:fork");
     expect(state.localEffects).not.toContain("clear-draft:other-side-chat");
 

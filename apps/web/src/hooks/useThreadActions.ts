@@ -477,8 +477,6 @@ export function useThreadActions() {
         }
         expireThreadUndos(target, [...LIST_PLACEMENT_UNDO_KINDS, "archive"]);
         refreshArchivedThreadsForEnvironment(target.environmentId);
-        releaseComposerDraftUploads(target);
-        clearComposerDraftForThread(target);
         clearTerminalUiState(target);
         clearDeletedThreadPanelState(target);
       }
