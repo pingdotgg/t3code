@@ -18,7 +18,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
+import { HttpClient, HttpClientError } from "effect/http";
 
 import {
   CLI_RELEASE_BASE_URL_ENV,
@@ -121,6 +121,29 @@ export function trackSwitchBlockReason(input: {
     ? `This database has changes t3@${input.targetVersion} does not support yet; it stays on this release.`
     : null;
 }
+
+/** Names the failed install step and, for a download, the host and its answer, never the URL. */
+const prepareFailureReason = (targetVersion: string, error: PinnedRuntimeInstallError) => {
+  const failed = `Could not prepare t3@${targetVersion} while ${error.step}`;
+  const cause = error.cause;
+  if (!HttpClientError.isHttpClientError(cause)) {
+    return error.step.endsWith("(timed out)") ? `${failed}. Try again.` : `${failed}.`;
+  }
+  const host = URL.parse(cause.request.url)?.host ?? "the release host";
+  switch (cause.reason._tag) {
+    case "StatusCodeError": {
+      const status = cause.reason.response.status;
+      const retryable = status >= 500 || status === 408 || status === 429;
+      return `${failed}: ${host} answered HTTP ${status}.${retryable ? " Try again." : ""}`;
+    }
+    // A refused connection, or one dropped while the body streams in.
+    case "TransportError":
+    case "DecodeError":
+      return `${failed}: the connection to ${host} failed. Try again.`;
+    default:
+      return `${failed} from ${host}.`;
+  }
+};
 
 export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const serverConfig = yield* ServerConfig.ServerConfig;
@@ -290,7 +313,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
                   `${mirror.organization}'s update mirror has no t3@${targetVersion} for this machine.`,
                   error,
                 )
-              : failWith(`Could not prepare t3@${targetVersion}.`, error),
+              : failWith(prepareFailureReason(targetVersion, error), error),
         ),
       );
 
