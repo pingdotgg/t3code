@@ -53,11 +53,26 @@ it.layer(NodeServices.layer)("writeFileStringAtomically", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-atomic-write-" });
-      const destination = path.join(root, "dotfiles", fileName);
+      let destination = path.join(root, "dotfiles", fileName);
       const link = path.join(root, "home", "settings.json");
       yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
       yield* fs.makeDirectory(path.dirname(link), { recursive: true });
-      yield* fs.writeFileString(destination, "before");
+      // Temporary mounts can have a smaller filename limit than the requested ASCII name.
+      for (let length = fileName.length; length > 0; length--) {
+        destination = path.join(root, "dotfiles", fileName.slice(0, length));
+        const created = yield* fs.writeFileString(destination, "before").pipe(
+          Effect.as(true),
+          Effect.catchIf(
+            (error) =>
+              length > 1 &&
+              error.cause instanceof Error &&
+              "code" in error.cause &&
+              error.cause.code === "ENAMETOOLONG",
+            () => Effect.succeed(false),
+          ),
+        );
+        if (created) break;
+      }
       yield* fs.symlink(destination, link);
 
       yield* writeFileStringAtomically({ filePath: link, contents: "after" });
