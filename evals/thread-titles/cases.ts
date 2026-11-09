@@ -108,7 +108,7 @@ export const threadTitleEvaluationCases = [
   },
   {
     id: "project-name",
-    source: "Titles repeating the project name shown beside them in the sidebar",
+    source: "https://github.com/pingdotgg/t3code/pull/33418",
     request: "Make hyperdrive init create a default config instead of crashing.",
     projectTitle: "Hyperdrive",
     previousTitle: "Hyperdrive Init Missing Config Crash",
