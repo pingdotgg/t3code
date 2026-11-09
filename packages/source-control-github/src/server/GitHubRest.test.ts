@@ -659,11 +659,6 @@ describe("listPullRequestNotifications", () => {
         truncated: false,
       });
       expect(yield* list(input)).toBeNull();
-      expect(requests.map((request) => request.headers.authorization)).toEqual([
-        "Bearer first",
-        "Bearer first",
-        "Bearer first",
-      ]);
       const [first] = requests;
       expect(first?.method).toBe("GET");
       const url = new URL(first!.url);

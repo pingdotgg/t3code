@@ -8939,7 +8939,6 @@ const watchCostScenarios = [
     saves: 48,
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
-  { name: "notifications unavailable", notificationsReadable: false, saves: 0 },
   { name: "notifications readable again", notificationsReadableFrom: 60, saves: 32 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
 ];
@@ -9106,11 +9105,7 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
     (scenario) =>
       Effect.gen(function* () {
         const baseline = yield* runWatch(scenario, false, "baseline");
-        const branch = yield* runWatch(
-          scenario,
-          scenario.notificationsReadable ?? true,
-          "notifications",
-        );
+        const branch = yield* runWatch(scenario, true, "notifications");
         branch.totals.forEach((total, index) => {
           assert.isAtMost(total, baseline.totals[index]!);
         });

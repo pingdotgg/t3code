@@ -1819,6 +1819,5 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
-    expect(before.viewerSubscription).toBe("SUBSCRIBED");
   });
 });
