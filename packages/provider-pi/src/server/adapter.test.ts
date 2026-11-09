@@ -1,3 +1,4 @@
+import * as Path from "effect/Path";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
@@ -2655,6 +2656,7 @@ describe("PiAdapterV2", () => {
         const native = yield* makeFakePi;
         const fileSystem = yield* FileSystem.FileSystem;
         const dir = yield* fileSystem.makeTempDirectoryScoped();
+        const path = yield* Path.Path;
         const forkFile = `${dir}/forked.jsonl`;
         const previousFile = `${dir}/previous.jsonl`;
         const sourceFile = `${dir}/source.jsonl`;
@@ -2681,7 +2683,7 @@ describe("PiAdapterV2", () => {
               spawnedText = yield* fileSystem.readFileString(spawnedSource);
               yield* fileSystem.writeFileString(
                 forkFile,
-                `${encodeJsonLine({ type: "session", id: "fork", parentSession: spawnedSource })}\n${spawnedText.slice(spawnedText.indexOf("\n") + 1)}`,
+                `${encodeJsonLine({ type: "session", id: "fork", parentSession: path.resolve(spawnedSource) })}\n${spawnedText.slice(spawnedText.indexOf("\n") + 1)}`,
               );
               native.queueState({ sessionFile: forkFile });
               native.queueState({ sessionFile: forkFile });

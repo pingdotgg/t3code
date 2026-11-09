@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeUtil from "node:util";
+import * as Path from "effect/Path";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { readToolOutputImage } from "@t3tools/shared/toolOutput";
@@ -428,6 +429,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const agentScope = yield* AgentScope;
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
@@ -3364,7 +3366,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 let nativeSourceFile = forkSourceFile;
                 if ("text" in forkSource) {
                   const directory = yield* fileSystem.makeTempDirectoryScoped();
-                  nativeSourceFile = `${directory}/source.jsonl`;
+                  nativeSourceFile = path.resolve(directory, "source.jsonl");
                   yield* fileSystem.writeFileString(nativeSourceFile, forkSource.text);
                 }
                 const forkResult = yield* Effect.scoped(
@@ -3435,7 +3437,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   const text = yield* fileSystem.readFileString(forkResult.initialFile);
                   const end = text.indexOf("\n");
                   const header = Option.getOrUndefined(decodePiSessionFileLine(text.slice(0, end)));
-                  if (!Predicate.isObject(header) || header.parentSession !== nativeSourceFile)
+                  if (
+                    !Predicate.isObject(header) ||
+                    header.parentSession !== path.resolve(nativeSourceFile)
+                  )
                     return yield* protocolError("Pi fork lost its source session provenance");
                   const updatedHeader = yield* encodePiSessionFileLine({
                     ...header,
@@ -3843,6 +3848,7 @@ function piUiResponse(
 }
 
 export type PiAdapterV2DriverEnv =
+  | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
