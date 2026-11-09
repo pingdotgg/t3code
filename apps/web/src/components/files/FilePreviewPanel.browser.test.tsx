@@ -118,7 +118,7 @@ function markdownPreview(truncated: boolean) {
   return filePreview("tasks.md");
 }
 
-function filePreview(relativePath: string, target = threadRef) {
+function filePreview(relativePath: string, target = threadRef, revealLine: number | null = null) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
@@ -130,8 +130,8 @@ function filePreview(relativePath: string, target = threadRef) {
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
-      revealLine={null}
-      revealRequestId={0}
+      revealLine={revealLine}
+      revealRequestId={revealLine === null ? 0 : 1}
       onOpenFile={vi.fn()}
       onNavigateFolder={vi.fn()}
       folderTrail={undefined}
@@ -327,5 +327,36 @@ describe("file view comments", () => {
     const otherDraft = useComposerDraftStore.getState().getComposerDraft(otherThreadRef);
     expect(otherDraft?.reviewComments ?? []).toEqual([]);
     expect(screen.getByText("Note from thread A").query()).toBeNull();
+  });
+
+  it("keeps a linked line revealed when the thread changes under the file view", async () => {
+    using _settings = setup();
+    const contents = Array.from(
+      { length: 400 },
+      (_, index) => `export const line${index + 1} = ${index + 1};`,
+    ).join("\n");
+    state.file = {
+      relativePath: "long.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
+
+    // Tailwind is not loaded in browser tests; give the scroller a height so it can scroll.
+    const style = document.head.appendChild(document.createElement("style"));
+    style.textContent = ".file-preview-virtualizer { height: 300px; overflow: auto; }";
+    using _style = { [Symbol.dispose]: () => style.remove() };
+
+    await using screen = await render(filePreview("long.ts", threadRef, 200));
+    const scrollTop = () =>
+      screen.container.querySelector<HTMLElement>(".file-preview-virtualizer")?.scrollTop ?? 0;
+    await vi.waitFor(() => expect(scrollTop(), "revealed on mount").toBeGreaterThan(0));
+
+    await screen.rerender(filePreview("long.ts", otherThreadRef, 200));
+
+    await vi.waitFor(() =>
+      expect(scrollTop(), "revealed after the thread change").toBeGreaterThan(0),
+    );
   });
 });

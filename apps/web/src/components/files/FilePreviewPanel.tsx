@@ -430,6 +430,7 @@ interface FileRevealState {
   cancelGuard: (() => void) | null;
   handledRequestId: number | null;
   latestRequestId: number | null;
+  scrollContainer: HTMLElement | null;
 }
 
 function useFileLineReveal(
@@ -448,6 +449,7 @@ function useFileLineReveal(
       cancelGuard: null,
       handledRequestId: null,
       latestRequestId: null,
+      scrollContainer: null,
     };
     if (!existingState) revealStatesByPath.set(relativePath, state);
 
@@ -484,6 +486,11 @@ function useFileLineReveal(
 
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
     if (!scrollContainer) return;
+    // A remounted surface starts at the top, so reveal the current request again.
+    if (state.scrollContainer !== scrollContainer) {
+      state.scrollContainer = scrollContainer;
+      state.handledRequestId = null;
+    }
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
     )}px`;
