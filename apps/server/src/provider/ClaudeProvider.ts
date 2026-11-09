@@ -520,7 +520,10 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
-  resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  resolveResetCredits?: (
+    version: string,
+    overageIncludedName: string | undefined,
+  ) => Effect.Effect<ServerProviderResetCredits | undefined>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -700,8 +703,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       authMethod: capabilities.tokenSource,
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+  const usage = !capabilities.usage
+    ? undefined
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
@@ -710,13 +713,15 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       : claudeUsageResponseToLimits({
           response: capabilities.usage,
           checkedAt: usageCheckedAt,
-        }).limits;
+        });
+  const usageLimits =
+    usage?.limits ?? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" });
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&
     !usageLimits.unavailable &&
     parsedVersion
-      ? yield* resolveResetCredits(parsedVersion)
+      ? yield* resolveResetCredits(parsedVersion, usage?.names.overageIncluded)
       : undefined;
   return buildServerProvider({
     presentation: CLAUDE_PRESENTATION,

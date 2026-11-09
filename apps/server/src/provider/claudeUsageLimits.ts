@@ -51,6 +51,17 @@ function scopedWindowId(displayName: string): string {
   return `seven_day_${displayName.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
 }
 
+/** Usage window ids by Claude bucket type, for the buckets this account shows a window for. */
+export function claudeBucketWindowIds(
+  overageIncludedName: string | undefined,
+): ReadonlyMap<string, string> {
+  const ids = new Map(Object.keys(WINDOWS).map((type) => [type, type]));
+  if (overageIncludedName) {
+    ids.set(OVERAGE_INCLUDED_EVENT_TYPE, scopedWindowId(overageIncludedName));
+  }
+  return ids;
+}
+
 function scopedWindow(
   displayName: string,
   usedPercent: number,
@@ -219,7 +230,7 @@ export function claudeUsageResponseToLimits(input: {
 export const recordClaudeUsageResponse = (
   namesRef: Ref.Ref<ClaudeScopedLimitNames>,
   input: Parameters<typeof claudeUsageResponseToLimits>[0],
-): Effect.Effect<ServerProviderUsageLimits> => {
-  const { limits, names } = claudeUsageResponseToLimits(input);
-  return Ref.set(namesRef, names).pipe(Effect.as(limits));
+): Effect.Effect<ReturnType<typeof claudeUsageResponseToLimits>> => {
+  const usage = claudeUsageResponseToLimits(input);
+  return Ref.set(namesRef, usage.names).pipe(Effect.as(usage));
 };

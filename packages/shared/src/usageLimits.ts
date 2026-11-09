@@ -11,6 +11,7 @@ import {
   isProviderAvailable,
   PROVIDER_DISPLAY_NAMES,
   type ServerProvider,
+  type ServerProviderResetCredits,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
@@ -622,6 +623,34 @@ export function limitsNotice(limits: ServerProviderUsageLimits): string | null {
     return limits.unavailable.message ?? "Could not read limits.";
   }
   return limits.windows.length === 0 ? "No limits reported." : null;
+}
+
+/**
+ * The reset credits that clear one window, and the credit a redeem from that window
+ * claims. A grant without `clearsWindowIds` clears every window.
+ */
+export function windowResetCredits(
+  limits: ServerProviderUsageLimits,
+  windowId: string,
+): (ServerProviderResetCredits & { readonly clears?: string }) | undefined {
+  const credits = limits.resetCredits;
+  if (!credits?.grants) return credits;
+  const grants = credits.grants.filter(
+    (grant) => grant && (!grant.clearsWindowIds || grant.clearsWindowIds.includes(windowId)),
+  );
+  const next = grants.find((grant) => grant.id === credits.nextCreditId) ?? grants[0];
+  const windowLabels = new Map(limits.windows.map((window) => [window?.id, window?.label]));
+  const labels = (next?.clearsWindowIds ?? []).flatMap((id) => windowLabels.get(id) ?? []);
+  return {
+    availableCount: grants.reduce((sum, grant) => sum + grant.count, 0),
+    ...(next?.expiresAt ? { nextExpiresAt: next.expiresAt } : {}),
+    ...(next ? { nextCreditId: next.id } : {}),
+    ...(labels.length > 0
+      ? {
+          clears: `Clears ${labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ` : ""}${labels.at(-1)}`,
+        }
+      : {}),
+  };
 }
 
 export function remainingPercent(window: ServerProviderUsageWindow): number {

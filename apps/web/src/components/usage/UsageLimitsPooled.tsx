@@ -13,6 +13,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  windowResetCredits,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -156,8 +157,8 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const windowCredits = windowResetCredits(account.limits, window.id);
+  const credits = redeem && windowCredits?.availableCount ? windowCredits : null;
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -199,7 +200,10 @@ function SegmentPopover({
       {credits && redeem ? (
         <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
           <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
+            <span className="tabular-nums">
+              {resetCreditsSummary(credits, now, true)}
+              {credits.clears ? ` · ${credits.clears}` : ""}
+            </span>
             <Button
               size="xs"
               variant="outline"
@@ -303,7 +307,14 @@ function RedeemableSegment({
 }: Omit<Parameters<typeof SegmentTriggers>[0], "redeem"> & {
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
-  const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const creditId = windowResetCredits(props.account.limits, props.window.id)?.nextCreditId;
+  // Pin the redeem to this window's credit only when it differs from the account's next one.
+  const redeem = useResetCredit(
+    redeemAt.environmentId,
+    creditId && creditId !== props.account.limits.resetCredits?.nextCreditId
+      ? { ...redeemAt.input, creditId }
+      : redeemAt.input,
+  );
   return (
     <>
       <SegmentTriggers redeem={redeem} {...props} />
@@ -347,7 +358,7 @@ function SegmentTriggers({
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const credits = windowResetCredits(account.limits, window.id)?.availableCount ?? 0;
   return (
     <>
       <PopoverTrigger
@@ -450,7 +461,7 @@ function LegendRow({
   const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const credits = windowResetCredits(account.limits, window.id)?.availableCount ?? 0;
   return (
     <PopoverTrigger
       handle={popover}

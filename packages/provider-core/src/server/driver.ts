@@ -45,10 +45,10 @@ export interface ProviderInstance {
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;
   readonly invalidateCaches?: Effect.Effect<void>;
-  readonly consumeResetCredit?: () => Effect.Effect<
-    ProviderConsumeResetCreditOutcome,
-    ProviderDriverError
-  >;
+  /** Claims `creditId` when given (instances without per-grant credits ignore it), else the next credit. */
+  readonly consumeResetCredit?: (
+    creditId?: string,
+  ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

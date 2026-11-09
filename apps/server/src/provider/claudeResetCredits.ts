@@ -11,6 +11,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { claudeBucketWindowIds } from "./claudeUsageLimits.ts";
+
 const API_BASE = "https://api.anthropic.com";
 const PROGRAM = "cedar_ember";
 const GRANT_ID = /^[a-z0-9_-]{1,40}$/;
@@ -31,6 +33,7 @@ const Grant = Schema.Struct({
   ends_at: Schema.optional(Schema.NullOr(Schema.String)),
   paused: Schema.optional(Schema.Boolean),
   usable_now: Schema.optional(Schema.Boolean),
+  clears: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
 });
 const decodeGrant = Schema.decodeUnknownOption(Grant);
 const CedarEmber = Schema.Struct({
@@ -95,9 +98,14 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
+/**
+ * `clears` names Claude bucket types. Types this account shows no window for are
+ * dropped, so a grant is never offered on a window it might not clear.
+ */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
+  overageIncludedName?: string,
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
@@ -110,13 +118,38 @@ export function claudeResetCreditsToContract(
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
   const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
-  const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
+  const expiresAt = (grant: (typeof live)[number] | undefined) => {
+    const endsAt = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
+    return Option.isSome(endsAt) ? DateTime.formatIso(endsAt.value) : undefined;
+  };
+  const nextExpiresAt = expiresAt(next);
+  const windowIds = claudeBucketWindowIds(overageIncludedName);
+  // Unscoped grants clear every window, which the account-level fields already say.
+  const grants =
+    next && live.some((grant) => grant.clears)
+      ? live
+          .filter((grant) => grant.resets_left > 0)
+          .map((grant) => {
+            const grantExpiresAt = expiresAt(grant);
+            return {
+              id: grant.id,
+              count: grant.resets_left,
+              ...(grantExpiresAt ? { expiresAt: grantExpiresAt } : {}),
+              ...(grant.clears
+                ? {
+                    clearsWindowIds: [
+                      ...new Set(grant.clears.flatMap((type) => windowIds.get(type) ?? [])),
+                    ],
+                  }
+                : {}),
+            };
+          })
+      : undefined;
   return {
     availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
-    ...(Option.isSome(nextExpiresAt)
-      ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
-      : {}),
+    ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
+    ...(grants ? { grants } : {}),
   };
 }
 
@@ -151,7 +184,7 @@ const withClaudeHeaders = (token: string, version: string) =>
   });
 
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
+  function* (configDir: string, version: string, overageIncludedName?: string) {
     const token = yield* readAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
@@ -166,6 +199,7 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
     return claudeResetCreditsToContract(
       body.cedar_ember,
       DateTime.toEpochMillis(yield* DateTime.now),
+      overageIncludedName,
     );
   },
   Effect.timeout("10 seconds"),

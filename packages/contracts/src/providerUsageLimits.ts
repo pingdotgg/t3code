@@ -20,11 +20,21 @@ export const ServerProviderUsageWindow = Schema.Struct({
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
+export const ServerProviderResetCreditGrant = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  expiresAt: Schema.optional(IsoDateTime),
+  /** Usage window ids the grant clears; absent means every window. */
+  clearsWindowIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+});
+export type ServerProviderResetCreditGrant = typeof ServerProviderResetCreditGrant.Type;
+
 export const ServerProviderResetCredits = Schema.Struct({
   availableCount: NonNegativeInt,
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  grants: Schema.optional(ForwardCompatibleArray(ServerProviderResetCreditGrant)),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 
@@ -87,7 +97,10 @@ export type UsageLimitSourceConsumeResetCreditInput =
   typeof UsageLimitSourceConsumeResetCreditInput.Type;
 
 export const ProviderConsumeResetCreditInput = Schema.Union([
-  Schema.Struct({ instanceId: ProviderInstanceId }),
+  Schema.Struct({
+    instanceId: ProviderInstanceId,
+    creditId: Schema.optional(TrimmedNonEmptyString),
+  }),
   UsageLimitSourceConsumeResetCreditInput,
 ]);
 export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditInput.Type;

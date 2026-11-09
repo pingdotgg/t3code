@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  windowResetCredits,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -160,6 +161,53 @@ describe("pace", () => {
     expect(paceOf(window, now)).toBe("under");
     expect(paceOf({ ...window, usedPercent: 62 }, now)).toBe("on");
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
+  });
+});
+
+describe("windowResetCredits", () => {
+  it("redeems a window only with a grant that clears it", () => {
+    const limits = {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [
+        window,
+        { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent: 93 },
+        { id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable", usedPercent: 3 },
+      ],
+      resetCredits: {
+        availableCount: 3,
+        nextCreditId: "fable",
+        nextExpiresAt: "2026-09-10T00:00:00.000Z",
+        grants: [
+          {
+            id: "fable",
+            count: 1,
+            expiresAt: "2026-09-10T00:00:00.000Z",
+            clearsWindowIds: ["five_hour", "seven_day_fable"],
+          },
+          { id: "any", count: 2 },
+        ],
+      },
+    } as const;
+
+    expect(windowResetCredits(limits, "five_hour")).toEqual({
+      availableCount: 3,
+      nextCreditId: "fable",
+      nextExpiresAt: "2026-09-10T00:00:00.000Z",
+      clears: "Clears Session and Weekly · Fable",
+    });
+    expect(windowResetCredits(limits, "seven_day")).toEqual({
+      availableCount: 2,
+      nextCreditId: "any",
+    });
+    expect(
+      windowResetCredits(
+        {
+          ...limits,
+          resetCredits: { ...limits.resetCredits, grants: [limits.resetCredits.grants[0]] },
+        },
+        "seven_day",
+      ),
+    ).toEqual({ availableCount: 0 });
   });
 });
 
