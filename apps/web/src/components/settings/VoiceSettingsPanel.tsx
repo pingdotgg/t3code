@@ -44,6 +44,7 @@ import {
   chooseTranscriptCleanup,
   useCleanupGrant,
 } from "../../speech/voiceConsent";
+import { playRecordingCue } from "../../speech/recordingCue";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { runtime } from "../../lib/runtime";
 import {
@@ -1131,6 +1132,8 @@ export function VoiceSettingsPanel() {
       searchTargetFallbacks={{
         "speech-models": prepared ? undefined : "voice-transcription-destination",
         "speech-hardware": prepared && model ? undefined : "voice-transcription-destination",
+        "speech-model-folders":
+          model?.modelDirectories !== undefined ? undefined : "voice-transcription-destination",
         "transcription-test": !prepared
           ? "voice-transcription-destination"
           : !model || model.state === "missing-model"
@@ -1210,6 +1213,21 @@ export function VoiceSettingsPanel() {
                 ))}
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("speech-recording-cue")}
+          title="Sound cue"
+          description="Play a short click when recording starts."
+          control={
+            <Switch
+              aria-label="Sound cue"
+              checked={settings.speechRecordingCue}
+              onCheckedChange={(checked) => {
+                if (checked) playRecordingCue();
+                void updateClientSettings({ speechRecordingCue: checked });
+              }}
+            />
           }
         />
       </SettingsSection>
