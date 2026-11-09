@@ -125,14 +125,27 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           icon={acpRegistryIconUrl}
         />
       ) : isCustomEndpoint ? (
+        // The tile is a size container: below ~18px it keeps one letter and drops the mark.
         <span
           className={cn(
-            "flex size-5 shrink-0 items-center justify-center rounded-md border bg-card text-4xs font-semibold leading-none text-foreground",
+            "@container relative flex size-5 shrink-0 items-center justify-center rounded-md border bg-card text-4xs font-semibold leading-none text-foreground",
             iconClassName,
           )}
           aria-hidden
         >
-          {providerInstanceInitials(props.displayName)}
+          {Array.from(providerInstanceInitials(props.displayName))[0]}
+          <span className="@max-[1.1rem]:hidden">
+            {Array.from(providerInstanceInitials(props.displayName)).slice(1).join("")}
+          </span>
+          <span
+            className={cn(
+              "pointer-events-none absolute right-[-0.3125rem] bottom-[-0.3125rem] z-10 flex size-3 items-center justify-center rounded-full border bg-card text-foreground shadow-sm @max-[1.1rem]:hidden",
+              props.badgeClassName,
+            )}
+            style={{ borderColor: indicatorBackground }}
+          >
+            <OpenAI className="size-2" />
+          </span>
         </span>
       ) : packageIcon ? (
         <ProviderPackageIcon
@@ -147,18 +160,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? (
-        <span
-          className={cn(
-            "pointer-events-none absolute right-[-0.1875rem] bottom-[-0.1875rem] z-10 flex size-3 items-center justify-center rounded-full border bg-card text-foreground shadow-sm",
-            props.badgeClassName,
-          )}
-          style={{ borderColor: indicatorBackground }}
-          aria-hidden
-        >
-          <OpenAI className="size-2" />
-        </span>
-      ) : props.showBadge ? (
+      {isCustomEndpoint ? null : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",

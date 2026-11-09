@@ -4,10 +4,8 @@ import {
   type ProviderInstanceId,
   type SecretReference,
   type ServerProvider,
-  type ServerSettingsPatch,
   TextGeneratorConfig,
   type TextGeneratorModel,
-  type UnifiedSettings,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { AsyncResult } from "effect/reactivity";
@@ -21,14 +19,16 @@ import {
   checkTextGeneratorConfig,
   nextTextGeneratorId,
   refreshTextGeneratorModels,
-  suggestTextGeneratorModel,
+  useTextGenerationTargets,
   useTextGeneratorModels,
   TEXT_GENERATOR_PRESETS,
   type TextGeneratorPreset,
   textGeneratorBrand,
   textGeneratorDisplayName,
 } from "../../textGenerators";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -50,7 +50,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -59,7 +58,7 @@ import { Switch } from "../ui/switch";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { searchableSetting } from "./settingsSearch";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SETTINGS_PICKER_TRIGGER_CLASSNAME, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const decodeTextGenerator = Schema.decodeUnknownOption(TextGeneratorConfig);
 
@@ -168,12 +167,9 @@ export function TextGeneratorsSettings({
         <TextGeneratorWizard
           environmentId={environmentId}
           editing={editing}
-          settings={settings}
+          providers={providers}
           onClose={() => setEditing(null)}
-          onSave={(patch) => {
-            updateSettings(patch);
-            setEditing(null);
-          }}
+          onSave={(id, config) => updateSettings({ textGenerators: { [id]: config } })}
           newId={(preset) => nextTextGeneratorId(preset.id, settings, providers)}
         />
       ) : null}
@@ -218,47 +214,36 @@ export function TextGeneratorsSettings({
   );
 }
 
-const STEPS = ["Connect", "Choose a model", "Use it for"] as const;
+const STEPS = ["Connect", "Use it"] as const;
 
-/** Text tasks a new generator can take over, in the order the settings pages show them. */
+/** Text tasks a generator can write, in the order the settings pages show them. */
 const TASKS = [
-  {
-    key: "textGenerationModelSelection",
-    label: "Thread titles and other generated text",
-    followsDefault: false,
-  },
+  { key: "textGenerationModelSelection", label: "Thread titles and other generated text" },
   {
     key: "sourceControlWriterModelSelection",
     label: "Commit messages, pull requests, and branch names",
-    followsDefault: true,
   },
-  {
-    key: "speechPostProcessingModelSelection",
-    label: "Voice transcript cleanup",
-    followsDefault: true,
-  },
+  { key: "speechPostProcessingModelSelection", label: "Voice transcript cleanup" },
 ] as const;
-type TaskKey = (typeof TASKS)[number]["key"];
-
-type TaskSettings = Pick<UnifiedSettings, TaskKey>;
 
 /**
- * Connect, check the key by listing models, pick one, then choose which tasks use it. The key goes
- * once to the environment's secret storage; settings keep only a redaction marker.
+ * Connect checks the settings by listing the service's models and saves the generator; Use it then
+ * shows each text task's model picker, so any of them can switch to it. The key goes once to the
+ * environment's secret storage; settings keep only a redaction marker.
  */
 function TextGeneratorWizard({
   environmentId,
   editing,
-  settings,
+  providers,
   onClose,
   onSave,
   newId,
 }: {
   readonly environmentId: EnvironmentId;
   readonly editing: Editing;
-  readonly settings: TaskSettings;
+  readonly providers: ReadonlyArray<ServerProvider>;
   readonly onClose: () => void;
-  readonly onSave: (patch: ServerSettingsPatch) => void;
+  readonly onSave: (id: ProviderInstanceId, config: TextGeneratorConfig) => void;
   readonly newId: (preset: TextGeneratorPreset) => ProviderInstanceId;
 }) {
   const existing = editing === "new" ? null : editing.config;
@@ -273,22 +258,10 @@ function TextGeneratorWizard({
   const [keyValid, setKeyValid] = useState(true);
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
-  const [models, setModels] = useState<ReadonlyArray<TextGeneratorModel>>([]);
-  const [model, setModel] = useState<string | null>(null);
-  const generatorId = editing === "new" ? newId(preset) : editing.id;
-  const uses = (key: TaskKey) => settings[key]?.instanceId === generatorId;
-  const [tasks, setTasks] = useState<Record<TaskKey, boolean>>(() =>
-    existing
-      ? {
-          textGenerationModelSelection: uses("textGenerationModelSelection"),
-          sourceControlWriterModelSelection: uses("sourceControlWriterModelSelection"),
-          speechPostProcessingModelSelection: uses("speechPostProcessingModelSelection"),
-        }
-      : {
-          textGenerationModelSelection: true,
-          sourceControlWriterModelSelection: false,
-          speechPostProcessingModelSelection: false,
-        },
+  const [modelCount, setModelCount] = useState(0);
+  // Fixed once saved, so editing the form again after Back updates the same generator.
+  const [savedId, setSavedId] = useState<ProviderInstanceId | null>(
+    editing === "new" ? null : editing.id,
   );
 
   // A saved literal key arrives redacted; sending the marker back keeps it.
@@ -308,36 +281,19 @@ function TextGeneratorWizard({
 
   const connect = async () => {
     if (!canConnect || checking) return;
+    const id = savedId ?? newId(preset);
     setChecking(true);
     setCheckError(null);
-    const result = await checkTextGeneratorConfig(environmentId, generatorId, config.value);
+    const result = await checkTextGeneratorConfig(environmentId, id, config.value);
     setChecking(false);
     if ("error" in result) {
       setCheckError(result.error);
       return;
     }
-    setModels(result.models);
-    const current = TASKS.map((task) => settings[task.key]).find(
-      (selection) => selection?.instanceId === generatorId,
-    )?.model;
-    setModel(
-      current && result.models.some((candidate) => candidate.id === current)
-        ? current
-        : (suggestTextGeneratorModel(result.models)?.id ?? null),
-    );
+    onSave(id, config.value);
+    setSavedId(id);
+    setModelCount(result.models.length);
     setStep(1);
-  };
-
-  const save = () => {
-    if (!Option.isSome(config) || model === null) return;
-    const selection = createModelSelection(generatorId, model);
-    const patch: Record<string, unknown> = { textGenerators: { [generatorId]: config.value } };
-    for (const task of TASKS) {
-      if (tasks[task.key]) patch[task.key] = selection;
-      // Turning a task off returns it to following the text generation model.
-      else if (task.followsDefault && uses(task.key)) patch[task.key] = null;
-    }
-    onSave(patch as ServerSettingsPatch);
   };
 
   return (
@@ -453,76 +409,102 @@ function TextGeneratorWizard({
                 </p>
               ) : null}
             </form>
-          ) : step === 1 ? (
-            <div className="grid gap-3">
-              <p className="text-sm text-muted-foreground">
-                {models.length === 0
-                  ? `${name} answered but listed no models.`
-                  : `${name} works. Pick the model to write with; ${models.length === 1 ? "it lists 1 model" : `it lists ${models.length} models`}.`}
-              </p>
-              <TextGeneratorModelList models={models} selected={model} onSelect={setModel} />
-            </div>
           ) : (
-            <div className="grid gap-3">
+            <div className="grid gap-4">
               <p className="text-sm text-muted-foreground">
-                Use {model} from {name} for:
+                {name} is connected and lists {modelCount} {modelCount === 1 ? "model" : "models"}.
+                Switch any of these to it, or keep what they use now.
               </p>
-              {TASKS.map((task) => {
-                const locked = !task.followsDefault && existing !== null && uses(task.key);
-                return (
-                  <label key={task.key} className="flex items-start gap-2.5 text-sm">
-                    <Checkbox
-                      checked={tasks[task.key]}
-                      disabled={locked}
-                      onCheckedChange={(checked) =>
-                        setTasks((current) => ({ ...current, [task.key]: checked === true }))
-                      }
-                    />
-                    <span className="grid gap-0.5">
-                      <span>{task.label}</span>
-                      {locked ? (
-                        <span className="text-xs text-muted-foreground">
-                          To stop, pick another model in Settings → Threads.
-                        </span>
-                      ) : task.followsDefault && !tasks[task.key] && settings[task.key] === null ? (
-                        <span className="text-xs text-muted-foreground">
-                          Already follows the text generation model.
-                        </span>
-                      ) : null}
-                    </span>
-                  </label>
-                );
-              })}
+              {TASKS.map((task) => (
+                <TextGenerationTaskPicker
+                  key={task.key}
+                  environmentId={environmentId}
+                  providers={providers}
+                  settingKey={task.key}
+                  label={task.label}
+                />
+              ))}
             </div>
           )}
         </WizardPanel>
         <WizardFooter
           leading={
             step > 0 ? (
-              <Button variant="ghost" onClick={() => setStep(step - 1)}>
+              <Button variant="ghost" onClick={() => setStep(0)}>
                 Back
               </Button>
             ) : null
           }
         >
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
           {step === 0 ? (
-            <Button onClick={() => void connect()} disabled={!canConnect || checking}>
-              {checking ? <Spinner /> : null}
-              {checking ? "Checking" : "Continue"}
-            </Button>
-          ) : step === 1 ? (
-            <Button onClick={() => setStep(2)} disabled={model === null}>
-              Continue
-            </Button>
+            <>
+              <Button variant="outline" onClick={onClose}>
+                Cancel
+              </Button>
+              <Button onClick={() => void connect()} disabled={!canConnect || checking}>
+                {checking ? <Spinner /> : null}
+                {checking ? "Connecting" : existing ? "Save and continue" : "Connect"}
+              </Button>
+            </>
           ) : (
-            <Button onClick={save}>{existing ? "Save" : "Add"}</Button>
+            <Button onClick={onClose}>Done</Button>
           )}
         </WizardFooter>
       </WizardPopup>
     </Dialog>
+  );
+}
+
+/** One text task's model, saved as it changes, with every text generation target to pick from. */
+function TextGenerationTaskPicker({
+  environmentId,
+  providers,
+  settingKey,
+  label,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly providers: ReadonlyArray<ServerProvider>;
+  readonly settingKey: (typeof TASKS)[number]["key"];
+  readonly label: string;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const own = settings[settingKey];
+  // Source control and voice follow the text generation model until they get their own.
+  const selection = own ?? settings.textGenerationModelSelection;
+  const targets = useTextGenerationTargets({
+    environmentId,
+    settings,
+    providers: providers.filter((provider) => provider.supportsTextGeneration !== false),
+    projectId: null,
+    selections: [selection],
+  });
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="grid min-w-0 gap-0.5">
+        <span className="text-sm">{label}</span>
+        {own === null ? (
+          <span className="text-xs text-muted-foreground">Follows the text generation model</span>
+        ) : null}
+      </div>
+      <ProviderModelPicker
+        environmentId={environmentId}
+        activeInstanceId={selection.instanceId}
+        model={selection.model}
+        lockedProvider={null}
+        instanceEntries={targets.entries}
+        modelOptionsByInstance={getCustomModelOptionsByInstance(
+          settings,
+          targets.providers,
+          selection.instanceId,
+          selection.model,
+        )}
+        triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+        onInstanceModelChange={(instanceId, model) =>
+          updateSettings({ [settingKey]: createModelSelection(instanceId, model) })
+        }
+      />
+    </div>
   );
 }
 

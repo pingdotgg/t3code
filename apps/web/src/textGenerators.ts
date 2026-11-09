@@ -205,13 +205,6 @@ export function useTextGeneratorModels(
   );
 }
 
-/** A fast, cheap model to suggest for short text, else the first one. */
-export function suggestTextGeneratorModel(
-  models: ReadonlyArray<TextGeneratorModel>,
-): TextGeneratorModel | undefined {
-  return models.find((model) => /haiku|mini|flash|nano/i.test(model.id)) ?? models[0];
-}
-
 function toProviderModel(model: TextGeneratorModel): ServerProviderModel {
   return { slug: model.id, name: model.name, isCustom: false, capabilities: null };
 }

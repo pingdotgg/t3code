@@ -12,6 +12,8 @@ import {
 export interface TextGeneratorConnection {
   readonly baseUrl: string;
   readonly apiKey: string;
+  /** Names the generator in errors, such as its label or host. */
+  readonly label: string;
 }
 
 /** Why a model API call failed, worded for the person who configured it. */
@@ -22,7 +24,6 @@ export class TextGeneratorRequestError extends Schema.TaggedError<TextGeneratorR
 
 export interface TextGeneratorDriver {
   readonly kind: TextGeneratorKind;
-  readonly label: string;
   readonly generate: (
     connection: TextGeneratorConnection,
     model: string,
@@ -136,9 +137,8 @@ const OpenAIModelList = Schema.Struct({
 
 const openAICompatible: TextGeneratorDriver = {
   kind: "openaiCompatible",
-  label: "This model API",
   generate: (connection, model, prompt) => {
-    const label = openAICompatible.label;
+    const { label } = connection;
     let request = HttpClientRequest.post(endpoint(connection, "/chat/completions")).pipe(
       HttpClientRequest.bodyJsonUnsafe({ model, messages: [{ role: "user", content: prompt }] }),
     );
@@ -160,7 +160,7 @@ const openAICompatible: TextGeneratorDriver = {
     );
   },
   listModels: (connection) => {
-    const label = openAICompatible.label;
+    const { label } = connection;
     let request = HttpClientRequest.get(endpoint(connection, "/models"));
     if (connection.apiKey) request = HttpClientRequest.bearerToken(request, connection.apiKey);
     return sendJson(label, request, OpenAIModelList).pipe(
@@ -193,9 +193,8 @@ const anthropicRequest = (request: HttpClientRequest.HttpClientRequest, apiKey: 
 
 const anthropic: TextGeneratorDriver = {
   kind: "anthropic",
-  label: "The Anthropic API",
   generate: (connection, model, prompt) => {
-    const label = anthropic.label;
+    const { label } = connection;
     const request = anthropicRequest(
       HttpClientRequest.post(endpoint(connection, "/messages")).pipe(
         HttpClientRequest.bodyJsonUnsafe({
@@ -226,7 +225,7 @@ const anthropic: TextGeneratorDriver = {
   },
   listModels: Effect.fn("TextGenerator.anthropic.listModels")(
     function* (connection) {
-      const label = anthropic.label;
+      const { label } = connection;
       const models = new Map<string, TextGeneratorModel>();
       let after: string | undefined;
       for (let page = 0; page < MAX_MODEL_PAGES; page++) {
@@ -248,7 +247,7 @@ const anthropic: TextGeneratorDriver = {
       }
       return sortModels(models.values());
     },
-    (effect) => effect.pipe(withTimeout(anthropic.label, LIST_MODELS_TIMEOUT)),
+    (effect, connection) => effect.pipe(withTimeout(connection.label, LIST_MODELS_TIMEOUT)),
   ),
 };
 

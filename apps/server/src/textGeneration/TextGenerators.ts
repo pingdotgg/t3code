@@ -46,6 +46,16 @@ interface CachedModels {
   readonly models: ReadonlyArray<TextGeneratorModel>;
 }
 
+/** The generator's name for messages: its label, else the host it reaches. */
+const generatorLabel = (config: TextGeneratorConfig) => {
+  if (config.label) return config.label;
+  try {
+    return new URL(config.baseUrl).host;
+  } catch {
+    return "The model API";
+  }
+};
+
 /** @public */
 export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
@@ -64,17 +74,18 @@ export const make = Effect.gen(function* () {
   });
 
   const connect = Effect.fn("TextGenerators.connect")(function* (config: TextGeneratorConfig) {
+    const label = generatorLabel(config);
     const apiKey = yield* requireSettingsSecret(secrets, config.apiKey).pipe(
       Effect.mapError((cause) => new TextGeneratorRequestError({ detail: cause.message, cause })),
     );
-    return { baseUrl: config.baseUrl, apiKey } satisfies TextGeneratorConnection;
+    return { baseUrl: config.baseUrl, apiKey, label } satisfies TextGeneratorConnection;
   });
 
   const runnerFor =
     (config: TextGeneratorConfig): TextGenerationOperations.Runner =>
     (request) => {
       const driver = TEXT_GENERATOR_DRIVERS[config.kind];
-      const label = config.label ?? driver.label;
+      const label = generatorLabel(config);
       return connect(config).pipe(
         Effect.flatMap((connection) =>
           driver.generate(connection, request.modelSelection.model, request.prompt),
@@ -95,7 +106,7 @@ export const make = Effect.gen(function* () {
   const runner = Effect.fn("TextGenerators.runner")(function* (id: ProviderInstanceId) {
     const config = yield* readConfig(id).pipe(Effect.orElseSucceed(() => undefined));
     if (config === undefined) return undefined;
-    const label = config.label ?? TEXT_GENERATOR_DRIVERS[config.kind].label;
+    const label = generatorLabel(config);
     if (!config.enabled) {
       return ((request) =>
         Effect.fail(
