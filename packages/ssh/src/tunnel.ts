@@ -54,7 +54,7 @@ const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;
 const REMOTE_READY_TIMEOUT_MS = 60_000;
 const REMOTE_LAUNCH_TIMEOUT_MS = 90_000;
-// The launch command's own ssh connection to the same host gets this long.
+// Matches the node-script launch command's whole ssh run against the same host.
 const SSH_TUNNEL_CONNECT_TIMEOUT_MS = REMOTE_LAUNCH_TIMEOUT_MS;
 const SSH_TUNNEL_FORWARD_PROBE_INTERVAL_MS = 100;
 // Cold archive launches download and extract ~70 MB and may wait on an install lock.
