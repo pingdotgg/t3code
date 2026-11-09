@@ -56,7 +56,7 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
       ? `irm https://github.com/${T3_LEARN_REPOSITORY}/releases/latest/download/install.ps1 | iex`
       : `curl -fsSL https://github.com/${T3_LEARN_REPOSITORY}/releases/latest/download/install.sh | sh`;
     return yield* new CliInstallError({
-      reason: `Only the standalone ${T3_LEARN_COMMAND} can install itself. Use \`${script}\`, or Settings in the desktop app.`,
+      reason: `Only the standalone ${T3_LEARN_COMMAND} can install itself. Install the desktop app with \`${script}\`; it sets up \`${T3_LEARN_COMMAND}\` on first launch, or from Settings → About.`,
     });
   }
   const { executable, versionsDir, runtimeDir } = runtime.value;

@@ -1,5 +1,6 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
+import { T3_LEARN_COMMAND, T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -278,7 +279,7 @@ export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedRe
             .writeFileString(
               files.failure,
               error._tag === "DatabaseInUseError"
-                ? "Another program kept the database open. Close other T3 Code apps and t3 commands on this machine, then try again."
+                ? `Another program kept the database open. Close other ${T3_LEARN_PRODUCT_NAME} apps and ${T3_LEARN_COMMAND} commands on this machine, then try again.`
                 : error.message,
             )
             .pipe(
