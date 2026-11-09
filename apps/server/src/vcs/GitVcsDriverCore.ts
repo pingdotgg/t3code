@@ -2803,7 +2803,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             detail: "Cannot push because no git remote is configured for this repository.",
           });
         }
-        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+        const publishBranch = isLocalUpstream
+          ? branch
+          : yield* resolvePublishBranchName(cwd, branch);
         // Publishing retargets the upstream, so preserve its comparison base first.
         if ((yield* readBranchBase(cwd, branch)) === null) {
           yield* writeConfigValue({

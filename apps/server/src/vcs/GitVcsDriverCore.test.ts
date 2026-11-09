@@ -6727,6 +6727,37 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("publishes a local-tracking branch named like a remote ref under its full name", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", "main"]);
+        const mainSha = yield* git(cwd, ["rev-parse", "refs/heads/main"]);
+        yield* git(cwd, ["checkout", "--track", "-b", "origin/main", "refs/heads/main"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "-A"]);
+        yield* driver.commit(cwd, "Add feature", "");
+
+        const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+        assert.deepInclude(pushed, {
+          status: "pushed",
+          branch: "origin/main",
+          upstreamBranch: "origin/origin/main",
+        });
+        assert.equal(yield* git(remote, ["--git-dir=.", "rev-parse", "refs/heads/main"]), mainSha);
+        assert.equal(
+          yield* git(remote, ["--git-dir=.", "log", "-1", "--pretty=%s", "refs/heads/origin/main"]),
+          "Add feature",
+        );
+      }),
+    );
+
     it.effect("still pushes a git-mangled tracking alias to its upstream head", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
