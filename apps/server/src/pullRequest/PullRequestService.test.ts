@@ -2533,6 +2533,51 @@ it.effect("continues GitLab projects read together by each project's own GraphQL
   }),
 );
 
+it.effect("reads GitLab projects together as deep as one project's own first page", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const node = (iid: number) => ({
+      iid: String(iid),
+      title: `acme/p0!${iid}`,
+      webUrl: `https://gitlab.com/acme/p0/-/merge_requests/${iid}`,
+      state: "opened",
+      createdAt: "2026-07-01T00:00:00Z",
+      updatedAt: `2026-07-01T00:${String(iid).padStart(2, "0")}:00Z`,
+      sourceBranch: `b${iid}`,
+      targetBranch: "main",
+    });
+    const gitlab = yield* gitLabWithGlab(
+      ({ variables }) => ({
+        metadata: { enterprise: false },
+        projects: {
+          nodes: (variables.fullPaths as ReadonlyArray<string>).map((fullPath) => {
+            const iids =
+              fullPath === "acme/p0" ? Array.from({ length: 50 }, (_, index) => 50 - index) : [];
+            const sent = iids.slice(0, variables.first as number);
+            return {
+              fullPath,
+              mergeRequests: {
+                pageInfo: { hasNextPage: sent.length < iids.length, endCursor: "c" },
+                nodes: sent.map(node),
+              },
+            };
+          }),
+        },
+      }),
+      reads,
+    );
+    const service = yield* makeService({
+      projects: Array.from({ length: 10 }, (_, index) => gitLabProject(index, `acme/p${index}`)),
+      providers: [gitlab],
+    });
+
+    // The web client re-reads everything it has loaded this way after "Load more".
+    const result = yield* service.list({ state: "open", limit: 99 });
+
+    expect(result.entries).toHaveLength(50);
+  }),
+);
+
 it.effect(
   "keeps listing freshness tied to read start when filtered reads finish out of order",
   () =>

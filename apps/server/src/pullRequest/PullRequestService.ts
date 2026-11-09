@@ -1457,28 +1457,33 @@ export const make = Effect.gen(function* () {
     // Filters a host cannot apply thin out the slices it hands over, so a repository keeps
     // reading until it has a page's worth or runs out. The reads are bounded: a filter that
     // matches nothing would otherwise walk the repository's whole history in one request.
-    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> => {
-      const fill = (batch: RepositoryBatch, reads: number): Effect.Effect<RepositoryBatch> => {
-        const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
-        if (
-          input.filters === undefined ||
-          cursor === null ||
-          batch.entries.length >= limit ||
-          reads >= FILTERED_LIST_READS
-        ) {
-          return Effect.succeed(batch);
-        }
-        return readSlice(project, cursor).pipe(
-          Effect.flatMap((next) =>
-            // A slice that failed keeps the cursor before it, so the reader can try again.
-            next.errors.length > 0
-              ? Effect.succeed(batch)
-              : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
-          ),
-        );
-      };
-      return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
+    const fill = (
+      project: SupportedProject,
+      batch: RepositoryBatch,
+      reads: number,
+    ): Effect.Effect<RepositoryBatch> => {
+      const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
+      if (
+        input.filters === undefined ||
+        cursor === null ||
+        batch.entries.length >= limit ||
+        reads >= FILTERED_LIST_READS
+      ) {
+        return Effect.succeed(batch);
+      }
+      return readSlice(project, cursor).pipe(
+        Effect.flatMap((next) =>
+          // A slice that failed keeps the cursor before it, so the reader can try again.
+          next.errors.length > 0
+            ? Effect.succeed(batch)
+            : fill(project, { ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
+        ),
+      );
     };
+    const readRepository = (project: SupportedProject): Effect.Effect<RepositoryBatch> =>
+      readSlice(project, cursorOf(project)).pipe(
+        Effect.flatMap((batch) => fill(project, batch, 1)),
+      );
 
     const readTogether = (
       chunk: ReadonlyArray<SupportedProject>,
@@ -1556,7 +1561,6 @@ export const make = Effect.gen(function* () {
       );
     };
 
-    // A first page read together is not topped up by `fill`; its next page is.
     const readFirstPages = (
       chunk: ReadonlyArray<SupportedProject>,
     ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
@@ -1586,7 +1590,7 @@ export const make = Effect.gen(function* () {
               const page = pages.get(project.repository.trim().toLowerCase());
               return page === undefined
                 ? readRepository(project)
-                : Effect.succeed(pageBatch(project, undefined, page, observedAt));
+                : fill(project, pageBatch(project, undefined, page, observedAt), 1);
             },
             { concurrency: REPOSITORY_CONCURRENCY },
           );

@@ -102,11 +102,11 @@ const READ_CACHE_CAPACITY = 256;
 const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 /**
  * gitlab.com takes at most 50 paths per `projects` read and cuts a query off at about 20 s; 10
- * projects of 20 rows answered in about 6 s, 25 of 20 sometimes timed out.
+ * projects of 99 rows answered in 6-10 s, 25 of 20 sometimes timed out.
  */
 const PROJECTS_PER_READ = 10;
-const ROWS_PER_READ = 200;
-const MIN_ROWS_PER_PROJECT = 20;
+/** GitLab's largest page; a deeper first page is read per project, as `listChangeRequests` does. */
+const ROWS_PER_PROJECT = 100;
 const PROJECT_READ_CONCURRENCY = 4;
 
 /** The checkout whose `glab` reads a host's version; any checkout of a project on it answers. */
@@ -324,6 +324,7 @@ export const make = Effect.gen(function* () {
     listChangeRequestsInRepositories: Effect.fn(
       "GitLabPullRequestProvider.listChangeRequestsInRepositories",
     )(function* (input) {
+      if (input.limit > ROWS_PER_PROJECT) return [];
       const failed = fail("listChangeRequestsInRepositories");
       if (!(yield* supportsGraphqlList(input).pipe(Effect.mapError(failed)))) {
         return yield* new PullRequestProviderError({
@@ -348,10 +349,7 @@ export const make = Effect.gen(function* () {
               state: input.state,
               involvement: input.involvement,
               viewer: input.viewer,
-              first: Math.min(
-                input.limit,
-                Math.max(MIN_ROWS_PER_PROJECT, Math.floor(ROWS_PER_READ / repositories.length)),
-              ),
+              first: input.limit,
               query: input.query,
               filters: input.filters,
             })
