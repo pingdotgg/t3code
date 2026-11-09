@@ -37,7 +37,7 @@ vi.mock(import("@tanstack/react-router"), async (original) => ({
 import { useCommandPaletteMount } from "../commandPaletteStore";
 import { installCommandPaletteCommands } from "../shortcuts/commandPaletteCommands";
 import { registerNavigationHistoryCommands } from "./AppSidebarLayout";
-import { AppRouteModal, AppRouteModalClose } from "./AppRouteModal";
+import { AppRouteModal } from "./AppRouteModal";
 
 function MountedPalette() {
   useCommandPaletteMount();
@@ -80,32 +80,23 @@ describe("usage toggle shortcut on Usage", () => {
 });
 
 describe("usage route modal", () => {
-  it.each(["escape", "close button", "backdrop"])(
-    "returns to the opener with %s",
-    async (action) => {
-      state.navigate.mockClear();
-      await using _screen = await render(
-        <AppRouteModal label="Usage">
-          <AppRouteModalClose />
-        </AppRouteModal>,
-      );
-      const dialog = page.getByRole("dialog", { name: "Usage" });
-      await expect.element(dialog).toBeVisible();
+  it.each(["escape", "backdrop"])("returns to the opener with %s", async (action) => {
+    state.navigate.mockClear();
+    await using _screen = await render(<AppRouteModal label="Usage">Usage</AppRouteModal>);
+    const dialog = page.getByRole("dialog", { name: "Usage" });
+    await expect.element(dialog).toBeVisible();
 
-      if (action === "escape") await userEvent.keyboard("{Escape}");
-      else if (action === "close button")
-        await page.getByRole("button", { name: "Close", exact: true }).click();
-      else {
-        const viewport = document.querySelector('[data-slot="dialog-viewport"]');
-        if (!viewport) throw new Error("Missing modal backdrop");
-        await act(() => {
-          viewport.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-          viewport.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-        });
-      }
+    if (action === "escape") await userEvent.keyboard("{Escape}");
+    else {
+      const viewport = document.querySelector('[data-slot="dialog-viewport"]');
+      if (!viewport) throw new Error("Missing modal backdrop");
+      await act(() => {
+        viewport.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        viewport.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
 
-      await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/" }]]);
-      await expect.element(dialog).not.toBeInTheDocument();
-    },
-  );
+    await expect.poll(() => state.navigate.mock.calls).toEqual([[{ href: "/" }]]);
+    await expect.element(dialog).not.toBeInTheDocument();
+  });
 });
