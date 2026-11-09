@@ -99,6 +99,7 @@ interface LastRead {
   readonly watches: ReadonlySet<string>;
   readonly status: string | null;
   readonly remarks: string | null;
+  readonly foreignRemarkAt: number | null;
   readonly detail: PullRequestDetail;
 }
 
@@ -186,6 +187,24 @@ function planRead(
   };
 }
 
+const viewerAuthored = (detail: PullRequestDetail) =>
+  detail.viewer !== undefined && detail.viewer.toLowerCase() === detail.author?.login.toLowerCase();
+
+const newestForeignRemark = (
+  detail: PullRequestDetail,
+  fingerprint: ProviderChangeRequestWatchFingerprint | null,
+  remarks: ReadonlyArray<PullRequestComment>,
+) => {
+  if (fingerprint?.viewerSubscription !== "SUBSCRIBED" || !viewerAuthored(detail)) return null;
+  const viewer = detail.viewer!.toLowerCase();
+  const times = remarks.flatMap((remark) =>
+    remark.author === null || remark.author.login.toLowerCase() === viewer
+      ? []
+      : [Date.parse(remark.createdAt)],
+  );
+  return times.length === 0 ? null : Math.max(...times);
+};
+
 const notificationsCanGate = (last: LastRead, now: number) =>
   now - last.checkedAt >= FINGERPRINT_REREAD_MS &&
   now - Math.min(last.at, last.detailAt) < NOTIFIED_REREAD_CEILING_MS;
@@ -202,8 +221,7 @@ const gatesReread = (
   last.remarks === fingerprint.remarks &&
   last.remarksComplete &&
   notificationsCanGate(last, now) &&
-  last.detail.viewer !== undefined &&
-  last.detail.viewer.toLowerCase() === last.detail.author?.login.toLowerCase();
+  viewerAuthored(last.detail);
 
 function watchesEqual(left: ThreadPullRequestWatch, right: ThreadPullRequestWatch): boolean {
   return (
@@ -606,6 +624,9 @@ export const make = Effect.gen(function* () {
       watches: new Set(group.targets.map(watchKey)),
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
+      foreignRemarkAt: Option.isSome(activity)
+        ? newestForeignRemark(detail, fingerprint, remarks ?? activity.value.comments)
+        : (last?.foreignRemarkAt ?? null),
       detail,
     });
     yield* eachTarget(group, (target) => {
@@ -633,6 +654,7 @@ export const make = Effect.gen(function* () {
   });
 
   const notificationsUnreadableAt = new Map<string, number>();
+  const notificationsLiveThrough = new Map<string, number>();
 
   const repositoryOf = (group: WatchGroup) => {
     const { projectId, host, repository } = referenceOf(group);
@@ -644,7 +666,10 @@ export const make = Effect.gen(function* () {
     groups: ReadonlyArray<WatchGroup>,
   ) {
     const now = yield* Clock.currentTimeMillis;
-    const due = new Map<string, { readonly group: WatchGroup; readonly since: number }>();
+    const due = new Map<
+      string,
+      { readonly group: WatchGroup; readonly since: number; readonly evidence: number }
+    >();
     for (const group of groups) {
       const last = lastReads.get(group.key);
       const repository = repositoryOf(group);
@@ -655,21 +680,40 @@ export const make = Effect.gen(function* () {
       ) {
         continue;
       }
-      const since = Math.min(due.get(repository)?.since ?? last.at, last.at);
-      due.set(repository, { group: due.get(repository)?.group ?? group, since });
+      const prior = due.get(repository);
+      due.set(repository, {
+        group: prior?.group ?? group,
+        since: Math.min(prior?.since ?? last.at, last.at),
+        evidence: Math.max(prior?.evidence ?? -Infinity, last.foreignRemarkAt ?? -Infinity),
+      });
     }
     const checks = new Map<
       string,
       Effect.Effect<ProviderChangeRequestNotifications | null | undefined>
     >();
-    for (const [repository, { group, since }] of due) {
+    for (const [repository, { group, since, evidence }] of due) {
+      // With "On GitHub" notifications off the inbox never moves, so its silence counts only
+      // once it has shown a remark someone else made on the viewer's own pull request.
+      const unproven = evidence > (notificationsLiveThrough.get(repository) ?? -Infinity);
       const check = pullRequests
-        .notifications({ ...referenceOf(group), since: since - NOTIFICATION_LAG_MS })
+        .notifications({
+          ...referenceOf(group),
+          since: (unproven ? Math.min(since, evidence) : since) - NOTIFICATION_LAG_MS,
+        })
         .pipe(
+          Effect.map((notifications) =>
+            unproven && notifications?.threads.length === 0 && !notifications.truncated
+              ? null
+              : notifications,
+          ),
           Effect.tap((notifications) =>
             Effect.sync(() => {
-              if (notifications === null) notificationsUnreadableAt.set(repository, now);
-              else notificationsUnreadableAt.delete(repository);
+              if (notifications === null) {
+                notificationsUnreadableAt.set(repository, now);
+                return;
+              }
+              notificationsUnreadableAt.delete(repository);
+              if (unproven) notificationsLiveThrough.set(repository, evidence);
             }),
           ),
           Effect.catchCause((cause) =>

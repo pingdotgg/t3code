@@ -8930,13 +8930,13 @@ it.layer(layerQueueResumeDisabledInstanceTest)(
 
 const watchCostScenarios = [
   { name: "quiet PR", saves: 48 },
-  { name: "review comment edited", reviewCommentEdit: 40, saves: 32 },
+  { name: "review comment edited", reviewCommentEdit: 40, saves: 31 },
   {
     name: "review comment edit missing from the inbox",
     reviewCommentEdit: 40,
     inboxMissesEdit: true,
     ceilingWake: 120,
-    saves: 48,
+    saves: 47,
   },
   { name: "noisy inbox", inboxEveryMinute: true, saves: 45 },
   {
@@ -8948,6 +8948,7 @@ const watchCostScenarios = [
   },
   { name: "notifications readable again", notificationsReadableFrom: 60, saves: 31 },
   { name: "unsubscribed author", viewerSubscription: "UNSUBSCRIBED", saves: 0 },
+  { name: "On GitHub notifications off", reviewCommentEdit: 40, inboxOff: true, saves: 0 },
 ];
 
 it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
@@ -9007,6 +9008,8 @@ it.layer(Layer.fresh(layerTest))("pull request watch request cost", (it) => {
         const bump = (thread: number, time: number) => {
           if (time <= now) times.set(thread, Math.max(times.get(thread) ?? 0, time));
         };
+        if (scenario.inboxOff) return times;
+        if (editAt !== null) bump(number, at(-60) + 3_000);
         if (editAt !== null && !scenario.inboxMissesEdit) bump(number, editAt + 3_000);
         if (scenario.inboxEveryMinute) {
           for (let minute = 0; at(minute) <= now; minute += 1) bump(900, at(minute) + 3_000);
