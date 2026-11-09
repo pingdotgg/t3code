@@ -104,6 +104,8 @@ function FileHeader(props: {
   readonly guardBack: boolean;
   readonly onBack: () => void;
   readonly onReturnToThread: () => void;
+  /** Set while selecting text, so the split-view chevron leaves selection before the file. */
+  readonly onShowLineNumbers?: () => void;
   readonly actions: ReadonlyArray<{
     readonly id: string;
     readonly title: string;
@@ -124,9 +126,9 @@ function FileHeader(props: {
       backInSplitView={
         props.fileInspectorSupported
           ? {
-              accessibilityLabel: "Return to chat",
+              accessibilityLabel: props.onShowLineNumbers ? "Show line numbers" : "Return to chat",
               icon: "chevron.left",
-              onPress: props.onReturnToThread,
+              onPress: props.onShowLineNumbers ?? props.onReturnToThread,
             }
           : undefined
       }
@@ -740,15 +742,18 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const canSelectText =
     Platform.OS === "ios" && resolvedActiveMode === "source" && fileData?.contents != null;
   const selectingText = canSelectText && scopedTextSelection?.active === true;
-  usePreventRemove(selectingText, ({ data }) => {
+  const exitTextSelection = () =>
     setTextSelection((current) => current && { ...current, active: false });
-    // The re-dispatched action skips this guard, so "Return to chat" still leaves in one tap.
+  usePreventRemove(selectingText, ({ data }) => {
+    exitTextSelection();
+    // The re-dispatched action skips this guard, so leaving the file any other way takes one step.
     if (data.action.type !== "GO_BACK" && data.action.type !== "POP") {
       navigation.dispatch(data.action);
     }
   });
 
   const handleSelectFile = (path: string) => {
+    setTextSelection(null);
     const targetPath =
       directoryPath === null ? path : resolveWorkspaceFilePath(directoryPath, path);
     const segments = fileRoutePathSegments(
@@ -1032,6 +1037,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         guardBack={selectingText && navigation.canGoBack()}
         onBack={handleBack}
         onReturnToThread={handleReturnToThread}
+        onShowLineNumbers={selectingText ? exitTextSelection : undefined}
         actions={fileMenuActions}
       />
       <ScreenContent>
