@@ -339,7 +339,7 @@ function SidebarControl() {
           '[data-sidebar-row][aria-current="page"]',
           "[data-sidebar-row]",
           // A search hides the rows, even with no matches; its combobox owns arrow-key navigation.
-          'input[role="combobox"][aria-label="Search threads"]',
+          'input[role="combobox"][aria-label="Search threads"]:not(:placeholder-shown)',
         ],
       });
     };
