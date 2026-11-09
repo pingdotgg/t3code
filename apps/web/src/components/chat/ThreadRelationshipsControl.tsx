@@ -811,6 +811,10 @@ export function ThreadRelationshipsPanel(props: {
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
     const agent = workflowGroup ? projectedAgent : currentSubagent(projectedAgent, node?.thread);
     const failed = rowStatus === "failed" || rowStatus === "error";
+    // The second line names parents, forks and transfers; only a child agent has a state to show.
+    const childAgent = isSubagent && !isParent;
+    const running = childAgent && (rowStatus === "running" || rowStatus === "in_progress");
+    const childFailed = childAgent && failed;
     const canStop =
       agent &&
       (agent.origin === "app_owned" ||
@@ -914,32 +918,26 @@ export function ThreadRelationshipsPanel(props: {
                 {lineageModelLabel(relationshipModel, providerEntry)}
               </span>
             ) : null}
+            {childAgent && !failed ? (
+              <span className="shrink-0">
+                {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
+                  <AgentElapsed agent={agent} compact />
+                ) : running ? null : (
+                  threadRelationshipStatusLabel(rowStatus)
+                )}
+              </span>
+            ) : null}
           </span>
         </span>
-        <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
-          {isParent ? (
-            "Parent"
-          ) : !isSubagent ? (
-            edge.kind === "transfer" ? (
-              relationship
+        {childFailed || running ? (
+          <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
+            {childFailed ? (
+              <span className="text-destructive-foreground">Failed</span>
             ) : (
-              "Fork"
-            )
-          ) : failed ? (
-            <span className="text-destructive-foreground">Failed</span>
-          ) : (
-            <>
-              {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
-                <AgentElapsed agent={agent} compact />
-              ) : (
-                threadRelationshipStatusLabel(rowStatus)
-              )}
-              {rowStatus === "running" || rowStatus === "in_progress" ? (
-                <Spinner size="xs" tone="muted" aria-label="Running" />
-              ) : null}
-            </>
-          )}
-        </span>
+              <Spinner size="xs" tone="muted" aria-label="Running" />
+            )}
+          </span>
+        ) : null}
       </>
     );
     // A workflow pairs its menu row with a disclosure; other rows render directly.
