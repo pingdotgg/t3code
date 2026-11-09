@@ -4049,6 +4049,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
                   },
                   pullRequest: {
                     author: { __typename: "User", login: "bilal" },
+                    suggestedReviewers: [],
+                    requestEvents: { nodes: [] },
                     reviewRequests: {
                       nodes: ["octocat", "unrelated"].map((login) => ({
                         requestedReviewer: {
