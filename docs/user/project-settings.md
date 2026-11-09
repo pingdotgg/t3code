@@ -288,6 +288,8 @@ local work, resolve it yourself before automatic pulls can resume.
 
 Assign the same explicit grouping identity to copies of a non-Git project to show them as one project with a choice of computers. Each computer keeps its own directory, project record, and threads. Names and paths alone never establish this relationship. Git projects continue to group by repository identity; the Separate grouping setting keeps all copies apart.
 
+Before grouping copies, [connect each computer's environment to the same client](./remote-access.md). Assigning an identity does not connect the computers.
+
 If `t3` is not available in your terminal, desktop users can [install the bundled command](./install.md#the-t3-command) from **Settings → About**, then open a new terminal.
 
 Generate a lowercase UUID v4 once (for example, `python -c "import uuid; print(uuid.uuid4())"`) and reuse it only for copies of that project:
