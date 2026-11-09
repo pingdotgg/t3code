@@ -50,7 +50,8 @@ function subscriptionUsageProps(
   configuredDrivers: ReadonlySet<string>,
   maxWindowsPerProvider: number,
 ): SubscriptionUsageSnapshot {
-  const pools = collectLimitPools(accounts, now);
+  // One row per provider: the widget has no room for a row per CLI Proxy source.
+  const pools = collectLimitPools(accounts, now, { splitSources: false });
   const checked = accounts
     .filter((account) => account.driver === "codex" || account.driver === "claudeAgent")
     .map((account) => Date.parse(account.limits.checkedAt));

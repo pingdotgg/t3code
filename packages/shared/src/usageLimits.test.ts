@@ -762,6 +762,60 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("keeps each CLI Proxy source in its own pool and names it", () => {
+    const hubAccount = (id: string, usedPercent: number) => ({
+      id,
+      driver: claude,
+      email: `${id}@example.com`,
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
+    });
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: {
+            providers: [],
+            usageLimitSources: [
+              {
+                ...source,
+                id: UsageLimitSourceId.make("main"),
+                label: "Main hub",
+                accounts: [
+                  hubAccount("a", 100),
+                  { ...hubAccount("x", 50), driver: ProviderDriverKind.make("codex") },
+                  hubAccount("b", 100),
+                ],
+              },
+              {
+                ...source,
+                id: UsageLimitSourceId.make("work"),
+                label: "Work hub",
+                accounts: [hubAccount("c", 20)],
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    const pools = collectLimitPools(accounts, now);
+    // A driver with one source keeps its unlabelled pool; one driver's pools stay adjacent.
+    expect(pools.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
+      ["claudeAgent", "Main hub", 2],
+      ["claudeAgent", "Work hub", 1],
+      ["codex", null, 1],
+    ]);
+    expect(new Set(pools.map((pool) => pool.key)).size).toBe(3);
+    expect(pools.map((pool) => pool.windows[0]?.remainingPercent)).toEqual([0, 80, 50]);
+
+    const combined = collectLimitPools(accounts, now, { splitSources: false });
+    expect(combined.map((pool) => [pool.driver, pool.label, pool.accounts.length])).toEqual([
+      ["claudeAgent", null, 3],
+      ["codex", null, 1],
+    ]);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [
