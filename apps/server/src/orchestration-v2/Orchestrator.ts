@@ -12436,7 +12436,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (command.restoreFiles !== false) {
-        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, targetScope, {
+        const restoreRun = projection.runs.find((run) =>
+          targetCheckpoint.runId === null ? run.ordinal === 1 : run.id === targetCheckpoint.runId,
+        );
+        const restoreScope = { cwd: restoreRun?.cwd ?? targetScope.cwd };
+        const isolated = yield* isCheckpointRestoreIsolated(projection.thread, restoreScope, {
           projects,
           path,
           fileSystem,

@@ -268,6 +268,7 @@ it.effect.each([
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThread: () => Effect.succeed(projection.thread),
             getCheckpointRollbackContext: () => Effect.succeed(projection),
+            getThreadRecords: () => Effect.succeed({ runs: [] } as never),
             getShellSnapshot: () =>
               Effect.succeed({
                 schemaVersion: 1,
@@ -357,6 +358,7 @@ const seedRollbackHistory = Effect.gen(function* () {
   const modelSelection = { instanceId: providerInstanceId, model: "test" };
   const scopeId = CheckpointScopeId.make("rollback-history-root");
   const otherScopeId = CheckpointScopeId.make("rollback-history-child");
+  const movedCwd = import.meta.dirname;
   const runId = (ordinal: number) => RunId.make(`rollback-history-run-${ordinal}`);
   const nodeId = (ordinal: number) => NodeId.make(`rollback-history-node-${ordinal}`);
   const attemptId = (ordinal: number) => RunAttemptId.make(`rollback-history-attempt-${ordinal}`);
@@ -465,6 +467,8 @@ const seedRollbackHistory = Effect.gen(function* () {
         completedAt: now,
         checkpointId: checkpointId(ordinal),
         contextHandoffId: null,
+        ...(ordinal === 4 ? { cwd: "/rollback-history/removed" } : {}),
+        ...(ordinal === 6 ? { cwd: movedCwd } : {}),
       },
     });
     yield* apply({
@@ -571,9 +575,18 @@ const seedRollbackHistory = Effect.gen(function* () {
             Effect.sync(() => {
               restored.push(checkpoint.id);
             }),
-          deleteStaleRefs: ({ checkpoints }) =>
-            Effect.sync(() => {
-              deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
+          deleteStaleRefs: ({ scope, checkpoints }) =>
+            Effect.gen(function* () {
+              const checkpointIds = checkpoints.map((checkpoint) => checkpoint.id);
+              if (scope.cwd === movedCwd) {
+                return yield* new CheckpointService.CheckpointDeleteStaleRefsError({
+                  scopeId: scope.id,
+                  checkpointIds,
+                  cause: "not a repository",
+                });
+              }
+              assert.equal(scope.cwd, process.cwd());
+              deletedRefs.push(...checkpointIds);
             }),
         }),
         Layer.mock(EventSink.EventSinkV2)({
@@ -663,7 +676,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
 
         assert.deepEqual(history.rollbackCounts, [4]);
         assert.deepEqual(history.restored, [checkpointId(2)]);
-        assert.sameMembers(history.deletedRefs, [3, 4, 5, 6].map(checkpointId));
+        assert.sameMembers(history.deletedRefs, [3, 5].map(checkpointId));
         const runs = yield* sql<{ ordinal: number; status: string }>`
           SELECT ordinal, status FROM orchestration_v2_projection_runs
           WHERE thread_id = ${threadId} ORDER BY ordinal`;
@@ -707,7 +720,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           yield* history.rollback(0);
 
           assert.deepEqual(history.rollbackCounts, [1, 3, 3]);
-          assert.sameMembers(history.deletedRefs, [1, 2, 3, 4, 5, 6].map(history.checkpointId));
+          assert.sameMembers(history.deletedRefs, [1, 2, 3, 5].map(history.checkpointId));
           assert.sameMembers(
             history.committed
               .filter((event) => event.type === "run.updated")

@@ -30,6 +30,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { findRepositoryRoot } from "../provider/Drivers/ClaudeSkills.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1442,8 +1443,18 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
+      const repositoryRoot =
+        projection.thread.worktreePath === null && resolvedRuntimePolicy.cwd !== null
+          ? yield* findRepositoryRoot(resolvedRuntimePolicy.cwd).pipe(
+              Effect.provideService(FileSystem.FileSystem, fileSystem),
+              Effect.provideService(Path.Path, path),
+            )
+          : undefined;
       const runningRun: OrchestrationV2Run = {
         ...run,
+        ...(resolvedRuntimePolicy.cwd === null
+          ? {}
+          : { cwd: resolvedRuntimePolicy.cwd, repositoryRoot }),
         status: "running",
         startedAt: now,
       };
@@ -1460,6 +1471,10 @@ export const layer: Layer.Layer<
         status: "running",
         startedAt: now,
       };
+      const startCheckpointScope =
+        resolvedRuntimePolicy.cwd === null || resolvedRuntimePolicy.cwd === checkpointScope.cwd
+          ? checkpointScope
+          : { ...checkpointScope, cwd: resolvedRuntimePolicy.cwd };
       const events: Array<OrchestrationV2DomainEvent> = [
         {
           id: yield* idAllocator.allocate.event({
@@ -1508,6 +1523,20 @@ export const layer: Layer.Layer<
                   updatedAt: now,
                   consumedAt: now,
                 },
+              },
+            ]),
+        ...(startCheckpointScope === checkpointScope
+          ? []
+          : [
+              {
+                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
+                type: "checkpoint-scope.created" as const,
+                threadId: projection.thread.id,
+                runId: run.id,
+                nodeId: rootNode.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: now,
+                payload: startCheckpointScope,
               },
             ]),
         {
@@ -1678,7 +1707,7 @@ export const layer: Layer.Layer<
         session: deliverySession,
         run: runningRun,
         rootNode: runningRootNode,
-        checkpointScope,
+        checkpointScope: startCheckpointScope,
         providerThread: runningProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,

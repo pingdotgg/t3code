@@ -144,7 +144,7 @@ function claudeSettingsPaths(
 }
 
 // Untraced: skill discovery resolves every distinct plugin project path, too often for spans.
-const findRepositoryRoot = Effect.fnUntraced(function* (
+export const findRepositoryRoot = Effect.fnUntraced(function* (
   cwd: string,
 ): Effect.fn.Return<string | undefined, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;

@@ -1,5 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   CommandId,
   MessageId,
   EventId,
@@ -31,7 +34,9 @@ import {
   orchestrationCommandsTotal,
 } from "../observability/Metrics.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { providerThread, runCreated, threadCreated } from "../project/ThreadMove.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { SHARED_WORKSPACE_RESTORE_MESSAGE } from "./CheckpointRestoreSafety.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
@@ -1666,4 +1671,114 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { firstRun: "moved", cwd: "/baseline-restore/moved-away", admitted: false },
+  { firstRun: "same", cwd: process.cwd(), admitted: true },
+  { firstRun: "legacy", cwd: undefined, admitted: true },
+])(
+  "admits a thread-start file restore by the first run's folder ($firstRun)",
+  ({ firstRun, cwd, admitted }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const name = `baseline-restore-${firstRun}`;
+      const threadId = ThreadId.make(`thread:${name}`);
+      const projectId = ProjectId.make(`project:${name}`);
+      const providerThreadId = ProviderThreadId.make(`provider-thread:${name}`);
+      const scopeId = CheckpointScopeId.make(`scope:${name}`);
+      const checkpointId = CheckpointId.make(`checkpoint:${name}`);
+      const runId = RunId.make(`run:${name}`);
+      const nodeId = NodeId.make(`node:${name}`);
+      const now = yield* DateTime.now;
+      yield* projections.apply(threadCreated({ threadId, projectId, worktreePath: process.cwd() }));
+      yield* projections.apply({
+        id: EventId.make(`${name}:provider-thread`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...providerThread({
+            id: providerThreadId,
+            threadId,
+            providerInstanceId: instanceId,
+            nativeId: name,
+          }),
+          driver: adapter.driver,
+          providerSessionId: ProviderSessionId.make(`session:${name}`),
+          nativeThreadRef: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${name}:scope`),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId,
+          runId,
+          nodeId,
+          parentScopeId: null,
+          providerThreadId,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: process.cwd(),
+          createdAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`${name}:checkpoint`),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: checkpointId,
+          threadId,
+          scopeId,
+          runId: null,
+          nodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make(`refs/t3/${name}`),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      });
+      yield* projections.apply(
+        runCreated({
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId: instanceId,
+          providerThreadId,
+          rootNodeId: nodeId,
+          cwd,
+          occurredAt: now,
+        }),
+      );
+      const rollback = orchestrator.dispatch({
+        type: "checkpoint.rollback",
+        commandId: CommandId.make(`rollback-${name}`),
+        threadId,
+        checkpointId,
+        scopeId,
+        restoreFiles: true,
+      });
+      if (admitted) {
+        assert.deepEqual(
+          (yield* rollback).storedEvents.map((stored) => stored.event.type),
+          ["thread.metadata-updated", "checkpoint.rollback-requested"],
+        );
+      } else {
+        assert.deepInclude(yield* rollback.pipe(Effect.flip), {
+          _tag: "OrchestratorDispatchError",
+          cause: SHARED_WORKSPACE_RESTORE_MESSAGE,
+        });
+      }
+    }).pipe(Effect.provide(layerTest)),
 );

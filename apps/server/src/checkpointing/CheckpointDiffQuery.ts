@@ -179,6 +179,9 @@ export const make = Effect.gen(function* () {
         input.fromTurnCount === 0
           ? projection.checkpointScopes.find((scope) => scope.kind === "root_run")
           : undefined;
+      const fromCheckpoint =
+        parentCheckpoint ??
+        readyCheckpoints.find((checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount);
       const fromCheckpointRef =
         input.fromTurnCount === 0
           ? firstScope === undefined
@@ -187,13 +190,29 @@ export const make = Effect.gen(function* () {
                 scopeId: firstScope.id,
                 ordinalWithinScope: 0,
               }).pipe(Effect.provideService(Digest.Digest, digest))
-          : (
-              parentCheckpoint ??
-              readyCheckpoints.find(
-                (checkpoint) => checkpoint.appRunOrdinal === input.fromTurnCount,
-              )
-            )?.ref;
-      if (fromCheckpointRef === undefined) {
+          : fromCheckpoint?.ref;
+      // Run 1 captured the thread baseline, and each run captures its own baseline in its folder.
+      const fromEnd =
+        input.fromTurnCount === 0
+          ? { runId: projection.runs.find((run) => run.ordinal === 1)?.id, scopeId: firstScope?.id }
+          : fromCheckpoint;
+      const { runs } = yield* threads
+        .getThreadRecords(input.threadId, ["runs"], {
+          runIds: [toCheckpoint, fromEnd].flatMap((end) => (end?.runId == null ? [] : [end.runId])),
+        })
+        .pipe(
+          Effect.mapError(
+            () => new CheckpointThreadNotFoundError({ operation, threadId: input.threadId }),
+          ),
+        );
+      const folder = (end: typeof fromEnd) =>
+        runs.find((run) => run.id === end?.runId)?.cwd ??
+        projection.checkpointScopes.find((scope) => scope.id === end?.scopeId)?.cwd;
+      const cwd = folder(toCheckpoint) ?? toScope.cwd;
+      if (
+        fromCheckpointRef === undefined ||
+        (input.fromTurnCount !== input.toTurnCount - 1 && folder(fromEnd) !== cwd)
+      ) {
         return yield* new CheckpointRefUnavailableError({
           operation,
           threadId: input.threadId,
@@ -203,7 +222,7 @@ export const make = Effect.gen(function* () {
       }
 
       const comparison = {
-        cwd: toScope.cwd,
+        cwd,
         fromCheckpointRef,
         toCheckpointRef: toCheckpoint.ref,
         fallbackFromToHead: false,
