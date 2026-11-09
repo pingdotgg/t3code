@@ -41,8 +41,8 @@ import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentSummaries } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
-import { layoutDraftIds } from "../layout/layoutModel";
-import { useLayoutStore } from "../layout/layoutStore";
+import { layoutDraftIds, selectLayoutOpenAnchor } from "../layout/layoutModel";
+import { runInNewLayoutTab, useLayoutStore } from "../layout/layoutStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings } from "./useSettings";
@@ -430,7 +430,13 @@ export function createNewThreadHandler(router: AnyRouter) {
     })();
   };
   return async (...args: Parameters<typeof openNewThread>) => {
-    const opened = await openNewThread(...args);
+    const open = () => openNewThread(...args);
+    // A new thread replaces the focused tab (cmd+N), kept or not; callers may place it elsewhere.
+    const store = useLayoutStore.getState();
+    const anchor = store.newTabRequest === null ? selectLayoutOpenAnchor(store.layout) : null;
+    const opened = await (anchor
+      ? runInNewLayoutTab(open, { replaceTabId: anchor.tab.id })
+      : open());
     if (opened) takeNoProjectsDraft(opened.draftId);
     return opened;
   };
