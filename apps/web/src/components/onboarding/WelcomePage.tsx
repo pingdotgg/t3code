@@ -275,7 +275,7 @@ export function WelcomePage({
         {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
-          <div className="mx-auto w-full max-w-3xl px-6 pt-12 pb-10 sm:pt-20">
+          <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pt-12 pb-8 sm:pt-20">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               Welcome to T3 Code
             </h1>
@@ -334,11 +334,11 @@ export function WelcomePage({
 function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId));
   return (
-    <p className="mt-10 max-w-prose text-xs leading-relaxed text-muted-foreground">
-      {telemetryOff ?? "T3 Code collects anonymous usage data to help us improve it."} To read more
-      about how your data is used{telemetryOff === undefined ? " and how to opt out" : ""}, see our{" "}
+    <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
+      {telemetryOff ?? "T3 Code collects anonymous usage data to improve the app."}{" "}
+      {telemetryOff === undefined ? "To opt out, see the" : "See the"}{" "}
       <a
-        className="underline underline-offset-2 hover:text-foreground"
+        className="underline decoration-current/40 underline-offset-2 hover:text-muted-foreground"
         href={PRIVACY_POLICY_URL}
         target="_blank"
         rel="noreferrer noopener"
