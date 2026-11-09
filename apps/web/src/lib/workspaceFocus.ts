@@ -240,25 +240,31 @@ export function createWorkspaceFocusController(doc: Document) {
     return focusArea(area);
   };
 
-  // Focus that drops to the body because its element was hidden, made inert, or removed
-  // returns to the same control when React remounted it, else to its area, else the content.
+  // Focus that drops to the body because its element was hidden, made inert, disabled, or removed
+  // returns to a remounted control, else its area, or the composer for a finished timeline prompt.
   const recover = (event: FocusEvent) => {
     const lost = event.target;
     if (!(lost instanceof HTMLElement) || event.relatedTarget) return;
     const areaName = workspaceArea(lost)?.dataset.workspaceArea;
+    const recoveryArea = areaName === "conversation" ? "composer" : areaName;
     const label = lost.getAttribute("aria-label");
     requestAnimationFrame(() => {
-      if (doc.activeElement !== doc.body || !doc.hasFocus() || isWorkspaceElementVisible(lost))
+      if (
+        doc.activeElement !== doc.body ||
+        !doc.hasFocus() ||
+        (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
+      )
         return;
       const remounted = Array.from(doc.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
         (element) =>
           element.tagName === lost.tagName &&
           ((lost.id && element.id === lost.id) ||
             (label && element.getAttribute("aria-label") === label)) &&
-          isWorkspaceElementVisible(element),
+          isWorkspaceElementVisible(element) &&
+          !element.matches(":disabled"),
       );
       if (remounted) remounted.focus({ preventScroll: true });
-      else if (!areaName || !focus(areaName)) focus("content");
+      else if (!recoveryArea || !focus(recoveryArea)) focus("content");
     });
   };
   doc.addEventListener("focusout", recover);
