@@ -369,6 +369,40 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  // regression: #33343 one Claude e-mail in two organizations keeps both hub credentials apart
+  it.effect("reports each Claude credential's organization as its workspace", () =>
+    Effect.gen(function* () {
+      // Claude auth files carry no ChatGPT account id.
+      const claude = { provider: "claude", id_token: { chatgpt_account_id: "" } };
+      const test = fixture({
+        accounts: [
+          { ...accounts[0]!, ...claude },
+          { ...accounts[0]!, ...claude, id: "first-team.json", auth_index: "b" },
+          { ...accounts[1]!, ...claude, auth_index: "c" },
+        ],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? request.auth_index === "c"
+              ? { status: 500, body: {} }
+              : {
+                  status: 200,
+                  body: {
+                    organization: { uuid: request.auth_index === "a" ? "org-max" : "org-team" },
+                  },
+                }
+            : { status: 200, body: { five_hour: { utilization: 10, resets_at: null } } },
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(
+        result.map((account) => [account.workspaceId, account.usageLimits.windows[0]?.usedPercent]),
+      ).toEqual([
+        ["org-max", 10],
+        ["org-team", 10],
+        [undefined, 10],
+      ]);
+    }),
+  );
+
   it.effect.each([
     {
       name: "spend budget",

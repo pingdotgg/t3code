@@ -89,6 +89,9 @@ const ClaudeUsage = Schema.Struct({
     ),
   ),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.optional(Schema.NullOr(Schema.Struct({ uuid: Schema.String }))),
+});
 const CreditList = Schema.Struct({
   credits: Schema.Array(
     Schema.Struct({
@@ -105,6 +108,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
@@ -284,7 +288,18 @@ export const makeCliproxyApi = Effect.gen(function* () {
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage");
+        // One e-mail can sign into several organizations; the native provider keys them by organization too.
+        const [body, workspaceId] = yield* Effect.all(
+          [
+            apiCall(hub, account, "https://api.anthropic.com/api/oauth/usage"),
+            apiCall(hub, account, "https://api.anthropic.com/api/oauth/profile").pipe(
+              Effect.flatMap(decodeClaudeProfile),
+              Effect.map((profile) => profile.organization?.uuid.trim() || undefined),
+              Effect.orElseSucceed(() => undefined),
+            ),
+          ],
+          { concurrency: 2 },
+        );
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -306,6 +321,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
         };
         return {
           ...base,
+          ...(workspaceId ? { workspaceId } : {}),
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
