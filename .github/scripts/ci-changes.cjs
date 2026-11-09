@@ -31,10 +31,10 @@ const EXTRA_OWNERS = [
   [/^docs\/user\/t3-connect-troubleshooting\.md$/, ["t3"]],
 ];
 const RUST = /^native\/(resource-monitor|kde-snap-shot|hyprland-snap-shot)\//;
-// Linux packaging, the release runner's libraries, and this check's CI job. Release runs packaged
-// Electron on native arm64 to prepare server bytecode, so CI packages the same unsigned app there.
+// Release uses packaged Electron on native arm64 to prepare server bytecode.
+// CI exercises that path when packaging, its launch check, or the runner setup changes.
 const LINUX_ARM64_PACKAGE =
-  /^scripts\/(build-desktop-artifact\.ts|linux-after-pack\.ts|prepare-server-compile-cache\.cjs|lib\/server-compile-cache\.ts)$|^apps\/desktop\/(package\.json|src\/serverCompileCache\.ts)$|^\.github\/workflows\/(release-desktop|ci)\.yml$/;
+  /^scripts\/(build-desktop-artifact\.ts|linux-after-pack\.ts|prepare-server-compile-cache\.cjs|smoke-desktop-app\.ts|lib\/server-compile-cache\.ts)$|^apps\/desktop\/(package\.json|src\/serverCompileCache\.ts)$|^\.github\/workflows\/(release-desktop|ci)\.yml$/;
 
 // These tests read other packages without declaring dependencies.
 const TEST_ONLY_DEPS = {

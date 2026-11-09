@@ -48,7 +48,7 @@ describe("check:changed", () => {
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
   });
 
-  it("packages Linux arm64 only for packaging and release runner library changes", () => {
+  it("packages Linux arm64 when packaging, its launch check, or runner setup changes", () => {
     const packages = readWorkspace();
     const packs = (file: string) => decide([file], packages, true).outputs.linux_arm64_package;
     for (const file of [
@@ -56,6 +56,7 @@ describe("check:changed", () => {
       ".github/workflows/ci.yml",
       "scripts/prepare-server-compile-cache.cjs",
       "scripts/build-desktop-artifact.ts",
+      "scripts/smoke-desktop-app.ts",
       "apps/desktop/package.json",
     ]) {
       assert.isTrue(packs(file), file);
