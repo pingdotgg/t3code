@@ -76,7 +76,6 @@ import {
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
-  MOUSE_NAVIGATE_CHANNEL,
   RECORDING_CURSOR_CHANNEL,
   RECORDING_INPUT_CHANNEL,
   RECORDING_CONTROLLER_CHANNEL,
@@ -1425,15 +1424,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
-    const mouseNavigate = (_event: unknown, payload?: unknown): void => {
-      const direction =
-        typeof payload === "object" && payload !== null && "direction" in payload
-          ? (payload as { direction?: unknown }).direction
-          : undefined;
-      if (direction !== "back" && direction !== "forward") return;
+    // Chromium navigates the outermost WebContents (the host app) on thumb buttons, even from guest iframes.
+    const beforeMouse = (event: Electron.Event, mouse: Electron.MouseInputEvent): void => {
+      // Electron reports thumb buttons as "back" and "forward", which its typings omit.
+      const button: string | undefined = mouse.button;
+      if (button !== "back" && button !== "forward") return;
+      if (mouse.type !== "mouseDown" && mouse.type !== "mouseUp") return;
+      event.preventDefault();
+      if (mouse.type !== "mouseUp") return;
       runFork(
         attempt({ operation: "mouseNavigate", tabId, webContentsId: wc.id }, () => {
-          if (direction === "back") {
+          if (button === "back") {
             if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
           } else if (wc.navigationHistory.canGoForward()) {
             wc.navigationHistory.goForward();
@@ -1528,9 +1529,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("audio-state-changed", audioStateChanged);
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
+        wc.off("before-mouse-event", beforeMouse);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.off(RECORDING_INPUT_CHANNEL, recordingInput);
-        wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys();
       }).pipe(Effect.ignore),
     );
@@ -1549,7 +1550,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
         wc.ipc.on(RECORDING_INPUT_CHANNEL, recordingInput);
-        wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         detachPasskeys = passkeys.attachGuest(wc);
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
@@ -1576,6 +1576,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         });
         wc.on("did-create-window", windowCreated);
         wc.on("before-input-event", beforeInput);
+        wc.on("before-mouse-event", beforeMouse);
       });
       yield* Ref.update(attachedRef, (attached) =>
         replaceMap(attached, (copy) => {
