@@ -1,0 +1,70 @@
+diff --git a/react.d.ts b/react.d.ts
+index 358fcd7..e3c7de6 100644
+--- a/react.d.ts
++++ b/react.d.ts
+@@ -314,6 +314,7 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * @default 0.1
+      */
+     maintainScrollAtEndThreshold?: number;
++    immediateWebShrinks?: boolean;
+     /**
+      * Maintains visibility of content.
+      * - size (default: true) stabilizes during size/layout changes while scrolling.
+diff --git a/react.js b/react.js
+index 5155454..7992d68 100644
+--- a/react.js
++++ b/react.js
+@@ -6290,7 +6290,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -9133,6 +9133,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9431,6 +9432,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
+diff --git a/react.mjs b/react.mjs
+index ce08abe..c1f0b6f 100644
+--- a/react.mjs
++++ b/react.mjs
+@@ -6269,7 +6269,7 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       var _a4;
+@@ -9112,6 +9112,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9410,6 +9411,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
