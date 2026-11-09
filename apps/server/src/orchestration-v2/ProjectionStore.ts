@@ -735,6 +735,16 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
 
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
 
+// Completed items of these types can fold into one deferred-work row in snapshot windows.
+const DEFERRABLE_WORK_TYPES = [
+  "command_execution",
+  "reasoning",
+  "file_change",
+  "file_search",
+  "web_search",
+  "dynamic_tool",
+] as const;
+
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
   if (index === -1) {
@@ -3032,6 +3042,46 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT ordinal, (SELECT MAX(ordinal) FROM user_anchors) AS latest FROM boundary
               `;
       const boundary = anchors[0]!;
+      // Folding work needs whole segments, so the window would otherwise walk every item
+      // since the boundary. Types outside the deferrable set always keep their own row,
+      // so the window cannot reach below the newest `tailRows` of them; start at the
+      // latest segment of each run that reaches that point so its groups stay whole.
+      const tailRows = Math.max(window.rowLimit, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT);
+      const workStart =
+        window.deferWork !== true || boundary.latest === null
+          ? boundary.ordinal
+          : Math.max(
+              boundary.ordinal,
+              (yield* sql<{ readonly ordinal: number | null }>`
+                ${eligible}, visible_tail AS (
+                  SELECT ordinal FROM eligible
+                  WHERE ordinal >= ${boundary.ordinal}
+                    AND type NOT IN ${sql.in(DEFERRABLE_WORK_TYPES)}
+                  ORDER BY ordinal DESC
+                  LIMIT ${tailRows}
+                ), tail AS (
+                  SELECT MIN(ordinal) AS ordinal FROM visible_tail HAVING COUNT(*) >= ${tailRows}
+                ), tail_runs AS (
+                  SELECT DISTINCT item.run_id
+                  FROM tail CROSS JOIN eligible AS item
+                  WHERE item.ordinal >= tail.ordinal AND item.run_id IS NOT NULL
+                )
+                SELECT MIN(COALESCE(
+                  (
+                    SELECT start.ordinal FROM eligible AS start
+                    WHERE start.run_id = tail_runs.run_id AND start.type = 'user_message'
+                      AND start.ordinal <= tail.ordinal
+                    ORDER BY start.ordinal DESC LIMIT 1
+                  ),
+                  (
+                    SELECT MIN(first.ordinal) FROM orchestration_v2_projection_turn_items AS first
+                    WHERE first.run_id = tail_runs.run_id
+                  ),
+                  tail.ordinal
+                )) AS ordinal
+                FROM tail LEFT JOIN tail_runs
+              `)[0]?.ordinal ?? 0,
+            );
       return sql`
                 ${eligible}, blocked_runs AS MATERIALIZED (
                   SELECT DISTINCT run_id FROM orchestration_v2_projection_turn_items
@@ -3039,7 +3089,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     AND ${window.deferWork ? 1 : 0} = 1
                     AND run_id IN (
                       SELECT run_id FROM eligible
-                      WHERE ordinal >= ${boundary.ordinal} AND run_id IS NOT NULL
+                      WHERE ordinal >= ${workStart} AND run_id IS NOT NULL
                     )
                     AND (type IN ('run_interrupt_request', 'run_interrupt_result')
                       OR (type = 'error' AND status = 'failed' AND parent_item_id IS NULL))
@@ -3048,14 +3098,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     MAX(CASE WHEN type = 'user_message' THEN ordinal ELSE 0 END)
                       OVER (PARTITION BY run_id ORDER BY ordinal) AS segment,
                     CASE WHEN status = 'completed' AND (run_status = 'completed' OR attempt_status = 'superseded')
-                      AND type IN ('command_execution', 'reasoning', 'file_change', 'file_search', 'web_search', 'dynamic_tool')
+                      AND type IN ${sql.in(DEFERRABLE_WORK_TYPES)}
                       AND NOT (${inlineWorkOutput})
                       AND run_id NOT IN (SELECT run_id FROM blocked_runs)
                       THEN 1 ELSE 0 END AS can_defer
                   FROM eligible AS item
                   WHERE ${window.deferWork ? 1 : 0} = 1
                     AND ${boundary.latest === null ? 0 : 1} = 1
-                    AND ordinal >= ${boundary.ordinal}
+                    AND ordinal >= ${workStart}
                 ), deferred_work AS (
                   SELECT run_id, segment, attempt_id, MIN(ordinal) AS first_ordinal,
                     MAX(ordinal) AS last_ordinal, COUNT(*) AS item_count

@@ -3356,6 +3356,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       yield* sql`UPDATE orchestration_v2_projection_turn_items SET ordinal = 999,
         payload_json = json_set(payload_json, '$.ordinal', 999)
         WHERE turn_item_id = 'turn-item:bounded-sql-history:999'`;
+      // Work folded below the newest 502 visible rows still counts its whole group, so the
+      // 100 commands after the messages stay hidden in the 398-item group.
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'assistant_message',
+        payload_json = json_set(payload_json, '$.type', 'assistant_message', '$.text', 'Working',
+          '$.messageId', turn_item_id, '$.streaming', json('false'))
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 300 AND 899`;
+      const straddledWindow = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+        userTurnLimit: 10,
+        deferWork: true,
+      });
+      assert.deepEqual(
+        straddledWindow.projection.turnItems.map((item) => item.ordinal),
+        [...Array.from({ length: sqlPageLimit }, (_, index) => 900 - sqlPageLimit + index), 1000],
+      );
+      yield* sql`UPDATE orchestration_v2_projection_turn_items SET type = 'command_execution',
+        payload_json = json_set(payload_json, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal BETWEEN 300 AND 899`;
       yield* sql`
         UPDATE orchestration_v2_projection_turn_items
         SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
