@@ -474,6 +474,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
   },
   {
+    id: "boring-sidebar-project-order",
+    title: "Customize project order",
+    to: "/settings/labs",
+    targetId: "boring-sidebar",
+    searchTerms: ["beta boring sidebar folder order manual drag number sort projects"],
+  },
+  {
     id: "tool-call-visibility",
     title: "Tool calls in chat",
     to: "/settings/chat",

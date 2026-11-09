@@ -8,12 +8,15 @@ import { ProjectOrderList } from "./ProjectOrderList";
 
 const state = vi.hoisted(() => ({
   groups: [] as SidebarProjectSnapshot[],
-  updateClientSettings: vi.fn(async () => {}),
 }));
 
-vi.mock(import("../../hooks/useSettings"), async (original) => ({
+vi.mock(import("../../hooks/useProjectGroupUpdate"), async (original) => ({
   ...(await original()),
-  updateClientSettings: state.updateClientSettings,
+  useProjectPin: () => ({
+    canPinProjectGroup: () => true,
+    setProjectGroupPinned: vi.fn(),
+    toggleProjectGroupPin: vi.fn(),
+  }),
 }));
 
 vi.mock(import("../../hooks/useSidebarProjectGroups"), () => ({
@@ -42,7 +45,6 @@ function group(name: string, memberKeys: readonly string[], pinned = false) {
 
 function setup(groups: SidebarProjectSnapshot[]) {
   state.groups = groups;
-  state.updateClientSettings.mockClear();
   useUiStateStore.setState({ projectOrder: [] });
 }
 
@@ -58,14 +60,13 @@ async function moveDown(name: string) {
 }
 
 describe("ProjectOrderList", () => {
-  it("saves a dragged project's checkouts together and locks the order", async () => {
+  it("saves a dragged project's checkouts together", async () => {
     setup([group("alpha", ["a-local", "a-remote"]), group("beta", ["b"]), group("gamma", ["g"])]);
     await using _screen = await render(<ProjectOrderList />);
 
     await moveDown("alpha");
 
     expect(useUiStateStore.getState().projectOrder).toEqual(["b", "a-local", "a-remote", "g"]);
-    expect(state.updateClientSettings).toHaveBeenCalledWith({ sidebarProjectSortOrder: "manual" });
   });
 
   it("leaves the order alone when a drop crosses the pinned line", async () => {
@@ -75,6 +76,5 @@ describe("ProjectOrderList", () => {
     await moveDown("pinned");
 
     expect(useUiStateStore.getState().projectOrder).toEqual([]);
-    expect(state.updateClientSettings).not.toHaveBeenCalled();
   });
 });

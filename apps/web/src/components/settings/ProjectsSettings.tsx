@@ -12,8 +12,8 @@ import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAx
 
 export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
-  const canOrderProjects = useClientSettings(
-    (settings) => settings.boringSidebarEnabled || settings.sidebarProjectSortOrder === "manual",
+  const manualOrder = useClientSettings(
+    (settings) => settings.sidebarProjectSortOrder === "manual",
   );
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -52,7 +52,7 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsPageContainer>
-          {canOrderProjects ? (
+          {manualOrder ? (
             <ProjectOrderList />
           ) : (
             <SettingsScopeNotice inline target="project">

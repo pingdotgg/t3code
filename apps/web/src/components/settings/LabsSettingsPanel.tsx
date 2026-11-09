@@ -1,6 +1,7 @@
 import { useAuth } from "@clerk/react";
 import { Link } from "@tanstack/react-router";
 import { managedCapabilityDenial } from "@t3tools/contracts";
+import { DEFAULT_SIDEBAR_PROJECT_SORT_ORDER } from "@t3tools/contracts/settings";
 
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -48,9 +49,33 @@ function BoringSidebarRow() {
       {settings.boringSidebarEnabled ? (
         <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
           <BoringSidebarMultilineRow />
+          <BoringSidebarProjectOrderRow />
         </div>
       ) : null}
     </SettingsRow>
+  );
+}
+
+function BoringSidebarProjectOrderRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("boring-sidebar-project-order")}
+      className="px-0 py-2 sm:px-0"
+      description="Number your projects and drag them into a fixed order in Settings → Projects. Agent activity won't move them."
+      control={
+        <Switch
+          checked={settings.sidebarProjectSortOrder === "manual"}
+          onCheckedChange={(checked) =>
+            updateSettings({
+              sidebarProjectSortOrder: checked ? "manual" : DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+            })
+          }
+          aria-label="Customize project order"
+        />
+      }
+    />
   );
 }
 
