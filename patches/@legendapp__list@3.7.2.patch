@@ -102,8 +102,20 @@ index 9ebfddc183a9b202d35c990a387c9b628feeb185..489050190144997ac72de8f4f7c62194
      const ownsMeasuredItem = measurement.containerId === void 0 || isContainerItemCurrent(ctx, measurement.containerId, measurement.itemKey);
      if (ownsMeasuredItem) {
        const index = state.indexByKey.get(measurement.itemKey);
+diff --git a/react.d.ts b/react.d.ts
+index 358fcd7faa598af8a4382719b7e7198b3ce04588..e3c7de6545578ee9dfd323064f02db7e783729a3 100644
+--- a/react.d.ts
++++ b/react.d.ts
+@@ -314,6 +314,7 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
+      * @default 0.1
+      */
+     maintainScrollAtEndThreshold?: number;
++    immediateWebShrinks?: boolean;
+     /**
+      * Maintains visibility of content.
+      * - size (default: true) stabilizes during size/layout changes while scrolling.
 diff --git a/react.js b/react.js
-index 515545471e08426fc90856256db9491db0ca4b92..8ba6019ac584a3f0cbb1310aafd57dc7d8677424 100644
+index 515545471e08426fc90856256db9491db0ca4b92..3ff1576fa5ce3522c7c34dcd905e36e231da3a8e 100644
 --- a/react.js
 +++ b/react.js
 @@ -3489,6 +3489,12 @@ function abortBootstrapInitialScroll(ctx) {
@@ -174,7 +186,14 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ba6019ac584a3f0cbb1310aafd57dc7
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6296,9 +6315,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6290,15 +6309,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -186,8 +205,24 @@ index 515545471e08426fc90856256db9491db0ca4b92..8ba6019ac584a3f0cbb1310aafd57dc7
          }
          applyLayout();
        }
+@@ -9133,6 +9151,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9431,6 +9450,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
 diff --git a/react.mjs b/react.mjs
-index ce08abe7ee62e8940f9c6ff169829244bd6bb736..5a6e9a9a867f51c29ea33efb5ec253629b55488f 100644
+index ce08abe7ee62e8940f9c6ff169829244bd6bb736..2e62bbbb6b729f300b61fd878805d89ffc158d20 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -3468,6 +3468,12 @@ function abortBootstrapInitialScroll(ctx) {
@@ -258,7 +293,14 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..5a6e9a9a867f51c29ea33efb5ec25362
        const previousRect = prevRect != null ? prevRect : getContainerLayoutBaseline(element);
        const didSizeChange = previousRect === void 0 || rectObserved.width !== previousRect.width || rectObserved.height !== previousRect.height;
        prevRect = rectObserved;
-@@ -6275,9 +6294,8 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+@@ -6269,15 +6288,14 @@ function processContainerLayout({ containerId, ctx, rectangle, ref, state }) {
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  const shouldDeferWebShrinkLayoutUpdate = !listState.props.immediateWebShrinks && !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
        var _a4;
        if (state.itemKey === currentItemKey) {
          const element = ref.current;
@@ -270,3 +312,19 @@ index ce08abe7ee62e8940f9c6ff169829244bd6bb736..5a6e9a9a867f51c29ea33efb5ec25362
          }
          applyLayout();
        }
+@@ -9112,6 +9130,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     getFixedItemSize,
+     getItemType,
+     horizontal,
++    immediateWebShrinks,
+     rtl,
+     estimatedHeaderSize,
+     initialScrollAtEnd = false,
+@@ -9410,6 +9429,7 @@ var LegendListInner = typedForwardRef(function LegendListInner2(props, forwarded
+     hasExternalScroll,
+     hideItemsUntilMeasured: experimental_hideItemsUntilMeasured,
+     horizontal: !!horizontal,
++    immediateWebShrinks: !!immediateWebShrinks,
+     itemsAreEqual,
+     keyExtractor: useWrapIfItem(keyExtractor),
+     maintainScrollAtEnd: maintainScrollAtEndConfig,
