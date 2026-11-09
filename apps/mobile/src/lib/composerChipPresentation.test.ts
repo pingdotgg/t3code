@@ -21,7 +21,6 @@ const CHIP_ACCENTS = [
         "review-comment",
         "pull-request",
         "skill",
-        "model",
         "thread",
         "environment",
       ].map((kind) => contextChipPresentation(kind)),

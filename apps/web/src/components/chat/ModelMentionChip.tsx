@@ -99,8 +99,7 @@ export function ModelMentionChip(props: {
   const accent = logoAccent(presentation.driverKind);
   return (
     <ContextChipPopover
-      // A black-and-white logo takes the text color, so its chip does too.
-      kind={accent ? "model" : "neutral"}
+      kind="neutral"
       accent={accent}
       icon={
         <ProviderInstanceIcon
