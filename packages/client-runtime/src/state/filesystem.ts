@@ -89,6 +89,17 @@ export function getFilesystemBrowsePath(
   };
 }
 
+export function findExactFilesystemBrowseEntry(
+  entries: ReadonlyArray<FilesystemBrowseEntry>,
+  query: string,
+) {
+  if (!query.trim()) return null;
+  const fullPathMatch = entries.find((entry) => entry.fullPath === query.trim());
+  if (fullPathMatch) return fullPathMatch;
+  const matches = entries.filter((entry) => entry.name.split(/[\\/]/).at(-1) === query);
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,

@@ -48,6 +48,7 @@ import {
   ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
+  isFilesystemBrowseQuery,
 } from "@t3tools/client-runtime/state/projects";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import {
@@ -939,7 +940,10 @@ function FolderBrowser(props: {
     browsePath.directoryPath.length > 0
       ? {
           partialPath: browsePath.directoryPath,
-          ...(!props.cloning && browsePath.filterQuery && !browsePath.filterQuery.startsWith(".")
+          ...(!props.cloning &&
+          !isFilesystemBrowseQuery(props.pathInput, props.environment.platform) &&
+          browsePath.filterQuery &&
+          !browsePath.filterQuery.startsWith(".")
             ? {
                 searchQuery: browsePath.filterQuery,
                 searchRoots: props.environment.searchDirectories ?? [],
@@ -1332,8 +1336,13 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const canSubmitPath =
+    canCreateProject &&
+    environment !== null &&
+    isFilesystemBrowseQuery(pathInput, environment?.platform);
+
   const submitPath = async () => {
-    if (!environment || isBrowseNavigating || isSubmitting) return;
+    if (!environment || !canSubmitPath || isBrowseNavigating || isSubmitting) return;
     setError(null);
     const resolved = resolveAddProjectPath({
       rawPath: pathInput,
@@ -1364,7 +1373,7 @@ export function AddProjectLocalFolderScreen(props: { readonly environmentId?: st
           <ProjectPathInput value={pathInput} onChangeText={setPathInput} onSubmit={submitPath} />
           <PrimaryActionButton
             label="Add project"
-            disabled={!canCreateProject || isBrowseNavigating || isSubmitting}
+            disabled={!canSubmitPath || isBrowseNavigating || isSubmitting}
             onPress={submitPath}
             loading={isSubmitting}
           />

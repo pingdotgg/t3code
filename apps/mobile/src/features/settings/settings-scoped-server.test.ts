@@ -188,3 +188,18 @@ describe("managed settings across environments", () => {
     expect(managedSettingReason(targets.slice(0, 1), "storageCleanup")).toBeUndefined();
   });
 });
+
+it("shows equal search-folder arrays as uniform and allows clearing them", () => {
+  const targets = resolveMobileSettingsTargets(
+    [
+      environment(firstId, { ...DEFAULT_SERVER_SETTINGS, projectSearchDirectories: ["/work"] }),
+      environment(secondId, { ...DEFAULT_SERVER_SETTINGS, projectSearchDirectories: ["/work"] }),
+    ],
+    null,
+  );
+  expect(uniformMobileSetting(targets, "projectSearchDirectories")).toEqual(["/work"]);
+  expect(planMobileScopedSettingsPatch(targets, false, { projectSearchDirectories: [] })).toEqual([
+    { environmentId: firstId, patch: { projectSearchDirectories: [] } },
+    { environmentId: secondId, patch: { projectSearchDirectories: [] } },
+  ]);
+});

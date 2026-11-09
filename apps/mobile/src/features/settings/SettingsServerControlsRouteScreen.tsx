@@ -38,6 +38,7 @@ import {
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
   uniformMobileSetting,
+  mobileSettingValuesEqual,
   type ScopedMobileSettingsTarget,
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -206,7 +207,9 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   // `uniform` folds a real null into "mixed"; nullable keys need the distinction.
   const isMixed = (key: keyof ServerSettings) =>
     reference === null ||
-    displayTargets.some((entry) => entry.settings[key] !== reference.settings[key]);
+    displayTargets.some(
+      (entry) => !mobileSettingValuesEqual(entry.settings[key], reference.settings[key]),
+    );
   const writeSettings = useSettingsWriter();
   const write = (patch: ServerSettingsPatch) => {
     if (writeInFlight.current) {
@@ -436,7 +439,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                         className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
                         onEndEditing={(event) => {
                           const text = event.nativeEvent.text.trim();
-                          if (text === value) return;
+                          if (text === value && !isMixed(key)) return;
                           write(
                             key === "projectSearchDirectories"
                               ? {

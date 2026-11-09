@@ -4,6 +4,7 @@ import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/co
 import {
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  findExactFilesystemBrowseEntry,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -156,4 +157,15 @@ it("fuzzy-matches and ranks folder names for every folder browser", () => {
       (entry) => entry.name === ".t3",
     ),
   ).toBe(false);
+});
+
+it("resolves only a unique exact basename from recursive folder results", () => {
+  const entries = [
+    { name: "team/project", fullPath: "/work/team/project" },
+    { name: "other/project", fullPath: "/work/other/project" },
+  ];
+  expect(findExactFilesystemBrowseEntry(entries.slice(0, 1), "project")).toEqual(entries[0]);
+  expect(findExactFilesystemBrowseEntry(entries, "project")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "proj")).toBeNull();
+  expect(findExactFilesystemBrowseEntry(entries, "/work/team/project")).toEqual(entries[0]);
 });

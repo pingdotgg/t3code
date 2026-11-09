@@ -33,6 +33,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  findExactFilesystemBrowseEntry,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
 } from "@t3tools/client-runtime/state/filesystem";
@@ -728,7 +729,9 @@ function OpenCommandPaletteDialog(props: {
         (root) => root.length > 0 && root.length <= FILESYSTEM_PATH_MAX_LENGTH,
       ) ?? [];
   const folderSearchQuery =
-    !isRemoteProjectCloneFlow && !browsePath.filterQuery.startsWith(".")
+    !isRemoteProjectCloneFlow &&
+    !isFilesystemBrowseQuery(query, browseEnvironmentPlatform) &&
+    !browsePath.filterQuery.startsWith(".")
       ? browsePath.filterQuery
       : "";
   const browseQuery = useEnvironmentQuery(
@@ -763,10 +766,7 @@ function OpenCommandPaletteDialog(props: {
       : browseResult?.recursive
         ? {
             visibleEntries: browseEntries,
-            exactEntry:
-              browseEntries.find(
-                (entry) => entry.fullPath === query.trim() || entry.name === browsePath.filterQuery,
-              ) ?? null,
+            exactEntry: findExactFilesystemBrowseEntry(browseEntries, browsePath.filterQuery),
           }
         : filterFilesystemBrowseEntries(browseEntries, browsePath.filterQuery);
 
@@ -2821,13 +2821,11 @@ function OpenCommandPaletteDialog(props: {
               : "This connection cannot add projects."
         }
         disabled={
-          !canCreateProject ||
-          !canCreateProjectInEnvironment(browseEnvironment?.connection.phase) ||
-          relativePathNeedsActiveProject ||
+          !canSubmitBrowsePath ||
           (isCloneDestinationStep && (!canCloneProject || isRemoteProjectPending))
         }
         onSubmit={() => {
-          if (relativePathNeedsActiveProject) {
+          if (!canSubmitBrowsePath || (isCloneDestinationStep && isRemoteProjectPending)) {
             return;
           }
           if (isCloneDestinationStep) {
