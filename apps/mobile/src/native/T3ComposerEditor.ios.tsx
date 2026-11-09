@@ -335,9 +335,19 @@ export function ComposerEditor({
         .then(() => nativeRef.current?.readState())
         .catch(() => undefined);
       // Acknowledging past a paste JS has not received yet would get the paste rejected.
-      if (state && state.pasteEventCount <= mostRecentEventCountRef.current) {
-        applyNativeChange(state);
+      if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
+      // A parent that dropped an acknowledged edit is stamped behind it, so native keeps showing that text.
+      if (
+        state.eventCount === mostRecentEventCountRef.current &&
+        state.resetGeneration >= readResetGeneration() &&
+        controlledEventCount < mostRecentEventCount &&
+        state.value !== props.value
+      ) {
+        onChangeText(state.value);
+        onSelectionChange?.(state.selection);
+        return;
       }
+      applyNativeChange(state);
     },
   }));
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));

@@ -300,3 +300,14 @@ it("sends text the native editor kept while the composer was locked for voice in
   expect(native.text).toBe("Draft plus more");
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe(native.text);
 });
+
+it("does not flush away a parent edit the native editor has not applied yet", async () => {
+  await using screen = await renderFlushableComposer();
+  await act(async () => emit("Draft"));
+
+  await act(async () => setComposerDraftText(DRAFT_KEY, "Draft @file"));
+  native.text = "Draft";
+
+  await act(async () => screen.editor.current!.flushPendingInput());
+  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft @file");
+});
