@@ -591,6 +591,10 @@ export function EnvironmentProviderSettings({
     serverEnvironment.configValueAtom(environmentId),
     (config) => config?.environment.capabilities.projectProviderInstanceOverrides === true,
   );
+  const supportsProviderOrder = useAtomValue(
+    serverEnvironment.configValueAtom(environmentId),
+    (config) => config?.environment.capabilities.providerOrder === true,
+  );
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -814,7 +818,8 @@ export function EnvironmentProviderSettings({
   const selectedRow =
     orderedRows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (orderedRows[0] ?? null));
-  const canReorder = !readOnly && canWriteSettings && orderedRows.length > 1;
+  const canReorder =
+    !readOnly && canWriteSettings && supportsProviderOrder && orderedRows.length > 1;
   const moveProvider = (id: ProviderInstanceId, to: number) => {
     const ids = orderedRows.map((row) => row.instanceId);
     const from = ids.indexOf(id);

@@ -7,9 +7,9 @@ desktop when the terminal is not focused. Customize `usage.open` in
 On mobile, choose **Usage** in the workspace navigation.
 
 Providers appear in the order you set in **Settings → Providers**. Drag a provider by its grip, or
-focus the grip and use Space and the arrow keys. The order is saved on the server, so usage, limits,
-and the model picker match on every device connected to it. With several environments, the primary
-environment's order applies. Until you reorder providers, usage ranks them by the selected metric.
+focus the grip and press the up or down arrow key. The order is saved on the server, so usage, limits,
+and the model picker match on every device connected to it. With several environments, web and
+desktop use the primary environment's order, and mobile uses the first environment that has one. Until you reorder providers, usage ranks them by the selected metric.
 When no model is remembered for a new conversation, it starts with the first provider in this order.
 
 ## Understand your usage
