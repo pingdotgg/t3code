@@ -166,6 +166,11 @@ describe("showLayoutContent", () => {
       expected: [[[["A", "~D!"]]]],
     },
     {
+      case: "(a) a launcher replaces the pane's previous ghost, keeping its other tabs",
+      layout: [[[["~A", "B", "+!", "C"]]]],
+      expected: [[[["B", "~D!", "C"]]]],
+    },
+    {
       case: "(b) several tabs, the focused ghost is replaced in its slot",
       layout: [[[["A", "~B!", "C"]]]],
       expected: [[[["A", "~D!", "C"]]]],
