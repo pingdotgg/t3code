@@ -531,7 +531,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   // The open history belongs to the prompt that opened it; sending closes it.
   const [workingHistoryKey, setWorkingHistoryKey] = useState<string | null>(null);
-  const [workingHistoryCollapsing, setWorkingHistoryCollapsing] = useState(false);
+  const [workingHistoryMoving, setWorkingHistoryMoving] = useState(false);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
 
@@ -1053,6 +1053,30 @@ const ConversationTimeline = memo(function ConversationTimeline({
     size: true,
   };
 
+  const workingHistoryCollapsing = workingHistoryMoving && !workingHistoryOpen;
+  const followHeldOff =
+    citationPositioning ||
+    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
+    anchoredEndSpace !== undefined ||
+    !liveFollowEnabled ||
+    fullscreenAppRowId !== null;
+  const maintainScrollAtEnd =
+    followHeldOff || workingHistoryMoving
+      ? false
+      : isWorking && !prefersReducedMotion && settlingListIdentity === null
+        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
+        : TIMELINE_MAINTAIN_SCROLL_AT_END;
+  const settleWorkingHistoryFollow = useStableCallback(() => {
+    const list = listRef.current;
+    const node = list?.getScrollableNode();
+    if (followHeldOff || !list || !node) return;
+    if (node.scrollHeight - node.clientHeight - node.scrollTop > node.clientHeight) {
+      navigateTimeline();
+    } else {
+      void list.scrollToEnd({ animated: !prefersReducedMotion });
+    }
+  });
+
   const refreshMinimap = useStableCallback(() => {
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
@@ -1301,7 +1325,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
     onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
     onToggleWorkingHistory,
-    onWorkingHistoryCollapsing: setWorkingHistoryCollapsing,
+    onWorkingHistoryMoving: setWorkingHistoryMoving,
+    onWorkingHistorySettled: settleWorkingHistoryFollow,
     onFocusComposer: onFocusComposer ?? null,
     workGroupViewState,
   };
@@ -1388,18 +1413,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     </>
   );
 
-  const maintainScrollAtEnd =
-    citationPositioning ||
-    (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
-    anchoredEndSpace ||
-    !liveFollowEnabled ||
-    fullscreenAppRowId !== null ||
-    workingHistoryOpen ||
-    workingHistoryCollapsing
-      ? false
-      : isWorking && !prefersReducedMotion && settlingListIdentity === null
-        ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
-        : TIMELINE_MAINTAIN_SCROLL_AT_END;
   const keepEndOnViewportResize = useStableCallback(() => {
     const list = listRef.current;
     const scrollNode = list?.getScrollableNode();
