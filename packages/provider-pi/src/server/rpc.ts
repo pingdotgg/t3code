@@ -158,13 +158,27 @@ const PI_STDERR_MAX_STACK_FRAMES = 3;
 // `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `fatal: …`
 const PI_STDERR_ERROR_LINE = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 const PI_STDERR_SECRET_KEY =
-  /((?<![\w-])["']?[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/giu;
+  /((?<![\w-])["']?[\w-]*(?:access[_-]?token|api[_-]?key|credential|password|private[_-]?key|secret|token)[\w-]*["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;]+)/giu;
 
 function redactPiStderrLine(line: string): string {
   const redacted = line
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ")
-    .replace(/(\b[a-z][a-z\d+.-]*:\/\/)[^\s/@"'<>]+@/giu, "$1[redacted]@")
-    .replace(/(\bhttps?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
+    .replace(/\b[a-z][a-z\d+.-]*:\/\/\S+/giu, (candidate) => {
+      try {
+        const url = new URL(candidate);
+        url.username = "";
+        url.password = "";
+        url.search = "";
+        url.hash = "";
+        return url.href;
+      } catch {
+        return "[redacted]";
+      }
+    })
+    .replace(
+      /(?<![\w-])["']?[\w-]*authorization[\w-]*["']?\s*[:=]\s*.*/giu,
+      "Authorization: [redacted]",
+    )
     .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [redacted]")
     .replace(PI_STDERR_SECRET_KEY, "$1[redacted]")
     .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]+|xox[a-z]-[A-Za-z0-9-]+)/gu, "[redacted]");
@@ -362,12 +376,15 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
 
   // Keep only a bounded tail; it is read once, when stdout closes unexpectedly.
   let stderrTail = "";
+  let stderrTailTruncated = false;
   const stderrDrained = yield* Deferred.make<void>();
   yield* child.stderr.pipe(
     Stream.decodeText(),
     Stream.runForEach((chunk) =>
       Effect.sync(() => {
-        stderrTail = `${stderrTail}${chunk}`.slice(-PI_STDERR_TAIL_MAX_CHARS);
+        const combined = `${stderrTail}${chunk}`;
+        stderrTailTruncated ||= combined.length > PI_STDERR_TAIL_MAX_CHARS;
+        stderrTail = combined.slice(-PI_STDERR_TAIL_MAX_CHARS);
       }),
     ),
     Effect.ignore,
@@ -414,7 +431,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
           [awaitBriefly(Deferred.await(exitDeferred)), awaitBriefly(Deferred.await(stderrDrained))],
           { concurrency: "unbounded" },
         );
-        const detail = describePiStdoutClosure(Option.getOrUndefined(maybeExitCode), stderrTail);
+        // An evicted line may have lost the credential label that made its contents sensitive.
+        const firstNewline = stderrTail.indexOf("\n");
+        const completeStderrTail = stderrTailTruncated
+          ? firstNewline < 0
+            ? ""
+            : stderrTail.slice(firstNewline + 1)
+          : stderrTail;
+        const detail = describePiStdoutClosure(
+          Option.getOrUndefined(maybeExitCode),
+          completeStderrTail,
+        );
         yield* failTransport(new PiRpcError({ operation: "read", detail }));
       }),
     }),

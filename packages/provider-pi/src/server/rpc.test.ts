@@ -107,6 +107,122 @@ describe("PiRpc stderr diagnostics", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live.each([
+    {
+      name: "userinfo with multiple at signs",
+      stderr: "Error: failed https://alice:prefix@secret-tail@example.test/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "userinfo with an apostrophe",
+      stderr: "Error: failed postgres://alice:prefix'secret-tail@example.test/db",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "query on a websocket URL",
+      stderr: "Error: failed wss://host/path?key=secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "fragment on a database URL",
+      stderr: "Error: failed postgres://host/db#secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "malformed URI",
+      stderr: "Error: failed https://alice:secret-tail@[invalid/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "unfinished password",
+      stderr: 'Error: config {"password":"prefix secret-tail',
+      secret: "secret-tail",
+      diagnosis: "Error: config",
+    },
+    {
+      name: "unfinished single quoted token",
+      stderr: "Error: config token='prefix secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error: config",
+    },
+    {
+      name: "AWS secret",
+      stderr: "Error: AWS_SECRET_ACCESS_KEY=wJalr-secret-tail",
+      secret: "wJalr-secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "secret key",
+      stderr: "Error: secret_key=secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "private key",
+      stderr: "Error: private_key=secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "token authorization",
+      stderr: "Error: Authorization: Token opaque123",
+      secret: "opaque123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "digest authorization",
+      stderr: 'Error: Authorization: Digest username="alice", response="secret-tail"',
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "evicted credential label",
+      stderr: 'Error: password="prefix' + "x".repeat(100) + "Error: secret-tail" + "x".repeat(8174),
+      secret: "secret-tail",
+      diagnosis: "pi process exited with code 1",
+    },
+    {
+      name: "error after evicted credential",
+      stderr:
+        'Error: password="prefix' +
+        "x".repeat(8300) +
+        'secret-tail"\nError: legitimate failure\n    at extension.ts:1:1',
+      secret: "secret-tail",
+      diagnosis: "Error: legitimate failure\nat extension.ts:1:1",
+    },
+  ])("omits $name from crash diagnostics", ({ stderr, secret, diagnosis }) => {
+    const { warnings, layer } = captureWarnings();
+    return Effect.gen(function* () {
+      const connection = yield* makePiRpcConnection({
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdin.once("data", () => process.stderr.write(${JSON.stringify(stderr)}, () => process.exit(1)));`,
+        ],
+        cwd: undefined,
+        env: {},
+      });
+      const error = yield* connection
+        .request({ type: "prompt", message: "hi" })
+        .pipe(Effect.asVoid, Effect.flip);
+      assert.equal(error._tag, "PiRpcError");
+      const detail = error._tag === "PiRpcError" ? error.detail : undefined;
+      assert.isDefined(detail);
+      assert.include(detail, diagnosis);
+      assert.notInclude(detail, secret);
+      for (const line of detail.split("\n").slice(1)) assert.isAtMost(line.length, 240);
+      assert.lengthOf(warnings, 1);
+      assert.deepEqual(warnings[0]?.[1], { detail });
+      const eventsError = yield* Queue.take(connection.events).pipe(Effect.flip);
+      assert.equal(eventsError.detail, detail);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  });
+
   it.live("does not warn when the caller stops Pi", () => {
     const { warnings, layer } = captureWarnings();
     return Effect.gen(function* () {
