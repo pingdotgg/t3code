@@ -72,12 +72,13 @@ const setup = Effect.gen(function* () {
     return delegate.spawn(command);
   });
   const clone = yield* testCloner;
+  const environment = yield* HostProcess.Environment;
   const provide = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.provideService(CheckoutCloner.CheckoutCloner, clone),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(HostProcess.Environment, {
-        ...process.env,
+        ...environment,
         GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_CONFIG_NOSYSTEM: "1",
       }),
@@ -175,6 +176,39 @@ describe.skipIf(!symlinksSupported)("worktree checkout cache", () => {
       const stock = yield* fixture.create("stock", "main", false);
       assert.deepStrictEqual(snapshot(fast), snapshot(stock));
       assert.equal(sh(fast, ["status", "--porcelain"]), "");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("matches Git after home-relative external attributes change", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const homeDirectory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "worktree-cache-home-$&-$$-",
+      });
+      const environment = yield* HostProcess.Environment;
+      yield* Effect.gen(function* () {
+        const fixture = yield* setup;
+        const attributes = NodePath.join(homeDirectory, "attributes");
+        NodeFS.writeFileSync(attributes, "README.md text eol=lf\n");
+        sh(fixture.repo, ["config", "core.attributesfile", "~/attributes"]);
+        yield* fixture.build(yield* fixture.create("base", "main", false));
+        assert.equal(
+          NodeFS.readFileSync(NodePath.join(cacheEntry(fixture), "README.md"), "utf8"),
+          "# test\n",
+        );
+
+        NodeFS.writeFileSync(attributes, "README.md text eol=crlf\n");
+        const created = yield* fixture.create("changed");
+        const stock = yield* fixture.create("stock", "main", false);
+        assert.deepStrictEqual(snapshot(created), snapshot(stock));
+      }).pipe(
+        Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+        Effect.provideService(HostProcess.Environment, {
+          ...environment,
+          HOME: homeDirectory,
+          GIT_ATTR_NOSYSTEM: "1",
+        }),
+      );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

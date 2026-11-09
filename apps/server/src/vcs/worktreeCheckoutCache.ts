@@ -212,7 +212,7 @@ export const makeWorktreeCheckoutCache = Effect.fn("WorktreeCheckoutCache.make")
     if (sparse !== undefined && !GIT_FALSE.has(sparse.toLowerCase())) return null;
     const attributesFile = pairs
       .findLast(([key]) => key === "core.attributesfile")?.[1]
-      ?.replace(/^~(?=$|\/)/, homeDirectory);
+      ?.replace(/^~(?=$|\/)/, () => homeDirectory);
     // Git reads a relative path from each checkout, which differs between the cache and the worktree.
     if (attributesFile !== undefined && !path.isAbsolute(attributesFile)) return null;
     const attributePaths = [
