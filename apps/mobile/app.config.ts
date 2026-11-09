@@ -326,7 +326,8 @@ const config: ExpoConfig = {
   },
   plugins: [
     "expo-asset",
-    "react-native-pdf-jsi",
+    // iOS previews PDFs in a WebView; keep the plugin from exposing Documents in the Files app.
+    ["react-native-pdf-jsi", { iosFileSharing: false }],
     [
       "expo-font",
       {
