@@ -1492,7 +1492,7 @@ it.layer(
     it.effect("invalidates model caches only for an explicit model refresh", () =>
       Effect.gen(function* () {
         const forceRefreshCalls = yield* Ref.make(0);
-        const onDemandManifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
+        const manifest = yield* Ref.make(ModelManifest.BUNDLED_MODEL_MANIFEST);
         const makeInstance = (name: string) =>
           Effect.gen(function* () {
             const driver = ProviderDriverKind.make("codex");
@@ -1559,12 +1559,12 @@ it.layer(
           },
         );
         const layerModelManifest = Layer.succeed(ModelManifest.ModelManifest, {
-          current: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+          current: Ref.get(manifest),
           refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
           forceRefresh: Ref.update(forceRefreshCalls, (count) => count + 1).pipe(
             Effect.as(ModelManifest.BUNDLED_MODEL_MANIFEST),
           ),
-          refreshOnDemand: Ref.get(onDemandManifest),
+          refreshOnDemand: Ref.get(manifest),
           refreshInBackground: Effect.void,
         });
         const layerLatestVersions = Layer.effect(
@@ -1611,11 +1611,11 @@ it.layer(
           yield* registry.invalidateModelCaches({ ...workspace, fresh: true });
           assert.deepStrictEqual(yield* first.takeMaintenanceReads, [false]);
 
-          // An opened model picker probes only when the manifest is newer than the last probe saw.
+          // An opened model picker probes only when the manifest differs from what the last pass saw.
           const probesBefore = yield* Ref.get(second.probes);
           yield* registry.refreshModelCatalog;
           assert.strictEqual(yield* Ref.get(second.probes), probesBefore);
-          yield* Ref.set(onDemandManifest, {
+          yield* Ref.set(manifest, {
             ...ModelManifest.BUNDLED_MODEL_MANIFEST,
             updatedAt: "2999-01-01T00:00:00Z",
           });
