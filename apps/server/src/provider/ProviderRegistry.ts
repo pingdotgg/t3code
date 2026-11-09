@@ -329,21 +329,12 @@ const correlateSnapshotWithSource = (
       ),
     );
   }
-  return Effect.succeed(snapshot);
+  return Effect.succeed(source.icon === undefined ? snapshot : { ...snapshot, icon: source.icon });
 };
 
 const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
-
-// Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
-const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource => ({
-  instanceId: instance.instanceId,
-  driverKind: instance.driverKind,
-  getSnapshot: instance.snapshot.getSnapshot,
-  refresh: instance.snapshot.refresh,
-  streamChanges: instance.snapshot.streamChanges,
-});
 
 export const layer = Layer.effect(
   ProviderRegistry,
@@ -363,8 +354,22 @@ export const layer = Layer.effect(
       PubSub.shutdown,
     );
 
+    // Rebuilt instances have new PubSubs; capture their fresh closures instead of a closed source.
+    const buildSnapshotSource = (instance: ProviderInstance) =>
+      Effect.map(
+        instanceRegistry.getInstanceIcon(instance.instanceId),
+        (icon): ProviderSnapshotSource => ({
+          instanceId: instance.instanceId,
+          driverKind: instance.driverKind,
+          icon,
+          getSnapshot: instance.snapshot.getSnapshot,
+          refresh: instance.snapshot.refresh,
+          streamChanges: instance.snapshot.streamChanges,
+        }),
+      );
+
     const bootInstances = yield* instanceRegistry.listInstances;
-    const bootSources = bootInstances.map(buildSnapshotSource);
+    const bootSources = yield* Effect.forEach(bootInstances, buildSnapshotSource);
     const fallbackProviders = yield* loadProviders(bootSources);
     const fallbackByInstance = new Map<ProviderInstanceId, ServerProvider>();
     for (let index = 0; index < fallbackProviders.length; index++) {
@@ -603,7 +608,7 @@ export const layer = Layer.effect(
         .pipe(Effect.map((current) => current === instance));
 
     const refreshOneSource = Effect.fn("refreshOneSource")(function* (instance: ProviderInstance) {
-      const providerSource = buildSnapshotSource(instance);
+      const providerSource = yield* buildSnapshotSource(instance);
       // Enrichment can publish a newer snapshot before refresh returns its pre-enrichment probe.
       const probe = yield* providerSource.refresh.pipe(
         Effect.andThen(providerSource.getSnapshot),
@@ -829,7 +834,7 @@ export const layer = Layer.effect(
 
         // Subscribe before reading so a probe completing mid-sync is observed by at least one path.
         for (const [, instance] of newlyAdded) {
-          const source = buildSnapshotSource(instance);
+          const source = yield* buildSnapshotSource(instance);
           yield* Stream.runForEach(source.streamChanges, (provider) =>
             correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
           ).pipe(Effect.forkScoped);
@@ -840,7 +845,7 @@ export const layer = Layer.effect(
           newlyAdded,
           ([, instance]) =>
             Effect.gen(function* () {
-              const source = buildSnapshotSource(instance);
+              const source = yield* buildSnapshotSource(instance);
               const provider = yield* source.getSnapshot;
               yield* correlateSnapshotWithSource(source, provider).pipe(
                 Effect.flatMap(syncProvider),

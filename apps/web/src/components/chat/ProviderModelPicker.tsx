@@ -356,6 +356,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       accentColor={selection.entry.accentColor}
                       acpRegistryAgentId={selection.entry.acpRegistryAgentId}
                       acpRegistryIconUrl={selection.entry.acpRegistryIconUrl}
+                      icon={selection.entry.icon}
                       className="size-4 rounded-full bg-(--chat-composer-glass-surface,var(--background)) ring-2 ring-(--chat-composer-glass-surface,var(--background))"
                       iconClassName="size-4"
                     />
@@ -376,6 +377,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 accentColor={activeEntry.accentColor}
                 acpRegistryAgentId={activeEntry.acpRegistryAgentId}
                 acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+                icon={activeEntry.icon}
                 showBadge={showInstanceBadge}
                 className="size-4"
                 iconClassName={cn("size-4", props.activeProviderIconClassName)}

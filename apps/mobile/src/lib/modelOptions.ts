@@ -8,6 +8,7 @@ import type {
   ModelCapabilities,
   ModelSelection,
   ProjectId,
+  ProviderVectorIcon,
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
@@ -33,6 +34,7 @@ export type ModelOption = {
   readonly providerDriver: string;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
+  readonly providerIcon?: ProviderVectorIcon | undefined;
   readonly providerBadge?: {
     readonly displayName: string;
     readonly accentColor?: string;
@@ -377,6 +379,7 @@ export function buildModelOptions(
           ? {}
           : { supportedRuntimeModes: provider.supportedRuntimeModes }),
         ...(provider.iconUrl ? { providerIconUrl: provider.iconUrl } : {}),
+        ...(provider.icon ? { providerIcon: provider.icon } : {}),
         isHidden: !model.isCustom && hiddenModels.has(model.slug),
         canHide: !model.isCustom,
         isDefault: model.isDefault === true,

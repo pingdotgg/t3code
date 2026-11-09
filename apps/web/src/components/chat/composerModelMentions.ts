@@ -37,6 +37,7 @@ export function matchComposerModelItems(input: {
     providerDisplayName: entry.displayName,
     acpRegistryAgentId: entry.acpRegistryAgentId,
     acpRegistryIconUrl: entry.acpRegistryIconUrl,
+    icon: entry.icon,
     label: getDisplayModelName(option),
     description: option.subProvider ?? entry.displayName,
   }));

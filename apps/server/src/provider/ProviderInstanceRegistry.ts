@@ -5,6 +5,7 @@ import {
   type ProviderInstanceConfigMap,
   type ProviderInstanceEnvironment,
   type ProviderDriverKind,
+  type ProviderVectorIcon,
   type ResolvedProviderInstanceEnvironment,
   type SecretReference,
   secretReferencesInSettings,
@@ -38,6 +39,10 @@ export class ProviderInstanceRegistry extends Context.Service<
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<ProviderInstance | undefined>;
     readonly listInstances: Effect.Effect<ReadonlyArray<ProviderInstance>>;
+    /** The icon settings give a live instance; drivers do not stamp it on their snapshots. */
+    readonly getInstanceIcon: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<ProviderVectorIcon | undefined>;
     readonly listUnavailable: Effect.Effect<ReadonlyArray<ServerProvider>>;
     /** streamChanges subscribes on consumption; use subscribeChanges before forking to avoid missing the next publish. */
     readonly streamChanges: Stream.Stream<void>;
@@ -181,6 +186,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: blocked,
       }),
     };
@@ -194,6 +200,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: `Driver '${entry.driver}' is not registered in this build.`,
       }),
     };
@@ -216,6 +223,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: `Invalid config for instance '${rawInstanceId}': ${detail}`,
       }),
     };
@@ -231,6 +239,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: "Reading secrets…",
       }),
     };
@@ -252,6 +261,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: `Could not read ${unreadable.join(", ")} from its secret provider. Unlock it, then refresh.`,
       }),
     };
@@ -286,6 +296,7 @@ const buildEntry = Effect.fn("ProviderInstanceRegistry.buildEntry")(function* <R
         instanceId,
         displayName: entry.displayName,
         accentColor: entry.accentColor,
+        icon: entry.icon,
         reason: `Driver '${entry.driver}' failed to create instance: ${createResult.failure.detail}`,
       }),
     };
@@ -578,6 +589,7 @@ export const makeProviderInstanceRegistry = Effect.fn(
           Array.from(map.values(), (live) => live.instance) as ReadonlyArray<ProviderInstance>,
       ),
     ),
+    getInstanceIcon: (id) => Ref.get(entries).pipe(Effect.map((map) => map.get(id)?.entry.icon)),
     listUnavailable: Ref.get(unavailable).pipe(
       Effect.map((map) => Array.from(map.values()) as ReadonlyArray<ServerProvider>),
     ),

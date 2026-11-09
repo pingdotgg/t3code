@@ -6,7 +6,7 @@ import {
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderVectorIcon } from "@t3tools/contracts";
 import {
   AnthropicIcon,
   AntigravityIcon,
@@ -92,6 +92,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   accentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  /** An instance's own glyph from settings; it replaces the driver's. */
+  icon?: ProviderVectorIcon | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
   size?: "default" | "compact";
@@ -101,7 +103,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   indicatorBackground?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
-  const packageIcon = providerClients.get(props.driverKind)?.icon;
+  const packageIcon = props.icon ?? providerClients.get(props.driverKind)?.icon;
   const indicatorBackground = props.indicatorBackground ?? "var(--card)";
   const accentColor = normalizeProviderAccentColor(props.accentColor);
   const accentStyle = accentColor
@@ -112,9 +114,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
     : undefined;
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
-  const isAcpRegistry = props.driverKind === "acpRegistry";
+  const isAcpRegistry = props.driverKind === "acpRegistry" && !props.icon;
   // A custom OpenAI-compatible endpoint has no brand: show its name, marked with the protocol.
-  const isCustomEndpoint = props.driverKind === "openaiCompatible";
+  const isCustomEndpoint = props.driverKind === "openaiCompatible" && !props.icon;
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,

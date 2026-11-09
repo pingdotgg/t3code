@@ -540,6 +540,20 @@ describe("resolveDefaultProviderModelSelection", () => {
 });
 
 describe("provider icon metadata", () => {
+  it("copies an instance's settings icon from its snapshot", () => {
+    const icon = {
+      viewBox: "0 0 24 24",
+      fill: { light: "#1c1c1c", dark: "#f5f5f5" },
+      paths: [{ d: "M12 2 22 22 2 22Z" }],
+    };
+    const [branded, stock] = deriveProviderInstanceEntries([
+      { ...provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi_aside" }), icon },
+      provider({ provider: ProviderDriverKind.make("pi"), instanceId: "pi" }),
+    ]);
+    expect(branded?.icon).toBe(icon);
+    expect(stock?.icon).toBeUndefined();
+  });
+
   it("clears stale registry branding when an instance switches to a local command", () => {
     const instanceId = ProviderInstanceId.make("custom-acp");
     const driver = ProviderDriverKind.make("acpRegistry");

@@ -1105,6 +1105,7 @@ it.layer(
                 getInstance: (id) =>
                   Effect.succeed(id === instance.instanceId ? instance : undefined),
                 listInstances: Effect.succeed([instance]),
+                getInstanceIcon: () => Effect.undefined,
                 listUnavailable: Effect.succeed([]),
                 streamChanges: Stream.empty,
                 subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -1244,6 +1245,7 @@ it.layer(
               getInstance: (id) =>
                 Effect.succeed(id === instance.instanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
+              getInstanceIcon: () => Effect.undefined,
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -1551,6 +1553,7 @@ it.layer(
             getInstance: (instanceId) =>
               Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
             listInstances: Effect.succeed(instances),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -1682,6 +1685,7 @@ it.layer(
               getInstance: (requestedId) =>
                 Effect.succeed(requestedId === instanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
+              getInstanceIcon: () => Effect.undefined,
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -1778,6 +1782,7 @@ it.layer(
             getInstance: (requestedId) =>
               Effect.succeed(requestedId === instanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -1899,6 +1904,7 @@ it.layer(
             getInstance: (requestedId) =>
               Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
             listInstances: Effect.succeed(instances),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -2012,6 +2018,7 @@ it.layer(
                   ),
                 ),
               listInstances: Ref.get(instances),
+              getInstanceIcon: () => Effect.undefined,
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: PubSub.subscribe(changes),
@@ -2141,6 +2148,7 @@ it.layer(
             getInstance: (requestedId) =>
               Effect.succeed(requestedId === instanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
@@ -2264,6 +2272,7 @@ it.layer(
             getInstance: (instanceId) =>
               Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
@@ -2365,6 +2374,7 @@ it.layer(
             getInstance: (instanceId) =>
               Effect.succeed(instanceId === claudeInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
@@ -2554,6 +2564,7 @@ it.layer(
               getInstance: (instanceId) =>
                 Effect.succeed(instanceId === openCodeInstanceId ? instance : undefined),
               listInstances: Effect.succeed([instance]),
+              getInstanceIcon: () => Effect.undefined,
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.empty,
               subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
@@ -2658,6 +2669,7 @@ it.layer(
             getInstance: (instanceId) =>
               Effect.succeed(instanceId === codexInstanceId ? instance : undefined),
             listInstances: Effect.succeed([instance]),
+            getInstanceIcon: () => Effect.undefined,
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.empty,
             subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
@@ -2828,23 +2840,30 @@ it.layer(
       }),
     );
 
-    it.effect("includes unavailable instance snapshots in getProviders", () =>
+    it.effect("includes unavailable instance snapshots and settings icons in getProviders", () =>
       Effect.gen(function* () {
-        const serverSettings = yield* makeMutableServerSettingsService(
+        const icon = {
+          viewBox: "0 0 24 24",
+          fill: { light: "#1c1c1c", dark: "#f5f5f5" },
+          paths: [{ d: "M12 2 22 22 2 22Z" }],
+        };
+        const settingsFor = (withIcons: boolean) =>
           decodeServerSettings(
             deepMerge(encodedDefaultServerSettings, {
               providerInstances: {
-                ...disabledDefaultSlots("codex", "claudeAgent", "cursor", "grok", "opencode"),
+                ...disabledDefaultSlots("claudeAgent", "cursor", "grok", "opencode"),
+                codex: { driver: "codex", enabled: false, ...(withIcons ? { icon } : {}) },
                 ghost_main: {
                   driver: "ghostDriver",
                   displayName: "A fork-only driver we don't ship",
                   enabled: false,
                   config: { arbitrary: "payload" },
+                  ...(withIcons ? { icon } : {}),
                 },
               } as unknown as (typeof ServerSettings.Encoded)["providerInstances"],
             }),
-          ),
-        );
+          );
+        const serverSettings = yield* makeMutableServerSettingsService(settingsFor(true));
         const scope = yield* Scope.make();
         yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
         const layerProviderRegistry = ProviderRegistry.layer.pipe(
@@ -2892,6 +2911,20 @@ it.layer(
           assert.strictEqual(ghost?.availability, "unavailable");
           assert.strictEqual(Object.hasOwn(ghost ?? {}, "setup"), false);
           assert.match(ghost?.unavailableReason ?? "", /ghostDriver/);
+          assert.deepStrictEqual(ghost?.icon, icon);
+          const codex = providers.find((provider) => provider.instanceId === "codex");
+          assert.deepStrictEqual(codex?.icon, icon);
+
+          const codexWithoutIcon = yield* Stream.toPull(
+            registry.streamChanges.pipe(
+              Stream.map((next) => next.find((provider) => provider.instanceId === "codex")),
+              Stream.filter((provider) => provider !== undefined && provider.icon === undefined),
+            ),
+          );
+          yield* serverSettings.updateSettings({
+            providerInstances: settingsFor(false).providerInstances,
+          });
+          assert.strictEqual(Object.hasOwn((yield* codexWithoutIcon)[0] ?? {}, "icon"), false);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

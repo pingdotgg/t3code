@@ -85,6 +85,7 @@ const layerWithPolicy = (policy?: ManagedPolicySummary) =>
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
         getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
         listInstances: Effect.succeed([]),
+        getInstanceIcon: () => Effect.undefined,
         listUnavailable: Effect.succeed([]),
         streamChanges: Stream.empty,
         subscribeChanges: Effect.never,

@@ -64,6 +64,7 @@ const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderIns
   getInstance: (instanceId) =>
     Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
   listInstances: Effect.succeed(instances),
+  getInstanceIcon: () => Effect.undefined,
   listUnavailable: Effect.succeed([]),
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,

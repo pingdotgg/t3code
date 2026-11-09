@@ -1,13 +1,19 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleOptional, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretReference } from "./secretReference.ts";
 
 const PROVIDER_SLUG_MAX_CHARS = 64;
 const PROVIDER_SLUG_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const ENVIRONMENT_VARIABLE_NAME_MAX_CHARS = 128;
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+const ICON_VIEW_BOX_MAX_CHARS = 64;
+const ICON_VIEW_BOX_PATTERN = /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[\s,]+-?(?:\d+(?:\.\d+)?|\.\d+)){3}$/;
+const ICON_HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const ICON_PATH_MAX_CHARS = 4096;
+const ICON_PATH_PATTERN = /^[MmZzLlHhVvCcSsQqTtAa0-9eE.,+\-\s]+$/;
+const ICON_MAX_PATHS = 8;
 
 const slugSchema = TrimmedNonEmptyString.check(
   Schema.isMaxLength(PROVIDER_SLUG_MAX_CHARS),
@@ -71,11 +77,34 @@ export type ResolvedProviderInstanceEnvironment = ReadonlyArray<
   Omit<ProviderInstanceEnvironmentVariable, "value"> & { readonly value: string }
 >;
 
+// Hex-only fills end up in CSS custom properties that drive `fill`, so no url() paint server can load.
+const ProviderIconFill = Schema.String.check(Schema.isPattern(ICON_HEX_COLOR_PATTERN));
+
+/** The themed glyph shape provider packages declare, without gradients or per-path fills. */
+export const ProviderVectorIcon = Schema.Struct({
+  viewBox: Schema.String.check(
+    Schema.isMaxLength(ICON_VIEW_BOX_MAX_CHARS),
+    Schema.isPattern(ICON_VIEW_BOX_PATTERN),
+  ),
+  fill: Schema.Struct({ light: ProviderIconFill, dark: ProviderIconFill }),
+  paths: Schema.Array(
+    Schema.Struct({
+      d: Schema.String.check(
+        Schema.isMaxLength(ICON_PATH_MAX_CHARS),
+        Schema.isPattern(ICON_PATH_PATTERN),
+      ),
+      fillRule: Schema.optionalKey(Schema.Literals(["evenodd", "nonzero"])),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(ICON_MAX_PATHS)),
+});
+export type ProviderVectorIcon = typeof ProviderVectorIcon.Type;
+
 /** Drivers decode their own config; unknown-driver envelopes round-trip verbatim across versions. */
 export const ProviderInstanceConfig = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  icon: ForwardCompatibleOptional(ProviderVectorIcon),
   environment: Schema.optionalKey(ProviderInstanceEnvironment),
   enabled: Schema.optionalKey(Schema.Boolean),
   config: Schema.optionalKey(Schema.Unknown),

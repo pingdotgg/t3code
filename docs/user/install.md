@@ -227,6 +227,29 @@ instance can have its own environment variables, such as API keys or a custom
 base URL. Mark secret values as sensitive; after saving, T3 Code does not display
 their original values.
 
+An instance can also show its own icon in place of the provider's logo, which
+tells two instances of the same provider apart. In the server's `settings.json`
+in its `userdata` directory, such as `~/.t3/userdata/settings.json`, set
+`providerInstances.<id>.icon` to a `viewBox`, `fill` colors for the light and
+dark themes as `#RRGGBB` hex, and one to eight `paths`, each a `d` string with an
+optional `fillRule`. An icon that does not fit this shape is ignored.
+
+```json
+{
+  "providerInstances": {
+    "pi_aside": {
+      "driver": "pi",
+      "displayName": "Aside Code",
+      "icon": {
+        "viewBox": "0 0 24 24",
+        "fill": { "light": "#1c1c1c", "dark": "#f5f5f5" },
+        "paths": [{ "d": "M12 2 22 22 2 22Z" }]
+      }
+    }
+  }
+}
+```
+
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),

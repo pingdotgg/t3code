@@ -229,6 +229,24 @@ describe("ServerSettings secret providers", () => {
   });
 });
 
+describe("ServerSettings provider instance icons", () => {
+  it("drops one instance's invalid icon without failing the whole settings decode", () => {
+    const icon = {
+      viewBox: "0 0 24 24",
+      fill: { light: "#1c1c1c", dark: "#f5f5f5" },
+      paths: [{ d: "M12 2 22 22 2 22Z" }],
+    };
+    const { providerInstances } = decodeServerSettings({
+      providerInstances: {
+        pi_aside: { driver: "pi", icon },
+        pi_broken: { driver: "pi", icon: { ...icon, fill: { light: "red", dark: "blue" } } },
+      },
+    });
+    expect(providerInstances[ProviderInstanceId.make("pi_aside")]?.icon).toEqual(icon);
+    expect(providerInstances[ProviderInstanceId.make("pi_broken")]).toEqual({ driver: "pi" });
+  });
+});
+
 describe("custom model settings", () => {
   const capabilities = {
     optionDescriptors: [

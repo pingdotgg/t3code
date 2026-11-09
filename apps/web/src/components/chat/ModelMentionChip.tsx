@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import type { EnvironmentId, ProviderDriverKind, ProviderVectorIcon } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
@@ -17,6 +17,7 @@ interface ModelMentionPresentation {
   readonly providerDisplayName: string;
   readonly acpRegistryAgentId: string | undefined;
   readonly acpRegistryIconUrl: string | undefined;
+  readonly icon: ProviderVectorIcon | undefined;
 }
 
 function presentationsEqual(left: ModelMentionPresentation, right: ModelMentionPresentation) {
@@ -26,7 +27,8 @@ function presentationsEqual(left: ModelMentionPresentation, right: ModelMentionP
     left.driverKind === right.driverKind &&
     left.providerDisplayName === right.providerDisplayName &&
     left.acpRegistryAgentId === right.acpRegistryAgentId &&
-    left.acpRegistryIconUrl === right.acpRegistryIconUrl
+    left.acpRegistryIconUrl === right.acpRegistryIconUrl &&
+    left.icon === right.icon
   );
 }
 
@@ -51,6 +53,7 @@ const modelMentionPresentationAtom = Atom.family((key: string) =>
       providerDisplayName: entry.displayName,
       acpRegistryAgentId: entry.acpRegistryAgentId,
       acpRegistryIconUrl: entry.acpRegistryIconUrl,
+      icon: entry.icon,
     };
     const previous = Option.getOrNull(get.self<ModelMentionPresentation | null>());
     return previous && presentationsEqual(previous, next) ? previous : next;
@@ -107,6 +110,7 @@ export function ModelMentionChip(props: {
           displayName={presentation.providerDisplayName}
           acpRegistryAgentId={presentation.acpRegistryAgentId}
           acpRegistryIconUrl={presentation.acpRegistryIconUrl}
+          icon={presentation.icon}
           className="z-auto"
           iconClassName="size-[1em]"
         />

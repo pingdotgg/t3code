@@ -30,6 +30,7 @@ import {
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
   type ProviderInstanceId,
+  type ProviderVectorIcon,
   type ServerProvider,
   type ThreadId,
   type EnvironmentId,
@@ -216,6 +217,7 @@ function SubagentAvatar({
   driver,
   displayName,
   iconUrl,
+  icon,
   accentColor,
   showBadge,
   status,
@@ -224,6 +226,7 @@ function SubagentAvatar({
   driver?: ProviderDriverKind | undefined;
   displayName?: string | undefined;
   iconUrl?: string | undefined;
+  icon?: ProviderVectorIcon | undefined;
   accentColor?: string | undefined;
   showBadge: boolean;
   status?: OrchestrationV2TurnItem["status"] | undefined;
@@ -243,6 +246,7 @@ function SubagentAvatar({
           displayName={displayName ?? driver}
           accentColor={accentColor}
           acpRegistryIconUrl={iconUrl}
+          icon={icon}
           showBadge={showBadge}
           size="compact"
           className="z-auto"
@@ -311,12 +315,17 @@ export function EnvironmentSubagentAvatar({
     (providers) =>
       providers?.find((provider) => provider.instanceId === providerInstanceId)?.iconUrl,
   );
+  const icon = useAtomValue(
+    providersAtom,
+    (providers) => providers?.find((provider) => provider.instanceId === providerInstanceId)?.icon,
+  );
   return (
     <SubagentAvatar
       {...props}
       driver={providerDriver ?? (remote === undefined ? driver : undefined)}
       displayName={displayName}
       iconUrl={iconUrl}
+      icon={icon}
       accentColor={accentColor}
       showBadge={showBadge}
     />
@@ -708,6 +717,7 @@ function HandoffEndpoint(props: {
               accentColor={entry?.accentColor}
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+              icon={entry?.icon}
               showBadge={showBadge}
               size="compact"
               iconClassName={cn(showBadge && "opacity-60")}

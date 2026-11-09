@@ -1,6 +1,7 @@
 import {
   ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderVectorIcon,
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -13,6 +14,7 @@ export interface UnavailableProviderSnapshotInput {
   readonly instanceId: ProviderInstanceId;
   readonly displayName?: string | undefined;
   readonly accentColor?: string | undefined;
+  readonly icon?: ProviderVectorIcon | undefined;
   readonly reason: string;
   readonly checkedAt?: string;
 }
@@ -45,6 +47,7 @@ export const buildUnavailableProviderSnapshot = Effect.fn(
     ...base,
     instanceId: input.instanceId,
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    ...(input.icon ? { icon: input.icon } : {}),
     driver:
       typeof input.driverKind === "string"
         ? ProviderDriverKind.make(input.driverKind)

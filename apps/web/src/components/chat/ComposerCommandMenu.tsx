@@ -10,6 +10,7 @@ import {
   type ProjectEntry,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ProviderVectorIcon,
   type PullRequestContextMetadata,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -100,6 +101,7 @@ export type ComposerCommandItem =
       providerDisplayName: string;
       acpRegistryAgentId: string | undefined;
       acpRegistryIconUrl: string | undefined;
+      icon: ProviderVectorIcon | undefined;
       label: string;
       description: string;
     };
@@ -241,6 +243,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           displayName={props.item.providerDisplayName}
           acpRegistryAgentId={props.item.acpRegistryAgentId}
           acpRegistryIconUrl={props.item.acpRegistryIconUrl}
+          icon={props.item.icon}
           className="size-4 shrink-0"
           iconClassName="size-4"
         />

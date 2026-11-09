@@ -367,9 +367,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("codex");
       const reason = "Example Corp's policy does not allow the Codex provider.";
+      const icon = {
+        viewBox: "0 0 24 24",
+        fill: { light: "#1c1c1c", dark: "#f5f5f5" },
+        paths: [{ d: "M12 2 22 22 2 22Z" }],
+      };
       const { registry } = yield* makeProviderInstanceRegistry({
         drivers: [CodexDriver],
-        configMap: { [instanceId]: { driver: ProviderDriverKind.make("codex") } },
+        configMap: { [instanceId]: { driver: ProviderDriverKind.make("codex"), icon } },
         blockedReason: (driver) => (driver === "codex" ? reason : undefined),
       });
 
@@ -378,6 +383,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(unavailable?.instanceId).toBe(instanceId);
       expect(unavailable?.availability).toBe("unavailable");
       expect(unavailable?.unavailableReason).toBe(reason);
+      expect(unavailable?.icon).toEqual(icon);
     }).pipe(Effect.provide(layerTest)),
   );
 

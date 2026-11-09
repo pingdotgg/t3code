@@ -53,6 +53,28 @@ describe("server config forward compatibility", () => {
     expect(parsed).toEqual([decodedBase]);
   });
 
+  it("drops an icon this build cannot decode instead of failing the provider", () => {
+    const icon = {
+      viewBox: "0 0 24 24",
+      fill: { light: "#1c1c1c", dark: "#f5f5f5" },
+      paths: [{ d: "M12 2 22 22 2 22Z" }],
+    };
+
+    const parsed = decodeServerProviders([
+      { ...baseProviderSnapshot, icon },
+      {
+        ...baseProviderSnapshot,
+        instanceId: "future",
+        icon: { ...icon, fill: { ...icon.fill, light: "url(https://evil/x.svg#a)" } },
+      },
+    ]);
+
+    expect(parsed.map((provider) => [provider.instanceId, provider.icon])).toEqual([
+      ["codex", icon],
+      ["future", undefined],
+    ]);
+  });
+
   it("drops usage windows this build cannot decode instead of failing the provider", () => {
     const parsed = decodeServerProvider({
       ...baseProviderSnapshot,

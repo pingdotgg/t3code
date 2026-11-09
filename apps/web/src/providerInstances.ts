@@ -7,6 +7,7 @@ import {
   type ProjectId,
   type ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderVectorIcon,
   type ServerProvider,
   type ServerProviderModel,
   type ServerSettings,
@@ -33,6 +34,7 @@ export interface ProviderInstanceEntry {
   readonly accentColor?: string | undefined;
   readonly acpRegistryAgentId?: string | undefined;
   readonly acpRegistryIconUrl?: string | undefined;
+  readonly icon?: ProviderVectorIcon | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -68,6 +70,7 @@ export function deriveProviderInstanceEntries(
       ...(driverKind === "acpRegistry" && snapshot.iconUrl
         ? { acpRegistryIconUrl: snapshot.iconUrl }
         : {}),
+      icon: snapshot.icon,
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,

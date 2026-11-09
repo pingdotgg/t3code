@@ -1,4 +1,8 @@
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ProviderVectorIcon,
+} from "@t3tools/contracts";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
@@ -22,6 +26,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   providerAccentColor?: string | undefined;
   acpRegistryAgentId?: string | undefined;
   acpRegistryIconUrl?: string | undefined;
+  icon?: ProviderVectorIcon | undefined;
   isFavorite: boolean;
   /** In Favorites every row is starred, so the star shows only on hover. */
   favoriteStarOnHover?: boolean;
@@ -60,6 +65,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         accentColor={props.providerAccentColor}
         acpRegistryAgentId={props.acpRegistryAgentId}
         acpRegistryIconUrl={props.acpRegistryIconUrl}
+        icon={props.icon}
         showBadge={props.showInstanceBadge}
         className="size-4"
         iconClassName="size-4"
