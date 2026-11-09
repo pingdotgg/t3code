@@ -120,10 +120,11 @@ overrides:
   "@react-navigation/native-stack": 7.21.0
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
-  react-native-gesture-handler: 3.3.0
+  react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.7.1
-  react-native-keyboard-controller: 1.22.8
-  react-native-pdf-jsi: 5.0.0
+  react-native-keyboard-controller: 1.23.0
+  # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
+  react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
   app-builder-lib: 26.16.1
@@ -241,12 +242,11 @@ patchedDependencies:
   "@react-navigation/native-stack@7.21.0": patches/@react-navigation%2Fnative-stack@7.21.0.patch
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
-  react-native-gesture-handler@3.3.0: patches/react-native-gesture-handler@3.3.0.patch
+  react-native-gesture-handler@3.5.0: patches/react-native-gesture-handler@3.5.0.patch
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
-  react-native-keyboard-controller@1.22.8: patches/react-native-keyboard-controller@1.22.8.patch
-  react-native-pdf-jsi@5.0.0: patches/react-native-pdf-jsi@5.0.0.patch
+  react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
   # Android: a Compose host that requests layout in a mount (a new screen's app bar) is laid out
@@ -259,6 +259,8 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
+  # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
+  "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.

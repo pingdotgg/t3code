@@ -913,6 +913,19 @@ function ThreadSettingsMainContent(props: {
     reportFailure: false,
   });
   const refreshProviderCatalog = createProviderCatalogRefreshRunner(refreshProvidersCommand);
+  const registry = use(RegistryContext);
+  const refreshModelCatalog = useEffectEvent(() => {
+    const environmentId = session.environmentId;
+    if (!environmentId) return;
+    // An older server drops the field and probes every provider.
+    const config = registry.get(environmentServerConfigsAtom).get(environmentId);
+    if (config?.environment.capabilities.modelCatalogRefresh !== true) return;
+    void refreshProvidersCommand({ environmentId, input: { modelCatalogOnly: true } });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server for newly released models when the model list opens
+  useEffect(() => {
+    refreshModelCatalog();
+  }, []);
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshProviders = () => {
     if (!session.environmentId || isRefreshingProviders) return;
