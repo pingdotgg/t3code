@@ -1510,6 +1510,154 @@ describe("AcpAdapterV2", () => {
       );
     }).pipe(Effect.provide(layerTest)),
   );
+  it.live("resumes a hidden failure the agent survives, up to the flavor's bound", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const instanceId = ProviderInstanceId.make("acp-test-prompt-resume");
+      const threadId = ThreadId.make("thread-acp-prompt-resume");
+      const emptyReply = {
+        class: "provider_error",
+        message: "The model returned an empty reply.",
+        code: "EMPTY_MODEL_OUTPUT",
+        retryable: true,
+      } as const;
+      const prompts: Array<{ readonly runtime: number; readonly text: string }> = [];
+      // Like the native session log, each check reads how the latest prompt ended.
+      let emptyPrompts = 1;
+      let lastPromptEmpty = false;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          reportsPerTurnPromptUsage: true,
+          watchPromptOutcome: () =>
+            Effect.succeed(() =>
+              Effect.sync(() =>
+                lastPromptEmpty
+                  ? { failure: emptyReply, threadDisposition: "reusable" as const }
+                  : undefined,
+              ),
+            ),
+          resumeAfterHiddenFailure: {
+            maxAttempts: 2,
+            prompt: (failure) => (failure.code === emptyReply.code ? "Continue." : undefined),
+          },
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+            ),
+            wrapRuntime: (runtime, runtimeOrdinal) => ({
+              ...runtime,
+              prompt: (payload) =>
+                Effect.sync(() => {
+                  const block = payload.prompt.at(-1);
+                  prompts.push({
+                    runtime: runtimeOrdinal,
+                    text: block?.type === "text" ? block.text : "",
+                  });
+                  lastPromptEmpty = emptyPrompts > 0;
+                  emptyPrompts -= 1;
+                  return {
+                    stopReason: "end_turn" as const,
+                    usage: { inputTokens: 10, outputTokens: 1, totalTokens: 11 },
+                  };
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-resume"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const runTurn = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now: yield* DateTime.now,
+              ordinal,
+            }),
+          );
+          return yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+        });
+      const retryItems = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? [[event.turnItem.title, event.turnItem.status, event.turnItem.retry] as const]
+            : [],
+        );
+
+      const recovered = yield* runTurn(1);
+      const recoveredTerminal = recovered.at(-1);
+      assert.equal(
+        recoveredTerminal?.type === "turn.terminal" ? recoveredTerminal.status : null,
+        "completed",
+      );
+      assert.deepEqual(
+        prompts.map((prompt) => prompt.runtime),
+        [1, 1],
+        "the resume runs on the same runtime",
+      );
+      assert.equal(prompts[1]?.text, "Continue.");
+      const retry = { attempt: 1, maxAttempts: 2, retryDelayMs: null };
+      assert.deepEqual(retryItems(recovered), [
+        ["Provider retry", "running", retry],
+        ["Provider recovered", "completed", retry],
+      ]);
+      const recoveredTurn = recovered.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        recoveredTurn?.type === "provider_turn.updated"
+          ? recoveredTurn.providerTurn.turnTokenUsage
+          : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          inputTokens: 20,
+          outputTokens: 2,
+        },
+      );
+
+      prompts.length = 0;
+      emptyPrompts = Number.POSITIVE_INFINITY;
+      const exhausted = (yield* runTurn(2)).at(-1);
+      if (exhausted?.type !== "turn.terminal" || exhausted.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.deepEqual(exhausted.failure, emptyReply);
+      assert.deepEqual(
+        prompts.map((prompt) => prompt.text).slice(1),
+        ["Continue.", "Continue."],
+        "two resumes, then the turn fails",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");

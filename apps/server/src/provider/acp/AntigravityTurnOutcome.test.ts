@@ -40,6 +40,15 @@ const MISSING_SIGNATURE_ERROR = errorPayload(
 const INVALID_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
 );
+// The harness's empty-output hook, trimmed from Antigravity 1.3.0 with gemini-4-argon-high.
+const EMPTY_OUTPUT_ERROR = Buffer.concat([
+  Buffer.from([0x0a, 0x1e]),
+  Buffer.from("Model produced invalid output."),
+  Buffer.from([0x12, 0x7c]),
+  Buffer.from(
+    "model output error: model output must contain either output text or tool calls, these cannot both be empty, please try again",
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -148,6 +157,19 @@ describe("watchAntigravityPromptOutcome", () => {
         assert.equal(outcome?.failure.code, "INVALID_THINKING_SIGNATURE");
         assert.equal(outcome?.threadDisposition, "broken");
       }
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
+          [PLANNER_RESPONSE, Buffer.alloc(0)],
+          [ERROR_MESSAGE, EMPTY_OUTPUT_ERROR],
+        ]),
+        reusable({
+          class: "provider_error",
+          message: "The model returned an empty reply.",
+          code: "EMPTY_MODEL_OUTPUT",
+          retryable: true,
+        }),
+      );
       // A completed tool keeps its usage, and the turn still fails.
       assert.equal(
         (yield* turn(

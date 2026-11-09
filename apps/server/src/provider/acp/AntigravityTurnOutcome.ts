@@ -24,6 +24,9 @@ const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
+// The harness's empty-output hook writes this step and then retries the model itself.
+const EMPTY_MODEL_OUTPUT = /model output must contain either output text or tool calls/;
+export const ANTIGRAVITY_EMPTY_OUTPUT_CODE = "EMPTY_MODEL_OUTPUT";
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -148,6 +151,16 @@ function turnFailure(
       }),
       threadDisposition: "broken",
     };
+  }
+  if (apiError === null && EMPTY_MODEL_OUTPUT.test(text)) {
+    return reusable(
+      makeProviderFailure({
+        class: "provider_error",
+        message: "The model returned an empty reply.",
+        code: ANTIGRAVITY_EMPTY_OUTPUT_CODE,
+        retryable: true,
+      }),
+    );
   }
   if (apiError === null) {
     return reusable(
