@@ -3112,6 +3112,175 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
+/* Classic keeps main's status colors and border weight on the redesign's extra surfaces. */
+html:root[data-theme-id="t3-code-classic"] {
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --success-tint: color-mix(in srgb, var(--success) 12%, transparent);
+  --info-tint: color-mix(in srgb, var(--info) 12%, transparent);
+  --info-alert-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 15%, transparent),
+    color-mix(in srgb, var(--info) 7%, transparent)
+  );
+  --info-alert-rim: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--info) 40%, transparent),
+    color-mix(in srgb, var(--info) 10%, transparent)
+  );
+  --tool-error-icon: var(--error);
+  --destructive-fill-foreground: #ffffff;
+  --raised-fill: linear-gradient(var(--popover), var(--popover));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
+  --popover-rim: var(--raised-rim);
+  --card-settings-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 60%, transparent),
+    color-mix(in srgb, var(--card) 60%, transparent)
+  );
+  --tray-fill: linear-gradient(
+    color-mix(in srgb, var(--card) 80%, transparent),
+    color-mix(in srgb, var(--card) 80%, transparent)
+  );
+  --composer-fill: linear-gradient(transparent, transparent);
+  --tray-stroke: var(--border);
+  --hairline: var(--border);
+  --divider: var(--border);
+  --table-row-rule: var(--border);
+  --sidebar-row-selected-fill: linear-gradient(
+    var(--sidebar-row-selected),
+    var(--sidebar-row-selected)
+  );
+  --sidebar-row-selected-rim: var(--sidebar-border);
+
+  @variant dark {
+    --info-foreground: var(--color-blue-400);
+    --success-foreground: var(--color-emerald-400);
+    --tool-error-icon: #fca5a5;
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"],
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope] {
+  --strong-foreground: var(--foreground);
+  --dim-foreground: var(--muted-foreground);
+  --sidebar-settled-title: var(--sidebar-muted-foreground);
+  --sidebar-settled-label: var(--sidebar-muted-foreground);
+  --sidebar-settled-meta: var(--sidebar-muted-foreground);
+  --sidebar-settled-pr: var(--sidebar-muted-foreground);
+  --code-gutter: var(--muted-foreground);
+  --search-line-number: var(--muted-foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-sidebar] {
+  --foreground: var(--app-theme-sidebar-foreground);
+  --muted-foreground: var(--app-theme-sidebar-muted-foreground);
+  --sidebar-thread-title-foreground: var(--foreground);
+  --sidebar-shelf-foreground: var(--muted-foreground);
+  border-color: var(--sidebar-border);
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] > body {
+  color: var(--foreground);
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-app-modal] {
+  --app-panel-fill: var(--background);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-card-settings-rim {
+  background: var(--card-settings-fill) padding-box;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-dialog {
+  background: color-mix(in srgb, var(--background) 80%, transparent);
+  border-color: var(--border);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
+  background: color-mix(in srgb, var(--popover) 83.6%, transparent);
+  border-color: color-mix(in srgb, var(--foreground) 10%, transparent);
+  backdrop-filter: blur(12px) saturate(1.14);
+
+  @variant dark {
+    backdrop-filter: blur(16px) saturate(1.08);
+  }
+}
+
+/* Main's blue is the lightest stop that keeps white button labels at AA contrast. */
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"] > body,
+html:root[data-theme-id="t3-code-classic"][data-surface-style="soft-gradient"].black-chrome
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="soft-gradient"] {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 90%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"]:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  > body,
+html:root[data-theme-id="t3-code-classic"].black-chrome:is(
+    [data-surface-style="aqua-gloss-full"],
+    [data-surface-style="aqua-blue"]
+  )
+  [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"]
+  :is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]) {
+  --lit-fill: linear-gradient(
+    var(--primary),
+    color-mix(in srgb, var(--primary) 92%, black) 50%,
+    color-mix(in srgb, var(--primary) 84%, black) 50%,
+    color-mix(in srgb, var(--primary) 95%, black)
+  ) !important;
+  --lit-hover-fill: var(--lit-fill) !important;
+}
+
+html:root[data-theme-id="t3-code-classic"] [data-settings-nav] {
+  --sidebar: light-dark(var(--app-theme-sidebar), var(--card));
+}
+
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-chrome-scope],
+html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
+  --background: #000000;
+  --foreground: #f1f3f7;
+  --muted-foreground: #a3a3a3;
+  --placeholder: #a3a3a3;
+  --card: color-mix(in srgb, var(--color-neutral-950) 97%, white);
+  --popover: var(--card);
+  --primary: oklch(0.571 0.21 264);
+  --primary-foreground: #ffffff;
+  --secondary: rgb(255 255 255 / 3%);
+  --muted: var(--secondary);
+  --accent: rgb(255 255 255 / 4%);
+  --border: rgb(255 255 255 / 8%);
+  --input: rgb(255 255 255 / 18%);
+  --sidebar-control-surface: #0a0a0a;
+  --sidebar-row-hover: color-mix(in srgb, var(--foreground) 8%, transparent);
+  --sidebar-row-active: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --sidebar-row-selected: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --sidebar-border: var(--border);
+  --raised-fill: linear-gradient(var(--card), var(--card));
+  --raised-hover-fill: linear-gradient(var(--accent), var(--accent));
+  --raised-rim: linear-gradient(var(--border), var(--border));
+  --raised-hover-rim: var(--raised-rim);
+}
+
 /* Surface styles: Settings > Appearance > Style sets html[data-surface-style]
    and each block below swaps the recipe tokens on body, so every surface-*
    recipe repaints with no per-component code. The values are the pen's
