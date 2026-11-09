@@ -5,12 +5,24 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanelStore";
 import {
   assistantCitationFromLocation,
   assistantCitationNavigation,
 } from "./assistantCitationNavigation";
+
+const sideChatShell = vi.hoisted(() => ({
+  id: "side-chat-one",
+  lineage: { parentThreadId: "thread-parent", relationshipToParent: "fork", sideChat: true },
+}));
+
+vi.mock("~/state/entities", async (original) => ({
+  ...(await original<typeof import("~/state/entities")>()),
+  readThreadShell: (ref: { threadId: string }) =>
+    ref.threadId === sideChatShell.id ? sideChatShell : null,
+}));
 
 const citation: AssistantCitation = {
   version: 1,
@@ -66,5 +78,21 @@ describe("assistant citation navigation", () => {
     );
     expect(router.history.length).toBe(3);
     expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
+  });
+
+  it("opens a side chat citation as a tab of its parent thread", async () => {
+    useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
+    const sideChatCitation = { ...citation, threadId: ThreadId.make(sideChatShell.id) };
+    const router = createCitationRouter("/environment-one/thread-parent");
+    await router.navigate(assistantCitationNavigation(sideChatCitation));
+
+    expect(router.state.location.pathname).toBe("/environment-one/thread-parent");
+    expect(assistantCitationFromLocation(router.state.location.href)).toEqual(sideChatCitation);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, {
+        environmentId: citation.environmentId,
+        threadId: ThreadId.make("thread-parent"),
+      }),
+    ).toMatchObject({ kind: "side-chat", threadId: sideChatShell.id });
   });
 });
