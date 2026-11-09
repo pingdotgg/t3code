@@ -248,9 +248,10 @@ it.live("creates child repos inside the home worktree on one task branch", () =>
         startFromOrigin: false,
       });
       assert.deepEqual(created.failed, []);
-      const homeWorktree = `${config.worktreesDir}/web/t3-abc12345`;
+      const homeWorktree = created.record.homeWorktreePath;
+      assert.match(homeWorktree, /\/web\/t3-abc12345-[0-9a-f]{16}$/);
+      assert.isTrue(homeWorktree.startsWith(`${config.worktreesDir}/`));
       assert.equal(created.record.root, homeWorktree);
-      assert.equal(created.record.homeWorktreePath, homeWorktree);
       assert.deepEqual(created.record.repositories[0]?.kind, "home");
       assert.deepEqual(
         created.record.repositories.map((row) => [row.relativePath, row.branch]).toSorted(),
@@ -356,7 +357,7 @@ it.live("uses a per-repo base and renames the branch for every repo when any rep
         created.record.repositories.map((row) => row.branch),
         ["task-1", "task-1", "task-1"],
       );
-      assert.equal(created.record.homeWorktreePath.endsWith("/web/task-1"), true);
+      assert.match(created.record.homeWorktreePath, /\/web\/task-1-[0-9a-f]{16}$/);
       const app = created.record.repositories.find((row) => row.name === "app")!;
       assert.equal(
         yield* out(app.worktreePath, ["rev-parse", "HEAD"]),

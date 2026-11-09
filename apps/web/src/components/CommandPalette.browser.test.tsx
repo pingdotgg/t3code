@@ -97,6 +97,7 @@ describe("CommandPalette open intents", () => {
       createdAt: "2026-03-01T00:00:00.000Z",
       updatedAt: "2026-03-01T00:00:00.000Z",
       scripts: [],
+      trackedFolders: [],
     });
     setup({
       projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
