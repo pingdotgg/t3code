@@ -502,18 +502,20 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
 
 function pendingTaskApproval(
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests" | "messages">,
   taskId: NodeId,
   originalRun: OrchestrationV2Run | undefined,
 ) {
+  const owners = originalRun?.delegatedTaskId === taskId ? delegatedRunOwners(child) : undefined;
   const taskRunIds = new Set(
     child.runs
       .filter(
         (run) =>
           !ThreadManagementService.isTerminalRunStatus(run.status) &&
-          (run.delegatedTaskId === taskId ||
-            // Legacy tasks own only their original run, not later turns in the child thread.
-            (run.delegatedTaskId === undefined && run.id === originalRun?.id)),
+          (owners === undefined
+            ? // Legacy tasks own only their original run, not later turns in the child thread.
+              run.delegatedTaskId === undefined && run.id === originalRun?.id
+            : owners.get(run.id) === taskId),
       )
       .map((run) => run.id),
   );

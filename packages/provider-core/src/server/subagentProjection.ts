@@ -354,7 +354,15 @@ export function delegatedFollowupProgress(
 ) {
   const runs = delegatedFollowupRuns(projection, taskId);
   const runIds = new Set<RunId | null>(runs.map((run) => run.id));
-  const resultRun = runs.at(-1);
+  // An untagged wake cancelled before it started produced nothing; the task's last reply stands.
+  const resultRun = runs
+    .filter(
+      (run) =>
+        run.delegatedTaskId !== undefined ||
+        run.startedAt !== null ||
+        !TERMINAL_RUN_STATUSES.has(run.status),
+    )
+    .at(-1);
   return {
     runs,
     resultRun,
