@@ -953,6 +953,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // apart from a failed load.
   const socketOpenTried = yield* Ref.make(false);
   const socketOnlyOpen = yield* Ref.make(false);
+  const failedSocketOnlyOpen = Effect.gen(function* () {
+    return (
+      (yield* Ref.get(socketOnlyOpen)) && Option.isNone((yield* SubscriptionRef.get(state)).data)
+    );
+  });
+  // A defect parks the subscription, so a socket-only open resubscribes once.
+  const httpRetries = yield* Queue.unbounded<void>();
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -1067,18 +1074,18 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         };
       }),
       {
-        onDefect: () => setStreamError("Could not synchronize the thread."),
         // A socket-only open that fails retries over HTTP, which tells a
         // missing thread apart from a failure, before showing an error.
+        onDefect: Effect.fn("EnvironmentThreadState.onDefect")(function* () {
+          if (yield* failedSocketOnlyOpen) return yield* Queue.offer(httpRetries, undefined);
+          yield* setStreamError("Could not synchronize the thread.");
+        }),
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
-          const retryOverHttp =
-            !isAuthorizationFailure(cause) &&
-            (yield* Ref.get(socketOnlyOpen)) &&
-            Option.isNone((yield* SubscriptionRef.get(state)).data);
+          const retryOverHttp = !isAuthorizationFailure(cause) && (yield* failedSocketOnlyOpen);
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
         }),
         retryExpectedFailureAfter: "250 millis",
-        resubscribe: foregroundResubscriptions,
+        resubscribe: Stream.merge(foregroundResubscriptions, Stream.fromQueue(httpRetries)),
       },
     ).pipe(Stream.runForEachArray(applyItems)),
   );

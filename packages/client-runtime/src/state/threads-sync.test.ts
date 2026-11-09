@@ -80,7 +80,9 @@ const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   thread: { ...v2Projection.thread, title: "Cached thread" },
 };
 
-type TestThreadInput = OrchestrationV2ThreadStreamItem | Error;
+const TEST_DEFECT = { defect: "Malformed snapshot" } as const;
+
+type TestThreadInput = OrchestrationV2ThreadStreamItem | Error | typeof TEST_DEFECT;
 
 function testSession(client: WsRpcProtocolClient, config: object = {}): RpcSession.RpcSession {
   return {
@@ -144,7 +146,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const streamFrom = (queue: Queue.Queue<TestThreadInput>) =>
     Stream.fromQueue(queue).pipe(
       Stream.mapEffect((input) =>
-        input instanceof Error ? Effect.fail(input) : Effect.succeed(input),
+        input === TEST_DEFECT
+          ? Effect.die(input)
+          : input instanceof Error
+            ? Effect.fail(input)
+            : Effect.succeed(input),
       ),
     );
   const client = {
@@ -793,6 +799,15 @@ describe("EnvironmentThreads", () => {
       socketSnapshots: true,
       httpSnapshot: { _tag: "missing" },
       failure: new Error("Thread not found"),
+      status: "deleted",
+      loads: [0, 1],
+    },
+    // A defect never retries on its own, so the socket-only open resubscribes once.
+    {
+      label: "a socket-only open that hits a defect asks HTTP",
+      socketSnapshots: true,
+      httpSnapshot: { _tag: "missing" },
+      failure: TEST_DEFECT,
       status: "deleted",
       loads: [0, 1],
     },
