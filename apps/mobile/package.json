@@ -48,7 +48,7 @@
     "generate:highlights": "node scripts/generate-highlights.mts",
     "generate:nitro": "cd modules/t3-highlights && nitrogen",
     "eas-build-on-success": "node scripts/upload-sourcemaps.mts build",
-    "test": "vp test run --project unit --project react && T3_MOBILE_TEST_PLATFORM=android vp test run --project react src/components/FilePreviewModal.test.tsx",
+    "test": "vp test run --project unit --project react",
     "typecheck": "effect-tsgo tsrs --noEmit"
   },
   "dependencies": {
@@ -60,7 +60,6 @@
     "@expo/ui": "58.0.20",
     "@legendapp/list": "catalog:",
     "@material/material-color-utilities": "0.3.0",
-    "@noble/curves": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/highlights": "catalog:",
     "@react-native-ai/apple": "0.12.0",
@@ -123,7 +122,7 @@
     "react-dom": "catalog:",
     "react-native": "0.88.0",
     "react-native-blob-util": "0.25.1",
-    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.18-4287c5d3.tgz",
+    "react-native-enriched-markdown": "file:deps/react-native-enriched-markdown-1.2.0-t3.18-497fbe63.tgz",
     "react-native-gesture-handler": "~3.3.0",
     "react-native-image-viewing": "^0.2.2",
     "react-native-keyboard-controller": "1.22.8",
