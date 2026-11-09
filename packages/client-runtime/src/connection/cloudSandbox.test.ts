@@ -36,6 +36,7 @@ it.effect("shares controller ownership discovery across sandbox status reads", (
     const controllerId = EnvironmentId.make("controller");
     const first = EnvironmentId.make("first");
     const second = EnvironmentId.make("second");
+    const late = EnvironmentId.make("late");
     const target = new PrimaryConnectionTarget({
       environmentId: controllerId,
       label: "Controller",
@@ -79,6 +80,7 @@ it.effect("shares controller ownership discovery across sandbox status reads", (
         [controllerId, { target, profile: Option.none(), enabled: true }],
         [first, sandboxEntry(first)],
         [second, sandboxEntry(second)],
+        [late, sandboxEntry(late)],
       ]),
     );
     const connection = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(
@@ -96,6 +98,7 @@ it.effect("shares controller ownership discovery across sandbox status reads", (
     });
     const session = yield* SubscriptionRef.make<Option.Option<RpcSession>>(Option.none());
     let lists = 0;
+    const listed = [first, second];
     const client = HttpClient.make((request) => {
       const body = decodeManagedCloudSandboxOperation(
         request.body._tag === "Uint8Array"
@@ -104,15 +107,20 @@ it.effect("shares controller ownership discovery across sandbox status reads", (
       );
       if (body._tag === "list") {
         lists++;
+        if (lists === 1)
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, Response.json({}, { status: 503 })),
+          );
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
             Response.json({
               _tag: "list",
-              resources: [first, second].map((id) => ({
+              resources: listed.map((id) => ({
                 resourceId: ManagedCloudSandboxResourceId.make(id),
                 controllerEnvironmentId: controllerId,
                 driverKind: "boat",
+                profileId: "fixture",
                 sandboxId: id,
                 parentResourceId: null,
                 phase: "connected",
@@ -170,13 +178,17 @@ it.effect("shares controller ownership discovery across sandbox status reads", (
         ),
     });
     yield* Effect.gen(function* () {
-      yield* loadEnvironmentSandboxStatus(first);
-      yield* loadEnvironmentSandboxStatus(second);
+      expect(yield* loadEnvironmentSandboxStatus(first)).toBeNull();
+      expect(yield* loadEnvironmentSandboxStatus(first)).not.toBeNull();
+      expect(yield* loadEnvironmentSandboxStatus(second)).not.toBeNull();
+      expect(lists).toBe(2);
+      listed.push(late);
+      expect(yield* loadEnvironmentSandboxStatus(late)).not.toBeNull();
+      expect(lists).toBe(3);
     }).pipe(
       Effect.provide(CloudSandboxDirectory.layer.pipe(Layer.provide(registry))),
       Effect.provideService(HttpClient.HttpClient, client),
     );
-    expect(lists).toBe(1);
   }),
 );
 

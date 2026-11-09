@@ -1,4 +1,5 @@
 import type { EnvironmentId, ManagedCloudSandboxResource } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -21,6 +22,8 @@ export class CloudSandboxDirectory extends Context.Service<
   }
 >()("@t3tools/client-runtime/connection/cloudSandboxDirectory") {}
 
+const LISTING_TTL_MS = 30_000;
+
 const make = Effect.gen(function* () {
   const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
   const operate = yield* makeManagedCloudSandboxClient;
@@ -28,10 +31,15 @@ const make = Effect.gen(function* () {
     EnvironmentId,
     {
       readonly prepared: PreparedConnection;
-      readonly read: Effect.Effect<readonly ManagedCloudSandboxResource[]>;
+      readonly listedAt: number;
+      readonly resources: readonly ManagedCloudSandboxResource[];
     }
   >();
-  const list = Effect.fn("CloudSandboxDirectory.list")(function* (controllerId: EnvironmentId) {
+  // Only successful listings are cached, so a timeout never hides a sandbox for the TTL.
+  const list = Effect.fn("CloudSandboxDirectory.list")(function* (
+    controllerId: EnvironmentId,
+    refresh: boolean,
+  ) {
     const prepared = yield* registry
       .run(
         controllerId,
@@ -42,27 +50,34 @@ const make = Effect.gen(function* () {
       .pipe(Effect.option);
     if (Option.isNone(prepared) || Option.isNone(prepared.value)) return null;
     const controller = prepared.value.value;
-    let cached = listings.get(controllerId);
-    if (cached?.prepared !== controller) {
-      const read = yield* operate(controller, { _tag: "list" }).pipe(
-        Effect.timeout("3 seconds"),
-        Effect.map((result) => (result._tag === "list" ? result.resources : [])),
-        Effect.orElseSucceed(() => []),
-        Effect.cachedWithTTL("30 seconds"),
-      );
-      cached = { prepared: controller, read };
-      listings.set(controllerId, cached);
-    }
-    return { controller, resources: yield* cached.read };
+    const now = yield* Clock.currentTimeMillis;
+    const cached = listings.get(controllerId);
+    if (!refresh && cached?.prepared === controller && now - cached.listedAt < LISTING_TTL_MS)
+      return { controller, resources: cached.resources, fresh: false };
+    const listed = yield* operate(controller, { _tag: "list" }).pipe(
+      Effect.timeout("3 seconds"),
+      Effect.map((result) => (result._tag === "list" ? result.resources : null)),
+      Effect.orElseSucceed(() => null),
+    );
+    if (listed === null) return { controller, resources: cached?.resources ?? [], fresh: true };
+    listings.set(controllerId, { prepared: controller, listedAt: now, resources: listed });
+    return { controller, resources: listed, fresh: true };
   });
   const findAt = Effect.fn("CloudSandboxDirectory.findAt")(function* (
     controllerId: EnvironmentId,
     environmentId: EnvironmentId,
   ) {
-    const listed = yield* list(controllerId);
-    const resource = listed?.resources.find(
-      (resource) => resource.environmentId === environmentId && resource.phase !== "deleted",
-    );
+    const lookup = (listed: { readonly resources: readonly ManagedCloudSandboxResource[] }) =>
+      listed.resources.find(
+        (resource) => resource.environmentId === environmentId && resource.phase !== "deleted",
+      );
+    let listed = yield* list(controllerId, false);
+    let resource = listed === null ? undefined : lookup(listed);
+    // A sandbox that connected after the cached listing is missing from it.
+    if (listed !== null && resource === undefined && !listed.fresh) {
+      listed = yield* list(controllerId, true);
+      resource = listed === null ? undefined : lookup(listed);
+    }
     return listed !== null && resource !== undefined
       ? { controller: listed.controller, resource }
       : null;
