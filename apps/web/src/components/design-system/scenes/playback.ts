@@ -27,7 +27,6 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
   derivePendingApprovals,
   derivePendingUserInputs,
-  findLatestProposedPlan,
 } from "../../../session-logic";
 
 /**
@@ -563,35 +562,15 @@ export function playbackTimeline(state: PlaybackState) {
 
 /**
  * What the composer reads at this moment, derived the way ChatView derives it
- * from the thread projection: pending approvals and questions, and the plan
- * the settled turn offers to build.
+ * from the thread projection: pending approvals and questions.
  */
 export function playbackComposerRequests(state: PlaybackState) {
   const { approvals, userInputs } = derivePendingThreadRequests({
     runtimeRequests: state.runtimeRequests,
     turnItems: state.items,
   });
-  const run = state.runs.at(-1);
-  const settled = run !== undefined && run.status !== "running";
-  const plan = settled
-    ? findLatestProposedPlan(
-        {
-          plans: state.plans,
-          turnItems: state.items,
-          thread: { createdAt: iso(0) },
-          runs: state.runs.map((entry) => ({
-            id: entry.runId,
-            requestedAt: iso(entry.startedAt),
-            startedAt: iso(entry.startedAt),
-            completedAt: entry.completedAt === null ? null : iso(entry.completedAt),
-          })),
-        },
-        run.runId,
-      )
-    : null;
   return {
     approvals: derivePendingApprovals(approvals),
     userInputs: derivePendingUserInputs(userInputs),
-    proposedPlan: plan?.status === "active" ? plan : null,
   };
 }
