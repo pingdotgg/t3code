@@ -2098,11 +2098,43 @@ function cardReplyRepeats(block: { readonly name: string; readonly input: unknow
 function cardReplyCoversLead(
   block: { readonly name: string; readonly input: unknown },
   text: string,
-) {
+): string | undefined {
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
-  if (typeof reply !== "string") return false;
-  const opening = /^\s*(.*?[.!?])(?=\s|$)/su.exec(text)?.[1] ?? text;
-  return replyCoverage(text, reply) >= 0.6 && replyCoverage(opening, reply) >= 0.5;
+  if (typeof reply !== "string") return undefined;
+  const openingMatch = /^\s*(.*?[.!?])(?=\s|$)/su.exec(text);
+  const opening = openingMatch?.[1] ?? text;
+  if (replyCoverage(text, reply) >= 0.6 && replyCoverage(opening, reply) >= 0.5) return "";
+  if (text.length > 200) {
+    return undefined;
+  }
+  const stripPunctuation = (value: string) =>
+    value.toLocaleLowerCase().replace(/\p{P}/gu, "").replace(/\s+/gu, " ").trim();
+  const replyOpening = /^\s*(.*?[.!?])(?=\s|$)/su.exec(reply)?.[1] ?? reply;
+  const leadOpening = stripPunctuation(opening);
+  const normalizedReplyOpening = stripPunctuation(replyOpening);
+  if (
+    leadOpening &&
+    (normalizedReplyOpening === leadOpening || normalizedReplyOpening.startsWith(`${leadOpening} `))
+  ) {
+    const remainder = openingMatch === null ? "" : text.slice(openingMatch[0].length).trim();
+    return remainder === "" || isLessonStatusLine(remainder) ? "" : remainder;
+  }
+  return isLessonStatusLine(text) ? "" : undefined;
+}
+
+function isLessonStatusLine(text: string) {
+  if (text.includes(":")) return false;
+  const sentences = text
+    .trim()
+    .match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu)
+    ?.map((sentence) => sentence.trim());
+  return (
+    sentences !== undefined &&
+    sentences.length > 0 &&
+    sentences.every((sentence) =>
+      /^(?:I['’]ve been reading|now I['’]ll|next I['’]ll)\b/iu.test(sentence),
+    )
+  );
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -7997,8 +8029,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           if (isLessonCardTool(block.name)) {
             for (const item of held) {
-              if (cardReplyRepeats(block, item.text) || cardReplyCoversLead(block, item.text)) {
+              const remainder = cardReplyCoversLead(block, item.text);
+              if (cardReplyRepeats(block, item.text) || remainder === "") {
                 yield* emitHeldAssistantTextItemAsReasoning(context, item);
+              } else if (remainder !== undefined) {
+                yield* emitAssistantTextArtifacts({ context, ...item, text: remainder });
               } else {
                 yield* emitAssistantTextArtifacts({ context, ...item });
               }

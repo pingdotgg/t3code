@@ -2283,15 +2283,51 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       testCase.setup.sideChat !== undefined ||
       testCase.setup.sideChatOpening !== undefined;
     const opening = (value: string) => /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1] ?? value;
+    const stripPunctuation = (value: string) =>
+      value.toLocaleLowerCase().replace(/\p{P}/gu, "").replace(/\s+/gu, " ").trim();
+    const isStatusLine = (value: string) => {
+      if (value.includes(":")) return false;
+      const sentences = (value.trim().match(/[^.!?]+(?:[.!?](?=\s|$)|$)/gu) ?? []).map((sentence) =>
+        sentence.trim(),
+      );
+      return (
+        sentences.length > 0 &&
+        sentences.every((sentence) =>
+          /^(?:I['’]ve been reading|now I['’]ll|next I['’]ll)\b/iu.test(sentence),
+        )
+      );
+    };
+    const leadRemainder = (use: typeof ToolUse.Type, text: string) => {
+      const reply = isRecord(use.input) ? use.input.reply : undefined;
+      if (typeof reply !== "string") return undefined;
+      if (reply.replace(/\s+/gu, " ").trim().includes(text.replace(/\s+/gu, " ").trim())) return "";
+      if (replyCoverage(text, reply) >= 0.6 && replyCoverage(opening(text), reply) >= 0.5)
+        return "";
+      if (text.length > 200) {
+        return undefined;
+      }
+      const openingMatch = /^\s*(.*?[.!?])(?=\s|$)/su.exec(text);
+      const leadOpening = stripPunctuation(openingMatch?.[1] ?? text);
+      const replyOpening = /^\s*(.*?[.!?])(?=\s|$)/su.exec(reply)?.[1] ?? reply;
+      const normalizedReplyOpening = stripPunctuation(replyOpening);
+      if (
+        leadOpening &&
+        (normalizedReplyOpening === leadOpening ||
+          normalizedReplyOpening.startsWith(`${leadOpening} `))
+      ) {
+        const remainder = openingMatch === null ? "" : text.slice(openingMatch[0].length).trim();
+        return remainder === "" || isStatusLine(remainder) ? "" : remainder;
+      }
+      return isStatusLine(text) ? "" : undefined;
+    };
     // Mirrors the adapter's cardReplyRepeats, plus cardReplyCoversLead for lesson lead text.
     const repeats = (use: typeof ToolUse.Type, text: string, lead = false) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return false;
       if (reply.replace(/\s+/gu, " ").trim().includes(text.replace(/\s+/gu, " ").trim()))
         return true;
-      return (
-        lead && replyCoverage(text, reply) >= 0.6 && replyCoverage(opening(text), reply) >= 0.5
-      );
+      if (!lead) return false;
+      return leadRemainder(use, text) !== undefined;
     };
     const texts: Array<string> = [];
     for (const [index, block] of response.content.entries()) {
@@ -2308,7 +2344,16 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
         if (isT3Mcp || held.join("").length > 300) {
-          texts.push(...(isCard ? held.filter((text) => !repeats(block, text, true)) : held));
+          if (isCard) {
+            texts.push(
+              ...held.flatMap((text) => {
+                const remainder = leadRemainder(block, text);
+                return remainder === undefined ? [text] : remainder === "" ? [] : [remainder];
+              }),
+            );
+          } else {
+            texts.push(...held);
+          }
         }
         if (isCard) {
           sample.lessonCardSeen = true;

@@ -3708,9 +3708,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       reply: "A closure preserves captured variables.",
       expected: "assistant_message",
     },
+    {
+      lead: "I've been reading the grader code and task cards to check your memory against what runs. Now I'll give you the first correction.",
+      reply:
+        "Your board description holds: a real open-source KiCad design, schematic plus layout. Two corrections.",
+      expected: "reasoning",
+    },
+    {
+      lead: "That holds. It's my reasoning back, so I'd like you to rebuild the whole chain in your own words. It's the explanation you'd give in your pitch.",
+      reply:
+        "That holds, including the key point that stalling the grader never pays. You've now seen every step, so here is the pitch itself.",
+      expected: "assistant_message",
+      expectedText:
+        "It's my reasoning back, so I'd like you to rebuild the whole chain in your own words. It's the explanation you'd give in your pitch.",
+    },
+    {
+      lead: "That's wrong. Now I'll give you the correction.",
+      reply: "The correction is that the grader checks physical limits.",
+      expected: "assistant_message",
+    },
+    {
+      lead: "No. You mixed up the ideal and the fail limit.",
+      reply: "Not quite: the score line runs from ideal to fail limit.",
+      expected: "assistant_message",
+    },
+    {
+      lead: "Let me be precise: the grader rejects any board whose rail sits above the fail limit.",
+      reply: "The grader's rule is that a rail above the fail limit is rejected.",
+      expected: "assistant_message",
+    },
+    {
+      lead: "I've read your answer, and the one gap is that the key comes from the real fix commit.",
+      reply: "The key comes from the real fix commit.",
+      expected: "assistant_message",
+    },
+    {
+      lead: "Now I'll give you the correction: a timeout scores zero, not partial credit.",
+      reply: "The next card checks a different part of the verifier.",
+      expected: "assistant_message",
+    },
+    {
+      lead: "Correct. The detail you missed is that the fail limit is inclusive, so a 3.3 V rail scores zero.",
+      reply: "Correct, so here is the next one.",
+      expected: "assistant_message",
+      expectedText:
+        "The detail you missed is that the fail limit is inclusive, so a 3.3 V rail scores zero.",
+    },
+    {
+      lead: "I’ve been reading the grader next. Now I’ll give you the correction.",
+      reply: "Your board description holds.",
+      expected: "reasoning",
+    },
+    {
+      lead: "Right, your explanation tracks the core: the checker measures physical limits and never compares layouts.",
+      reply:
+        "The explanation tracks the core; the checker measures physical limits and never compares layouts.",
+      expected: "reasoning",
+    },
   ] as const)(
     "lesson card lead sharing the reply's opening shows as $expected",
-    ({ lead, reply, expected }) =>
+    ({ lead, reply, expected, expectedText }) =>
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
         yield* harness.runtime.startTurn(
@@ -3762,7 +3819,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.deepEqual(
           items.map((item) => [item.type, item.text]),
-          [[expected, lead]],
+          [[expected, expectedText ?? lead]],
         );
       }).pipe(
         Effect.scoped,
