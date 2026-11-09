@@ -2234,7 +2234,7 @@ export const layerWithOptions = (
             if (providerThread === undefined || runningRetries.get(item.providerTurnId) !== item)
               return;
             stalledRetries.set(item.providerTurnId, item);
-            yield* entry.runtime.interruptTurn({
+            yield* entry.exposedRuntime.interruptTurn({
               providerThread,
               providerTurnId: item.providerTurnId,
             });
