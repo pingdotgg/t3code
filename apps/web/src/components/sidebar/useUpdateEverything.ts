@@ -50,7 +50,13 @@ export type ReportLocalUpdateError = (title: string, description: string) => voi
 /** `channelSwitch` makes the run move the fleet to that release's track instead of updating it. */
 export function useUpdateEverything(
   localUpdateVersion: string | null,
-  channelSwitch?: ChannelSwitchRelease,
+  {
+    channelSwitch,
+    includeProviderUpdates = true,
+  }: {
+    readonly channelSwitch?: ChannelSwitchRelease;
+    readonly includeProviderUpdates?: boolean;
+  } = {},
 ) {
   const targetVersion = localUpdateVersion ?? APP_VERSION;
   const { environments } = useEnvironments();
@@ -73,8 +79,14 @@ export function useUpdateEverything(
   const moving = servers.filter((server) => server.trackOnly !== true);
   const restarts = collectRestartingMachines(machines, moving, localUpdateVersion !== null);
   const providerUpdates = useProviderUpdates();
-  // A track switch moves app and servers only; provider updates stay a separate choice.
-  const providers = channelSwitch ? { machines: [], updateAll: async () => [] } : providerUpdates;
+  const hasAppUpdates = localUpdateVersion !== null || servers.length > 0;
+  const canChooseProviderUpdates =
+    !channelSwitch && hasAppUpdates && providerUpdates.machines.length > 0;
+  // Provider-only updates remain available regardless of the choice for app updates.
+  const providers =
+    channelSwitch || (hasAppUpdates && !includeProviderUpdates)
+      ? { machines: [], updateAll: async () => [] }
+      : providerUpdates;
   const updateServer = useServerUpdate();
 
   const view = describeUpdateEverything({
@@ -92,7 +104,9 @@ export function useUpdateEverything(
   });
 
   return {
-    hasUpdates: servers.length > 0 || providers.machines.length > 0,
+    hasUpdates: servers.length > 0 || (!channelSwitch && providerUpdates.machines.length > 0),
+    hasAppUpdates,
+    canChooseProviderUpdates,
     ...view,
     restarts,
     run: async ({
