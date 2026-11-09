@@ -198,6 +198,31 @@ describe("check:changed", () => {
     });
   });
 
+  it("opens the built desktop app only for startup, settlement, and sidebar changes", () => {
+    const packages = readWorkspace();
+    const launches = (file: string) => decide([file], packages, false).outputs.desktop_launch;
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.ts",
+      "apps/server/src/persistence/Migrations/054_ProjectionThreadsAutoSettleDisabledAt.ts",
+      "apps/web/src/components/sidebar/SidebarThreadRow.tsx",
+      "apps/desktop/src/backend/DesktopBackendManager.ts",
+      "packages/contracts/src/settings.ts",
+      "scripts/fixtures/desktop-launch/statev2.sqlite",
+    ]) {
+      assert.isTrue(launches(file), file);
+    }
+    for (const file of [
+      "apps/server/src/orchestration-v2/ThreadSettlementService.test.ts",
+      "apps/web/src/components/chat/ChatView.tsx",
+      "apps/desktop/src/updates/DesktopRemoteUpdates.ts",
+      "packages/contracts/src/orchestration.ts",
+    ]) {
+      assert.isFalse(launches(file), file);
+    }
+    // A script-only change still builds the app it opens.
+    assert.isTrue(decide(["scripts/smoke-desktop-app.ts"], packages, false).outputs.build);
+  });
+
   it.each([
     "packages/shared/src/testing/longTempDir.ts",
     "packages/shared/src/testing/providerEnv.ts",
