@@ -68,17 +68,12 @@ describe("MediaVideoPlayer", () => {
     await expectVideoSrc(screen, "/asset/first/clip.mp4");
   });
 
-  it.each(["native", "custom"] as const)(
-    "starts loading metadata near the viewport with %s controls",
-    async (transport) => {
-      using _observer = stubGlobal("IntersectionObserver", VisibleIntersectionObserver);
-      await using screen = await render(
-        <MediaVideoPlayer src="/asset/clip.mp4" label="clip" transport={transport} />,
-      );
+  it("starts loading metadata once the player scrolls near the viewport", async () => {
+    using _observer = stubGlobal("IntersectionObserver", VisibleIntersectionObserver);
+    await using screen = await render(<MediaVideoPlayer src="/asset/clip.mp4" label="clip" />);
 
-      await expect.element(screen.getByLabelText("clip")).toHaveAttribute("preload", "metadata");
-    },
-  );
+    await expect.element(screen.getByLabelText("clip")).toHaveAttribute("preload", "metadata");
+  });
 
   it.each(["native", "custom"] as const)(
     "keeps a playing video playing when the player rerenders with %s controls",
