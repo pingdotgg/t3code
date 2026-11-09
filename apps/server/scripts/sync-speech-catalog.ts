@@ -5,6 +5,7 @@ import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import { catalog } from "@handy-computer/models";
+import { format } from "vite-plus/fmt";
 import * as Schema from "effect/Schema";
 
 import manifest from "../package.json" with { type: "json" };
@@ -24,12 +25,22 @@ const expected = await renderSpeechCatalog(
   sourceManifest.version,
   manifest.dependencies["transcribe-cpp"],
 );
+const policyTarget = new URL(
+  "../../../packages/shared/src/speechRecommendationPolicy.json",
+  import.meta.url,
+);
+const policy = await format("speechRecommendationPolicy.json", JSON.stringify(catalog.methodology));
+if (policy.errors.length > 0) throw new Error("Could not format speech recommendation policy.");
 if (process.argv.includes("--check")) {
-  if (NodeFS.readFileSync(target, "utf8") !== expected) {
+  if (
+    NodeFS.readFileSync(target, "utf8") !== expected ||
+    NodeFS.readFileSync(policyTarget, "utf8") !== policy.code
+  ) {
     throw new Error("Speech catalog differs; run vp run speech:catalog:sync in apps/server.");
   }
   console.log("Bundled speech catalog matches the pinned source.");
 } else {
   NodeFS.writeFileSync(target, expected);
+  NodeFS.writeFileSync(policyTarget, policy.code);
   console.log(`Generated speech catalog from @handy-computer/models@${sourceManifest.version}.`);
 }
