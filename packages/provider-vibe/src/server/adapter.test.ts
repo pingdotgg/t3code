@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Sink from "effect/Sink";
@@ -36,6 +37,8 @@ describe("Vibe question callbacks through the adapter", () => {
         const stdout = yield* Queue.unbounded<Uint8Array>();
         const responses = yield* Queue.unbounded<Record<string, unknown>>();
         const callbackResults = yield* Queue.unbounded<unknown>();
+        const interrupts = yield* Queue.unbounded<unknown>();
+        let rejectInterrupt = true;
         const encoder = new TextEncoder();
         const decoder = new TextDecoder();
         const send = (value: unknown) =>
@@ -61,6 +64,18 @@ describe("Vibe question callbacks through the adapter", () => {
                     if (!("method" in message)) {
                       yield* Queue.offer(responses, message);
                       continue;
+                    }
+                    if (message["method"] === "turn/interrupt") {
+                      yield* Queue.offer(interrupts, message["params"]);
+                      if (rejectInterrupt) {
+                        rejectInterrupt = false;
+                        yield* send({
+                          jsonrpc: "2.0",
+                          id: message["id"],
+                          error: { code: "conflict", message: "Cannot interrupt this turn" },
+                        });
+                        continue;
+                      }
                     }
                     let result: unknown = {};
                     if (message["method"] === "initialize")
@@ -109,7 +124,11 @@ describe("Vibe question callbacks through the adapter", () => {
           Effect.forkScoped({ startImmediately: true }),
         );
 
-        yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
         const takeEvent = (type: ProviderAdapter.ProviderAdapterV2Event["type"]) =>
           Effect.gen(function* () {
             while (true) {
@@ -178,6 +197,27 @@ describe("Vibe question callbacks through the adapter", () => {
         });
         expect(yield* takeEvent("runtime_request.updated")).toMatchObject({
           runtimeRequest: { id: pending.runtimeRequest.id, kind: "user_input", status: "resolved" },
+        });
+        yield* send({
+          jsonrpc: "2.0",
+          method: "turn/started",
+          params: { sessionId: "native-session", turn: { id: "native-turn" } },
+        });
+        const started = yield* takeEvent("provider_turn.updated");
+        if (started.type !== "provider_turn.updated") throw new Error("Missing native turn");
+        const interruptInput = { providerThread, providerTurnId: started.providerTurn.id };
+        const rejected = yield* Effect.result(runtime.interruptTurn(interruptInput));
+        expect(Result.isFailure(rejected)).toBe(true);
+        if (Result.isFailure(rejected))
+          expect(rejected.failure._tag).toBe("ProviderAdapterProtocolError");
+        expect(yield* Queue.take(interrupts)).toEqual({
+          sessionId: "native-session",
+          expectedTurnId: "native-turn",
+        });
+        yield* runtime.interruptTurn(interruptInput);
+        expect(yield* Queue.take(interrupts)).toEqual({
+          sessionId: "native-session",
+          expectedTurnId: "native-turn",
         });
       }).pipe(Effect.provide(layerTest)),
     ),

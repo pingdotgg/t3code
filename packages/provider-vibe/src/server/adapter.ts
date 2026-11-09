@@ -918,7 +918,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         yield* Effect.mapError(
           client.turnInterrupt({ sessionId: nativeSessionId, expectedTurnId: nativeTurnId }),
           protocolError,
-        ).pipe(Effect.ignore);
+        );
       });
 
     const respondToRuntimeRequest: ProviderAdapter.ProviderAdapterV2SessionRuntime["respondToRuntimeRequest"] =
