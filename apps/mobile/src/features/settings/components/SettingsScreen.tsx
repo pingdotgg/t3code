@@ -45,8 +45,12 @@ export function SettingsScreen(
         search={props.search}
         trailing={props.trailing}
         menus={props.menus}
-        onBack={workspaceRoot ? undefined : back}
-        guardBack={props.guardBack}
+        // Hide system Back as well as the callback, so the first detail cannot reveal a second list.
+        //
+        // 首个详情页同时隐藏系统返回并禁用回滑，避免右列退回后重复显示设置目录。
+        onBack={workspaceRoot || back.columnRoot ? undefined : back.onBack}
+        onBackToList={!workspaceRoot && back.columnRoot ? back.onBack : undefined}
+        guardBack={props.guardBack || back.columnRoot}
         hideBottomBorder
       />
       <ScreenScrollViewBottomInset value={deviceType === "pad" || compactTabs ? 80 : 0}>

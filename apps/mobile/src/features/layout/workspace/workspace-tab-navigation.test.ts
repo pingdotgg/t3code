@@ -51,16 +51,16 @@ describe("workspace tab selections", () => {
 describe("opening a workspace tab", () => {
   const columns = { columns: true, check: available };
 
-  it("opens the Settings list on iPads without native columns", () => {
+  it("opens the remembered Settings detail beside its list on legacy iPads", () => {
     const next = workspaceTabNavigationState(
       { routes: [home, thread] },
       "settings",
       { settings: "SettingsAppearance" },
-      { columns: workspaceTabColumns("ios", "settings", true, false), check: available },
+      { columns: workspaceTabColumns("ios", "settings", true), check: available },
     );
-    expect(names(next)).toEqual(["Home", "Settings"]);
-    expect(workspaceTabColumns("ios", "threads", true, false)).toBe(true);
-    expect(workspaceTabColumns("ios", "settings", true, true)).toBe(true);
+    expect(names(next)).toEqual(["Home", "Settings", "SettingsAppearance"]);
+    expect(workspaceTabColumns("ios", "threads", true)).toBe(true);
+    expect(workspaceTabColumns("ios", "settings", false)).toBe(false);
   });
 
   it("opens Android Settings beside its default page only in a wide window", () => {

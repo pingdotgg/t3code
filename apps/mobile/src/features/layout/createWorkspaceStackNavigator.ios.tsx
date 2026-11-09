@@ -527,6 +527,7 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     workspace.state.selectedTab,
     workspace.settingsOpen,
     props.nativeColumns,
+    layout.usesSplitView,
   );
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,

@@ -15,8 +15,13 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
-import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { use, type ComponentProps } from "react";
+import {
+  NavigationContext,
+  NavigationRouteContext,
+  useNavigation,
+  useNavigationState,
+} from "@react-navigation/native";
+import { use, type ComponentProps, type ReactNode } from "react";
 import { Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
@@ -33,6 +38,30 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
+import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
+
+export function WorkspaceSettingsSidebar(props: { readonly width: number }) {
+  const navigation = use(NavigationContext);
+  const route = useNavigationState((state) =>
+    state.routes.find((route) => route.name === "Settings"),
+  );
+  const list = useSettingsListPlacement();
+  if (!route) return null;
+  return (
+    <WorkspaceSidebarColumn width={props.width}>
+      <SettingsListScreen sidebar selected={list.selected}>
+        {/* The column stack owns search; list actions must reach the workspace's detail stack.
+
+            列内导航负责原生搜索，目录操作回到工作区根导航，避免将详情推入独立侧栏。 */}
+        <NavigationContext value={navigation}>
+          <NavigationRouteContext value={route}>
+            <SettingsListContent />
+          </NavigationRouteContext>
+        </NavigationContext>
+      </SettingsListScreen>
+    </WorkspaceSidebarColumn>
+  );
+}
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -72,6 +101,7 @@ function SettingsListContent() {
 export function SettingsListScreen(props: {
   readonly sidebar: boolean;
   readonly selected: string | null;
+  readonly children?: ReactNode;
 }) {
   const workspace = useWorkspaceTabs();
   const environmentMenu = useSettingsEnvironmentMenu();
@@ -93,7 +123,7 @@ export function SettingsListScreen(props: {
               : undefined
           }
         >
-          <SettingsListContent />
+          {props.children ?? <SettingsListContent />}
         </SettingsScreen>
       </View>
     </SettingsSidebarContext>

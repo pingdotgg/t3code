@@ -92,7 +92,12 @@ export function WorkspaceNativeTabs(props: {
   const hiddenWithSidebar =
     deviceType === "pad" &&
     layout.usesSplitView &&
-    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen, nativeColumns) &&
+    workspaceUsesColumns(
+      workspace.state.selectedTab,
+      workspace.settingsOpen,
+      nativeColumns,
+      layout.usesSplitView,
+    ) &&
     !panes.primarySidebarVisible;
   const floatingTabs = useFloatingWorkspaceTabs();
   const { width } = useWindowDimensions();
