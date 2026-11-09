@@ -27,9 +27,7 @@ class T3NativeControlsModule : Module() {
       T3DpopKeys.matches(privateKey, publicKey)
     }
 
-    AsyncFunction("signDpop") { privateKey: ByteArray, signingInput: ByteArray ->
-      T3DpopKeys.sign(privateKey, signingInput)
-    }
+    AsyncFunction("signDpop") { key: ByteArray, input: ByteArray -> T3DpopKeys.sign(key, input) }
 
     AsyncFunction("openFile") { uri: String, mimeType: String, promise: Promise ->
       check(filePreviewPromise == null) { "A document viewer is already open." }
