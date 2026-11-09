@@ -9118,6 +9118,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             type: "secret_request",
             label: command.label,
             reason: command.reason,
+            ...(command.url === undefined ? {} : { url: command.url }),
             ...(command.placeholder === undefined ? {} : { placeholder: command.placeholder }),
             ...(command.delivery === undefined ? {} : { delivery: command.delivery }),
             secretStatus: command.secretStatus,
