@@ -3404,17 +3404,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ${filter?.runIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.runIds)}))`}
               ${
                 filter?.runStatuses === undefined
-                  ? sql``
-                  : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
-                    OR (${filter.includeLatestRun === true ? 1 : 0} = 1 AND run_id = (
+                  ? sql`ORDER BY ordinal ASC`
+                  : filter.includeLatestRun !== true
+                    ? // `+ordinal` stops SQLite from walking every run in the (thread_id, ordinal)
+                      // index to skip a sort; the (thread_id, status) index reads only matching runs.
+                      sql`AND status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                    ORDER BY +ordinal ASC`
+                    : sql`AND (status IN (SELECT value FROM json_each(${encodeIdList(filter.runStatuses)}))
+                    OR run_id = (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
                         AND (status <> 'cancelled' OR json_extract(payload_json, '$.startedAt') IS NOT NULL)
                       ORDER BY ordinal DESC
                       LIMIT 1
-                    )))`
+                    ))
+                    ORDER BY ordinal ASC`
               }
-            ORDER BY ordinal ASC
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_runs

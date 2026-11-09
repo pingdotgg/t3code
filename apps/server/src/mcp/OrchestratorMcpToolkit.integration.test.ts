@@ -603,6 +603,7 @@ describe("orchestrator MCP toolkit", () => {
           );
           const transferReads: Array<string> = [];
           const messageReads: Array<string> = [];
+          const runReads: Array<string> = [];
           const projectionTableReads: Array<string> = [];
           const tracer = Tracer.make({
             span(options) {
@@ -621,6 +622,9 @@ describe("orchestrator MCP toolkit", () => {
                   /SELECT[\s\S]*FROM orchestration_v2_projection_context_transfers/i.test(query)
                 ) {
                   transferReads.push(query);
+                }
+                if (/SELECT\s+payload_json\s+FROM orchestration_v2_projection_runs/i.test(query)) {
+                  runReads.push(query);
                 }
                 if (
                   /SELECT\s+payload_json\s+FROM orchestration_v2_projection_messages/i.test(query)
@@ -685,6 +689,7 @@ describe("orchestrator MCP toolkit", () => {
               ?.completionDelivery?.state,
           ).toBe("claimed");
 
+          const runReadsBeforeRead = runReads.length;
           const read = yield* invoke("t3_thread_read", {
             threadId: delegated.childThreadId,
             limit: 100,
@@ -693,6 +698,16 @@ describe("orchestrator MCP toolkit", () => {
           expect(read.isError).not.toBe(true);
           expect(transferReads.length).toBeGreaterThan(0);
           expect(read.structuredContent).toEqual(parentlessRead.structuredContent);
+          // The caller's runs are read by status alone, so SQLite can use the status index.
+          expect(
+            runReads
+              .slice(runReadsBeforeRead)
+              .some((query) =>
+                /AND status IN \(SELECT value FROM json_each\(\?\)\)\s+ORDER BY \+ordinal/.test(
+                  query,
+                ),
+              ),
+          ).toBe(true);
           const afterRead = yield* orchestrator.getThreadProjection(parentThreadId);
           expect(
             afterRead.subagents.find((task) => task.id === queuedFollowup.taskId)
@@ -708,8 +723,17 @@ describe("orchestrator MCP toolkit", () => {
           expect(messageReads).toHaveLength(messageReadsBeforeCapabilities);
           // The caller check reads the thread row and its active runs, never its history.
           expect(new Set(projectionTableReads.slice(tableReadsBeforeCapabilities))).toEqual(
-            new Set(["threads", "runs"]),
+            new Set(["threads"]),
           );
+          const runReadsBeforeStatus = runReads.length;
+          const transferReadsBeforeStatus = transferReads.length;
+          const statusAgain = yield* invoke("task_status", { taskId: delegated.taskId }).pipe(
+            Effect.withTracer(tracer),
+          );
+          expect(statusAgain.isError).not.toBe(true);
+          // A task wait reads result transfers and runs from the child; the parent's stay unread.
+          expect(runReads).toHaveLength(runReadsBeforeStatus + 1);
+          expect(transferReads).toHaveLength(transferReadsBeforeStatus + 1);
         }).pipe(Effect.provide(layerTest));
       }),
     ),
