@@ -169,6 +169,48 @@ function themeJsonc(name: string, background: string) {
   }`;
 }
 
+it("keeps edits to a staged theme when adding another file", async () => {
+  using _themes = isolateThemes();
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(input, themeFile("Dawn"));
+  const editor = page.getByRole("textbox", { name: "Theme JSON" });
+  await expect.element(editor).toHaveValue(JSON.stringify(theme("Dawn")));
+  const edited = JSON.stringify(theme("Edited Dawn", "#f97316"));
+  await editor.fill(edited);
+  await userEvent.upload(input, themeFile("Dusk"));
+  await expect.element(page.getByText("Dusk.json", { exact: true })).toBeVisible();
+  await expect.element(editor).toHaveValue(edited);
+  await page.getByRole("button", { name: "Add theme", exact: true }).click();
+  expect(getCustomThemes().map((theme) => theme.label)).toEqual(["Dusk", "Edited Dawn"]);
+});
+
+it("does not import a staged theme after its editor is cleared", async () => {
+  using _themes = isolateThemes();
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+  await userEvent.upload(input, themeFile("Dawn"));
+  const editor = page.getByRole("textbox", { name: "Theme JSON" });
+  await expect.element(editor).toHaveValue(JSON.stringify(theme("Dawn")));
+  await editor.fill("");
+  await expect.element(page.getByRole("button", { name: "Add theme", exact: true })).toBeDisabled();
+  expect(getCustomThemes()).toEqual([]);
+});
+
 describe("ThemeImportDialog JSONC imports", () => {
   it.each(["paste", "file"])("imports a VS Code JSONC theme from %s", async (source) => {
     using _themes = isolateThemes();
