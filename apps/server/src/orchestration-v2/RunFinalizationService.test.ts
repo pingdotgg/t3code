@@ -284,6 +284,8 @@ it.effect.each([
     const threadId = ThreadId.make("thread-project-folder");
     const runId = RunId.make("completed-run");
     const commands: OrchestrationV2ServerCommand[] = [];
+    const refreshed: string[] = [];
+    const lookedUp = Deferred.makeUnsafe<void>();
     const layer = RunFinalization.layerObserver.pipe(
       Layer.provideMerge(
         Layer.mergeAll(
@@ -302,7 +304,10 @@ it.effect.each([
                 hasWorkingTreeChanges: false,
                 workingTree: { files: [], insertions: 0, deletions: 0 },
               }),
-            refreshPullRequestStatus: () => Effect.succeed(null),
+            refreshPullRequestStatus: (cwd) => {
+              refreshed.push(cwd);
+              return Deferred.succeed(lookedUp, undefined).pipe(Effect.as(null));
+            },
           }),
           Layer.mock(ProjectionStore.ProjectionStoreV2)({
             getThreadShell: () =>
@@ -336,6 +341,8 @@ it.effect.each([
         [{ threadId, branch: scenario.checkedOut }],
         `thread kept branch ${scenario.stored} after its turn checked out ${scenario.checkedOut}`,
       );
+      if (!scenario.isDefaultRef) yield* Deferred.await(lookedUp);
+      assert.deepEqual(refreshed, scenario.isDefaultRef ? [] : ["/repo"]);
     }).pipe(Effect.provide(layer));
   },
 );
