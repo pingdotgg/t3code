@@ -1,4 +1,5 @@
-import { AppWindowIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
+import { AppWindowIcon, AtSignIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 
 import { PANE_TAB_CLASS } from "../components/PaneNotch";
@@ -25,6 +26,8 @@ const GRIP_THICKNESS = 4;
 /** Pen ZyA9S/JYBD5: window-edge bars are 6px, 4px outside the strip. */
 const EXTEND_THICKNESS = 6;
 const EXTEND_GAP = 4;
+/** The dragged row covers the composer, so the mention pill's middle sits this far above it. */
+const MENTION_PILL_LIFT = 24;
 
 type Box = { left: number; top: number; width: number; height: number };
 
@@ -210,6 +213,27 @@ function DraggedTabGhostBody({ tab, point }: { tab: LayoutTab; point: { x: numbe
   );
 }
 
+/** Cuts the composers out of the zones, so a composer reads as above them. */
+function zonesClipPath(composers: readonly LayoutDragRect[]): string | undefined {
+  if (composers.length === 0) return undefined;
+  const holes = composers.map(
+    (rect) => `M${rect.left} ${rect.top}H${rect.right}V${rect.bottom}H${rect.left}Z`,
+  );
+  return `path(evenodd, "M0 0H${window.innerWidth}V${window.innerHeight}H0Z${holes.join("")}")`;
+}
+
+/** The label that names where the drop lands (pen MI18S). */
+function DropPill({ x, y, children }: { x: number; y: number; children: ReactNode }) {
+  return (
+    <div
+      className="absolute flex h-6.5 -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta whitespace-nowrap text-background shadow-drag-label"
+      style={{ left: x, top: y }}
+    >
+      {children}
+    </div>
+  );
+}
+
 /** A window overlay keeps webviews and iframes from swallowing layout drags. */
 export function LayoutDropZones() {
   const state = useLayoutDragState();
@@ -222,27 +246,35 @@ export function LayoutDropZones() {
       className="fixed inset-0 z-[90] cursor-grabbing select-none"
     >
       <div className="pointer-events-none absolute inset-0">
-        <ExtendBars state={state} />
-        {zone ? (
-          <div
-            className="absolute rounded-card bg-foreground/[0.04] inset-ring inset-ring-foreground/22"
-            style={zone}
-          />
-        ) : null}
-        {state.panes.map((pane) => (
-          <PaneGrips key={pane.paneId} pane={pane} target={state.target} />
-        ))}
+        <div className="absolute inset-0" style={{ clipPath: zonesClipPath(state.composers) }}>
+          <ExtendBars state={state} />
+          {zone ? (
+            <div
+              className="absolute rounded-card bg-foreground/[0.04] inset-ring inset-ring-foreground/22"
+              style={zone}
+            />
+          ) : null}
+          {state.panes.map((pane) => (
+            <PaneGrips key={pane.paneId} pane={pane} target={state.target} />
+          ))}
+        </div>
         {state.source.kind === "tab" ? (
           <DraggedTabGhost tabId={state.source.tabId} point={state.point} />
         ) : null}
         {zone && state.target ? (
-          <div
-            className="absolute flex h-6.5 -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta whitespace-nowrap text-background shadow-drag-label"
-            style={{ left: zone.left + zone.width / 2, top: zone.top + zone.height / 2 }}
-          >
+          <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
             <PillIcon target={state.target} />
             {layoutDropLabel(state.target)}
-          </div>
+          </DropPill>
+        ) : null}
+        {state.composer ? (
+          <DropPill
+            x={(state.composer.left + state.composer.right) / 2}
+            y={state.composer.top - MENTION_PILL_LIFT}
+          >
+            <AtSignIcon aria-hidden className="size-3.25 shrink-0" />
+            Mention thread
+          </DropPill>
         ) : null}
       </div>
     </div>,
