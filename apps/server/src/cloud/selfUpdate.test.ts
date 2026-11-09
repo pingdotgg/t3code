@@ -30,17 +30,26 @@ interface HarnessOptions {
   readonly preflightDuration?: Duration.Input;
   readonly preflightStarted?: Deferred.Deferred<void>;
   readonly beforeDownload?: Effect.Effect<void>;
+  readonly checksumsStatus?: number;
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
   readonly policy?: ManagedPolicyDocument;
 }
 
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[], urls: string[], beforeDownload?: Effect.Effect<void>) =>
+const releaseHttpClient = (
+  order: string[],
+  urls: string[],
+  beforeDownload?: Effect.Effect<void>,
+  checksumsStatus?: number,
+) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
       urls.push(request.url);
       if (request.url.endsWith("/SHA256SUMS")) {
+        if (checksumsStatus !== undefined) {
+          return HttpClientResponse.fromWeb(request, new Response("", { status: checksumsStatus }));
+        }
         const digest = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", archiveBytes));
         const hex = Array.from(new Uint8Array(digest), (byte) =>
           byte.toString(16).padStart(2, "0"),
@@ -145,7 +154,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
     ),
     Effect.provideService(
       HttpClient.HttpClient,
-      releaseHttpClient(order, urls, options.beforeDownload),
+      releaseHttpClient(order, urls, options.beforeDownload, options.checksumsStatus),
     ),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
@@ -253,6 +262,17 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
       expect(result).toEqual({ targetVersion: "1.2.0", method: "desktop-app" });
       expect(stages).toEqual(["downloading", "installing"]);
+      expect(order).toEqual([]);
+    }),
+  );
+
+  it.effect("names the failed step, HTTP status, and host when a release download fails", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ checksumsStatus: 504 });
+      const { reason } = yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip);
+      expect(reason).toContain("checksums");
+      expect(reason).toContain("504");
+      expect(reason).toContain("github.com");
       expect(order).toEqual([]);
     }),
   );
