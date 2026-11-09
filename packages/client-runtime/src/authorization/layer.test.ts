@@ -2,6 +2,7 @@ import {
   AuthStandardClientScopes,
   EnvironmentId,
   ORCHESTRATION_PROTOCOL_VERSION,
+  type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { type RelayEnvironmentConnectResponse } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
@@ -317,58 +318,62 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("reuses a descriptor a host check just read, once, while fresh, over HTTPS", () =>
+  it.effect("reuses a matching descriptor a check just read, once, while fresh, over HTTPS", () =>
     Effect.gen(function* () {
       const descriptor = {
         ...DESCRIPTOR,
         orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-      };
+      } as ExecutionEnvironmentDescriptor;
       const harness = yield* makeHarness({
         responses: [
-          websocketTicket("first-ticket"),
-          Response.json(descriptor),
-          websocketTicket("second-ticket"),
-          Response.json(descriptor),
-          websocketTicket("third-ticket"),
-          Response.json(descriptor),
-          websocketTicket("lan-ticket"),
+          websocketTicket("reused"),
+          ...Array.from({ length: 5 }, () => [
+            Response.json(descriptor),
+            websocketTicket("fresh"),
+          ]).flat(),
         ],
       });
 
       yield* Effect.gen(function* () {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
-        const authorize = remote.authorizeBearer({
-          expectedEnvironmentId: ENVIRONMENT_ID,
-          httpBaseUrl: ENDPOINT.httpBaseUrl,
-          wsBaseUrl: ENDPOINT.wsBaseUrl,
-          bearerToken: "bearer-token",
-          connectionMethod: "direct",
-        });
-        yield* remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, descriptor as never);
+        const authorizeAt = (httpBaseUrl: string) =>
+          remote.authorizeBearer({
+            expectedEnvironmentId: ENVIRONMENT_ID,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            bearerToken: "bearer-token",
+            connectionMethod: "direct",
+          });
+        const authorize = authorizeAt(ENDPOINT.httpBaseUrl);
+        const remember = (value: Option.Option<ExecutionEnvironmentDescriptor>) =>
+          remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, value);
+
+        yield* remember(Option.some(descriptor));
         yield* authorize;
+        // Used once.
         yield* authorize;
-        yield* remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, descriptor as never);
+        // Stale.
+        yield* remember(Option.some(descriptor));
         yield* TestClock.adjust("6 seconds");
         yield* authorize;
+        // A mismatch reads again, so a host back on the right environment is not blocked.
+        yield* remember(Option.some({ ...descriptor, environmentId: "other" as never }));
+        yield* authorize;
+        // A failed check drops an older match.
+        yield* remember(Option.some(descriptor));
+        yield* remember(Option.none());
+        yield* authorize;
         // After a network change, a plain LAN address can belong to another machine.
-        const lan = { httpBaseUrl: "http://192.168.1.2:3773", wsBaseUrl: "ws://192.168.1.2:3773" };
-        yield* remote.rememberCheckedDescriptor(lan.httpBaseUrl, descriptor as never);
-        yield* remote.authorizeBearer({
-          expectedEnvironmentId: ENVIRONMENT_ID,
-          ...lan,
-          bearerToken: "bearer-token",
-          connectionMethod: "direct",
-        });
+        yield* remote.rememberCheckedDescriptor("http://192.168.1.2:3773", Option.some(descriptor));
+        yield* authorizeAt("http://192.168.1.2:3773");
       }).pipe(Effect.provide(harness.layer));
 
       expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
         "/api/auth/websocket-ticket/rpc",
-        "/.well-known/t3/environment",
-        "/api/auth/websocket-ticket/rpc",
-        "/.well-known/t3/environment",
-        "/api/auth/websocket-ticket/rpc",
-        "/.well-known/t3/environment",
-        "/api/auth/websocket-ticket/rpc",
+        ...Array.from({ length: 5 }, () => [
+          "/.well-known/t3/environment",
+          "/api/auth/websocket-ticket/rpc",
+        ]).flat(),
       ]);
     }),
   );
