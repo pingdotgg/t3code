@@ -55,7 +55,7 @@ describe("CommandPalette open intents", () => {
 
     openCommandPalette({});
     await expect
-      .element(page.getByPlaceholder("Search commands, projects, and threads..."))
+      .element(page.getByPlaceholder("Search threads, projects, and commands…"))
       .toHaveFocus();
     await userEvent.keyboard("{ArrowDown}");
     await expect
