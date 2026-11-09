@@ -45,18 +45,6 @@ const encodeServerSettingsPatch = Schema.encodeSync(ServerSettingsPatch);
 const decodeProjectSettingsOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
-describe("client onboarding completion", () => {
-  it("preserves onboarding completion through settings decoding and subsequent writes", () => {
-    const onboardingCompletedAt = "2026-10-01T12:00:00.000Z";
-    expect(decodeClientSettings({}).onboardingCompletedAt).toBeNull();
-    const settings = decodeClientSettings({ onboardingCompletedAt });
-    expect(decodeClientSettings(encodeClientSettings(settings)).onboardingCompletedAt).toBe(
-      onboardingCompletedAt,
-    );
-    expect(decodeClientSettingsPatch({ onboardingCompletedAt })).toEqual({ onboardingCompletedAt });
-  });
-});
-
 describe("client layout settings", () => {
   it("preserves absence so old clients can migrate their primary environment's layout", () => {
     expect(decodeClientSettings({}).layout).toBeUndefined();

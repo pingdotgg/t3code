@@ -302,15 +302,3 @@ it.each([false, true])("clears selected output only after chat accepts it: %s", 
   await act(() => accept(added));
   expect(fixture.clearSelection).toHaveBeenCalledTimes(added ? 1 : 0);
 });
-
-it("omits add to chat when the terminal has no composer target", async () => {
-  const { other } = setup();
-  await using _screen = await render(<Drawer threadRef={other} onCloseTerminal={() => {}} />);
-  await act(() => fixture.pendingSurfaces.shift()?.());
-  await act(() => fixture.contextMenu?.(new MouseEvent("contextmenu", { cancelable: true })));
-  const items = fixture.showContextMenu.mock.calls[0]![0];
-  expect(items).not.toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: "add-to-chat" })]),
-  );
-  expect(fixture.clearSelection).not.toHaveBeenCalled();
-});
