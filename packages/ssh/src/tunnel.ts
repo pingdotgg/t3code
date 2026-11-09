@@ -46,7 +46,8 @@ import {
 
 const DEFAULT_REMOTE_PORT = 3773;
 const REMOTE_PORT_SCAN_WINDOW = 200;
-const SSH_READY_TIMEOUT_MS = 20_000;
+// OpenSSH can spend ConnectTimeout on each address before opening the forward.
+const SSH_READY_TIMEOUT_MS = 60_000;
 const SSH_READY_PROBE_TIMEOUT_MS = 1_000;
 const TUNNEL_SHUTDOWN_TIMEOUT_MS = 2_000;
 const TUNNEL_STDERR_TAIL_CHARS = 16_384;

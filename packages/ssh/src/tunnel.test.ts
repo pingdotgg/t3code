@@ -13,7 +13,7 @@ import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
@@ -165,6 +165,75 @@ describe("ssh tunnel scripts", () => {
       assert.equal(result.credential, "LCL4R2TPHDKQ");
     }).pipe(Effect.provide(layerProcess));
   });
+
+  it.effect("allows SSH address fallback during startup", () =>
+    Effect.gen(function* () {
+      const probeStarted = yield* Deferred.make<void>();
+      let listening = false;
+      let kills = 0;
+      let remoteStops = 0;
+      const target = { alias: "devbox", hostname: "devbox", username: null, port: null };
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          const args = commandArgs(command);
+          if (args.includes("-N")) {
+            return makeRunningProcess(() => {
+              kills += 1;
+            });
+          }
+          if (args.some((arg, index) => arg === "-s" && args[index + 1] === "--")) {
+            return makeSuccessfulProcess('{"remotePort":3773,"serverKind":"external"}\n');
+          }
+          if (command._tag === "StandardCommand") {
+            const stdin = command.options.stdin;
+            if (typeof stdin === "object" && "stream" in stdin && Stream.isStream(stdin.stream)) {
+              const script = yield* stdin.stream.pipe(Stream.decodeText(), Stream.runCollect);
+              if (script.join("").includes('"stopped":true')) remoteStops += 1;
+            }
+          }
+          return makeSuccessfulProcess("");
+        }),
+      );
+      const httpClient = HttpClient.make((request) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(probeStarted, undefined);
+          if (!listening) {
+            return yield* new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                request,
+                cause: new Error("ECONNREFUSED"),
+              }),
+            });
+          }
+          return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+        }),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+        Layer.succeed(NetService.NetService, testNetService),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const connection = yield* Effect.forkChild(manager.ensureEnvironment(target));
+        yield* Deferred.await(probeStarted);
+        // Two unreachable addresses each consume OpenSSH's 10s ConnectTimeout.
+        yield* TestClock.adjust("20 seconds");
+        yield* TestClock.adjust("200 millis");
+        listening = true;
+        yield* TestClock.adjust("100 millis");
+        const result = yield* Fiber.join(connection);
+        assert.equal(result.httpBaseUrl, "http://127.0.0.1:41773/");
+        assert.equal(result.remoteServerKind, "external");
+        assert.equal(kills, 0);
+        assert.equal(remoteStops, 0, "startup must leave the remote server running");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
 
   it.effect("retains a bounded diagnostic tail when the tunnel exits before readiness", () =>
     Effect.gen(function* () {
