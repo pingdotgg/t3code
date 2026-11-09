@@ -113,39 +113,32 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
     expect(formatSubagentEffort({ modelSlug, modelSelection, provider })).toBe("xhigh");
   });
 
-  it("labels a delegated child by its own saved selection, not the parent's or a guess", () => {
+  it("picks a delegated child's own saved selection, never the parent's or a guess", () => {
     const instanceId = ProviderInstanceId.make("pi");
     const model = "opencode-go/deepseek-v4.1-flash";
-    const provider = { driver: ProviderDriverKind.make("pi"), models: [] };
-    const child = {
-      modelSelection: { instanceId, model, options: [{ id: "thinking", value: "high" }] },
-    };
+    const saved = { instanceId, model, options: [{ id: "thinking", value: "high" }] };
     const reported = { instanceId, model, options: [{ id: "thinking", value: "max" }] };
-    const effortOf = (modelSelection: ReturnType<typeof subagentModelSelection>) =>
-      formatSubagentEffort({
-        modelSlug: resolveSubagentMetadata({ model, modelSelection, provider }).modelSlug,
-        modelSelection,
-        provider,
-      });
-
     const delegated = {
       origin: "app_owned",
       providerInstanceId: instanceId,
       modelSelection: reported,
     } as const;
     const movedChild = {
-      modelSelection: { ...child.modelSelection, instanceId: ProviderInstanceId.make("pi-work") },
+      modelSelection: { ...saved, instanceId: ProviderInstanceId.make("pi-work") },
     };
 
-    expect(effortOf(subagentModelSelection(delegated, child))).toBe("high");
-    expect(effortOf(subagentModelSelection(delegated, undefined))).toBe("max");
-    expect(effortOf(subagentModelSelection(delegated, movedChild))).toBe("max");
+    expect(subagentModelSelection(delegated, { modelSelection: saved })).toBe(saved);
+    expect(subagentModelSelection(delegated, undefined)).toBe(reported);
+    expect(subagentModelSelection(delegated, movedChild)).toBe(reported);
     expect(
-      effortOf(subagentModelSelection({ ...delegated, modelSelection: undefined }, undefined)),
-    ).toBeNull();
+      subagentModelSelection({ ...delegated, modelSelection: undefined }, undefined),
+    ).toBeUndefined();
     expect(
-      effortOf(subagentModelSelection({ ...delegated, origin: "provider_native" }, child)),
-    ).toBe("max");
+      subagentModelSelection(
+        { ...delegated, origin: "provider_native" },
+        { modelSelection: saved },
+      ),
+    ).toBe(reported);
   });
 
   it("names a workflow by the model it runs on when the provider reports none", () => {
