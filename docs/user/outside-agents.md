@@ -64,6 +64,10 @@ Only approve a sign-in you just started. To approve, enter a code from
 `t3 auth pairing create` on the host. A browser already signed in to the
 environment with permission to manage access can approve without a code.
 
+When the page opens on the environment's T3 Connect address, choose the level
+and select **Approve with T3 Connect** instead. Sign in with the T3 Connect
+account the environment is linked to, and the sign-in completes without a code.
+
 A code from **Use T3 Code in another app (MCP)** already carries the level you
 picked there. With another code, choose what the agent may do here: **Auto** is
 selected by default, or the closest lower mode allowed by your organization’s
