@@ -4,7 +4,7 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   isAtomCommandInterrupted,
@@ -19,7 +19,12 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import { isTrailingDoubleClick } from "../Sidebar.logic";
+import {
+  isTrailingDoubleClick,
+  resolveThreadLastVisitedAt,
+  threadHeaderMayShowIdle,
+} from "../Sidebar.logic";
+import { useUiStateStore } from "../../uiStateStore";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -42,6 +47,32 @@ import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
+import { useQuietThreadShell } from "../../state/entities";
+import { useNowAfter } from "~/hooks/useDeadline";
+import { useThreadHasNoPendingWake } from "../../hooks/useThreadHasNoPendingWake";
+
+// Its own component, so shell updates during a turn re-render only the badge.
+function ThreadIdleBadge(props: { threadRef: ScopedThreadRef }) {
+  const shell = useQuietThreadShell(props.threadRef);
+  const localLastVisitedAt = useUiStateStore(
+    (state) => state.threadLastVisitedAtById[scopedThreadKey(props.threadRef)],
+  );
+  // A clock read in render would stay frozen in the compiler's cache; this one moves when a snooze ends.
+  const now = new Date(useNowAfter(Date.parse(shell?.snoozedUntil ?? "") || null)).toISOString();
+  const mayShowIdle =
+    shell !== null &&
+    threadHeaderMayShowIdle(shell, {
+      lastVisitedAt: resolveThreadLastVisitedAt(shell.lastVisitedAt, localLastVisitedAt),
+      now,
+    });
+  if (!useThreadHasNoPendingWake(shell, mayShowIdle)) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Badge variant="outline" size="sm" />}>Idle</TooltipTrigger>
+      <TooltipPopup side="top">Nothing will resume this thread</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -418,6 +449,7 @@ export const ChatHeader = memo(function ChatHeader({
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
+          {renamingTitle === null ? <ThreadIdleBadge threadRef={activeThreadRef} /> : null}
           {renamingTitle === null && activeThreadLinkOrigin ? (
             <Tooltip>
               <TooltipTrigger render={<Badge variant="info" size="sm" />}>

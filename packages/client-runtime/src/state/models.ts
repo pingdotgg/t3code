@@ -154,6 +154,8 @@ export interface EnvironmentThreadShell {
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
   readonly blockedOnThreadWait?: boolean;
+  /** Queued messages wait, held after a failure or a stop, until released. Unknown on older servers. */
+  readonly hasHeldQueue?: boolean;
   readonly latestUserMessageAt: string | null;
   readonly latestUserAuthoredMessageAt?: string | null;
   readonly hasPendingApprovals: boolean;
@@ -303,6 +305,7 @@ export function presentThreadShell(
     latestRun,
     runtime,
     blockedOnThreadWait: thread.blockedOnThreadWait ?? false,
+    ...(thread.hasHeldQueue === undefined ? {} : { hasHeldQueue: thread.hasHeldQueue }),
     latestUserMessageAt: nullableIso(thread.latestUserMessageAt),
     ...(thread.latestUserAuthoredMessageAt === undefined
       ? {}

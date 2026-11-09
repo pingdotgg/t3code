@@ -52,7 +52,9 @@ import {
   type EnvironmentRpcInput,
 } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
+import { parseScopedThreadKey } from "../environment/scoped.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { scheduledTasksWakeThread } from "./threadInbox.ts";
 import {
   applyServerConfigProjection,
   reuseUnchanged,
@@ -1203,6 +1205,11 @@ export function createServerEnvironmentAtoms<R, E>(
     concurrency: configConcurrency,
   });
 
+  const scheduledTasksLive = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:server:scheduled-tasks:live",
+    tag: WS_METHODS.scheduledTasksSubscribe,
+  });
+
   return {
     configValueAtom,
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
@@ -1335,9 +1342,16 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
-    scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:server:scheduled-tasks:live",
-      tag: WS_METHODS.scheduledTasksSubscribe,
+    scheduledTasksLive,
+    /** Keyed by scoped thread key; a list push re-renders only threads whose answer flips. */
+    threadHasScheduledWake: Atom.family((threadKey: string) => {
+      const ref = parseScopedThreadKey(threadKey);
+      return Atom.make((get): boolean | null => {
+        if (ref === null) return null;
+        const result = get(scheduledTasksLive({ environmentId: ref.environmentId, input: {} }));
+        const tasks = AsyncResult.getOrElse(result, () => null)?.tasks;
+        return tasks === undefined ? null : scheduledTasksWakeThread(tasks, ref.threadId);
+      }).pipe(Atom.withLabel(`environment-data:server:thread-scheduled-wake:${threadKey}`));
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
     // long enough that switching windows or re-rendering does not rescan.

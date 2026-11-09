@@ -77,6 +77,8 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { useThreadHasNoPendingWake } from "./use-thread-has-no-pending-wake";
+import { RelativeTime } from "../../components/RelativeTime";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -132,6 +134,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
+};
+const IDLE_STATUS_LABEL: StatusLabel = {
+  label: "Idle",
+  icon: "circle",
+  className: "text-foreground-muted",
+  iconTintClassName: "accent-foreground-muted",
 };
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
@@ -740,10 +748,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
+  // Settled and snoozed rows show the user's own decision, and queued messages will start a turn.
+  const isIdle = useThreadHasNoPendingWake(
+    thread,
+    variant === "card" && !snoozedRow && props.hasQueuedMessages !== true,
+  );
   const statusLabel =
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : isIdle ? IDLE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowAccessibilityLabel = `${thread.title}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
@@ -1227,6 +1240,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
                 ) : status === "waiting" ? (
                   <ThreadListV2Duration startedAt={thread.latestRun?.completedAt ?? null} />
+                ) : statusLabel === IDLE_STATUS_LABEL && thread.latestRun?.completedAt ? (
+                  <>
+                    {" "}
+                    <RelativeTime timestamp={thread.latestRun.completedAt} />
+                  </>
                 ) : null}
               </Text>
             </View>

@@ -8,6 +8,7 @@ import {
   RunId,
   RuntimeRequestId,
   TurnItemId,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
@@ -17,7 +18,7 @@ import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
 import { isThreadWorking } from "./threadInbox.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
-import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
+import { canSnooze, effectiveSnoozed, isThreadListedActive } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 
@@ -51,6 +52,30 @@ describe("V2 client presentation", () => {
     expect(completed.hasPendingUserInput).toBe(true);
     expect(isThreadWorking(completed)).toBe(false);
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+  });
+
+  it("lists a thread as active only while it is neither settled nor snoozed", () => {
+    const now = "2026-06-20T00:05:00.000Z";
+    const ended = (overrides: Partial<OrchestrationV2ThreadShell>) =>
+      presentThreadShell(environmentId, {
+        ...v2ThreadShell,
+        latestRunId: RunId.make("run-ended"),
+        status: "completed",
+        ...overrides,
+      });
+    const snoozedUntil = (until: string) => ({
+      snoozedAt: DateTime.makeUnsafe("2026-06-19T23:00:00.000Z"),
+      snoozedUntil: DateTime.makeUnsafe(until),
+    });
+    expect(isThreadListedActive(ended({}), { now })).toBe(true);
+    expect(isThreadListedActive(ended({ settledOverride: "settled" }), { now })).toBe(false);
+    expect(isThreadListedActive(ended(snoozedUntil("2026-06-20T01:00:00.000Z")), { now })).toBe(
+      false,
+    );
+    // A snooze that already ended puts the thread back in the active list.
+    expect(isThreadListedActive(ended(snoozedUntil("2026-06-20T00:00:00.000Z")), { now })).toBe(
+      true,
+    );
   });
 
   it("moves a running thread with any question out of Working", () => {

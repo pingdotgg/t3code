@@ -10,6 +10,7 @@ import {
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
+  threadHeaderMayShowIdle,
   resolveSidebarRowThreadId,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
@@ -42,7 +43,14 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { resolveProjectExpanded } from "../uiStateStore";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -926,6 +934,38 @@ describe("navigation after parking a thread", () => {
 });
 
 describe("unseen completion with background work", () => {
+  it("lets the header show Idle only where the sidebar row would", () => {
+    const now = "2026-06-20T02:00:00.000Z";
+    const read = "2026-06-20T01:30:00.000Z";
+    const ended = (overrides: Partial<OrchestrationV2ThreadShell> = {}) =>
+      presentThreadShell(localEnvironmentId, {
+        ...makeThreadFixture().source,
+        latestRunId: RunId.make("run-header-idle"),
+        status: "completed",
+        latestRunCompletedAt: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        ...overrides,
+      });
+    expect(threadHeaderMayShowIdle(ended(), { lastVisitedAt: read, now })).toBe(true);
+    // Done comes first while the completion is unread.
+    const unread = { lastVisitedAt: "2026-06-20T00:30:00.000Z", now };
+    expect(threadHeaderMayShowIdle(ended(), unread)).toBe(false);
+    const settled = ended({ settledOverride: "settled" });
+    expect(threadHeaderMayShowIdle(settled, { lastVisitedAt: read, now })).toBe(false);
+    const snoozed = (until: string) =>
+      ended({
+        snoozedAt: DateTime.makeUnsafe("2026-06-20T01:35:00.000Z"),
+        snoozedUntil: DateTime.makeUnsafe(until),
+      });
+    expect(
+      threadHeaderMayShowIdle(snoozed("2026-06-20T03:00:00.000Z"), { lastVisitedAt: read, now }),
+    ).toBe(false);
+    // Woke comes first until the user opens the thread after it woke.
+    const woke = snoozed("2026-06-20T01:50:00.000Z");
+    expect(threadHeaderMayShowIdle(woke, { lastVisitedAt: read, now })).toBe(false);
+    const seen = { lastVisitedAt: "2026-06-20T01:55:00.000Z", now };
+    expect(threadHeaderMayShowIdle(woke, seen)).toBe(true);
+  });
+
   it.each([
     {
       roster: "dev server",

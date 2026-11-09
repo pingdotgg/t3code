@@ -165,6 +165,14 @@ export function effectiveSnoozed(
   return !threadRaisedHandWhileSnoozed(shell);
 }
 
+/** Neither settled nor snoozed, so the thread sits in the active list, as the sidebar sorts it. */
+export function isThreadListedActive(
+  shell: ThreadSnoozeShell & Pick<EnvironmentThreadShell, "settledOverride">,
+  options: { readonly now: string },
+): boolean {
+  return shell.settledOverride !== "settled" && !effectiveSnoozed(shell, options);
+}
+
 export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },
