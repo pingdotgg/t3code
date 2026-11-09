@@ -1,6 +1,7 @@
 import {
   type ManagedPolicySummary,
   ProjectId,
+  resolveProviderInstanceEnabled,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -13,6 +14,7 @@ import {
   codexCardProvider,
   codexNeedsSetup,
   groupWelcomeAgents,
+  turnedOnInstance,
   welcomePhonePath,
 } from "./welcomePage.logic";
 
@@ -172,6 +174,16 @@ describe("cliTerminalStep", () => {
     // Signed in from its home files with the binary gone: the installer.
     expect(step({ installed: false, status: "error" })).toBe("open");
     expect(step()).toBe("done");
+  });
+});
+
+describe("turnedOnInstance", () => {
+  it("turns an agent on even when older settings keep it off inside its config", () => {
+    const pi = ProviderDriverKind.make("pi");
+    expect(resolveProviderInstanceEnabled(turnedOnInstance({ driver: pi }))).toBe(true);
+    const migrated = turnedOnInstance({ driver: pi, config: { enabled: false, binaryPath: "pi" } });
+    expect(resolveProviderInstanceEnabled(migrated)).toBe(true);
+    expect(migrated.config).toEqual({ enabled: true, binaryPath: "pi" });
   });
 });
 

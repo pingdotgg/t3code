@@ -2,6 +2,7 @@ import {
   isProviderAvailable,
   managedCapabilityDenial,
   type ManagedPolicySummary,
+  type ProviderInstanceConfig,
   ProviderDriverKind,
   type ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
@@ -69,6 +70,21 @@ export function groupWelcomeAgents(
   );
   available.sort(byName);
   return { checking, readyCount, found: found.map((entry) => entry.provider), available };
+}
+
+/** Older settings can also keep `enabled: false` inside `config`, which still turns the agent off. */
+export function turnedOnInstance(instance: ProviderInstanceConfig): ProviderInstanceConfig {
+  const { config } = instance;
+  const configOff =
+    typeof config === "object" &&
+    config !== null &&
+    "enabled" in config &&
+    config.enabled === false;
+  return {
+    ...instance,
+    enabled: true,
+    ...(configOff ? { config: { ...config, enabled: true } } : {}),
+  };
 }
 
 /** A CLI the server knows is too old or otherwise broken for T3 Code; Settings updates it. */

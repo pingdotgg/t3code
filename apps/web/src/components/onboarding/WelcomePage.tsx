@@ -70,6 +70,7 @@ import {
   codexNeedsSetup,
   groupWelcomeAgents,
   isBrokenVersion,
+  turnedOnInstance,
   welcomeAgentState,
   welcomePhonePath,
 } from "../../onboarding/welcomePage.logic";
@@ -511,7 +512,7 @@ function AgentsSection({
     const result = await persistProviderInstance({
       operation: "upsert",
       instanceId: provider.instanceId,
-      instance: { ...instance, enabled: true },
+      instance: turnedOnInstance(instance),
     });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
