@@ -152,14 +152,22 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   }
 
   if (preferBundle) candidates.push(...editor.commands);
-  for (const candidate of candidates) {
-    const resolved = yield* resolveCommandPath(candidate, { env });
-    if (resolved === null || (editor.id === "zed" && (yield* isZfsEventDaemon(resolved)))) continue;
-    return Option.some({
-      command: candidate,
+  const found = (command: string) =>
+    Option.some({
+      command,
       baseArgs:
         editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
     });
+  for (const candidate of candidates) {
+    const resolved = yield* resolveCommandPath(candidate, { env });
+    if (resolved === null) continue;
+    if (editor.id !== "zed" || !(yield* isZfsEventDaemon(resolved))) return found(candidate);
+    if (candidate !== "zed") continue;
+    // OpenZFS zed can shadow the editor's zed in a later PATH entry.
+    for (const dir of (env.PATH ?? "").split(":")) {
+      const later = dir ? yield* resolveCommandPath(path.join(dir, "zed"), { env }) : null;
+      if (later !== null && !(yield* isZfsEventDaemon(later))) return found(later);
+    }
   }
   return Option.none();
 });

@@ -480,6 +480,7 @@ it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Ze
     const zedApp = path.join(home, ".local/zed.app/bin");
     const systemBin = path.join(home, "system-bin");
     const sbin = path.join(home, "sbin");
+    const optZed = path.join(home, "opt/zed/bin");
     // Arch keeps OpenZFS zed beside zpool, Debian keeps it in sbin, and Nix links zpool beside Zed.
     for (const [dir, name] of [
       [zedApp, "zed"],
@@ -496,7 +497,7 @@ it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Ze
     }
     yield* fs.symlink(path.join(zedApp, "zed"), path.join(localBin, "zed"));
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: sbin }).pipe(
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: `${sbin}:${optZed}` }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, {
         ...path,
@@ -519,6 +520,14 @@ it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Ze
     );
     yield* fs.remove(path.join(localBin, "zed"));
     assert.deepEqual(yield* resolve, Option.none());
+    yield* fs.makeDirectory(optZed, { recursive: true });
+    yield* fs.writeFileString(path.join(optZed, "zed"), "#!/bin/sh\n");
+    yield* fs.chmod(path.join(optZed, "zed"), 0o755);
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(optZed, "zed"), baseArgs: [] }),
+    );
+    yield* fs.remove(path.join(optZed, "zed"));
     yield* fs.remove(path.join(systemBin, "zpool"));
     assert.deepEqual(
       yield* resolve,
