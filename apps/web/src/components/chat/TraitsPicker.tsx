@@ -525,7 +525,6 @@ export function resolveTraitsTriggerLabel(input: {
   if (!visibility.hasAnyControls) return null;
   // The trigger label already pairs speed with reasoning ("High Fast").
   const { label } = buildTraitsTriggerDisplay({
-    provider: input.provider,
     descriptors: visibility.descriptors,
     primarySelectDescriptorId: visibility.primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
