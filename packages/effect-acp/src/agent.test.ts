@@ -256,12 +256,7 @@ it.effect("effect-acp agent keeps RPC ids within int32 and apart from extension 
         Schema.fromJsonString(RequestPermissionRequest),
       );
       const decodedExt = Schema.decodeEffect(Schema.fromJsonString(ExtRequest));
-      const firstIsPermission = yield* decodedPermission(firstOutbound).pipe(
-        Effect.match({
-          onFailure: () => false,
-          onSuccess: () => true,
-        }),
-      );
+      const firstIsPermission = yield* decodedPermission(firstOutbound).pipe(Effect.isSuccess);
 
       const permissionRequest = firstIsPermission
         ? yield* decodedPermission(firstOutbound)

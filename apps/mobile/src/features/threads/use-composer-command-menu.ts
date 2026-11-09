@@ -2,7 +2,6 @@ import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
-  ProviderInteractionMode,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
@@ -104,47 +103,54 @@ export function buildComposerSlashCommandItems(input: {
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
   readonly offersUsageLimits?: boolean;
-  readonly allowInteractionMode: boolean;
-  readonly selectedProviderStatus: Pick<
-    ServerProvider,
-    "driver" | "slashCommands" | "showInteractionModeToggle"
-  > | null;
+  /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
+  readonly offersFreshSession?: boolean;
+  readonly offersSideChat?: boolean;
+  readonly selectedProviderStatus: Pick<ServerProvider, "driver" | "slashCommands"> | null;
 }): ComposerCommandItem[] {
   const query = input.query.toLowerCase();
-  const allowInteractionMode =
-    input.allowInteractionMode && input.selectedProviderStatus?.showInteractionModeToggle !== false;
-  const builtIn = [
-    {
-      id: "cmd:model",
-      type: "slash-command",
-      command: "model",
-      label: "/model",
-      description: "Switch model",
-    },
-    {
-      id: "cmd:plan",
-      type: "slash-command",
-      command: "plan",
-      label: "/plan",
-      description: "Switch to plan mode",
-    },
-    {
-      id: "cmd:default",
-      type: "slash-command",
-      command: "default",
-      label: "/default",
-      description: "Switch to default mode",
-    },
-  ] satisfies ComposerCommandItem[];
-  const items: ComposerCommandItem[] = builtIn.filter(
-    (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
-  );
+  const items: ComposerCommandItem[] = "model".includes(query)
+    ? [
+        {
+          id: "cmd:model",
+          type: "slash-command",
+          command: "model",
+          label: "/model",
+          description: "Switch model",
+        },
+      ]
+    : [];
 
   // Providers expand commands only at the start of a message. T3 commands
-  // change local state and do not have this restriction.
+  // change local state and do not have this restriction, except `/clear`.
   if (!input.atMessageStart) return items;
+  if (input.offersSideChat) {
+    for (const [command, description] of [
+      ["side", "Ask a side question in a new side chat"],
+      ["btw", "Same as /side"],
+    ] as const) {
+      if (!command.includes(query)) continue;
+      items.push({
+        id: `cmd:${command}`,
+        type: "slash-command",
+        command,
+        label: `/${command}`,
+        description,
+      });
+    }
+  }
+  if (input.offersFreshSession && "clear".includes(query)) {
+    items.push({
+      id: "cmd:clear",
+      type: "slash-command",
+      command: "clear",
+      label: "/clear",
+      description: "Start a fresh session",
+    });
+  }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
     if (!command.name.toLowerCase().includes(query)) continue;
+    if (command.name === "clear" && input.offersFreshSession) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     if (command.name === USAGE_LIMITS_COMMAND.name && input.offersUsageLimits && !input.hasThread) {
       continue;
@@ -171,24 +177,8 @@ export function resolveComposerCommandSelection(input: {
   readonly draftMessage: string;
   readonly trigger: Pick<ComposerTrigger, "rangeStart" | "rangeEnd">;
   readonly item: ComposerCommandItem;
-  readonly allowInteractionMode: boolean;
-}): {
-  readonly text: string;
-  readonly cursor: number;
-  readonly interactionMode: ProviderInteractionMode | null;
-} {
+}): { readonly text: string; readonly cursor: number } {
   const { draftMessage, trigger, item } = input;
-  if (
-    input.allowInteractionMode &&
-    item.type === "slash-command" &&
-    (item.command === "plan" || item.command === "default")
-  ) {
-    return {
-      ...replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, ""),
-      interactionMode: item.command,
-    };
-  }
-
   let replacement = "";
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
@@ -199,10 +189,7 @@ export function resolveComposerCommandSelection(input: {
   } else if (item.type === "provider-slash-command") {
     replacement = `/${item.command.name} `;
   }
-  return {
-    ...replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, replacement),
-    interactionMode: null,
-  };
+  return replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, replacement);
 }
 
 export function useComposerCommandMenu({
@@ -223,8 +210,9 @@ export function useComposerCommandMenu({
   offersUsageLimits = false,
   enabled = true,
   onChangeDraftMessage,
-  onUpdateInteractionMode,
   onUsageLimits,
+  onFreshSession,
+  offersSideChat = false,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -244,8 +232,10 @@ export function useComposerCommandMenu({
   readonly offersUsageLimits?: boolean;
   readonly enabled?: boolean;
   readonly onChangeDraftMessage: (value: string) => void;
-  readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   readonly onUsageLimits?: () => void;
+  /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
+  readonly onFreshSession?: () => void;
+  readonly offersSideChat?: boolean;
 }) {
   const [localSelection, setLocalSelection] = useState(() => ({
     ownerKey,
@@ -349,7 +339,8 @@ export function useComposerCommandMenu({
         hasThread,
         hasCompactableConversation,
         offersUsageLimits,
-        allowInteractionMode: onUpdateInteractionMode !== undefined,
+        offersFreshSession: onFreshSession !== undefined,
+        offersSideChat,
         selectedProviderStatus: selectedProviderStatus
           ? {
               ...selectedProviderStatus,
@@ -582,6 +573,13 @@ export function useComposerCommandMenu({
       return;
     }
 
+    if (item.type === "slash-command" && item.command === "clear" && onFreshSession) {
+      const cleared = replaceTextRange(draftMessage, trigger.rangeStart, trigger.rangeEnd, "");
+      setSelection({ start: cleared.cursor, end: cleared.cursor });
+      onChangeDraftMessage(cleared.text);
+      onFreshSession();
+      return;
+    }
     if (
       item.type === "provider-slash-command" &&
       item.command.name === USAGE_LIMITS_COMMAND.name &&
@@ -594,19 +592,9 @@ export function useComposerCommandMenu({
       return;
     }
 
-    const result = resolveComposerCommandSelection({
-      draftMessage,
-      trigger,
-      item,
-      allowInteractionMode:
-        onUpdateInteractionMode !== undefined &&
-        selectedProviderStatus?.showInteractionModeToggle !== false,
-    });
+    const result = resolveComposerCommandSelection({ draftMessage, trigger, item });
     setSelection({ start: result.cursor, end: result.cursor });
     onChangeDraftMessage(result.text);
-    if (result.interactionMode !== null) {
-      onUpdateInteractionMode?.(result.interactionMode);
-    }
   };
 
   return {

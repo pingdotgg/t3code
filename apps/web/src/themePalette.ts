@@ -30,7 +30,7 @@ import {
 } from "./lib/contextChipAccents";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
-import { primaryServerEnvironmentThemesAtom } from "./state/server";
+import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -315,7 +315,7 @@ export function publishedThemeDefinitions(
 // Every reconnect snapshot delivers a fresh but usually identical array; keeping the
 // previous one skips regenerating palettes and repainting the document for it.
 const publishedThemesAtom = Atom.make((get): ReadonlyArray<EnvironmentTheme> => {
-  const next = get(primaryServerEnvironmentThemesAtom);
+  const next = get(themeServerEnvironmentThemesAtom);
   const previous = Option.getOrNull(get.self<ReadonlyArray<EnvironmentTheme>>());
   return previous !== null && Equal.equals(previous, next) ? previous : next;
 }).pipe(Atom.withLabel("web-published-environment-themes"));
