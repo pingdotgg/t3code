@@ -15,7 +15,7 @@ export function cardReplyProblem(input: {
   ) {
     return undefined;
   }
-  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Write the verdict and the teaching this card tests in full in reply, then call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
+  return "The learner sees only real message text and this reply; thinking, plans, and anything you wrote while thinking are summarized away and never shown. Give the verdict on the learner's last answer if there is one, then write out the teaching this card tests in full in reply, and call the card again. If this card is the opening check or an explain-back request, set purpose instead.";
 }
 
 export interface QuestionCard {
