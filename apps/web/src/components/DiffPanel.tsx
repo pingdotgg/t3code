@@ -1546,6 +1546,8 @@ export default function DiffPanel({
                   >
                     <ReviewAnnotatableCodeView
                       key={collapseScopeKey ?? reviewSectionId}
+                      environmentId={activeThread?.environmentId}
+                      projectId={activeThread?.projectId}
                       viewerRef={attachViewer}
                       reviewRef={reviewRef}
                       onSelectedLinesChange={review.onSelectedLinesChange}
