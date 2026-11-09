@@ -3100,8 +3100,11 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   }
 }
 
-/* Classic keeps main's status colors and border weight on the redesign's extra surfaces. */
+/* Classic keeps main's status colors and border weight on the redesign's extra surfaces.
+   Main paints the sidebar and the content the same color; here the pane is an
+   inset shape, so the chrome steps a little toward the text color to keep it visible. */
 html:root[data-theme-id="t3-code-classic"] {
+  --app-chrome-background: color-mix(in srgb, var(--app-theme-sidebar) 94%, var(--foreground));
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
   --success: var(--color-emerald-500);
@@ -3129,11 +3132,12 @@ html:root[data-theme-id="t3-code-classic"] {
     color-mix(in srgb, var(--card) 60%, transparent),
     color-mix(in srgb, var(--card) 60%, transparent)
   );
+  /* Solid, so the timeline never shows through the composer or its tray. */
   --tray-fill: linear-gradient(
-    color-mix(in srgb, var(--card) 80%, transparent),
-    color-mix(in srgb, var(--card) 80%, transparent)
+    color-mix(in srgb, var(--card) 80%, var(--background)),
+    color-mix(in srgb, var(--card) 80%, var(--background))
   );
-  --composer-fill: linear-gradient(transparent, transparent);
+  --composer-fill: linear-gradient(var(--card), var(--card));
   --tray-stroke: var(--border);
   --hairline: var(--border);
   --divider: var(--border);
