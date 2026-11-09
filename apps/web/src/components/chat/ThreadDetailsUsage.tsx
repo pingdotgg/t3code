@@ -313,7 +313,7 @@ function UsageRow({
             {value}
           </span>
         </TooltipTrigger>
-        {fill !== null ? <span className="flex justify-end">{trailing}</span> : null}
+        {fill !== null ? <span className="flex min-w-0">{trailing}</span> : null}
       </div>
       <TooltipPopup side="left" sideOffset={16}>
         <div className="flex flex-col gap-0.5 text-muted-foreground">{tooltip}</div>
