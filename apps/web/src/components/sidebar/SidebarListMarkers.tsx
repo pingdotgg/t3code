@@ -126,22 +126,26 @@ export function SidebarSectionHeader(props: {
       : props.marker === "snoozed-header"
         ? "snoozed"
         : "settled";
+  // Keep the zero-height marker mounted so an empty shelf remains a valid drop target.
+  const visible = props.count > 0 || props.dragging === true;
   return (
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("relative mx-0.5 h-8", props.className)}
+      className={cn("relative mx-0.5", visible ? "h-8" : "-mb-px h-0", props.className)}
     >
-      <CollapsibleSectionHeader
-        data-sidebar-row={`shelf:${shelf}`}
-        onClick={props.toggle.onToggle}
-        expanded={props.toggle.expanded}
-        tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
-        data-testid={`sidebar-${shelf}-shelf-toggle`}
-        accessory={<span className="font-normal tabular-nums">{props.count}</span>}
-      >
-        {props.label}
-      </CollapsibleSectionHeader>
+      {visible ? (
+        <CollapsibleSectionHeader
+          data-sidebar-row={`shelf:${shelf}`}
+          onClick={props.toggle.onToggle}
+          expanded={props.toggle.expanded}
+          tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
+          data-testid={`sidebar-${shelf}-shelf-toggle`}
+          accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+        >
+          {props.label}
+        </CollapsibleSectionHeader>
+      ) : null}
     </SortableSidebarMarker>
   );
 }
