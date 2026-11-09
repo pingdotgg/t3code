@@ -73,7 +73,11 @@ import type {
 import * as NodeChildProcess from "node:child_process";
 import * as NodeUtil from "node:util";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
-import { QUESTION_CARD_TOOL_NAME, QUIZ_CARD_TOOL_NAME } from "@t3tools/shared/quizCard";
+import {
+  QUESTION_CARD_TOOL_NAME,
+  QUIZ_CARD_TOOL_NAME,
+  replyCoverage,
+} from "@t3tools/shared/quizCard";
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
@@ -2091,17 +2095,14 @@ function cardReplyRepeats(block: { readonly name: string; readonly input: unknow
   return typeof reply === "string" && words(reply).includes(words(text));
 }
 
-// Short lead text that opens with the reply's own first sentence is the reply drafted twice (APP-108).
-function leadRepeatsCardReply(
+function cardReplyCoversLead(
   block: { readonly name: string; readonly input: unknown },
   text: string,
 ) {
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
-  if (typeof reply !== "string" || text.length > 300) return false;
-  const opening = (value: string) =>
-    /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
-  // A bare "Right." opens most replies; only a sentence this long marks a repeat.
-  return opening(text).length >= 40 && opening(text) === opening(reply);
+  if (typeof reply !== "string") return false;
+  const opening = /^\s*(.*?[.!?])(?=\s|$)/su.exec(text)?.[1] ?? text;
+  return replyCoverage(text, reply) >= 0.6 && replyCoverage(opening, reply) >= 0.5;
 }
 
 // In SDK mode, /goal appears only in transcripts: command output names it and Stop hooks report unmet checks.
@@ -4372,6 +4373,7 @@ interface ActiveClaudeTurnContext {
     fallbackNativeItemId: string;
     emittedNativeItemIds: Set<string>;
     cardSeen: boolean;
+    cardReplies: Array<string>;
     heldText: Array<{ readonly nativeItemId: string; readonly text: string }>;
     // The CLI repeats a notice that ends a prompt as the turn's result text.
     noticeTexts: Set<string>;
@@ -7928,12 +7930,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           context: ActiveClaudeTurnContext,
         ) {
           if (context.assistant.heldText.length === 0) return;
+          const joined = context.assistant.heldText.map((item) => item.text).join("\n");
+          if (
+            joined.length > 150 &&
+            replyCoverage(joined, context.assistant.cardReplies.join("\n")) < 0.85
+          ) {
+            yield* flushHeldAssistantText(context);
+            return;
+          }
           const itemId = `assistant-card-trailing:${context.providerTurnId}`;
           yield* ensureReasoningBlock(context, itemId);
           yield* reasoningDeltas.complete({
             turnId: context.nativeTurnId,
             itemId,
-            finalText: context.assistant.heldText.map((item) => item.text).join("\n"),
+            finalText: joined,
             emitEmpty: false,
           });
           context.assistant.heldText = [];
@@ -7987,7 +7997,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
           if (isLessonCardTool(block.name)) {
             for (const item of held) {
-              if (cardReplyRepeats(block, item.text) || leadRepeatsCardReply(block, item.text)) {
+              if (cardReplyRepeats(block, item.text) || cardReplyCoversLead(block, item.text)) {
                 yield* emitHeldAssistantTextItemAsReasoning(context, item);
               } else {
                 yield* emitAssistantTextArtifacts({ context, ...item });
@@ -8060,6 +8070,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         }) {
           if (input.context.assistant.cardSeen) {
             yield* emitHeldAssistantTextAsReasoning(input.context);
+          } else if (
+            isLessonTurn(input.context.input) &&
+            isClaudeProviderContinuationTurn(input.context.input) &&
+            input.context.assistant.heldText.length > 0 &&
+            input.context.assistant.heldText.reduce((total, item) => total + item.text.length, 0) <=
+              300
+          ) {
+            const held = input.context.assistant.heldText;
+            input.context.assistant.heldText = [];
+            // The result frame repeats this text; it must not come back as the fallback message.
+            input.context.assistant.fallbackText = "";
+            for (const item of held) {
+              yield* emitHeldAssistantTextItemAsReasoning(input.context, item);
+            }
           } else {
             yield* flushHeldAssistantText(input.context);
           }
@@ -9825,7 +9849,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 context.assistant.heldText.push(rootText);
               }
               yield* flushHeldAssistantTextForTool(context, toolUse);
-              if (isLessonCardTool(toolUse.name)) context.assistant.cardSeen = true;
+              if (isLessonCardTool(toolUse.name)) {
+                context.assistant.cardSeen = true;
+                const reply = (toolUse.input as { readonly reply?: unknown } | null)?.reply;
+                context.assistant.cardReplies.push(typeof reply === "string" ? reply : "");
+              }
             }
             const nativeToolInput = claudeNativeToolInputFromUnknown(toolUse.input);
             if (toolUse.name === "Agent") {
@@ -10159,6 +10187,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 yield* flushHeldAssistantText(context);
               }
               context.assistant.cardSeen = false;
+              context.assistant.cardReplies = [];
               context.steeredSegmentUsage.push(message.usage);
               context.steeredLedgerUsage = addClaudeLedgerUsage(
                 context.steeredLedgerUsage,
@@ -11367,6 +11396,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 fallbackNativeItemId: `assistant:${turnInput.runId}`,
                 emittedNativeItemIds: new Set(),
                 cardSeen: false,
+                cardReplies: [],
                 heldText: [],
                 noticeTexts: new Set(),
               },
