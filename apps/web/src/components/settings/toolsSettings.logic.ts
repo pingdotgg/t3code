@@ -256,7 +256,7 @@ export function filterSkillRows(rows: ReadonlyArray<SkillRow>, query: string) {
 
 /** What the server knows about a row's folders: see `skills.inspect`. */
 export interface SkillRowDetails {
-  /** The copy shown first: the installed one, else the first found; null when none was inspected. */
+  /** The copy shown first: the row's own level's, installed first; null when none was inspected. */
   readonly folder: SkillFolderInfo | null;
   /** Each distinct folder holding a skill of this name, the shown one first. */
   readonly copies: ReadonlyArray<SkillFolderInfo>;
@@ -283,6 +283,14 @@ const NO_DETAILS: SkillRowDetails = {
   removable: null,
 };
 
+/** The install level a group's skills live at; plugin and built-in skills have none. */
+const GROUP_LEVEL: Partial<
+  Record<SkillGroupKind, NonNullable<SkillFolderInfo["location"]>["kind"]>
+> = {
+  project: "project",
+  personal: "environment",
+};
+
 export function skillRowDetails(
   row: SkillRow,
   folders: ReadonlyMap<string, SkillFolderInfo>,
@@ -293,18 +301,24 @@ export function skillRowDetails(
   });
   if (infos.length === 0) return NO_DETAILS;
   // Two agents reaching one folder through a link report two paths for one copy.
-  const byFolder = new Map(infos.map((info) => [info.folder, info]));
-  const copies = [...byFolder.values()].toSorted(
-    (left, right) => Number(right.installed !== undefined) - Number(left.installed !== undefined),
-  );
-  const installed = copies.find((info) => info.installed !== undefined)?.installed ?? null;
+  const found = [...new Map(infos.map((info) => [info.folder, info])).values()];
+  // A name can sit at home and in the project at once: a row acts only on its own level's copy.
+  const level = GROUP_LEVEL[row.group];
+  const own =
+    level === undefined
+      ? found
+      : found.filter((info) => (info.installed?.target ?? info.location)?.kind === level);
+  const rank = (info: SkillFolderInfo) =>
+    (own.includes(info) ? 0 : 2) + (info.installed === undefined ? 1 : 0);
+  const copies = found.toSorted((left, right) => rank(left) - rank(right));
+  const installed = own.find((info) => info.installed !== undefined)?.installed ?? null;
   return {
     folder: copies[0] ?? null,
     copies,
     scripts: copies.some((info) => info.scripts),
     conflict: new Set(copies.map((info) => info.hash)).size > 1,
     installed,
-    removable: installed?.target ?? copies.find((info) => info.location)?.location ?? null,
+    removable: installed?.target ?? own.find((info) => info.location)?.location ?? null,
   };
 }
 

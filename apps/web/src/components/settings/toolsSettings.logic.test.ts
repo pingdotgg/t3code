@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type McpServerConfig,
   type ServerProvider,
+  type SkillFolderInfo,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -192,10 +193,10 @@ describe("mergeEnvironmentSkillRows", () => {
 });
 
 describe("skill row details", () => {
-  const row = (paths: ReadonlyArray<string>): SkillRow => ({
+  const row = (paths: ReadonlyArray<string>, group: SkillRow["group"] = "personal"): SkillRow => ({
     name: "review",
     description: undefined,
-    group: "personal",
+    group,
     paths,
     providers: [],
     disabledByProvider: false,
@@ -236,6 +237,46 @@ describe("skill row details", () => {
     const details = skillRowDetails(row([...copies.keys()]), copies);
     expect(details.conflict).toBe(true);
     expect(details.scripts).toBe(true);
+  });
+
+  it("acts on the copy at the row's own level when home and project share a name", () => {
+    const environment = { kind: "environment" } as const;
+    const project = { kind: "project", cwd: "/h/app" } as const;
+    // Sorted paths put the home copy first, ahead of a project under the same home.
+    const homePath = "/h/.agents/skills/review/SKILL.md";
+    const projectPath = "/h/app/.agents/skills/review/SKILL.md";
+    const homeCopy = {
+      ...folder(homePath, "/h/.agents/skills/review", "a"),
+      location: environment,
+      installed: { target: environment, source: "acme/global" },
+    };
+    const handPlaced = {
+      ...folder(projectPath, "/h/app/.agents/skills/review", "b"),
+      location: project,
+    };
+    const copies = new Map<string, SkillFolderInfo>([
+      [homePath, homeCopy],
+      [projectPath, { ...handPlaced, installed: { target: project, source: "acme/project" } }],
+    ]);
+    const paths = [homePath, projectPath];
+
+    const inProject = skillRowDetails(row(paths, "project"), copies);
+    expect(inProject.folder?.folder).toBe("/h/app/.agents/skills/review");
+    expect(inProject.installed).toEqual({ target: project, source: "acme/project" });
+    expect(inProject.removable).toEqual(project);
+
+    const atHome = skillRowDetails(row(paths, "personal"), copies);
+    expect(atHome.installed).toEqual({ target: environment, source: "acme/global" });
+    expect(atHome.removable).toEqual(environment);
+
+    // A hand-placed project copy can't be updated, and must not update the home one.
+    const mixed = new Map<string, SkillFolderInfo>([
+      [homePath, homeCopy],
+      [projectPath, handPlaced],
+    ]);
+    const unmanaged = skillRowDetails(row(paths, "project"), mixed);
+    expect(unmanaged.installed).toBeNull();
+    expect(unmanaged.removable).toEqual(project);
   });
 
   it("knows nothing about a row whose folders weren't inspected", () => {
