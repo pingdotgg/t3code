@@ -10,13 +10,14 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { resolveProviderInstanceDisplayName as agentName } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
+  AuthAccessWriteScope,
   AuthProvidersManageScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -24,7 +25,6 @@ import {
   CommandId,
   AuthOrchestrationOperateScope,
   isManagedDriverAllowed,
-  isProviderAvailable,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -64,6 +64,7 @@ import {
 } from "../../onboarding/providerReadiness.logic";
 import {
   cliTerminalStep,
+  codexNeedsSetup,
   groupWelcomeAgents,
   welcomeAgentState,
   welcomePhonePath,
@@ -128,13 +129,17 @@ export function WelcomePage({
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     "this computer";
   const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
-  // Sharing this computer needs the same relay access as Settings → Sharing & access.
+  // The phone and `t3` on PATH belong to the primary computer, so only it offers them.
+  const isPrimary = usePrimaryEnvironmentId() === environmentId;
+  // The same access Settings → Sharing & access checks.
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
+  const canPair = useEnvironmentScope(environmentId, AuthAccessWriteScope);
   const phonePath = welcomePhonePath({
-    isPrimary: usePrimaryEnvironmentId() === environmentId,
+    isPrimary,
     cloud: hasCloudPublicConfig(),
     canShare: canReadRelay && canWriteRelay,
+    canPair,
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
@@ -161,6 +166,8 @@ export function WelcomePage({
     enableBeforeUnload: false,
   });
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
+  // Starting before the project list loads keeps saved picks, such as an import a quit cut short.
+  const keepChoicesRef = useRef(false);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const finish = (
     projectRef?: ScopedProjectRef,
@@ -183,7 +190,7 @@ export function WelcomePage({
         // Release before onDone so its own navigation is not blocked.
         holdPageRef.current = false;
         await onDone(projectRef);
-        setImportSelection(null);
+        if (!keepChoicesRef.current) setImportSelection(null);
         if (importWarning) {
           toastManager.add({
             type: "warning",
@@ -234,6 +241,7 @@ export function WelcomePage({
   const selected = projectImport.canWrite ? projectImport.selected : [];
   const newCount = selected.filter(projectImport.isNew).length;
   const start = () => {
+    keepChoicesRef.current = scans.some((scan) => scan.data === null);
     if (selected.length === 0) {
       projectImport.finishAfterImport();
       return;
@@ -264,6 +272,7 @@ export function WelcomePage({
             <AgentsSection
               environmentId={environmentId}
               label={label}
+              isPrimary={isPrimary}
               onImportSourceEnabled={() => scans[0]?.refresh()}
             />
             <ProjectsSection
@@ -360,9 +369,6 @@ interface AgentTerminalSession {
   readonly keybindings: ServerConfig["keybindings"];
 }
 
-// The same name the model picker shows, which tells two unnamed instances of one agent apart.
-const agentName = resolveProviderInstanceDisplayName;
-
 // Shared by the page (to enable Start) and the agents section, so both agree on what is ready.
 function useWelcomeAgents(environmentId: EnvironmentId) {
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
@@ -387,10 +393,12 @@ const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 function AgentsSection({
   environmentId,
   label,
+  isPrimary,
   onImportSourceEnabled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  readonly isPrimary: boolean;
   // The project scan only reads agents that are on, so turning one on can find more history.
   readonly onImportSourceEnabled: () => void;
 }) {
@@ -423,12 +431,6 @@ function AgentsSection({
     return isInstallableDriver(provider.driver) && (state === "install" || state === "signIn");
   };
   // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
-  const codexNeedsSetup = (provider: ServerProvider) =>
-    provider.driver === "codex" &&
-    (needsInstallOrSignIn(provider) ||
-      (stateOf(provider) === "attention" &&
-        isProviderAvailable(provider) &&
-        provider.auth.status !== "authenticated"));
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
   // starts after an install is not lost when the agent moves between groups. It closes once
   // Codex is signed in; anything left, such as a broken version, shows on its row.
@@ -506,11 +508,13 @@ function AgentsSection({
   // One action per agent, the same in the list and in the grid.
   const actionFor = (provider: ServerProvider) => {
     const state = stateOf(provider);
+    const name = agentName(provider);
     if (state === "disabled") {
       return (
         <Button
           size="xs"
           variant="outline"
+          aria-label={`Turn on: ${name}`}
           disabled={!canManageProviders || serverConfig === null}
           onClick={() => void turnOn(provider)}
         >
@@ -518,12 +522,13 @@ function AgentsSection({
         </Button>
       );
     }
-    if (serverConfig !== null && codexNeedsSetup(provider)) {
+    if (serverConfig !== null && codexNeedsSetup(provider, serverConfig.settings)) {
       const open = codexSetupId === provider.instanceId;
       return (
         <Button
           size="xs"
           variant="outline"
+          aria-label={`Set up: ${name}`}
           aria-expanded={open}
           onClick={() => setCodexSetupId(open ? null : provider.instanceId)}
         >
@@ -534,6 +539,7 @@ function AgentsSection({
     if (needsInstallOrSignIn(provider)) {
       return (
         <TerminalAction
+          name={name}
           signIn={state === "signIn"}
           disabled={
             terminalSession?.providerInstanceId === provider.instanceId ||
@@ -544,10 +550,12 @@ function AgentsSection({
         />
       );
     }
+    const label = state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up";
     return (
       <Button
         size="xs"
         variant="outline"
+        aria-label={`${label}: ${name}`}
         render={
           <Link
             to="/settings/providers"
@@ -555,7 +563,7 @@ function AgentsSection({
           />
         }
       >
-        {state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up"}
+        {label}
       </Button>
     );
   };
@@ -585,7 +593,8 @@ function AgentsSection({
       ) : null}
       {!canOperateTerminal &&
       [...found, ...available].some(
-        (provider) => needsInstallOrSignIn(provider) || codexNeedsSetup(provider),
+        (provider) =>
+          needsInstallOrSignIn(provider) || codexNeedsSetup(provider, serverConfig?.settings),
       ) ? (
         <p className="mt-2 text-sm text-muted-foreground">
           This connection cannot control terminals.
@@ -653,7 +662,7 @@ function AgentsSection({
           />
         </div>
       ) : null}
-      <CliPathSetup />
+      {isPrimary ? <CliPathSetup /> : null}
       {terminalSession !== null ? (
         <AgentInstallTerminal
           key={`${terminalSession.environmentId}:${terminalSession.providerInstanceId}:${terminalSession.driver}`}
@@ -1073,24 +1082,34 @@ function OnboardingCodexSetup({
       mode={mode}
       enabled={provider.enabled}
       readOnly={!canManageProviders}
+      displayName={agentName(provider)}
       onModeChange={changeMode}
     />
   );
 }
 
 function TerminalAction({
+  name,
   signIn,
   disabled,
   onClick,
 }: {
+  readonly name: string;
   readonly signIn: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
+  const label = signIn ? "Sign in" : "Install";
   return (
-    <Button size="xs" variant="outline" disabled={disabled} onClick={onClick}>
+    <Button
+      size="xs"
+      variant="outline"
+      aria-label={`${label}: ${name}`}
+      disabled={disabled}
+      onClick={onClick}
+    >
       <TerminalIcon className="size-3.5" />
-      {signIn ? "Sign in" : "Install"}
+      {label}
     </Button>
   );
 }

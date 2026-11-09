@@ -8,7 +8,12 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { cliTerminalStep, groupWelcomeAgents, welcomePhonePath } from "./welcomePage.logic";
+import {
+  cliTerminalStep,
+  codexNeedsSetup,
+  groupWelcomeAgents,
+  welcomePhonePath,
+} from "./welcomePage.logic";
 
 function provider(name: string, overrides: Partial<ServerProvider> = {}): ServerProvider {
   return {
@@ -147,18 +152,36 @@ describe("cliTerminalStep", () => {
     expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
     // A check that timed out still gets the sign-in command.
     expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
-    // A broken version needs the update its row offers, not another sign-in.
-    expect(
-      step({
-        compatibilityAdvisory: {
-          status: "broken",
-          message: "Update Codex.",
-          recommendedVersion: null,
-          recommendedRange: null,
-        },
-      }),
-    ).toBe("done");
+    // Signed in with a broken version: the update its row offers fixes it, not another sign-in.
+    const broken = {
+      status: "broken",
+      message: "Update Codex.",
+      recommendedVersion: null,
+      recommendedRange: null,
+    } as const;
+    expect(step({ compatibilityAdvisory: broken })).toBe("done");
+    // Signed out, it still needs the sign-in first.
+    expect(step({ compatibilityAdvisory: broken, auth: { status: "unauthenticated" } })).toBe(
+      "open",
+    );
     expect(step()).toBe("done");
+  });
+});
+
+describe("codexNeedsSetup", () => {
+  it("opens the setup card only while Codex is not signed in", () => {
+    const setup = (overrides: Partial<ServerProvider>) =>
+      codexNeedsSetup(provider("Codex", overrides), undefined);
+
+    expect(setup({ installed: false, status: "error", auth: { status: "unknown" } })).toBe(true);
+    expect(setup({ auth: { status: "unauthenticated" } })).toBe(true);
+    // A check that timed out can still sign in with ChatGPT.
+    expect(setup({ status: "error", auth: { status: "unknown" } })).toBe(true);
+    // Signed in from its home files but the binary is gone: Install, not the card.
+    expect(setup({ installed: false, status: "error" })).toBe(false);
+    expect(setup({})).toBe(false);
+    const claude = provider("Claude", { auth: { status: "unauthenticated" } });
+    expect(codexNeedsSetup(claude, undefined)).toBe(false);
   });
 });
 
@@ -174,6 +197,7 @@ describe("welcomePhonePath", () => {
         isPrimary: true,
         cloud: true,
         canShare: true,
+        canPair: true,
         policy: undefined,
         ...input,
       });
@@ -181,6 +205,8 @@ describe("welcomePhonePath", () => {
     expect(path({})).toBe("connect");
     expect(path({ cloud: false })).toBe("pairing");
     expect(path({ canShare: false })).toBe("pairing");
+    // Without access to share or to create a pairing code, the phone has no way in.
+    expect(path({ canShare: false, canPair: false })).toBeNull();
     expect(path({ policy: policy({ connect: false }) })).toBe("pairing");
     expect(path({ policy: policy({ clients: ["desktop"] }) })).toBeNull();
     expect(path({ isPrimary: false })).toBeNull();

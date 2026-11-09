@@ -33,7 +33,7 @@ is found, it reads **Set up an agent** and opens by itself:
   **Update now** working in Settings.
 - For Codex, **Set up** offers sign-in with your ChatGPT account or your own
   Codex CLI. **Use existing CLI** opens the terminal to install or sign in, and
-  **Continue with ChatGPT** stays available until Codex is ready.
+  **Continue with ChatGPT** stays available until Codex is signed in.
 - Other agents, and agents that could not load, open their page in
   **Settings → Providers**.
 - **Browse** opens the ACP Registry for more agents.

@@ -46,6 +46,7 @@ const state = vi.hoisted(() => ({
   linkError: null as string | null,
   refreshLinkState: vi.fn(),
   scanError: null as string | null,
+  scanPending: false,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -134,8 +135,8 @@ vi.mock(import("../../onboarding/useProjectScans"), async (original) => {
         state.scan({ environmentId });
         return {
           environmentId,
-          data: { candidates, truncated: false } as never,
-          isPending: false,
+          data: (state.scanPending ? null : { candidates, truncated: false }) as never,
+          isPending: state.scanPending,
           error: state.scanError,
           refresh: state.refreshScan,
         };
@@ -320,6 +321,7 @@ function setup() {
   state.linkError = null;
   state.refreshLinkState.mockReset();
   state.scanError = null;
+  state.scanPending = false;
   localStorage.removeItem(welcomeImportSelectionKey(primaryId));
   return now;
 }
@@ -574,6 +576,19 @@ it("keeps the project controls when a later scan fails", async () => {
   await vi.waitFor(() => expect(pageText()).toContain("Could not check projects again."));
   expect(button("Import 2 projects and start").disabled).toBe(false);
   expect(button("Retry").disabled).toBe(false);
+});
+
+it("keeps saved picks when Start comes before the project list loads", async () => {
+  using _now = setup();
+  const saved = JSON.stringify({ knownKeys: ["a"], keys: ["a"], optedOut: false });
+  localStorage.setItem(welcomeImportSelectionKey(primaryId), saved);
+  state.scanPending = true;
+  await using _screen = await mountWelcome();
+
+  await click("Start");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  // An import a quit cut short is still checked on the next visit.
+  expect(localStorage.getItem(welcomeImportSelectionKey(primaryId))).toBe(saved);
 });
 
 it("starts without importing when this connection cannot import projects", async () => {

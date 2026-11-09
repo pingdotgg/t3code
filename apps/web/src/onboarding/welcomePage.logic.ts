@@ -81,14 +81,31 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
-  // A broken version needs an update, which its row offers; signing in again would not help.
-  if (provider.compatibilityAdvisory?.status === "broken") return "done";
+  // Signed in with a broken version: the row offers the update, and signing in again would not help.
+  if (state === "attention" && provider.compatibilityAdvisory?.status === "broken") return "done";
   // The terminal shows the command first, so it also helps a CLI whose check failed.
   const fixable =
     state === "install" ||
     state === "signIn" ||
     (state === "attention" && isProviderAvailable(provider));
   return fixable ? "open" : "done";
+}
+
+/**
+ * Whether Codex's row opens its setup card, which offers ChatGPT sign-in or the CLI. A signed-in
+ * Codex gets the plain Install or Details action instead, since the card has nothing left for it.
+ */
+export function codexNeedsSetup(
+  provider: ServerProvider,
+  settings: ComputerSettings | null | undefined,
+) {
+  if (provider.driver !== "codex" || provider.auth.status === "authenticated") return false;
+  const state = welcomeAgentState(provider, settings);
+  return (
+    state === "install" ||
+    state === "signIn" ||
+    (state === "attention" && isProviderAvailable(provider))
+  );
 }
 
 /**
@@ -100,14 +117,19 @@ export function welcomePhonePath(input: {
   readonly cloud: boolean;
   // Relay read and write access, which sharing this computer through T3 Connect needs.
   readonly canShare: boolean;
+  // Access to create a pairing code, as in Settings → Sharing & access.
+  readonly canPair: boolean;
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   if (!input.isPrimary || managedCapabilityDenial(input.policy, "remoteClients") !== undefined) {
     return null;
   }
-  return input.cloud &&
+  if (
+    input.cloud &&
     input.canShare &&
     managedCapabilityDenial(input.policy, "connect") === undefined
-    ? "connect"
-    : "pairing";
+  ) {
+    return "connect";
+  }
+  return input.canPair ? "pairing" : null;
 }
