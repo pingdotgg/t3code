@@ -843,9 +843,6 @@ export function useThreadComposerState(input: {
       Dialog.alert(title, detail);
       return null;
     }
-    const provider = serverConfig?.providers.find(
-      (entry) => entry.instanceId === modelSelection.instanceId,
-    );
     const metadata = makeQueuedMessageMetadata();
     const messageId = MessageId.make(metadata.messageId);
     await enqueueThreadOutboxMessage({
@@ -857,7 +854,7 @@ export function useThreadComposerState(input: {
       attachments: [],
       modelSelection,
       runtimeMode: thread.runtimeMode,
-      interactionMode: resolveProviderInteractionMode(provider, thread.interactionMode),
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
       createdAt: metadata.createdAt,
     });
     return messageId;
