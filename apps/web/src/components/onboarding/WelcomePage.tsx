@@ -55,6 +55,7 @@ import {
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
+  isNewOnboardingProject,
   resolveOnboardingProjectId,
   type OnboardingProjectGroup,
   splitOnboardingProjectPath,
@@ -1440,8 +1441,8 @@ function useProjectImport({
   // Projects already in T3 Code stay in the list, but reopening the page does not import their
   // history again unless the user picks them. The scan can be 30 s old, so the live list decides.
   const projects = useProjects();
-  const isNew = (candidate: ImportCandidate) =>
-    resolveOnboardingProjectId(projects, candidate.environmentId, candidate) === null;
+  const isNewProject = isNewOnboardingProject(projects);
+  const isNew = (candidate: ImportCandidate) => isNewProject(candidate.environmentId, candidate);
   const recent = recentActive.filter(isNew);
   const recentKeys = new Set(recent.map((candidate) => candidate.key));
   const knownKeys = new Set(importSelection?.knownKeys);
