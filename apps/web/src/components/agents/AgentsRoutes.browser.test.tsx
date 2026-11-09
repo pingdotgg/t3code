@@ -18,7 +18,7 @@ vi.mock(import("@effect/atom-react"), async (original) => ({
   useAtomValue: (() => []) as never,
 }));
 vi.mock("../../hooks/useThreadVisitedMigration", () => ({ useThreadVisitedMigration: () => {} }));
-vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("../../state/server", () => ({ primaryServerKeybindingsAtom: {}, serverEnvironment: {} }));
 vi.mock("../../hooks/useSettings", () => ({
   useLegacySidebarEnabled: () => false,
   useEnvironmentIdentificationMode: () => "none",
@@ -73,6 +73,8 @@ describe("Agents route shell", () => {
     async (pathname) => {
       // Below the mobile breakpoint the sidebar is a sheet, not the layout under test.
       await page.viewport(1280, 900);
+      // The open state persists, so an earlier case's toggle would carry over.
+      localStorage.removeItem("chat_thread_sidebar_open");
       route.pathname = pathname;
       await using screen = await render(
         <AppSidebarLayout>
