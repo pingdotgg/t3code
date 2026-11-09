@@ -7,6 +7,12 @@ import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
 import { useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 
 import {
+  dropThreadContext,
+  endThreadContextDrag,
+  hoverThreadContextDrop,
+  threadContextDropTargets,
+} from "../components/chat/threadContextDrag";
+import {
   countLayoutTabs,
   findLayoutPane,
   findLayoutTab,
@@ -49,6 +55,10 @@ export interface LayoutDragState {
   panes: readonly LayoutDragPane[];
   strip: LayoutDragRect;
   target: LayoutDropTarget | null;
+  /** Composers that take this drag as a mention. They sit above the zones. */
+  composers: readonly LayoutDragRect[];
+  /** The composer under the pointer. It takes the drop, so there is no target. */
+  composer: LayoutDragRect | null;
 }
 
 /** The chrome row at the top of a pane: dropping there adds a tab (pen: zones start 48px down). */
@@ -242,15 +252,31 @@ export function layoutDropLabel(target: LayoutDropTarget): string {
   }
 }
 
+/** The thread a tab shows, which a composer can take as a mention. */
+function layoutTabThreadRef(layout: LayoutState, tabId: string): ScopedThreadRef | null {
+  const content = findLayoutTab(layout, (tab) => tab.id === tabId)?.tab.content;
+  return content?.kind === "chat" && content.target.kind === "server"
+    ? content.target.threadRef
+    : null;
+}
+
+/** A thread goes into any composer except its own dragged tab's. */
+function composerTakesDrag(source: LayoutDragSource, composer: HTMLElement): boolean {
+  return (
+    source.kind === "thread" ||
+    composer.closest<HTMLElement>("[data-layout-tab-id]")?.dataset.layoutTabId !== source.tabId
+  );
+}
+
 /**
- * Follow the pointer. `allowTarget: false` keeps the zones visible but
- * targets nothing, e.g. while a sidebar thread hovers a composer, which
- * takes it as context instead.
+ * Follow the pointer. Pass `composer` when the drag carries a thread: the
+ * composer under the pointer (or null) takes it as context, so the layout
+ * targets nothing there.
  */
 export function moveLayoutDrag(
   source: LayoutDragSource,
   point: { x: number; y: number },
-  options: { allowTarget?: boolean } = {},
+  options: { composer?: HTMLElement | null } = {},
 ): void {
   const measured = measure();
   if (!measured) {
@@ -258,10 +284,14 @@ export function moveLayoutDrag(
     return;
   }
   const layout = useLayoutStore.getState().layout;
-  let raw =
-    options.allowTarget === false
-      ? null
-      : resolveLayoutDropTarget(point, measured.panes, measured.strip);
+  const composers =
+    options.composer === undefined
+      ? []
+      : threadContextDropTargets()
+          .filter((composer) => composerTakesDrag(source, composer))
+          .map((composer) => toRect(composer.getBoundingClientRect()));
+  const composer = options.composer ? toRect(options.composer.getBoundingClientRect()) : null;
+  let raw = composer ? null : resolveLayoutDropTarget(point, measured.panes, measured.strip);
   if (raw?.kind === "into") {
     const paneId = raw.paneId;
     const tabs = measured.panes
@@ -284,7 +314,15 @@ export function moveLayoutDrag(
   ) {
     return;
   }
-  setDragState({ source, point, panes: measured.panes, strip: measured.strip, target });
+  setDragState({
+    source,
+    point,
+    panes: measured.panes,
+    strip: measured.strip,
+    target,
+    composers,
+    composer,
+  });
 }
 
 function sameSource(a: LayoutDragSource, b: LayoutDragSource): boolean {
@@ -395,6 +433,8 @@ export function beginLayoutTabDrag(event: ReactPointerEvent, tabId: string): voi
   const start = { x: event.clientX, y: event.clientY };
   const pointerId = event.pointerId;
   const source = { kind: "tab", tabId } as const;
+  const threadRef = layoutTabThreadRef(useLayoutStore.getState().layout, tabId);
+  const takesDrag = (composer: HTMLElement) => composerTakesDrag(source, composer);
   let started = false;
 
   const move = (moveEvent: PointerEvent) => {
@@ -406,16 +446,22 @@ export function beginLayoutTabDrag(event: ReactPointerEvent, tabId: string): voi
       started = true;
     }
     moveEvent.preventDefault();
-    moveLayoutDrag(source, { x: moveEvent.clientX, y: moveEvent.clientY });
+    const point = { x: moveEvent.clientX, y: moveEvent.clientY };
+    moveLayoutDrag(
+      source,
+      point,
+      threadRef ? { composer: hoverThreadContextDrop(point, takesDrag) } : {},
+    );
   };
-  const finish = (commit: boolean) => {
+  const finish = (drop: { x: number; y: number } | null) => {
     window.removeEventListener("pointermove", move, true);
     window.removeEventListener("pointerup", up, true);
     window.removeEventListener("pointercancel", cancel, true);
     window.removeEventListener("keydown", key, true);
     window.removeEventListener("blur", cancel);
     if (!started) return;
-    if (commit) dropLayoutDrag();
+    endThreadContextDrag();
+    if (drop && !(threadRef && dropThreadContext(drop, [threadRef], takesDrag))) dropLayoutDrag();
     else cancelLayoutDrag();
     // The release that ends a drag must not also open the tab's menu.
     const swallow = (clickEvent: MouseEvent) => {
@@ -426,14 +472,14 @@ export function beginLayoutTabDrag(event: ReactPointerEvent, tabId: string): voi
     setTimeout(() => window.removeEventListener("click", swallow, true), 0);
   };
   const up = (upEvent: PointerEvent) => {
-    if (upEvent.pointerId === pointerId) finish(true);
+    if (upEvent.pointerId === pointerId) finish({ x: upEvent.clientX, y: upEvent.clientY });
   };
-  const cancel = () => finish(false);
+  const cancel = () => finish(null);
   const key = (keyEvent: KeyboardEvent) => {
     if (keyEvent.key !== "Escape" || !started) return;
     keyEvent.preventDefault();
     keyEvent.stopPropagation();
-    finish(false);
+    finish(null);
   };
   window.addEventListener("pointermove", move, true);
   window.addEventListener("pointerup", up, true);
