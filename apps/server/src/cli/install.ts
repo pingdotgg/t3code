@@ -176,14 +176,20 @@ export const installCli = Effect.fn("cli.install.install")(function* () {
     pathCommand:
       onPath || shadowedBy !== undefined
         ? undefined
-        : pathSetupCommand({
-            directory: binDir,
-            home,
-            shell: environment.SHELL,
-            platform,
-            configHome: environment.XDG_CONFIG_HOME,
-            zdotdir: environment.ZDOTDIR,
-          }),
+        : windows
+          ? // PowerShell; it covers this window only, since changing the saved PATH would flatten
+            // its %VAR% entries. A `;` would split the folder.
+            binDir.includes(";")
+            ? undefined
+            : `$env:Path += ';${binDir.replaceAll("'", "''")}'`
+          : pathSetupCommand({
+              directory: binDir,
+              home,
+              shell: environment.SHELL,
+              platform,
+              configHome: environment.XDG_CONFIG_HOME,
+              zdotdir: environment.ZDOTDIR,
+            }),
     binDir,
   };
 });
@@ -200,6 +206,13 @@ const reportInstalled = Effect.fn("cli.install.report")(function* (
   if (installed.onPath) return yield* Console.log("Run `t3` to get started.");
   if (installed.pathCommand === undefined) {
     return yield* Console.log(`Add ${installed.binDir} to your PATH, then run \`t3\`.`);
+  }
+  if ((yield* HostProcess.Platform) === "win32") {
+    yield* Console.log(
+      `${installed.binDir} is not on your PATH yet. In this PowerShell window, run:`,
+    );
+    yield* Console.log(`  ${installed.pathCommand}`);
+    return yield* Console.log("Then run `t3`. For new windows, add the folder to your PATH.");
   }
   yield* Console.log(`${installed.binDir} is not on your PATH yet. Add it with:`);
   yield* Console.log(`  ${installed.pathCommand}`);
@@ -296,6 +309,8 @@ export const offerCliInstall = Effect.fn("cli.install.offer")(function* <E, R, E
   const environment = yield* HostProcess.Environment;
   if (!input.interactive || environment.CI || environment.SUDO_USER) return true;
   if (environment.TERM === "dumb") return true;
+  // `npx --yes` asks for no prompts; npm passes it on to the command as npm_config_yes.
+  if (environment.npm_config_yes === "true") return true;
   // `--json=true` and `-y=true` are the same flags.
   if (input.args.some((arg) => SKIPPED_ARGUMENTS.has(arg.split("=")[0]!))) return true;
   const command = topLevelCommand(input.args);
