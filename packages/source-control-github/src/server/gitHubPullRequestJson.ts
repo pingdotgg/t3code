@@ -118,6 +118,7 @@ interface LabelFields {
 }
 
 interface ReviewRequestFields {
+  readonly __typename?: string | undefined;
   readonly login?: string | null | undefined;
   readonly slug?: string | null | undefined;
   readonly name?: string | null | undefined;
@@ -197,9 +198,10 @@ function toReactions(
   for (const group of groups ?? []) {
     const content = REACTION_CONTENT_BY_GITHUB[trimmed(group.content)?.toUpperCase() ?? ""];
     if (content === undefined) continue;
-    const logins = nodesOf(group.reactors).flatMap((node) =>
-      "login" in node ? (trimmed(node.login) ?? []) : [],
-    );
+    const logins = nodesOf(group.reactors).flatMap((node) => {
+      const login = "login" in node ? trimmed(node.login) : null;
+      return login === null ? [] : [gitHubActorLogin(login, node.__typename === "Bot")];
+    });
     const count = Math.max(group.reactors.totalCount, logins.length);
     if (count <= 0) continue;
     const actors =
@@ -406,12 +408,17 @@ function toPullRequestViewerFields(
   return { canUpdate: raw?.viewerCanUpdate !== false, didAuthor: raw?.viewerDidAuthor === true };
 }
 
+/** GitHub Bot actors can omit the suffix used by their authenticated viewer. */
+function gitHubActorLogin(login: string, isBot: boolean): string {
+  return isBot && !login.endsWith("[bot]") ? `${login}[bot]` : login;
+}
+
 function toActor(raw: ActorFields | null | undefined): PullRequestActor | null {
   const login = trimmed(raw?.login);
   return login === null
     ? null
     : {
-        login,
+        login: gitHubActorLogin(login, raw?.__typename === "Bot"),
         name: trimmed(raw?.name),
         avatarUrl: trimmed(raw?.avatarUrl),
         ...(raw?.__typename === "Bot" ? { isBot: true } : {}),
@@ -560,7 +567,7 @@ function toReviewRequestLogins(
 ): ReadonlyArray<string> {
   return (raw ?? []).flatMap((request) => {
     const login = trimmed(request.login);
-    return login === null ? [] : [login];
+    return login === null ? [] : [gitHubActorLogin(login, request.__typename === "Bot")];
   });
 }
 
@@ -868,7 +875,7 @@ function toRow(
       const reviewer = request.requestedReviewer;
       if (reviewer === null) return [];
       const login = "login" in reviewer ? trimmed(reviewer.login) : null;
-      if (login !== null) return [{ login }];
+      if (login !== null) return [{ __typename: reviewer.__typename, login }];
       const slug = "slug" in reviewer ? trimmed(reviewer.slug) : null;
       return slug === null ? [] : [{ slug }];
     },
@@ -1071,6 +1078,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             ? []
             : [
                 {
+                  __typename: requestedReviewer.__typename,
                   login: "login" in requestedReviewer ? requestedReviewer.login : null,
                   slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
                   name:
@@ -1563,12 +1571,12 @@ export function toReviewerCandidates(
   const repository = result.repository;
   if (repository == null) return null;
   const pullRequest = repository.pullRequest;
-  const author = trimmed(pullRequest?.author?.login);
+  const author = toActor(pullRequest?.author)?.login ?? null;
   const candidates = new Map<string, PullRequestReviewerCandidate>();
   for (const { requestedReviewer: raw } of nodesOf(pullRequest?.reviewRequests)) {
     if (raw === null) continue;
     const slug = "slug" in raw ? trimmed(raw.slug) : null;
-    const id = slug ?? ("login" in raw ? trimmed(raw.login) : null);
+    const id = slug ?? toActor(raw)?.login ?? null;
     if (id === null) continue;
     candidates.set(`${slug === null ? "user" : "team"} ${id}`, {
       id,

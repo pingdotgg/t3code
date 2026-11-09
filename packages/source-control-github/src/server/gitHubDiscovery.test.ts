@@ -12,6 +12,8 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubAppSignIn from "./GitHubAppSignIn.ts";
+import { HttpClient } from "effect/http";
+import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
@@ -21,6 +23,15 @@ const unknownContext = (baseUrl: string) => ({
   remoteUrl: "git@code.example.test:team/project.git",
 });
 
+// Discovery reaches GraphQL only after REST refuses the viewer read.
+const noGraphQl = Layer.mergeAll(
+  Layer.mock(GitHubRequestPolicy.GitHubRequestPolicy)({}),
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make(() => Effect.die("unexpected HTTP request")),
+  ),
+);
+
 // The default host dies on any command, so refinement never reaches `gh`.
 const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"]) =>
   GitHubSourceControlProvider.makeDiscovery.pipe(
@@ -29,6 +40,7 @@ const makeDiscovery = (credential: GitHubRest.GitHubRest["Service"]["credential"
         Layer.mock(GitHubRest.GitHubRest)({ credential }),
         Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
         TestSourceControlHost.layer(),
+        noGraphQl,
       ),
     ),
     Effect.provideService(HostProcess.Environment, {}),
@@ -148,13 +160,14 @@ it.effect.each([
               return Effect.succeed({
                 status: 200,
                 headers: {},
-                body: JSON.stringify({ login: "octocat" }),
+                body: JSON.stringify({ login: "octocat", id: 1 }),
                 truncated: false,
                 invalidUtf8: false,
               });
             },
           }),
           Layer.mock(GitHubAppSignIn.GitHubAppSignIn)({ enabled: false }),
+          noGraphQl,
           Layer.effect(
             SourceControlHost.SourceControlHost,
             Effect.gen(function* () {

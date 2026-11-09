@@ -518,9 +518,10 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       : (firstReadyPublishProvider ?? offeredSelection ?? sourceControlClients.get(undefined).kind);
   const selectedPublishProviderReadiness = publishProviderReadiness(publishProvider);
   const publishAccount = publishAccountByProvider.get(publishProvider) ?? null;
-  const publishRepositoryPrefill = publishAccount ? `${publishAccount}/` : "";
-  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const currentPublishProvider = publishProviderOption(publishProvider);
+  const publishOwner = currentPublishProvider.definition.newRepositoryOwner(publishAccount)?.owner;
+  const publishRepositoryPrefill = publishOwner ? `${publishOwner}/` : "";
+  const publishRepository = publishRepositoryOverride ?? publishRepositoryPrefill;
   const publishHost = currentPublishProvider.definition.publishHost(
     Option.getOrNull(
       sourceControlDiscovery.data?.sourceControlProviders.find(
