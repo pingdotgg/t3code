@@ -96,6 +96,15 @@ describe("GitHub change request URLs", () => {
   });
 });
 
+describe("GitHub CLI commands", () => {
+  it("recognizes shell pull request creates, including gh's `new` alias", () => {
+    for (const command of ["gh pr create --fill", "gh pr new --fill"]) {
+      expect(definition.changeRequestCreateCommand.test(command), command).toBe(true);
+    }
+    expect(definition.changeRequestCreateCommand.test("gh pr view 7")).toBe(false);
+  });
+});
+
 describe("GitHub remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 
