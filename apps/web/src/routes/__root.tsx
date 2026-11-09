@@ -169,6 +169,8 @@ function RootRouteBranch() {
       <>
         {/* The Welcome page can sign in to T3 Connect; this links the computer for the phone. */}
         <ConnectOnboardingDialog />
+        {/* Settings can reopen the page while threads run. */}
+        {isElectron ? <RunningThreadKeepAlive /> : null}
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <CommandPalette>

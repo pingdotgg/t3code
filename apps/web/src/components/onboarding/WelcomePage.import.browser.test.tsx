@@ -29,7 +29,7 @@ const state = vi.hoisted(() => ({
   projects: null as unknown,
   providers: null as unknown,
   config: null as unknown,
-  candidates: [] as AgentSessionProjectCandidate[],
+  candidates: null as unknown,
   createProject: vi.fn(),
   importThreads: vi.fn(),
   refreshProviders: vi.fn(),
@@ -71,6 +71,7 @@ vi.mock(import("../../cloud/cloudLinkState"), async (original) => {
     ...(await original()),
     useCloudLinkState: (() => ({
       data: useAtomValue(state.linkState as Atom.Atom<EnvironmentCloudLinkStateResult | null>),
+      isPending: false,
     })) as never,
   };
 });
@@ -83,6 +84,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
   useEnvironments: (() => ({
     environments: [{ environmentId: "primary", label: "primary" }],
   })) as never,
+  usePrimaryEnvironmentId: (() => "primary") as never,
 }));
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
@@ -113,20 +115,27 @@ vi.mock(import("../../state/agentSessions"), async (original) => ({
   ...(await original()),
   agentSessionImport: "importThreads" as never,
 }));
-vi.mock(import("../../onboarding/useProjectScans"), async (original) => ({
-  ...(await original()),
-  useProjectScans: (ids: readonly EnvironmentId[]) =>
-    ids.map((environmentId) => {
-      state.scan({ environmentId });
-      return {
-        environmentId,
-        data: { candidates: state.candidates, truncated: false } as never,
-        isPending: false,
-        error: null,
-        refresh: state.refreshScan,
-      };
-    }),
-}));
+vi.mock(import("../../onboarding/useProjectScans"), async (original) => {
+  const { useAtomValue } = await import("@effect/atom-react");
+  return {
+    ...(await original()),
+    useProjectScans: (ids: readonly EnvironmentId[]) => {
+      const candidates = useAtomValue(
+        state.candidates as Atom.Atom<AgentSessionProjectCandidate[]>,
+      );
+      return ids.map((environmentId) => {
+        state.scan({ environmentId });
+        return {
+          environmentId,
+          data: { candidates, truncated: false } as never,
+          isPending: false,
+          error: null,
+          refresh: state.refreshScan,
+        };
+      });
+    },
+  };
+});
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: ((command: "createProject" | "importThreads" | "refreshProviders") =>
@@ -175,6 +184,10 @@ function sessionAtom(environmentId: EnvironmentId) {
 
 function projectsAtom() {
   return state.projects as Atom.Writable<ReadonlyArray<Project>>;
+}
+
+function candidatesAtom() {
+  return state.candidates as Atom.Writable<ReadonlyArray<AgentSessionProjectCandidate>>;
 }
 
 function setGrant(environmentId: EnvironmentId, allowed: boolean) {
@@ -277,7 +290,10 @@ function setup() {
   state.projects = Atom.make<ReadonlyArray<Project>>([]).pipe(Atom.keepAlive);
   state.providers = Atom.make<ReadonlyArray<ServerProvider>>([readyClaude]).pipe(Atom.keepAlive);
   state.config = Atom.make(null).pipe(Atom.keepAlive);
-  state.candidates = [candidate("/projects/first"), candidate("/projects/second")];
+  state.candidates = Atom.make<ReadonlyArray<AgentSessionProjectCandidate>>([
+    candidate("/projects/first"),
+    candidate("/projects/second"),
+  ]).pipe(Atom.keepAlive);
   state.createProject
     .mockReset()
     .mockImplementation(async (input: CreateProjectInput) => recordProject(input));
@@ -325,7 +341,7 @@ it("rechecks after project creation and can retry its history without recreating
 
 it("completes accepted imports when permission is revoked after the final server write", async () => {
   using _now = setup();
-  state.candidates = state.candidates.slice(0, 1);
+  appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   const imported = deferred<{ importedCount: number; skippedCount: number }>();
   state.importThreads.mockImplementationOnce(async () =>
     AsyncResult.success(await imported.promise),
@@ -345,7 +361,7 @@ it("completes accepted imports when permission is revoked after the final server
 
 it("finishes setup without landing when the imported project never reaches the client", async () => {
   using _now = setup();
-  state.candidates = state.candidates.slice(0, 1);
+  appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
   // The server accepts the project, but it never shows up in the client's projects.
   state.createProject.mockResolvedValue(AsyncResult.success(undefined));
   state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
@@ -405,13 +421,40 @@ it("blocks leaving the page until the imported projects have landed", async () =
   await leave();
   expect(screen.router?.state.location.pathname).toBe("/");
 
+  const saved = deferred<void>();
+  state.completeOnboarding.mockImplementationOnce(() => saved.promise);
   await act(async () => {
     landing.resolve();
     await landing.promise;
   });
+  await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
+  await leave();
+  expect(screen.router?.state.location.pathname).toBe("/");
+
+  await act(async () => {
+    saved.resolve();
+    await saved.promise;
+  });
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(screen.router?.state.location.pathname).toBe("/");
   expect(state.createProject).toHaveBeenCalledTimes(2);
+});
+
+it("selects projects that a later scan finds after the selection was changed", async () => {
+  using _now = setup();
+  await using _screen = await mountWelcome();
+  const bringIn = document.querySelector<HTMLElement>('[role="checkbox"]');
+  await act(async () => bringIn?.click());
+  expect(button("Start").disabled).toBe(false);
+
+  // Turning on another agent rescans and finds a recent project the user has not seen.
+  await act(async () =>
+    appAtomRegistry.set(candidatesAtom(), [
+      ...appAtomRegistry.get(candidatesAtom()),
+      candidate("/projects/third"),
+    ]),
+  );
+  expect(button("Add 1 project and start").disabled).toBe(false);
 });
 
 it("starts without importing when this connection cannot import projects", async () => {
@@ -434,16 +477,34 @@ it("says the phone is set up only once this computer is shared with the signed-i
   // Signed in, but "Not now" on the share step left this computer unreachable.
   expect(pageText()).toContain("Set up T3 Connect");
 
-  await act(async () =>
-    appAtomRegistry.set(state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>, {
-      linked: true,
-      cloudUserId: "user_1",
-      relayUrl: null,
-      relayIssuer: null,
-      managedTunnelActive: true,
-      publishAgentActivity: true,
-    }),
-  );
+  const share = (reachability: EnvironmentCloudLinkStateResult["reachability"]) =>
+    act(async () =>
+      appAtomRegistry.set(
+        state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>,
+        {
+          linked: true,
+          cloudUserId: "user_1",
+          relayUrl: null,
+          relayIssuer: null,
+          managedTunnelActive: true,
+          publishAgentActivity: true,
+          reachability,
+        },
+      ),
+    );
+  const checkedAt = "2026-01-01T00:00:00.000Z";
+  await share({
+    status: "unreachable",
+    checkedAt,
+    cause: "connector_not_running",
+    reason: "The tunnel is not running.",
+    hint: null,
+    fix: "Turn T3 Connect off and on.",
+  });
+  expect(pageText()).toContain("Check T3 Connect");
+  expect(pageText()).not.toContain("Your phone can reach this computer.");
+
+  await share({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
   expect(pageText()).toContain("Your phone can reach this computer.");
-  expect(pageText()).not.toContain("Set up T3 Connect");
+  expect(pageText()).not.toContain("Check T3 Connect");
 });

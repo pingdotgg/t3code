@@ -18,6 +18,8 @@ import {
   CommandId,
   AuthOrchestrationOperateScope,
   isManagedDriverAllowed,
+  isProviderAvailable,
+  managedCapabilityDenial,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -59,7 +61,7 @@ import { groupWelcomeAgents, welcomeAgentState } from "../../onboarding/welcomeA
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, waitForProject } from "../../state/entities";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { managedTelemetryOffMessage, useManagedPolicy } from "../../state/managedPolicy";
 import { useProjectScans } from "../../onboarding/useProjectScans";
 import { projectEnvironment } from "../../state/projects";
@@ -113,9 +115,27 @@ export function WelcomePage({
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     "this computer";
   const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
+  // The phone links and pairs the primary computer, so it is offered only when setting that one up.
+  const isPrimary = usePrimaryEnvironmentId() === environmentId;
   const scans = useProjectScans([environmentId]);
   const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  // True from Start until the landing; leaving earlier would drop the import or the landing.
+  const holdPageRef = useRef(false);
+  useBlocker({
+    shouldBlockFn: () => {
+      if (!holdPageRef.current) return false;
+      toastManager.add({
+        id: "welcome-finishing",
+        type: "info",
+        title: "Finishing setup",
+        description: "One moment.",
+      });
+      return true;
+    },
+    // Electron cancels a quit silently when unload is blocked. A later visit resumes the import.
+    enableBeforeUnload: false,
+  });
   const finishingPromiseRef = useRef<Promise<boolean> | null>(null);
   const completionErrorToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
   const finish = (
@@ -129,12 +149,15 @@ export function WelcomePage({
       completionErrorToastIdRef.current = null;
     }
 
+    holdPageRef.current = true;
     const completion = completeOnboarding()
       .then(async () => {
         if (completionErrorToastIdRef.current !== null) {
           toastManager.close(completionErrorToastIdRef.current);
           completionErrorToastIdRef.current = null;
         }
+        // Release before onDone so its own navigation is not blocked.
+        holdPageRef.current = false;
         await onDone(projectRef);
         if (importWarning) {
           toastManager.add({
@@ -152,6 +175,7 @@ export function WelcomePage({
         return true;
       })
       .catch(() => {
+        holdPageRef.current = false;
         const errorToast = {
           type: "error",
           title: "Could not finish setup",
@@ -178,12 +202,14 @@ export function WelcomePage({
     onImportSelectionChange: setImportSelection,
     isImporting,
     setIsImporting,
+    holdPageRef,
     onDone: finish,
   });
   // Without import permission, starting simply skips the projects.
-  const selectedCount = projectImport.canWrite ? projectImport.selected.length : 0;
+  const selected = projectImport.canWrite ? projectImport.selected : [];
+  const newCount = selected.filter((candidate) => !candidate.alreadyImported).length;
   const start = () => {
-    if (selectedCount > 0) void projectImport.runImport(projectImport.selected);
+    if (selected.length > 0) void projectImport.runImport(selected);
     else projectImport.finishAfterImport();
   };
 
@@ -215,7 +241,7 @@ export function WelcomePage({
               projectImport={projectImport}
               isImporting={isImporting}
             />
-            <PhoneSection environmentId={environmentId} />
+            {isPrimary ? <PhoneSection environmentId={environmentId} /> : null}
             <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
               {agentReady ? (
                 <span />
@@ -231,9 +257,11 @@ export function WelcomePage({
                 <Button disabled={!agentReady || isImporting} onClick={start}>
                   {isImporting
                     ? "Importing…"
-                    : selectedCount > 0
-                      ? `Add ${selectedCount} ${selectedCount === 1 ? "project" : "projects"} and start`
-                      : "Start"}
+                    : newCount > 0
+                      ? `Add ${newCount} ${newCount === 1 ? "project" : "projects"} and start`
+                      : selected.length > 0
+                        ? "Import threads and start"
+                        : "Start"}
                 </Button>
               </div>
             </div>
@@ -351,20 +379,29 @@ function AgentsSection({
   const [moreOpen, setMoreOpen] = useState<boolean | null>(null);
   const [addingProvider, setAddingProvider] = useState(false);
   const [codexSetupId, setCodexSetupId] = useState<ProviderInstanceId | null>(null);
+  const [cliTerminalFor, setCliTerminalFor] = useState<ProviderInstanceId | null>(null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment to refresh its provider list when the environment changes
   useEffect(() => {
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  // With nothing on this computer yet, the list of agents to add is the main task.
-  const showMore = moreOpen ?? found.length === 0;
+  // Decided once the first check ends: with nothing on this computer, adding an agent is the task.
+  if (moreOpen === null && !checking) setMoreOpen(found.length === 0);
+  const showMore = moreOpen === true;
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
   const needsInstallOrSignIn = (provider: ServerProvider) => {
     const state = stateOf(provider);
     return isInstallableDriver(provider.driver) && (state === "install" || state === "signIn");
   };
+  // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
+  const codexNeedsSetup = (provider: ServerProvider) =>
+    provider.driver === "codex" &&
+    (needsInstallOrSignIn(provider) ||
+      (stateOf(provider) === "attention" &&
+        isProviderAvailable(provider) &&
+        provider.auth.status !== "authenticated"));
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
   // starts after an install is not lost when the agent moves between groups.
   const codexSetupProvider =
@@ -398,6 +435,21 @@ function AgentsSection({
     });
   };
 
+  // "Use existing CLI" opens the CLI's terminal once Codex has checked the CLI. Only the
+  // ChatGPT sign-in runtime reports `setup.canAuthenticate`, so its status is not the CLI's.
+  const cliProvider =
+    cliTerminalFor === null
+      ? undefined
+      : providers?.find((provider) => provider.instanceId === cliTerminalFor);
+  if (
+    cliProvider !== undefined &&
+    cliProvider.setup?.canAuthenticate !== true &&
+    stateOf(cliProvider) !== "checking"
+  ) {
+    setCliTerminalFor(null);
+    if (needsInstallOrSignIn(cliProvider)) openTerminal(cliProvider);
+  }
+
   const turnOn = async (provider: ServerProvider) => {
     if (serverConfig === null) return;
     const instance = serverConfig.settings.providerInstances[provider.instanceId] ?? {
@@ -408,8 +460,10 @@ function AgentsSection({
       instanceId: provider.instanceId,
       instance: { ...instance, enabled: true },
     });
-    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      toastManager.add({ type: "error", title: `Could not turn on ${agentName(provider)}` });
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        toastManager.add({ type: "error", title: `Could not turn on ${agentName(provider)}` });
+      }
       return;
     }
     void refreshProviders({ environmentId, input: { instanceId: provider.instanceId } });
@@ -431,7 +485,7 @@ function AgentsSection({
         </Button>
       );
     }
-    if (provider.driver === "codex" && serverConfig !== null && needsInstallOrSignIn(provider)) {
+    if (serverConfig !== null && codexNeedsSetup(provider)) {
       const open = codexSetupId === provider.instanceId;
       return (
         <Button
@@ -557,7 +611,7 @@ function AgentsSection({
             environmentId={environmentId}
             provider={codexSetupProvider}
             serverConfig={serverConfig}
-            onOpenTerminal={() => openTerminal(codexSetupProvider)}
+            onUseCli={() => setCliTerminalFor(codexSetupProvider.instanceId)}
           />
         </div>
       ) : null}
@@ -629,7 +683,7 @@ function ProjectsSection({
     visibleImportError,
   } = projectImport;
   if (scan === undefined) return null;
-  if (scan.isPending && scan.data === null) {
+  if (scan.isPending && candidates.length === 0) {
     return (
       <WelcomeSection title="Projects">
         <p className="text-sm text-muted-foreground">
@@ -668,17 +722,18 @@ function ProjectsSection({
   return (
     <WelcomeSection title="Projects" status={`From your ${IMPORT_SOURCES_LABEL} history`}>
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
-        <Checkbox
-          aria-label="Bring in projects"
-          checked={canWrite && selected.length > 0}
-          disabled={isImporting || !canWrite}
-          onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
-        />
-        <span className="min-w-0 flex-1 text-sm text-foreground">
-          {canWrite && selected.length > 0
-            ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
-            : "Bring in projects and their threads"}
-        </span>
+        <label className="flex min-w-0 flex-1 items-center gap-3">
+          <Checkbox
+            checked={canWrite && selected.length > 0}
+            disabled={isImporting || !canWrite}
+            onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
+          />
+          <span className="min-w-0 flex-1 text-sm text-foreground">
+            {canWrite && selected.length > 0
+              ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
+              : "Bring in projects and their threads"}
+          </span>
+        </label>
         {canWrite ? (
           <Button
             variant="ghost-muted"
@@ -741,6 +796,11 @@ function ProjectsSection({
 
 function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const [open, setOpen] = useState(false);
+  const policy = useManagedPolicy(environmentId);
+  // A policy that blocks other devices leaves the phone nothing to connect to.
+  if (managedCapabilityDenial(policy, "remoteClients") !== undefined) return null;
+  const connectAllowed =
+    hasCloudPublicConfig() && managedCapabilityDenial(policy, "connect") === undefined;
   return (
     <WelcomeSection title="Phone" status="Optional">
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -777,7 +837,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
               <span className="text-sm text-muted-foreground">Scan to get the app.</span>
             </div>
             <div className="flex flex-col justify-center gap-2 rounded-lg border border-border bg-background p-3.5">
-              {hasCloudPublicConfig() ? (
+              {connectAllowed ? (
                 <PhoneConnectLink environmentId={environmentId} />
               ) : (
                 <>
@@ -805,7 +865,8 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
 function PhoneConnectLink({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  const link = useCloudLinkState(environmentId).data;
+  const linkState = useCloudLinkState(environmentId);
+  const link = linkState.data;
   // The phone reaches this computer through its tunnel; older servers leave that flag out.
   const shared =
     link !== null &&
@@ -813,11 +874,23 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
     link.linkRevoked !== true &&
     link.cloudUserId === userId &&
     link.managedTunnelActive !== false;
-  if (isSignedIn && shared) {
+  // The server checks the tunnel on its own; until it has, the result is unknown.
+  const reachability = shared ? link.reachability?.status : undefined;
+  if (isSignedIn && link === null && linkState.isPending) {
+    return <span className="text-sm text-muted-foreground">Checking T3 Connect…</span>;
+  }
+  if (isSignedIn && reachability === "reachable") {
     return (
       <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
         <CheckIcon className="size-4 shrink-0 text-success-foreground" />
         Your phone can reach this computer. Sign in to the app with the same account.
+      </span>
+    );
+  }
+  if (isSignedIn && shared && reachability === undefined) {
+    return (
+      <span className="text-sm text-muted-foreground">
+        T3 Connect is on for this computer. Sign in to the app with the same account.
       </span>
     );
   }
@@ -826,7 +899,9 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
     return (
       <>
         <span className="text-sm text-muted-foreground">
-          Signed in. Share this computer so the app can reach it.
+          {shared
+            ? "T3 Connect is on, but the app cannot reach this computer."
+            : "Signed in. Share this computer so the app can reach it."}
         </span>
         <Button
           variant="outline"
@@ -834,7 +909,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
           className="self-start"
           render={<Link to="/settings/access" />}
         >
-          Set up T3 Connect
+          {shared ? "Check T3 Connect" : "Set up T3 Connect"}
         </Button>
       </>
     );
@@ -862,12 +937,12 @@ function OnboardingCodexSetup({
   environmentId,
   provider,
   serverConfig,
-  onOpenTerminal,
+  onUseCli,
 }: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly serverConfig: ServerConfig;
-  readonly onOpenTerminal: () => void;
+  readonly onUseCli: () => void;
 }) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
@@ -880,9 +955,10 @@ function OnboardingCodexSetup({
     instance.config !== null && typeof instance.config === "object" ? instance.config : {};
   const mode = readCodexSetupMode(config);
   const changeMode = (setupMode: "managed" | "existing") => {
-    // On the CLI card, "Use existing CLI" also opens a terminal to install or sign in.
-    if (setupMode === "existing" && mode === "existing") onOpenTerminal();
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    // "Use existing CLI" also opens a terminal to install or sign in to the CLI.
+    if (setupMode === "existing") onUseCli();
+    const unchanged = "setupMode" in config && config.setupMode === setupMode;
+    if (unchanged || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     // One-instance upsert keeps a provider another client added in the meantime.
     void persistProviderInstance({
       operation: "upsert",
@@ -938,14 +1014,19 @@ function AgentCard({
   readonly compact?: boolean;
 }) {
   const name = agentName(provider);
+  // Claude Code and Codex tiles show Install or Set up; other agents that are on say why not.
   const detail =
-    compact || state === "ready" || state === "checking"
-      ? null
-      : state === "install"
-        ? "Not installed"
-        : state === "disabled"
-          ? "Off"
-          : (provider.unavailableReason ?? getProviderSummary(provider).headline);
+    state === "install"
+      ? isInstallableDriver(provider.driver)
+        ? null
+        : "Not installed"
+      : compact || state === "ready" || state === "checking"
+        ? null
+        : state === "attention"
+          ? (provider.unavailableReason ??
+            provider.message ??
+            getProviderSummary(provider).headline)
+          : getProviderSummary(provider).headline;
   return (
     <div
       className={cn(
@@ -961,7 +1042,7 @@ function AgentCard({
       <div className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-foreground">{name}</span>
         {detail ? (
-          <p className="mt-0.5 text-xs leading-relaxed break-words text-muted-foreground">
+          <p className="mt-0.5 line-clamp-2 text-xs leading-relaxed break-words text-muted-foreground">
             {detail}
           </p>
         ) : null}
@@ -1146,8 +1227,8 @@ function AgentInstallTerminal({
 const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
 
 interface ImportSelection {
-  // Computers whose projects were listed when the selection changed; later ones get the defaults.
-  readonly environmentIds: ReadonlySet<EnvironmentId>;
+  // Projects listed when the selection changed; projects found later get the defaults.
+  readonly knownKeys: ReadonlySet<string>;
   readonly keys: ReadonlySet<string>;
 }
 
@@ -1159,6 +1240,7 @@ function useProjectImport({
   onImportSelectionChange,
   isImporting,
   setIsImporting,
+  holdPageRef,
   onDone,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
@@ -1166,6 +1248,8 @@ function useProjectImport({
   readonly onImportSelectionChange: (next: ImportSelection) => void;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
+  // Blocks leaving the page; onDone releases it before landing.
+  readonly holdPageRef: { current: boolean };
   readonly onDone: (
     projectRef?: ScopedProjectRef,
     importWarning?: string,
@@ -1184,17 +1268,6 @@ function useProjectImport({
     new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
   );
   const importGenerationRef = useRef(0);
-  // True from the first project until the landing; leaving earlier drops the rest of the import.
-  const holdPageRef = useRef(false);
-  useBlocker({
-    shouldBlockFn: () => {
-      if (!holdPageRef.current) return false;
-      toastManager.add({ type: "info", title: "Importing projects", description: "One moment." });
-      return true;
-    },
-    // Electron cancels a quit silently when unload is blocked. A later visit resumes the import.
-    enableBeforeUnload: false,
-  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the import generation on mount and unmount so in-flight imports drop stale results
   useEffect(() => {
@@ -1215,16 +1288,14 @@ function useProjectImport({
   );
   const recentKeys = new Set(recent.map((candidate) => candidate.key));
   const selected = candidates.filter((candidate) =>
-    importSelection?.environmentIds.has(candidate.environmentId)
+    importSelection?.knownKeys.has(candidate.key)
       ? importSelection.keys.has(candidate.key)
       : recentKeys.has(candidate.key),
   );
   const selectedKeys = new Set(selected.map((candidate) => candidate.key));
   const setSelectedKeys = (keys: ReadonlySet<string>) =>
     onImportSelectionChange({
-      environmentIds: new Set(
-        scans.flatMap((scan) => (scan.data === null ? [] : [scan.environmentId])),
-      ),
+      knownKeys: new Set(candidates.map((candidate) => candidate.key)),
       keys,
     });
 
@@ -1259,9 +1330,10 @@ function useProjectImport({
         () => undefined,
       )
       .then(async (landing) => {
-        // Release before onDone so its own navigation is not blocked.
-        holdPageRef.current = false;
-        if (importGeneration !== importGenerationRef.current) return;
+        if (importGeneration !== importGenerationRef.current) {
+          holdPageRef.current = false;
+          return;
+        }
         const completed = await onDone(
           landing,
           importWarningRef.current,
