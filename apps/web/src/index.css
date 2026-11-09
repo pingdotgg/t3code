@@ -5958,3 +5958,27 @@ body {
 [data-layout-strip] [data-layout-pane-id] :is(pre, .overflow-x-auto, .overflow-x-scroll) {
   overscroll-behavior-x: contain;
 }
+
+.chat-scroll-to-bottom {
+  opacity: 1;
+  transition:
+    opacity 150ms ease-out,
+    display 150ms allow-discrete;
+}
+
+.chat-scroll-to-bottom[data-visible="false"] {
+  display: none;
+  opacity: 0;
+}
+
+@starting-style {
+  .chat-scroll-to-bottom {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-scroll-to-bottom {
+    transition: none;
+  }
+}

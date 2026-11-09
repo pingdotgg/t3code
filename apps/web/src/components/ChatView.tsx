@@ -3602,13 +3602,12 @@ export default function ChatView(props: ChatViewProps) {
                 />
               </WorkspaceMutationIdContext>
 
-              {showScrollToBottom && !isThreadFindActive && (
-                <ScrollToEndButton
-                  bottom={scrollToEndClearance + 4}
-                  summary={scrollToEndSummary}
-                  onScrollToEnd={() => scrollToEnd(true)}
-                />
-              )}
+              <ScrollToEndButton
+                visible={showScrollToBottom && !isThreadFindActive}
+                bottom={scrollToEndClearance + 4}
+                summary={scrollToEndSummary}
+                onScrollToEnd={() => scrollToEnd(true)}
+              />
             </div>
 
             {/* Input bar — docked at the bottom; an empty draft centers its headline above it. */}
