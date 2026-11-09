@@ -1,6 +1,6 @@
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -33,6 +33,39 @@ describe("CommandPalette open intents", () => {
     openCommandPalette({ open: "new-thread-in" });
 
     await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
+  });
+
+  it("highlights the first project when New thread in... opens from the root list", async () => {
+    const environmentId = EnvironmentId.make("local");
+    const project = (id: string, title: string): Project => ({
+      id: ProjectId.make(id),
+      environmentId,
+      title,
+      workspaceRoot: `/work/${id}`,
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+      scripts: [],
+    });
+    setup({
+      projects: [project("acme", "Acme"), project("beta", "Beta"), project("gamma", "Gamma")],
+    });
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    openCommandPalette({});
+    await expect
+      .element(page.getByPlaceholder("Search threads, projects, and commands…"))
+      .toHaveFocus();
+    await userEvent.keyboard("{ArrowDown}");
+    await expect
+      .element(page.getByRole("option", { name: /^New thread in\.\.\./ }))
+      .toHaveAttribute("data-highlighted");
+    await userEvent.keyboard("{Enter}");
+
+    await expect.element(page.getByPlaceholder("Search...")).toHaveFocus();
+    await expect.element(page.getByRole("option").first()).toHaveAttribute("data-highlighted");
+    await expect.element(page.getByRole("option").nth(1)).not.toHaveAttribute("data-highlighted");
   });
 
   it("opens a search intent with its query in the focused input", async () => {
