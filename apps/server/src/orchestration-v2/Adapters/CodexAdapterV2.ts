@@ -4780,15 +4780,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(context.providerTurnId, state);
               return updated;
             });
+            yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
+              Effect.delay(CODEX_PROVIDER_RETRY_STALL_TIMEOUT),
+              Effect.forkIn(scope, { startImmediately: true }),
+            );
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,
               turnItem: codexRetryTurnItem(context, state, "running", updatedAt),
             });
-            yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
-              Effect.delay(CODEX_PROVIDER_RETRY_STALL_TIMEOUT),
-              Effect.forkIn(scope),
-            );
           }).pipe(Effect.orDie),
         );
 
@@ -6136,6 +6136,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly failureMessage?: string;
           readonly failureErrorInfo?: CodexErrorInfo;
           readonly continueRun?: boolean;
+          readonly stalledRetry?: {
+            readonly state: ActiveCodexProviderRetry;
+            readonly failure: NonNullable<ActiveCodexTurnContext["latestProviderFailure"]>;
+          };
         }) =>
           // Capacity continuation already holds the permit across finalization and restart.
           (input.continueRun ? Function.identity : turnTerminalizationPermit.withPermits(1))(
@@ -6143,6 +6147,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const current = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
               if (current !== input.context) {
                 return false;
+              }
+              if (input.stalledRetry !== undefined) {
+                // Model output clears the retry under this permit, so check it here.
+                const retries = yield* Ref.get(providerRetries);
+                if (retries.get(input.context.providerTurnId) !== input.stalledRetry.state)
+                  return false;
+                input.context.latestProviderFailure = input.stalledRetry.failure;
               }
               input.context.fileChangeKindsByItem.clear();
               const providerRetry = yield* Ref.modify(providerRetries, (current) => {
@@ -6455,21 +6466,23 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             state: ActiveCodexProviderRetry,
             errorInfo: CodexErrorInfo | null | undefined,
           ) {
-            if ((yield* Ref.get(providerRetries)).get(context.providerTurnId) !== state) return;
-            context.latestProviderFailure = {
-              nativeMessage: state.nativeMessage,
-              nativeCode: state.nativeCode,
-              failure: {
-                ...state.failure,
-                retryable: false,
-                ...(codexErrorHttpStatus(errorInfo) === 429 ? { class: "usage_limit" } : {}),
-              },
-            };
             const finalized = yield* finalizeCodexTurn({
               context,
               nativeTurnId: context.nativeTurnId,
               status: "failed",
               completedAt: yield* DateTime.now,
+              stalledRetry: {
+                state,
+                failure: {
+                  nativeMessage: state.nativeMessage,
+                  nativeCode: state.nativeCode,
+                  failure: {
+                    ...state.failure,
+                    retryable: false,
+                    ...(codexErrorHttpStatus(errorInfo) === 429 ? { class: "usage_limit" } : {}),
+                  },
+                },
+              },
             });
             if (!finalized) return;
             const nativeThreadId = yield* getNativeThreadId(context.providerThread);
