@@ -9,7 +9,7 @@ import { HttpClient } from "effect/http";
 import * as RemoteAuthorization from "../authorization/service.ts";
 import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpAuth.ts";
+import { executeAuthenticatedEnvironmentHttpRequest } from "../state/environmentHttpRequest.ts";
 import {
   RemoteEnvironmentAuthUndeclaredStatusError,
   type RemoteEnvironmentRequestError,
