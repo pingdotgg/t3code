@@ -525,7 +525,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             serverScoped
             settingKeys={["pullRequestWatchInstructions"]}
             {...searchableSetting("pull-request-watch-instructions")}
-            description="Added to every update T3 Code sends an agent watching a pull request: failed checks, comments, conflicts, or a moved base. Tell it how to handle them."
+            description="Added to every update T3 Code sends an agent watching a pull request: check results, comments, and conflicts. Tell it how to handle them."
             resetAction={
               mixedWatchInstructions || settings.pullRequestWatchInstructions !== "" ? (
                 <SettingResetButton
@@ -547,7 +547,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 placeholder={
                   mixedWatchInstructions
                     ? "Mixed. Enter instructions to apply to all selected targets."
-                    : "Rebase onto the base when it moves. Fix failing checks yourself. Ask me before replying to a reviewer."
+                    : "Rebase onto the base when the branch conflicts. Fix failing checks yourself. Ask me before replying to a reviewer."
                 }
                 onBlur={(event) => {
                   const value = event.target.value.trim();
