@@ -72,8 +72,6 @@ function CitationMarkers({
           const anchor = findAssistantCitationSourceAnchor(viewport, citation);
           anchors.set(key, anchor);
           resolvedSource = true;
-          if (anchor)
-            sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
         }
         const anchor = anchors.get(key);
         const rect =
@@ -110,19 +108,10 @@ function CitationMarkers({
     const schedule = () => {
       if (frame === null) frame = requestAnimationFrame(update);
     };
-    const stopResize = observeResize(viewport, schedule);
-    let stopSourceResize = () => {};
-    const invalidateText = (records: MutationRecord[]) => {
-      for (const [key, anchor] of anchors) {
-        if (anchor && records.some((record) => anchor.source.contains(record.target)))
-          anchors.delete(key);
-      }
-    };
+    let stopResize = () => {};
     const rebuildSourceObservations = () => {
-      invalidateText(sourceMutations.takeRecords());
-      sourceMutations.disconnect();
-      stopSourceResize();
-      const geometry = new Set<Element>();
+      stopResize();
+      const geometry = new Set<Element>([viewport]);
       for (const anchor of anchors.values()) {
         for (
           let node: Element | null = anchor?.source ?? null;
@@ -131,10 +120,7 @@ function CitationMarkers({
         )
           geometry.add(node);
       }
-      stopSourceResize = observeResize([...geometry], schedule);
-      for (const anchor of anchors.values()) {
-        if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
-      }
+      stopResize = observeResize([...geometry], schedule);
     };
     const mutations = new MutationObserver((records) => {
       const relevant = records.filter((record) => !overlay.contains(record.target));
@@ -153,30 +139,17 @@ function CitationMarkers({
     mutations.observe(viewport, {
       childList: true,
       subtree: true,
+      characterData: true,
       attributes: true,
       attributeFilter: ["style", "class"],
     });
-    const sourceMutations = new MutationObserver((records) => {
-      invalidateText(records);
-      rebuildSourceObservations();
-      schedule();
-    });
-    for (const marker of citations) {
-      const { citation, key } = marker;
-      const anchor = findAssistantCitationSourceAnchor(viewport, citation);
-      anchors.set(key, anchor);
-      if (anchor) sourceMutations.observe(anchor.source, { subtree: true, characterData: true });
-    }
-    rebuildSourceObservations();
     viewport.addEventListener("scroll", schedule, true);
     window.addEventListener("resize", schedule);
     schedule();
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       viewport.removeAttribute("data-has-draft-citations");
-      stopSourceResize();
       stopResize();
-      sourceMutations.disconnect();
       mutations.disconnect();
       viewport.removeEventListener("scroll", schedule, true);
       window.removeEventListener("resize", schedule);

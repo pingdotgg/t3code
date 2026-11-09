@@ -68,7 +68,6 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
         Number.parseFloat(markers[0]!.style.left) + viewport.getBoundingClientRect().left,
       ).toBeGreaterThanOrEqual(source.getBoundingClientRect().right);
     });
-    using disconnect = vi.spyOn(MutationObserver.prototype, "disconnect");
     const searches = mocks.findAnchor.mock.calls.length;
     await screen.rerender(
       <AssistantCitationMarkers
@@ -78,7 +77,6 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
         onOpen={onOpen}
       />,
     );
-    expect(disconnect).not.toHaveBeenCalled();
     expect(mocks.findAnchor).toHaveBeenCalledTimes(searches);
     if (scenario === "moving sibling") {
       const previousTop = markers[0]!.style.top;
@@ -114,6 +112,8 @@ it.each(["moving sibling", "queued text", "narrow gutter"])(
       });
     }
     await act(() => source.remove());
-    await vi.waitFor(() => expect(disconnect).toHaveBeenCalled());
+    await vi.waitFor(() => {
+      for (const marker of markers) expect(marker.hidden).toBe(true);
+    });
   },
 );
