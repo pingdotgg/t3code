@@ -281,7 +281,6 @@ function NewLessonDialog({ request, onClose }: { request: Request; onClose: () =
                       model={modelSelection.model}
                       modelOptions={modelSelection.options ?? []}
                       allowPromptInjectedEffort={false}
-                      planModeEnabled={false}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       onModelOptionsChange={(options) =>
                         setRememberedModel(
