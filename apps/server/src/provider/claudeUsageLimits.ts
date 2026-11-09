@@ -63,6 +63,13 @@ export function windowLimitsModel(
   return model !== null && scopeToken(model).includes(window.id.slice(SCOPED_WINDOW_PREFIX.length));
 }
 
+/** Maps a usage bucket named by Claude's API to the id of the window shown for it. */
+export function claudeUsageWindowId(bucket: string, overageIncluded: string | undefined): string {
+  return bucket === OVERAGE_INCLUDED_EVENT_TYPE && overageIncluded
+    ? scopedWindowId(overageIncluded)
+    : bucket;
+}
+
 function scopedWindow(
   displayName: string,
   usedPercent: number,

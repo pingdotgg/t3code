@@ -1025,3 +1025,36 @@ export function collectProviderUsageLimits(
   }
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }
+
+export interface WindowResetCredits {
+  readonly count: number;
+  /** Set when every counted reset only clears part of the account, e.g. "Fable". */
+  readonly scope: string | undefined;
+}
+
+/** Resets without a clears list count against every window. */
+export function resetCreditsForWindow(
+  credits: ServerProviderResetCredits | undefined,
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  windowId: string,
+): WindowResetCredits {
+  if (!credits?.options) return { count: credits?.availableCount ?? 0, scope: undefined };
+  const resettable = windows.filter((window) => window.kind !== "monthly");
+  const scopeOf = (window: ServerProviderUsageWindow) => window.label.split(" · ")[1];
+  let count = 0;
+  const scopes = new Set<string | undefined>();
+  for (const option of credits.options) {
+    const clears = option.clearsWindowIds;
+    let scope: string | undefined;
+    if (clears) {
+      const listed = resettable.filter((window) => clears.includes(window.id));
+      scope = listed.length < resettable.length ? listed.map(scopeOf).find(Boolean) : undefined;
+      // Claude lists the shared Session in a model-scoped reset's clears, but redeeming leaves it.
+      const cleared = scope ? listed.filter((window) => scopeOf(window) === scope) : listed;
+      if (!cleared.some((window) => window.id === windowId)) continue;
+    }
+    count += option.availableCount;
+    scopes.add(scope);
+  }
+  return { count, scope: scopes.size === 1 ? [...scopes][0] : undefined };
+}

@@ -15,6 +15,7 @@ import {
   remainingPercent,
   type ResetCreditChoice,
   resetCreditChoices,
+  resetCreditsForWindow,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -349,7 +350,11 @@ function SegmentTriggers({
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   return (
     <>
       <PopoverTrigger
@@ -361,7 +366,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} ${scope ? `${scope} ` : ""}reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -425,6 +430,9 @@ function SegmentTriggers({
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
+                    {scope ? (
+                      <span className="font-normal text-muted-foreground">{scope}</span>
+                    ) : null}
                   </span>
                 </>
               ) : null}
@@ -452,7 +460,11 @@ function LegendRow({
   const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   return (
     <PopoverTrigger
       handle={popover}
@@ -483,9 +495,11 @@ function LegendRow({
             >
               <TicketIcon className="size-3" aria-hidden />
               {credits}
+              {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
+              {credits} {scope ? `${scope} ` : ""}reset {credits === 1 ? "credit" : "credits"}{" "}
+              banked
             </span>
           </>
         ) : null}
