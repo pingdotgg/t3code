@@ -5090,6 +5090,7 @@ describe("turn fold endings", () => {
       updates: [],
       active: false,
       expanded,
+      revealedRowIds: [],
     });
     const rows = [group("a", [runId], false), group("b", [RunId.make("other")], false)];
     expect(withRunGroupsOpen(new Set(), rows, runId)).toEqual(new Set(["a"]));
@@ -5273,6 +5274,11 @@ it.each([
   });
   expect(expanded.slice(1)).toEqual(original);
   expect(expanded.slice(1).every((row, index) => row === original[index])).toBe(true);
+  expect(expanded[0]).toMatchObject({
+    revealedRowIds: original
+      .filter((row) => !keptAnswer(original).includes(row))
+      .map((row) => row.id),
+  });
   expect(applyBackgroundActivityGroups(original, input)).toEqual(collapsed);
 
   const recentInput = {
