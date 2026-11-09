@@ -221,7 +221,9 @@ describe("MessagesTimeline work rows", () => {
     const props = baseProps();
     const runId = RunId.make("completed-run");
     const container = document.createElement("div");
-    container.style.cssText = "height: 600px; width: 900px; display: flex; flex-direction: column;";
+    // Keep the heading on screen so Playwright does not scroll it before clicking.
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
     await using screen = await render(
       <MessagesTimeline
         {...props}
@@ -240,9 +242,11 @@ describe("MessagesTimeline work rows", () => {
     // frames, which the fake clock below would freeze.
     await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
     const viewport = props.listRef.current!.getScrollableNode()!;
-    await vi.waitFor(() =>
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2),
-    );
+    // Legend keeps rows transparent and unclickable until its initial scroll settles.
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(heading.element().checkVisibility({ opacityProperty: true })).toBe(true);
+    });
     expect(viewport.scrollTop).toBeGreaterThan(0);
     const top = heading.element().getBoundingClientRect().top;
     const height = viewport.scrollHeight;
@@ -256,6 +260,41 @@ describe("MessagesTimeline work rows", () => {
         500,
       );
     });
+  });
+
+  it("keeps following a streaming turn after a heading is expanded at the bottom", async () => {
+    const props = { ...baseProps(), isWorking: true };
+    const runId = RunId.make("live-run");
+    const container = document.createElement("div");
+    container.style.cssText =
+      "height: min(600px, 100vh); width: 900px; display: flex; flex-direction: column;";
+    const entries = [
+      ...Array.from({ length: 12 }, (_, index) =>
+        message(`Earlier context ${index}`, {}, `context-${index}`),
+      ),
+      message("Progress details\n\n".repeat(50), { role: "assistant", runId }, "progress"),
+      message("Done", { role: "assistant", runId }, "final"),
+    ];
+    await using screen = await render(<MessagesTimeline {...props} timelineEntries={entries} />, {
+      container,
+    });
+    const heading = screen.getByRole("button", { name: /^Worked for/ });
+    await expect.element(heading).toHaveStyle({ pointerEvents: "auto" });
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const distanceFromEnd = () =>
+      viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
+    await heading.click();
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          ...entries,
+          message("Streamed reply\n\n".repeat(40), { role: "assistant", runId }, "streamed"),
+        ]}
+      />,
+    );
+    await vi.waitFor(() => expect(distanceFromEnd()).toBeLessThan(2));
   });
 
   it.each(["delegated", "legacy", "missing"] as const)(

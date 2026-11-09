@@ -1,5 +1,6 @@
 import { MAC_PERMISSION_SETTINGS_URLS } from "../permissions/MacPermission.ts";
 import {
+  isLocalEditorFileUrl,
   REMOTE_CAPABLE_EDITOR_IDS,
   remoteSchemeForEditor,
   type SystemSettingsPane,
@@ -12,7 +13,7 @@ import * as Option from "effect/Option";
 import * as Electron from "electron";
 import { parseObsidianNavigationHref } from "@t3tools/shared/markdownLinks";
 
-// Remote editor deep links must reach the OS handler.
+// Remote editor deep links and local editor file links must reach the OS handler.
 const SAFE_WEB_PROTOCOLS = new Set(["http:", "https:"]);
 const REMOTE_EDITOR_PROTOCOLS = new Set(
   REMOTE_CAPABLE_EDITOR_IDS.flatMap((id) => {
@@ -47,6 +48,7 @@ export function parseSafeExternalUrl(rawUrl: unknown): Option.Option<string> {
     const url = new URL(rawUrl);
     return SAFE_WEB_PROTOCOLS.has(url.protocol) ||
       isRemoteEditorUrl(url) ||
+      isLocalEditorFileUrl(url) ||
       parseObsidianNavigationHref(rawUrl) !== null
       ? Option.some(url.href)
       : Option.none();
