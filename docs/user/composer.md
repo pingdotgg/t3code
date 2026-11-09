@@ -295,6 +295,15 @@ earlier messages, and the thread marks where it began with **New session**.
 Earlier messages and diffs stay in the thread. Dismiss the notice above the
 composer to keep the current session instead.
 
+Send `/cd` followed by a folder path to move the thread to that folder and its
+project. Send `/cd` on its own to pick one of your recent projects, or type part
+of a path and press Tab to complete folders. The next turn runs in the new
+folder and keeps the conversation. Send `/no` to move the thread to
+**No project** in a new scratch folder.
+
+T3 Code asks before it leaves a worktree or a scratch folder, and before it
+makes a plain folder a project. A thread cannot move while a turn is running.
+
 On web and desktop, turn on **Context window** in **Settings → Appearance →
 Thread details** to see context usage in the thread details card. It appears
 once the provider reports usage.
