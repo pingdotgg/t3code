@@ -1435,29 +1435,39 @@ interface TerminalActionButtonProps {
   unavailable?: boolean;
   children: ReactNode;
   disabled?: boolean;
+  /** "bare" for the notch's "+", which matches the chat tab strip's. */
+  variant?: "ghost-muted" | "bare";
 }
 
 /**
  * The terminal pane's tabs: in a layout pane they sit in the pane's notch with
- * "+" as its last child, like a chat's tabs; the drawer keeps a plain row.
+ * "+" as its last child, like a chat's tabs, and the split and close actions
+ * sit in the mirrored right notch. The drawer keeps a plain row.
  */
 function TerminalTabsNotch({
   notch,
   newTerminalButton,
+  actions,
   children,
 }: {
   notch: boolean;
   newTerminalButton: ReactNode;
+  actions: ReactNode;
   children: ReactNode;
 }) {
   if (!notch) return children;
   return (
-    <PaneNotch>
-      <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
-      <span data-pane-notch-add="" className="flex shrink-0">
-        {newTerminalButton}
-      </span>
-    </PaneNotch>
+    <>
+      <PaneNotch>
+        <LayoutPaneTabStrip>{children}</LayoutPaneTabStrip>
+        <span data-pane-notch-add="" className="flex shrink-0">
+          {newTerminalButton}
+        </span>
+      </PaneNotch>
+      <PaneNotch side="right" className="ms-auto shrink-0">
+        {actions}
+      </PaneNotch>
+    </>
   );
 }
 
@@ -1502,6 +1512,7 @@ function TerminalActionButton({
   onClick,
   unavailable,
   children,
+  variant = "ghost-muted",
 }: TerminalActionButtonProps) {
   return (
     <Popover>
@@ -1510,7 +1521,7 @@ function TerminalActionButton({
         render={
           <Button
             size="icon-xs"
-            variant="ghost-muted"
+            variant={variant}
             onClick={() => {
               if (!unavailable) onClick();
             }}
@@ -1572,7 +1583,7 @@ export default function ThreadTerminalDrawer({
   const fillsContainer = mode !== "drawer";
   const terminalOwner = mode === "panel" ? "right-panel" : "drawer";
   // As a pane, this is a layout tab: dragging one of its terminals moves it.
-  const { tabId: layoutTabId, leadingEdge } = useLayoutPane();
+  const { tabId: layoutTabId, leadingEdge, trailingEdge } = useLayoutPane();
   const siblingTabs = useLayoutPaneSiblingTabs();
   const [advancedTypography] = useLocalStorage(
     TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -1934,9 +1945,8 @@ export default function ThreadTerminalDrawer({
     </TerminalActionButton>
   );
 
-  // Keep every terminal action in the header so controls never cover shell output.
-  const terminalActions = (
-    <div className="flex items-center gap-0.5">
+  const splitButtons = (
+    <>
       <TerminalActionButton
         label={splitTerminalActionLabel}
         onClick={onSplitTerminalAction}
@@ -1951,14 +1961,23 @@ export default function ThreadTerminalDrawer({
       >
         <SquareSplitVertical className="size-3.5" />
       </TerminalActionButton>
+    </>
+  );
+  const closeButton = (
+    <TerminalActionButton
+      label={closeTerminalActionLabel}
+      onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
+      unavailable={!canOperateTerminal}
+    >
+      <Trash2 className="size-3.5" />
+    </TerminalActionButton>
+  );
+  // Keep every terminal action in the header so controls never cover shell output.
+  const terminalActions = (
+    <div className="flex items-center gap-0.5">
+      {splitButtons}
       {newTerminalButton}
-      <TerminalActionButton
-        label={closeTerminalActionLabel}
-        onClick={() => confirmCloseTerminal(resolvedActiveTerminalId)}
-        unavailable={!canOperateTerminal}
-      >
-        <Trash2 className="size-3.5" />
-      </TerminalActionButton>
+      {closeButton}
     </div>
   );
 
@@ -1984,17 +2003,36 @@ export default function ThreadTerminalDrawer({
         <div
           className={cn(
             "flex h-11 shrink-0 items-center gap-1",
-            // A layout pane's tabs sit in its notch (pen hRbzg), from the pane's
-            // edge; the notch stops short of the pane's top-right corner.
-            mode === "pane" ? "relative pe-10 ps-1.5 md:ps-0" : "px-1.5 pt-1",
+            // A layout pane's tabs sit in its notch (pen hRbzg) from the pane's
+            // left edge, its actions in the mirrored notch, as a panel pane's do.
+            mode === "pane" ? "relative ps-1.5 pe-2 md:ps-0" : "px-1.5 pt-1",
             mode === "pane" && leadingEdge && COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
+            mode === "pane" && trailingEdge && "wco:pr-(--workspace-native-controls-inset)",
           )}
           data-terminal-tab-strip
           // In a pane the strip is the pane's header: the shared rule centers its tabs on
           // the chrome row's line like every other pane header.
           data-pane-header={mode === "pane" ? "" : undefined}
         >
-          <TerminalTabsNotch notch={mode === "pane"} newTerminalButton={terminalActions}>
+          <TerminalTabsNotch
+            notch={mode === "pane"}
+            newTerminalButton={
+              <TerminalActionButton
+                label={newTerminalActionLabel}
+                onClick={onNewTerminalAction}
+                unavailable={!canOperateTerminal}
+                variant="bare"
+              >
+                <Plus />
+              </TerminalActionButton>
+            }
+            actions={
+              <div className="flex items-center gap-0.5">
+                {splitButtons}
+                {closeButton}
+              </div>
+            }
+          >
             {mode === "pane"
               ? siblingTabs.before.map((tab) => <LayoutPaneTab key={tab.id} tab={tab} />)
               : null}
@@ -2097,9 +2135,10 @@ export default function ThreadTerminalDrawer({
         <div
           className={cn(
             "flex h-full min-h-0 bg-(--terminal-background)",
-            // Text sits 16px in from the pane's edge, in line with its tabs; a
-            // panel terminal's starts below its floating actions.
-            mode === "panel" ? "px-4 pt-1" : "px-4 pt-1 pb-1",
+            // A pane's text starts right under its notch, 10px in (with the
+            // surface's own 4px) in line with the tab icons; a panel terminal's
+            // starts below its floating actions.
+            mode === "pane" ? "px-1.5" : mode === "panel" ? "px-4 pt-1" : "px-4 pt-1 pb-1",
           )}
         >
           <div className="min-w-0 flex-1">
