@@ -277,6 +277,32 @@ function Probe(props: {
   ) : null;
 }
 
+function draftAccess(drafts: Record<string, string>, owner: string) {
+  return {
+    readDraft: () => ({
+      text: drafts[owner] ?? "",
+      selection: { start: drafts[owner]?.length ?? 0, end: drafts[owner]?.length ?? 0 },
+    }),
+    commitDraft: (text: string) => {
+      drafts[owner] = text;
+    },
+  };
+}
+
+function ThreadProbe(props: { readonly owner: string; readonly drafts: Record<string, string> }) {
+  const value = useEnvironmentSpeechInput({
+    environmentId: THREAD_ENV as EnvironmentId,
+    ownerKey: props.owner,
+    draftText: props.drafts[props.owner] ?? "",
+    ...draftAccess(props.drafts, props.owner),
+    detachDraft: () => draftAccess(props.drafts, props.owner),
+  });
+  useLayoutEffect(() => {
+    mocks.voice = value;
+  });
+  return null;
+}
+
 function expectNoAudioSent() {
   expect(mocks.platforms).toEqual([]);
   expect(mocks.microphoneRequests).toEqual([]);
@@ -359,6 +385,19 @@ it.each([
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual([]);
   expect(mocks.committed).not.toHaveBeenCalled();
+});
+
+it("finishes a recording into the thread it started in when the editor moves to another thread", async () => {
+  setup({ destination: "env-a" });
+  mocks.transcripts = ["the login bug"];
+  const drafts: Record<string, string> = { "thread-a": "Fix", "thread-b": "Unrelated" };
+  await using screen = await render(<ThreadProbe owner="thread-a" drafts={drafts} />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await screen.rerender(<ThreadProbe owner="thread-b" drafts={drafts} />);
+  await vi.waitFor(() => expect(drafts["thread-a"]).toBe("Fix the login bug"));
+  expect(drafts["thread-b"]).toBe("Unrelated");
+  expect(mocks.transcribeCalls).toEqual(["env-a"]);
 });
 
 it("retries a failed transcription on the same chosen environment", async () => {
