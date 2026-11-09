@@ -1320,7 +1320,7 @@ export default function FilePreviewPanel({
   const [explorerOpen, setExplorerOpen] = useState(initialExplorerOpen);
   const [renderMarkdownPreferred, setRenderMarkdownPreferred] = useLocalStorage(
     RENDER_MARKDOWN_STORAGE_KEY,
-    true,
+    false,
     Schema.Boolean,
   );
   const [renderBrowserFilePreferred, setRenderBrowserFilePreferred] = useLocalStorage(
