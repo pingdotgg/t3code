@@ -63,6 +63,11 @@ const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
+
+function acpRegistryProbeTtlMs(provider: ServerProvider): number {
+  const discoveredModels = provider.models.filter((model) => !model.isCustom);
+  return discoveredModels.length <= 1 ? PROBE_PROVISIONAL_TTL_MS : PROBE_SUCCESS_TTL_MS;
+}
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -629,16 +634,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }
       const enriched = yield* enrichProvider;
       if (enriched.status === "ready") {
-        const discoveredModels = enriched.models.filter((model) => !model.isCustom);
-        const ttlMs =
-          discoveredModels.length <= 1 ? PROBE_PROVISIONAL_TTL_MS : PROBE_SUCCESS_TTL_MS;
         yield* Ref.update(enrichmentCache, (current) =>
           current.generation === cacheState.generation
             ? {
                 ...current,
                 entry: {
                   provider: enriched,
-                  expiresAt: now + ttlMs,
+                  expiresAt: now + acpRegistryProbeTtlMs(enriched),
                 },
               }
             : current,
@@ -730,7 +732,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           entry: {
                             ...cache.entry,
                             provider: enrichedProvider,
-                            expiresAt: now + PROBE_SUCCESS_TTL_MS,
+                            expiresAt: now + acpRegistryProbeTtlMs(enrichedProvider),
                           },
                         };
                       }),
