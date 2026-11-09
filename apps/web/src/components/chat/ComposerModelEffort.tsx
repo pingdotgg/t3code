@@ -90,8 +90,8 @@ export function describeComposerEffort(
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const reasoning =
-    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
-      .effort?.descriptor ?? null;
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
+      ?.descriptor ?? null;
   const descriptors = visibility.descriptors.filter(
     (descriptor) =>
       isReasoningControl(descriptor) ||
