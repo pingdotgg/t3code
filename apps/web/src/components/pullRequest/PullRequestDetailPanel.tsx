@@ -379,6 +379,7 @@ export function PullRequestDetailPanel({
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(
     () => linkedTab(revealAnchor) ?? initialTab,
   );
+  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
@@ -1664,6 +1665,10 @@ export function PullRequestDetailPanel({
                 onThreadPickerOpenChange={setThreadPickerOpen}
                 refreshing={refreshing}
                 refreshFromHost={refreshFromHost}
+                timelineOrder={tab === "timeline" ? timelineOrder : null}
+                onToggleTimelineOrder={() =>
+                  setTimelineOrder((order) => (order === "newest" ? "oldest" : "newest"))
+                }
                 handoff={handoff}
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
@@ -1990,7 +1995,7 @@ export function PullRequestDetailPanel({
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
-                    order="newest"
+                    order={timelineOrder}
                     onOpenCommit={openCommit}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onOpenCode={openFileInCode}
