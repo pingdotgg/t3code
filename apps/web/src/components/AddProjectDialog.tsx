@@ -98,16 +98,20 @@ const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
 // Dot segments and doubled separators are refused too: the server normalizes them away,
 // so they would miss an existing project's saved path.
 function isHostPath(value: string, platform: string) {
-  const separator = isWindowsPlatform(platform) ? /[\\/]/ : /\//;
-  const segments = value.split(separator);
+  const windows = isWindowsPlatform(platform);
+  const segments = value.split(windows ? /[\\/]/ : "/");
+  // Only a Windows network path may start with two separators.
+  const firstInteriorIndex = windows && segments[0] === "" && segments[1] === "" ? 2 : 1;
   return (
     getFilesystemBrowsePath(value, platform).isBrowsing &&
     !isExplicitRelativeProjectPath(value) &&
+    // A bare "C:" means the server's working folder on that drive.
+    !(windows && /^[a-z]:(?![\\/])/i.test(value)) &&
     !segments.some(
       (segment, index) =>
         segment === "." ||
         segment === ".." ||
-        (segment === "" && index > 0 && index < segments.length - 1 && segments[index - 1] !== ""),
+        (segment === "" && index >= firstInteriorIndex && index < segments.length - 1),
     )
   );
 }
@@ -484,13 +488,18 @@ function FolderStep({
       environmentId,
       // A loaded listing expands "~", so an existing project at that folder matches.
       rawCwd:
-        typed.startsWith("~") && isCurrentListing && listing
+        typed.startsWith("~") &&
+        // The browse helpers also split on a backslash, which is a name character off Windows.
+        (isWindowsPlatform(platform) || !typed.includes("\\")) &&
+        isCurrentListing &&
+        listing
           ? `${ensureBrowseDirectoryPath(listing.parentPath)}${browsePath.filterQuery}`
           : typed,
       platform,
       currentProjectCwd: null,
       isCurrent,
     }).catch((cause: unknown) => {
+      if (!isCurrent()) return false;
       toastManager.add(
         stackedThreadToast({
           type: "error",
