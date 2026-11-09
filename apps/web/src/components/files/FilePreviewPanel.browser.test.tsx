@@ -107,15 +107,15 @@ function markdownPreview(truncated: boolean) {
   return filePreview("tasks.md");
 }
 
-function filePreview(relativePath: string) {
+function filePreview(relativePath: string, target = threadRef) {
   return (
     <FilePreviewPanel
       environmentId={environmentId}
       cwd="/workspace"
       projectName="Project"
       relativePath={relativePath}
-      threadRef={threadRef}
-      composerDraftTarget={threadRef}
+      threadRef={target}
+      composerDraftTarget={target}
       keybindings={[]}
       availableEditors={[]}
       openInShortcutEnabled={false}
@@ -194,5 +194,48 @@ describe("file view comments", () => {
     const inlineComment = screen.getByText("Repro note on line two");
     await expect.element(inlineComment).toBeVisible();
     expect(inlineComment.element().closest("[slot]")?.getAttribute("slot")).toBe("annotation-2");
+  });
+
+  it("shows only the current thread's comments when the thread changes under a mounted file view", async () => {
+    using _settings = setup();
+    const contents = "export const one = 1;\nexport const two = 2;\n";
+    state.file = {
+      relativePath: "config.ts",
+      contents,
+      byteLength: contents.length,
+      truncated: false,
+    };
+    const otherThreadRef = { environmentId, threadId: ThreadId.make("other-thread") };
+    const store = useComposerDraftStore.getState();
+    const comments = [
+      { target: threadRef, id: "file-comment-a", line: 1, text: "Note from thread A" },
+      { target: otherThreadRef, id: "file-comment-b", line: 2, text: "Note from thread B" },
+    ];
+    for (const { target, id, line, text } of comments) {
+      store.addReviewComment(
+        target,
+        buildFileReviewComment({
+          id,
+          filePath: "config.ts",
+          startLine: line,
+          endLine: line,
+          text,
+          contents,
+        }),
+      );
+    }
+    using _comments = {
+      [Symbol.dispose]: () => {
+        for (const { target, id } of comments) store.removeReviewComment(target, id);
+      },
+    };
+
+    await using screen = await render(filePreview("config.ts"));
+    await expect.element(screen.getByText("Note from thread A")).toBeVisible();
+
+    await screen.rerender(filePreview("config.ts", otherThreadRef));
+
+    await expect.element(screen.getByText("Note from thread B")).toBeVisible();
+    expect(screen.getByText("Note from thread A").query()).toBeNull();
   });
 });
