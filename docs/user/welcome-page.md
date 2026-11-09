@@ -89,8 +89,8 @@ are read from each enabled Pi provider's session directory, which follows
 `PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
 Pi conversation imports its active branch, the one Pi reopens.
 
-Conversation import is best effort. T3 Code keeps the first user prompt and the
-newest remaining visible user and assistant messages, with 200 messages total.
+Conversation import is best effort. T3 Code keeps every visible user and
+assistant message.
 It omits tool activity and attachments. For Codex, it omits generated setup
 context only when a canonical user event and a valid shared turn ID identify the
 same user turn. Ambiguous legacy or response-only context stays in the imported

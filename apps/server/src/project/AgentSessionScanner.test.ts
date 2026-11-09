@@ -2277,47 +2277,44 @@ describe("parseAgentSessionTranscript", () => {
     },
   );
 
-  it.each([199, 200, 201, 205])(
-    "counts only omitted conversation messages for a %s-message Claude transcript",
-    (count) => {
-      const thread = AgentSessionScanner.parseAgentSessionTranscript({
-        contents: [
-          ...Array.from({ length: count }, (_, index) =>
-            encodeTranscriptRecord({
-              type: index === 0 ? "user" : "assistant",
-              sessionId: "claude-session",
-              message: { content: `Message ${index}` },
-            }),
-          ),
-          encodeTranscriptRecord({ type: "user", isMeta: true, message: { content: "Setup" } }),
+  it("keeps every visible message of a long Claude transcript", () => {
+    const count = 205;
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        ...Array.from({ length: count }, (_, index) =>
           encodeTranscriptRecord({
-            type: "user",
-            isCompactSummary: true,
-            message: { content: "Summary" },
+            type: index === 0 ? "user" : "assistant",
+            sessionId: "claude-session",
+            message: { content: `Message ${index}` },
           }),
-          encodeTranscriptRecord({
-            type: "assistant",
-            isSidechain: true,
-            message: { content: "Sidechain" },
-          }),
-          encodeTranscriptRecord({
-            type: "assistant",
-            message: { content: [{ type: "tool_use" }] },
-          }),
-          "malformed",
-        ].join("\n"),
-        source: "claudeAgent",
-        providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-        fallbackSessionId: "fallback",
-        lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
-      });
+        ),
+        encodeTranscriptRecord({ type: "user", isMeta: true, message: { content: "Setup" } }),
+        encodeTranscriptRecord({
+          type: "user",
+          isCompactSummary: true,
+          message: { content: "Summary" },
+        }),
+        encodeTranscriptRecord({
+          type: "assistant",
+          isSidechain: true,
+          message: { content: "Sidechain" },
+        }),
+        encodeTranscriptRecord({
+          type: "assistant",
+          message: { content: [{ type: "tool_use" }] },
+        }),
+        "malformed",
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
 
-      expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 200));
-      expect(thread?.messages).toHaveLength(Math.min(200, count));
-      expect(thread?.messages[0]?.text).toBe("Message 0");
-      expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
-    },
-  );
+    expect(thread?.messages).toHaveLength(count);
+    expect(thread?.messages[0]?.text).toBe("Message 0");
+    expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
+  });
 
   it("keeps Claude text and titles while dropping malformed and tool records", () => {
     const thread = AgentSessionScanner.parseAgentSessionTranscript({
@@ -2470,7 +2467,8 @@ describe("parseAgentSessionTranscript", () => {
     ]);
   });
 
-  it.each([199, 200])("keeps the canonical first prompt with %s later Codex messages", (count) => {
+  it("keeps the canonical first prompt and every later Codex message", () => {
+    const count = 200;
     const canonicalPrompt = "\n  Keep the canonical prompt  \n";
     const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
     const laterAssistantMessages = Array.from({ length: count }, (_, index) =>
@@ -2502,59 +2500,20 @@ describe("parseAgentSessionTranscript", () => {
           payload: { type: "user_message", message: canonicalPrompt },
         }),
         ...laterAssistantMessages,
-      ].join("\n"),
-      source: "codex",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      fallbackSessionId: "fallback",
-      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
-    });
-
-    expect(thread?.omittedMessageCount).toBe(count - 199);
-    expect(thread?.messages).toHaveLength(200);
-    expect(thread?.messages[0]).toMatchObject({
-      role: "user",
-      text: canonicalPrompt,
-      createdAt: canonicalTimestamp,
-    });
-  });
-
-  it("restores the canonical first prompt when a later user message remains", () => {
-    const canonicalPrompt = "\n  Keep the canonical prompt  \n";
-    const canonicalTimestamp = "2026-08-24T10:01:00.000Z";
-    const assistantMessages = Array.from({ length: 198 }, (_, index) =>
-      encodeTranscriptRecord({
-        type: "response_item",
-        timestamp: `2026-08-24T11:${String(index % 60).padStart(2, "0")}:00.000Z`,
-        payload: {
-          type: "message",
-          role: "assistant",
-          content: [{ type: "output_text", text: `Assistant message ${index}` }],
-        },
-      }),
-    );
-    const thread = AgentSessionScanner.parseAgentSessionTranscript({
-      contents: [
-        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
-        encodeTranscriptRecord({
-          type: "response_item",
-          timestamp: "2026-08-24T10:00:00.000Z",
-          payload: {
-            type: "message",
-            role: "user",
-            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
-            content: [{ type: "input_text", text: "Keep the canonical prompt" }],
-          },
-        }),
-        encodeTranscriptRecord({
-          type: "event_msg",
-          timestamp: canonicalTimestamp,
-          payload: { type: "user_message", message: canonicalPrompt },
-        }),
-        ...assistantMessages,
         encodeTranscriptRecord({
           type: "event_msg",
           timestamp: "2026-08-24T11:58:30.000Z",
           payload: { type: "user_message", message: "Keep this later prompt" },
+        }),
+        // The response copy that follows its event is not imported twice.
+        encodeTranscriptRecord({
+          type: "response_item",
+          timestamp: "2026-08-24T11:58:31.000Z",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Keep this later prompt" }],
+          },
         }),
         encodeTranscriptRecord({
           type: "response_item",
@@ -2572,20 +2531,16 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.omittedMessageCount).toBe(1);
-    expect(thread?.messages).toHaveLength(200);
+    expect(thread?.messages).toHaveLength(count + 3);
+    expect(thread?.messages.slice(-2).map(({ role, text }) => ({ role, text }))).toEqual([
+      { role: "user", text: "Keep this later prompt" },
+      { role: "assistant", text: "Keep this latest response" },
+    ]);
     expect(thread?.messages[0]).toMatchObject({
       role: "user",
       text: canonicalPrompt,
       createdAt: canonicalTimestamp,
     });
-    expect(
-      thread?.messages.filter((message) => message.text.trim() === canonicalPrompt.trim()),
-    ).toHaveLength(1);
-    expect(thread?.messages.some((message) => message.text === "Keep this later prompt")).toBe(
-      true,
-    );
-    expect(thread?.messages.at(-1)?.text).toBe("Keep this latest response");
   });
 
   it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
