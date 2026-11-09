@@ -305,7 +305,7 @@ export function SourceControlWritingSettingsSection() {
                 }
               }}
               rows={4}
-              placeholder="Keep commit subjects under 60 characters. Write pull request descriptions as two short paragraphs with no headings."
+              placeholder="Keep commit subjects under 60 characters. Keep pull request descriptions short and plain."
               aria-label="Custom commit and pull request instructions"
             />
           </div>

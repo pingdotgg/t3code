@@ -1136,7 +1136,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Commit and pull request writing",
     to: "/settings/source-control",
     searchTerms: [
-      "repository conventions conventional commits custom instructions commit messages pr pull request merge request titles descriptions body style prompt write my own",
+      "repository conventions conventional commits custom instructions commit messages change pr pull request merge request titles descriptions body style prompt write my own",
     ],
     environmentOnly: true,
   },
