@@ -1,18 +1,17 @@
-import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Test from "alchemy/Test/Bun";
+import { describe, expect } from "bun:test";
+import * as GCP from "@alchemy.run/gcp";
+import * as Test from "@alchemy.run/test/Bun";
 import * as bigquery from "@distilled.cloud/gcp/bigquery_v2";
 import * as pubsub from "@distilled.cloud/gcp/pubsub_v1";
 import * as run from "@distilled.cloud/gcp/run_v2";
 import * as storage from "@distilled.cloud/gcp/storage_v1";
-import { describe, expect } from "bun:test";
+import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import { spawnSync } from "node:child_process";
+import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import Stack from "../alchemy.run.ts";
 import { MAX_DELIVERY_ATTEMPTS } from "../src/Email.ts";
 import { emailObjectFor, type OrderEvent } from "../src/resources.ts";
@@ -26,19 +25,10 @@ const { getWhenReady } = Test;
 
 // Out-of-band calls to the Google APIs resolve the same stored credentials
 // the deploy uses, so the test runs against the configured profile.
-const GcpHttp = Layer.mergeAll(
-  GCP.GcpAuth,
-  GCP.fromAuthProvider(),
-  FetchHttpClient.layer,
-);
-
-// The services are built from `main`, which needs a local image build.
-const dockerAvailable =
-  spawnSync("docker", ["info"], { stdio: "ignore", timeout: 15_000 }).status ===
-  0;
+const GcpHttp = Layer.mergeAll(GCP.GcpAuth, GCP.fromAuthProvider(), FetchHttpClient.layer);
 
 // Deploy, tests and destroy all sit behind the same Docker guard.
-describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
+describe("gcp-pubsub-fanout", () => {
   const stack = beforeAll(deploy(Stack), { timeout: 900_000 });
 
   const baseUrlOf = (url: string | undefined) => {
@@ -59,9 +49,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
     pubsub.listProjectsTopicsSubscriptions({ topic }).pipe(
       Effect.map((page) => page.subscriptions ?? []),
       Effect.flatMap((names) =>
-        Effect.forEach(names, (subscription) =>
-          pubsub.getProjectsSubscriptions({ subscription }),
-        ),
+        Effect.forEach(names, (subscription) => pubsub.getProjectsSubscriptions({ subscription })),
       ),
       Effect.retry({
         while: (error) => error._tag === "NotFound",
@@ -150,8 +138,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
     analyticsRowsFor(tableName, eventIds).pipe(
       Effect.repeat({
         schedule: Schedule.spaced("5 seconds"),
-        until: (rows) =>
-          eventIds.every((id) => rows.some((row) => row.eventId === id)),
+        until: (rows) => eventIds.every((id) => rows.some((row) => row.eventId === id)),
         times: 60,
       }),
     );
@@ -159,12 +146,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
   test(
     "each consumer gets its own push subscription on the one topic",
     Effect.gen(function* () {
-      const {
-        topicName,
-        deadLetterTopicName,
-        deadLetterSubscription,
-        project,
-      } = yield* stack;
+      const { topicName, deadLetterTopicName, deadLetterSubscription, project } = yield* stack;
 
       const subscriptions = yield* subscriptionsOf(topicName);
       expect(subscriptions.length).toBe(2);
@@ -209,8 +191,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
       expect(
         (subscriptionPolicy.bindings ?? []).some(
           (binding) =>
-            binding.role === "roles/pubsub.subscriber" &&
-            binding.members?.includes(agent!),
+            binding.role === "roles/pubsub.subscriber" && binding.members?.includes(agent!),
         ),
       ).toBe(true);
 
@@ -228,9 +209,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
 
       for (const body of [{ total: 10 }, { email: "a@example.com" }]) {
         const res = yield* HttpClient.execute(
-          HttpClientRequest.post(`${baseUrl}/orders`).pipe(
-            HttpClientRequest.bodyJsonUnsafe(body),
-          ),
+          HttpClientRequest.post(`${baseUrl}/orders`).pipe(HttpClientRequest.bodyJsonUnsafe(body)),
         );
         expect(res.status).toBe(400);
       }
@@ -284,16 +263,9 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
       yield* getWhenReady(`${baseUrl}/`);
 
       const created = yield* placeOrder(baseUrl, "changed@example.com", 40);
-      const cancelled = yield* cancelOrder(
-        baseUrl,
-        created.orderId,
-        "changed@example.com",
-      );
+      const cancelled = yield* cancelOrder(baseUrl, created.orderId, "changed@example.com");
 
-      const rows = yield* awaitAnalytics(tableName, [
-        created.eventId,
-        cancelled.eventId,
-      ]);
+      const rows = yield* awaitAnalytics(tableName, [created.eventId, cancelled.eventId]);
       expect(rows).toContainEqual({
         eventId: cancelled.eventId,
         type: "order.cancelled",
@@ -311,8 +283,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
   test(
     "an email that can never be sent is dead-lettered after max attempts",
     Effect.gen(function* () {
-      const { url, bucketName, tableName, deadLetterSubscription } =
-        yield* stack;
+      const { url, bucketName, tableName, deadLetterSubscription } = yield* stack;
       const baseUrl = baseUrlOf(url);
       yield* getWhenReady(`${baseUrl}/`);
 
@@ -334,9 +305,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
         Effect.tap(({ receivedMessages = [] }) =>
           Effect.gen(function* () {
             dead.push(...receivedMessages);
-            const ackIds = receivedMessages.flatMap((m) =>
-              m.ackId ? [m.ackId] : [],
-            );
+            const ackIds = receivedMessages.flatMap((m) => (m.ackId ? [m.ackId] : []));
             if (ackIds.length > 0) {
               yield* pubsub
                 .acknowledgeProjectsSubscriptions({
@@ -357,9 +326,7 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
       const letter = dead.find((m) => decode(m).eventId === order.eventId)!;
       expect(letter.message?.attributes?.type).toBe("order.created");
       // Pub/Sub stamps where the dead letter came from.
-      expect(
-        letter.message?.attributes?.CloudPubSubDeadLetterSourceSubscription,
-      ).toBeDefined();
+      expect(letter.message?.attributes?.CloudPubSubDeadLetterSourceSubscription).toBeDefined();
 
       expect(yield* emailFor(bucketName, order.eventId)).toBeUndefined();
     }),
@@ -372,24 +339,17 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
     ) as OrderEvent;
 
   /** Poll until a deleted resource reads as `NotFound`. */
-  const expectGone = <E, R>(
-    what: string,
-    status: Effect.Effect<"found" | "gone", E, R>,
-  ) =>
+  const expectGone = <E, R>(what: string, status: Effect.Effect<"found" | "gone", E, R>) =>
     status.pipe(
       Effect.repeat({
         schedule: Schedule.spaced("5 seconds"),
         until: (status) => status === "gone",
         times: 12,
       }),
-      Effect.tap((status) =>
-        Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`)),
-      ),
+      Effect.tap((status) => Effect.sync(() => expect(`${what}: ${status}`).toBe(`${what}: gone`))),
     );
 
-  const statusOf = <A, E extends { _tag: string }, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) =>
+  const statusOf = <A, E extends { _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
       Effect.as("found" as const),
       Effect.catchIf(
@@ -414,15 +374,9 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
         ["email service", outputs.emailService],
         ["analytics service", outputs.analyticsService],
       ] as const) {
-        yield* expectGone(
-          what,
-          statusOf(run.getProjectsLocationsServices({ name })),
-        );
+        yield* expectGone(what, statusOf(run.getProjectsLocationsServices({ name })));
       }
-      for (const subscription of [
-        ...subscriptions,
-        outputs.deadLetterSubscription,
-      ]) {
+      for (const subscription of [...subscriptions, outputs.deadLetterSubscription]) {
         yield* expectGone(
           subscription,
           statusOf(pubsub.getProjectsSubscriptions({ subscription })),
@@ -431,15 +385,9 @@ describe.skipIf(!dockerAvailable)("gcp-pubsub-fanout", () => {
       for (const topic of [outputs.topicName, outputs.deadLetterTopicName]) {
         yield* expectGone(topic, statusOf(pubsub.getProjectsTopics({ topic })));
       }
-      yield* expectGone(
-        "bucket",
-        statusOf(storage.getBuckets({ bucket: outputs.bucketName })),
-      );
+      yield* expectGone("bucket", statusOf(storage.getBuckets({ bucket: outputs.bucketName })));
       const { projectId, datasetId } = tableRefOf(outputs.tableName);
-      yield* expectGone(
-        "dataset",
-        statusOf(bigquery.getDatasets({ projectId, datasetId })),
-      );
+      yield* expectGone("dataset", statusOf(bigquery.getDatasets({ projectId, datasetId })));
     }),
     { timeout: 600_000 },
   );

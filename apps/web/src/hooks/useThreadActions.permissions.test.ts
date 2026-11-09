@@ -335,6 +335,18 @@ describe("thread action permissions", () => {
     },
   );
 
+  it("names an archived thread in its delete confirmation and preserves it on cancel", async () => {
+    state.threads = [];
+    state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
+    state.confirm.mockResolvedValue(false);
+    await useThreadActions().confirmAndDeleteThread(target, "Archived release notes");
+    expect(state.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('Delete thread "Archived release notes"?'),
+      { variant: "destructive" },
+    );
+    expect(state.requests).toEqual([]);
+  });
+
   it("deletes an archived thread only with its own environment's grant", async () => {
     state.serverConfig.shellThreadFamilies = true;
     state.familyThreads = [
@@ -358,6 +370,12 @@ describe("thread action permissions", () => {
     expect((await actions.deleteThread(target))._tag).toBe("Success");
     expect(state.requests).toEqual([
       expect.objectContaining({ action: "delete", environmentId: secondary }),
+    ]);
+    expect(state.localEffects).toEqual([
+      "refresh-archive",
+      "release-uploads",
+      "clear-draft",
+      "clear-terminal-ui",
     ]);
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
     expect(state.localEffects).toEqual([
