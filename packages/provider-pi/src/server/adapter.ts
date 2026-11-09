@@ -3594,25 +3594,21 @@ function piQuestion(
             description: option || "Empty value",
             value: option,
           }))
-      : method === "editor"
-        ? []
-        : [
-            {
-              label: "Submit empty value",
-              description: "Send an empty string to the extension.",
-              value: "",
-            },
-          ];
-  // Pi's select and editor dialogs carry only a title, so show it once, as the question.
-  // Extensions may send a blank placeholder, which is not a valid question.
-  const detail = [recordString(event, "message"), recordString(event, "placeholder")].find(
-    (text) => text !== undefined && text.trim().length > 0,
-  );
+      : [];
+  // Input/editor placeholders are hints, not question content.
+  const detail =
+    method === "select"
+      ? [recordString(event, "message"), recordString(event, "placeholder")].find(
+          (text) => text !== undefined && text.trim().length > 0,
+        )
+      : undefined;
   return {
     id: questionId,
     header: detail === undefined ? "Question" : title,
     question: detail ?? title,
-    ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
+    ...(method !== "select"
+      ? { initialAnswer: method === "editor" ? (recordString(event, "prefill") ?? "") : "" }
+      : {}),
     options,
   };
 }
