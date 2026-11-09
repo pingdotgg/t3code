@@ -206,7 +206,7 @@ export function injectMcpAppThemeBootstrap(html: string): string {
   try {
     const initial = new URLSearchParams(location.search).get(${JSON.stringify(MCP_APP_COLOR_SCHEME_PARAM)});
     if (initial === "light" || initial === "dark") {
-      // A meta tag, unlike an inline style, survives the app's own <html style> and yields to its CSS.
+      // A meta tag, unlike an inline style, survives the app's own <html style> attribute.
       const meta = document.createElement("meta");
       meta.name = "color-scheme";
       meta.content = initial;
