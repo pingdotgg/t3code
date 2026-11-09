@@ -1317,7 +1317,7 @@ it.effect(
           Effect.andThen(EffectWorker.runDaemonWithOptions({ concurrency: 4 })),
           Effect.forkScoped,
         );
-        // Three attempts hit the deadline while the child stays held, as in the reported incident.
+        // Three attempts hit the deadline while the child stays held.
         yield* TestClock.adjust("95 seconds");
         const timedOut = yield* stopEffect;
         assert.equal(timedOut.status, "running");
