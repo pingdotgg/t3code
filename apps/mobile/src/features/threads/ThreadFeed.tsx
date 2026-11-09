@@ -122,11 +122,18 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Pressable,
+  RefreshControl,
   StyleSheet,
   type ColorValue,
   useWindowDimensions,
   View,
 } from "react-native";
+import {
+  shouldAutoloadEarlierHistory,
+  threadFeedAlignEndPadding,
+  threadFeedLayoutReady,
+  threadFeedUnderfillsViewport,
+} from "./threadFeedViewportFill";
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
@@ -3201,6 +3208,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     headerMaterialVisibleRef.current = visible;
     onHeaderMaterialVisibilityChange?.(visible);
   };
+  const listHeaderSizeRef = useRef(0);
   const handleMetricsChange = () => {
     const state = listRef.current?.getState();
     if (state) onIsAtEndChange?.(state.isAtEnd);
@@ -3218,7 +3226,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       state.listen("isAtEnd", handleMetricsChange),
       state.listen("totalSize", handleMetricsChange),
       state.listen("footerSize", handleMetricsChange),
-      state.listen("headerSize", handleMetricsChange),
+      state.listen("headerSize", (headerSize) => {
+        listHeaderSizeRef.current = headerSize;
+        handleMetricsChange();
+      }),
     ];
     return () => {
       for (const stop of stops) stop();
@@ -3291,11 +3302,172 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
 
+  // Short pages with older history keep requesting earlier turns until messages
+  // reach the header. Native RefreshControl replaces the Load earlier button.
+  const historyControls = props.historyControls;
+  const autofillAttemptRef = useRef<string | null>(null);
+  const loadedListKeyRef = useRef<string | null>(null);
+  const [viewportFill, setViewportFill] = useState({
+    listKey: feedThreadKey,
+    underfills: true,
+  });
+  if (viewportFill.listKey !== feedThreadKey) {
+    setViewportFill({ listKey: feedThreadKey, underfills: true });
+  }
+  const underfillsViewport = viewportFill.underfills;
+  const measureViewportFill = useEffectEvent(() => {
+    const state = listRef.current?.getState();
+    if (!state || state.scrollLength <= 0) {
+      return {
+        underfills: true,
+        layoutReady: false,
+        alignItemsAtEndPadding: 0,
+        firstItemScreenOffset: Number.POSITIVE_INFINITY,
+        scrollRange: 0,
+      };
+    }
+    const hasRows = state.data.length > 0;
+    const firstItemPosition = hasRows ? state.positionAtIndex(0) : 0;
+    const alignItemsAtEndPadding = hasRows
+      ? threadFeedAlignEndPadding({
+          firstItemPosition,
+          headerSize: listHeaderSizeRef.current,
+          stylePaddingTop: FEED_PADDING_TOP,
+        })
+      : 0;
+    const firstItemScreenOffset = hasRows
+      ? firstItemPosition - state.scroll
+      : Number.POSITIVE_INFINITY;
+    const layoutReady = threadFeedLayoutReady({
+      contentLength: state.contentLength,
+      scrollLength: state.scrollLength,
+    });
+    const scrollRange = Math.max(0, state.contentLength - state.scrollLength);
+    const underfills =
+      !layoutReady ||
+      threadFeedUnderfillsViewport({
+        contentLength: state.contentLength,
+        scrollLength: state.scrollLength,
+        alignItemsAtEndPadding,
+        firstItemScreenOffset: hasRows ? firstItemScreenOffset : undefined,
+        contentInsetStart: anchorTopInset,
+      });
+    return {
+      underfills,
+      layoutReady,
+      alignItemsAtEndPadding,
+      firstItemScreenOffset,
+      scrollRange,
+      state,
+    };
+  });
+  const loadEarlierIfUnderfilled = useEffectEvent(() => {
+    if (loadedListKeyRef.current !== feedThreadKey) return;
+    const history = historyControls;
+    if (!history || history.loading) return;
+    const measured = measureViewportFill();
+    const state = measured.state;
+    if (!state) return;
+    if (
+      !shouldAutoloadEarlierHistory({
+        hasMoreHistory: history.hasMoreHistory,
+        loading: false,
+        error: history.error,
+        contentLength: state.contentLength,
+        scrollLength: state.scrollLength,
+        alignItemsAtEndPadding: measured.alignItemsAtEndPadding,
+        firstItemScreenOffset: Number.isFinite(measured.firstItemScreenOffset)
+          ? measured.firstItemScreenOffset
+          : undefined,
+        contentInsetStart: anchorTopInset,
+        jumpToMessageActive: jumpToMessageId != null,
+      })
+    ) {
+      autofillAttemptRef.current = null;
+      return;
+    }
+    const attemptKey = `${feedThreadKey}:${Math.round(state.contentLength)}:${Math.round(measured.alignItemsAtEndPadding)}:${Math.round(measured.firstItemScreenOffset)}`;
+    if (autofillAttemptRef.current === attemptKey) return;
+    autofillAttemptRef.current = attemptKey;
+    history.onLoadEarlier();
+  });
+  const requestEarlierToFillViewport = useEffectEvent(() => {
+    if (loadedListKeyRef.current !== feedThreadKey) return;
+    const history = historyControls;
+    if (!history) {
+      autofillAttemptRef.current = null;
+      setViewportFill({ listKey: feedThreadKey, underfills: false });
+      return;
+    }
+    const measured = measureViewportFill();
+    setViewportFill((current) =>
+      current.listKey === feedThreadKey && current.underfills === measured.underfills
+        ? current
+        : { listKey: feedThreadKey, underfills: measured.underfills },
+    );
+    loadEarlierIfUnderfilled();
+  });
+  const historyHasMore = historyControls?.hasMoreHistory === true;
+  const historyLoading = historyControls?.loading === true;
+  const historyError = historyControls?.error ?? null;
+  const feedEntryCount = presentedFeed.length;
+  // Native UIRefreshControl for earlier history. Separate from autofill so short
+  // pages do not flash the system spinner without a user pull.
+  const [pullRefresh, setPullRefresh] = useState({ listKey: feedThreadKey, refreshing: false });
+  if (pullRefresh.listKey !== feedThreadKey) {
+    setPullRefresh({ listKey: feedThreadKey, refreshing: false });
+  }
+  const pullRefreshing = pullRefresh.refreshing;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the system spinner until earlier-history loading settles
+  useEffect(() => {
+    if (!pullRefreshing) return;
+    if (historyLoading) return;
+    // Brief hold so a fast page does not dismiss the control before it reads as native.
+    const timer = setTimeout(() => {
+      setPullRefresh((current) =>
+        current.listKey === feedThreadKey && current.refreshing
+          ? { listKey: feedThreadKey, refreshing: false }
+          : current,
+      );
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [historyLoading, pullRefreshing, feedThreadKey]);
+  const canPullEarlierHistory =
+    historyControls !== undefined && (historyHasMore || historyError !== null);
+  const handlePullEarlierHistory = useEffectEvent(() => {
+    if (!historyControls || historyControls.loading) return;
+    if (!historyControls.hasMoreHistory && historyControls.error === null) return;
+    setPullRefresh({ listKey: feedThreadKey, refreshing: true });
+    historyControls.onLoadEarlier();
+  });
+  // After earlier pages prepend, re-measure on the next frame so autofill stops
+  // once the viewport fills even when header metrics are unchanged.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- short underfilled pages request earlier history until messages reach the header
+  useEffect(() => {
+    if (loadedListKey !== feedThreadKey) return;
+    if (jumpToMessageId != null) return;
+    if (!historyHasMore || historyLoading || historyError !== null) return;
+    if (feedEntryCount < 0) return;
+    const frame = requestAnimationFrame(() => {
+      requestEarlierToFillViewport();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    feedThreadKey,
+    loadedListKey,
+    historyHasMore,
+    historyLoading,
+    historyError,
+    jumpToMessageId,
+    feedEntryCount,
+  ]);
+
   const handleViewportLayout = (event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     const nextHeight = Math.round(event.nativeEvent.layout.height);
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
+    requestEarlierToFillViewport();
   };
 
   const anchoredEndSpace = resolveChatListAnchoredEndSpace(
@@ -3429,6 +3601,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     if (disclosureMotionRef.current && !disclosureMotionRef.current.playing) {
       settleDisclosureAfterLayout();
     }
+    requestEarlierToFillViewport();
   };
 
   const onCopyWorkRow = (rowId: string, value: string) => {
@@ -3707,21 +3880,60 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             alignItemsAtEnd
             initialScrollAtEnd
             onReady={() => {
+              loadedListKeyRef.current = feedThreadKey;
               setLoadedListKey(feedThreadKey);
               handleMetricsChange();
+              requestEarlierToFillViewport();
             }}
-            onLayout={handleMetricsChange}
+            onLayout={() => {
+              handleMetricsChange();
+              requestEarlierToFillViewport();
+            }}
             onItemSizeChanged={handleItemSizeChanged}
             onScroll={handleScroll}
             scrollEventThrottle={16}
+            alwaysBounceVertical={canPullEarlierHistory}
+            refreshControl={
+              canPullEarlierHistory ? (
+                <RefreshControl
+                  refreshing={pullRefreshing}
+                  onRefresh={handlePullEarlierHistory}
+                  tintColor={iconSubtleColor}
+                  colors={[String(iconSubtleColor)]}
+                  // Sit the system spinner below the floating thread header on both platforms.
+                  progressViewOffset={topContentInset}
+                />
+              ) : undefined
+            }
+            onStartReached={() => {
+              if (underfillsViewport) return;
+              if (!historyControls?.hasMoreHistory || historyControls.loading) return;
+              if (historyControls.error !== null) return;
+              historyControls.onLoadEarlier();
+            }}
+            onStartReachedThreshold={0.15}
             ListHeaderComponent={
               <>
                 {usesNativeAutomaticInsets ? null : <View style={{ height: topContentInset }} />}
                 {setupAnchorIndex < 0 && props.worktreeSetup ? (
                   <WorktreeSetupCard key={props.threadId} {...props.worktreeSetup} />
                 ) : null}
-                {props.historyControls ? (
-                  <ThreadFeedLoadEarlierControl {...props.historyControls} />
+                {historyLoading && !pullRefreshing ? (
+                  <View className="mb-2 items-center py-2">
+                    <AppActivityIndicator />
+                  </View>
+                ) : null}
+                {historyControls?.error !== null && historyControls !== undefined ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Retry loading earlier activity"
+                    onPress={historyControls.onLoadEarlier}
+                    className="mb-3 px-2"
+                  >
+                    <Text className="text-center text-xs text-foreground-muted">
+                      {historyControls.error}
+                    </Text>
+                  </Pressable>
                 ) : null}
               </>
             }
@@ -3767,36 +3979,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     </PresentationSource>
   );
 });
-
-function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
-  const theme = useUniwindTheme();
-  const mutedColor = theme["--color-icon-subtle"];
-  if (!props.hasMoreHistory && props.error === null) {
-    return null;
-  }
-  return (
-    <View className="mb-3 items-center gap-1.5 px-2">
-      {props.hasMoreHistory ? (
-        <View className="self-center">
-          <Button
-            label={props.loading ? "Loading earlier activity…" : "Load earlier activity"}
-            tone="secondary"
-            accessibilityLabel="Load earlier activity"
-            disabled={props.loading}
-            onPress={props.onLoadEarlier}
-            icon="chevron.up"
-            loading={props.loading}
-          />
-        </View>
-      ) : null}
-      {props.error !== null ? (
-        <Text className="text-center text-xs" style={{ color: mutedColor }}>
-          {props.error}
-        </Text>
-      ) : null}
-    </View>
-  );
-}
 
 function MessageImageGalleryScope(props: {
   entry: ThreadFeedRow;
