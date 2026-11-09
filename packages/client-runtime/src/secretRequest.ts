@@ -1,5 +1,6 @@
 import {
   SecretReference,
+  secretRequestPageUrl,
   type OrchestrationV2TurnItem,
   type SecretProviderId,
   type SecretRequestAnswerInput,
@@ -21,6 +22,45 @@ export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery
     ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
     : "Stored securely, never shown to the agent";
 export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+
+// Backticks, <angle brackets> and markdown link targets keep their exact text; a bare link drops
+// trailing sentence punctuation.
+const REASON_LINK =
+  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
+const trimPunctuation = (link: string) => link.replace(/[.,;:!?)]+$/u, "");
+
+/** Drops a closing `**`, `__`, `*` or `_` only when the same run opened emphasis before the link and is still open. */
+function trimEmphasis(link: string, before: string) {
+  const run = /(\*\*|__|\*|_)$/u.exec(link)?.[1];
+  if (run === undefined) return link;
+  const escaped = run.replaceAll("*", "\\*");
+  const opener = [...before.matchAll(new RegExp(`(?:^|[\\s(])${escaped}(?=\\S|$)`, "gu"))].at(-1);
+  if (opener === undefined) return link;
+  const closed = new RegExp(`\\S${escaped}(?:[\\s.,;:!?)]|$)`, "u").test(
+    before.slice(opener.index + opener[0].length),
+  );
+  return closed ? link : trimPunctuation(link.slice(0, -run.length));
+}
+
+/** The one distinct http(s) link in `reason`, for agents that put it there instead of in `url`. */
+function reasonLink(reason: string): string | undefined {
+  const links = new Set(
+    Array.from(reason.matchAll(REASON_LINK), (match) => {
+      const [, ticked, angled, target, bare] = match;
+      return bare === undefined
+        ? (ticked ?? angled ?? target ?? "")
+        : trimEmphasis(trimPunctuation(bare), reason.slice(0, match.index));
+    }),
+  );
+  return links.size === 1 ? [...links][0] : undefined;
+}
+
+/** Only http(s), so an agent cannot make the card open another scheme. */
+export function secretRequestLink(item: Pick<SecretRequestItem, "url" | "reason">) {
+  const raw = item.url ?? reasonLink(item.reason);
+  const url = raw === undefined ? null : secretRequestPageUrl(raw);
+  return url === null ? null : { href: url.href, host: url.host };
+}
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }

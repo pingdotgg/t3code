@@ -4,6 +4,7 @@ import {
   secretRequestAnswerInput,
   secretRequestDisplay,
   secretRequestFailureMessage,
+  secretRequestLink,
   secretRequestPrivacyNote,
   secretRequestReference,
   secretRequestSources,
@@ -21,7 +22,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { CheckIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
+import { CheckIcon, ExternalLinkIcon, LockIcon, MinusIcon, ShieldCheckIcon } from "lucide-react";
 import { useId, useRef, useState, type FormEvent } from "react";
 
 import { isSecretsFeatureEnabled } from "../../env";
@@ -125,6 +126,7 @@ function PendingSecretRequestForm(props: {
     }
   };
   const draft = source === null ? secret : reference;
+  const link = secretRequestLink(item);
   const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
 
   return (
@@ -151,6 +153,17 @@ function PendingSecretRequestForm(props: {
           <p className="text-sm wrap-anywhere text-muted-foreground">{item.reason}</p>
         ) : null}
       </div>
+      {link !== null ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
+        >
+          Open {link.host}
+          <ExternalLinkIcon aria-hidden />
+        </Button>
+      ) : null}
       <div className="flex min-w-0 items-center gap-2">
         {sources.length > 0 ? (
           <SecretSourceSelect
