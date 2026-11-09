@@ -50,6 +50,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { cn } from "~/lib/utils";
 import { listBrowserMicrophones, type BrowserMicrophone } from "../../speech/browserMicrophones";
 import { preferredSpeechLanguages } from "../../speech/preferredSpeechLanguages";
 import {
@@ -172,6 +173,8 @@ type ModelCardProps = {
   readonly onCancel: () => void;
   readonly onDelete: () => void;
   readonly testControls?: ReactNode;
+  /** Keeps the controls under the text, so a live test never squeezes the model's details. */
+  readonly stacked?: boolean;
   readonly children?: ReactNode;
 };
 
@@ -193,7 +196,13 @@ function ModelCard(props: ModelCardProps) {
   const progress = model.downloaded === undefined ? 0 : (model.downloaded / model.size) * 100;
   return (
     <div className="@container/model px-3 py-3">
-      <div className="flex flex-col gap-2.5 @min-[28rem]/model:flex-row @min-[28rem]/model:items-start @min-[28rem]/model:gap-4">
+      <div
+        className={cn(
+          "flex flex-col gap-2.5",
+          !props.stacked &&
+            "@min-[28rem]/model:flex-row @min-[28rem]/model:items-start @min-[28rem]/model:gap-4",
+        )}
+      >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-sm font-medium leading-5">{model.name}</span>
@@ -1025,6 +1034,7 @@ function TranscriptionTest(props: {
     <SettingsSearchTarget {...searchableSetting("transcription-test")} hidden={props.hidden}>
       <ModelCard
         {...props.card}
+        stacked={showTranscript}
         testControls={
           <div className="flex min-w-0 max-w-full items-center gap-1">
             <ComposerSpeechRecordingPill

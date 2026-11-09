@@ -165,15 +165,15 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
       if (capture.current !== current) return;
       releaseCapture();
       setPhase("idle");
+      const name = typeof cause === "object" && cause !== null && "name" in cause && cause.name;
       setError(
-        typeof cause === "object" &&
-          cause !== null &&
-          "name" in cause &&
-          cause.name === "NotAllowedError"
+        name === "NotAllowedError"
           ? MICROPHONE_PERMISSION_ERROR
-          : cause instanceof Error
-            ? cause.message
-            : "Could not access the microphone.",
+          : name === "NotFoundError"
+            ? "No microphone found."
+            : cause instanceof Error
+              ? cause.message
+              : "Could not access the microphone.",
       );
     }
   };
@@ -215,7 +215,7 @@ export function MicrophoneTest({ microphoneId }: { microphoneId: string }) {
   ) : phase === "recording" ? (
     <>
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-destructive" />
-      <div className="flex w-36 min-w-0">
+      <div className="flex w-24 min-w-0">
         <VoiceWaveform level={level} />
       </div>
       <span
