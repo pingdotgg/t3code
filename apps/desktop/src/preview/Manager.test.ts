@@ -1,5 +1,6 @@
 import { it as effectIt } from "@effect/vitest";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   DesktopPreviewRecordingInputEvent,
   PreviewAnnotationPayload,
@@ -7,6 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { parseKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { app, shell } from "electron";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -169,6 +171,7 @@ const {
 }));
 
 vi.mock("electron", () => ({
+  app: { getPath: vi.fn() },
   BrowserWindow: browserWindowConstructor,
   // oxlint-disable-next-line typescript/no-extraneous-class -- This constructor-only mock implements the browser ClipboardItem API.
   ClipboardItem: class {
@@ -570,6 +573,103 @@ describe("PreviewManager", () => {
     createFromPath.mockClear();
     webviewSend.mockClear();
   });
+
+  effectIt.effect.each([false, true])(
+    "preserves simultaneous same-name downloads with an existing destination: %s",
+    (existing) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-download-test-" });
+        const downloads = `${dir}/downloads`;
+        yield* fs.makeDirectory(downloads);
+        using _downloads = vi.spyOn(app, "getPath").mockReturnValue(downloads);
+        if (existing) yield* fs.writeFileString(`${downloads}/report.txt`, "existing download");
+        const sources = [`${dir}/first`, `${dir}/second`];
+        yield* fs.writeFileString(sources[0]!, "first download");
+        yield* fs.writeFileString(sources[1]!, "second download");
+        const checked = yield* Deferred.make<void>();
+        const finished = makeChangeSignal();
+        let probes = 0;
+        let completions = 0;
+        using _reveal = vi.spyOn(shell, "showItemInFolder").mockImplementation(() => {
+          completions += 1;
+          finished.notify();
+        });
+        const raceTarget = `${downloads}/${existing ? "report (1).txt" : "report.txt"}`;
+        const exists = (target: string) =>
+          Effect.gen(function* () {
+            const found = yield* fs.exists(target);
+            if (target === raceTarget) {
+              if (++probes === 2) yield* Deferred.succeed(checked, undefined);
+              yield* Deferred.await(checked);
+            }
+            return found;
+          });
+        const manager = yield* PreviewManager.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, { ...fs, exists }),
+          Effect.provide(
+            Layer.mergeAll(
+              layerEnvironment,
+              layerBrowserSession,
+              Layer.mock(DesktopBrowserHost.DesktopBrowserHost)({
+                attach: () => {},
+                detach: () => {},
+                setShown: () => {},
+                humanStartedDownload: () => true,
+                placeDownload: () => true,
+              }),
+              Layer.mock(PreviewPasskeys.PreviewPasskeys)({
+                bridgeEnabled: false,
+                installSessionHandlers: () => {},
+                attachGuest: () => () => {},
+              }),
+              Layer.mock(DesktopRendererHistory.DesktopRendererHistory)({}),
+              Layer.succeed(HostProcess.Platform, "linux"),
+            ),
+          ),
+        );
+        yield* manager.getBrowserSession("downloads");
+        const listener = previewSession.on.mock.calls[0]![1] as (
+          event: unknown,
+          item: {
+            once: (event: string, done: (event: unknown, state: string) => void) => void;
+            getFilename: () => string;
+            getSavePath: () => string;
+          },
+          source: unknown,
+        ) => void;
+        for (const source of sources) {
+          listener(
+            {},
+            {
+              once: (_event, done) => done({}, "completed"),
+              getFilename: () => "report.txt",
+              getSavePath: () => source,
+            },
+            {},
+          );
+        }
+        yield* finished.until(() => completions === 2);
+        const names = yield* fs.readDirectory(downloads);
+        expect(names.toSorted()).toEqual(
+          existing
+            ? ["report (1).txt", "report (2).txt", "report.txt"]
+            : ["report (1).txt", "report.txt"],
+        );
+        const contents = yield* Effect.forEach(names, (name) =>
+          fs.readFileString(`${downloads}/${name}`),
+        );
+        expect(contents.toSorted()).toEqual(
+          (existing
+            ? ["existing download", "first download", "second download"]
+            : ["first download", "second download"]
+          ).toSorted(),
+        );
+        if (existing) {
+          expect(yield* fs.readFileString(`${downloads}/report.txt`)).toBe("existing download");
+        }
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+  );
 
   effectIt.effect.each([
     ["linux", "ctrl+alt+[", "[", "BracketLeft", false],
