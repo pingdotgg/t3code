@@ -160,7 +160,7 @@ export function parseGitHubRemoteRepositorySelector(
   const remote = remoteUrl.trim().replace(/\/+$/g, "");
   const url = URL.parse(remote);
   const selector =
-    url !== null
+    url !== null && url.host !== ""
       ? `https://${host}${url.pathname}`
       : isSshRemoteUrl(remote)
         ? remote.slice(remote.indexOf(":") + 1)

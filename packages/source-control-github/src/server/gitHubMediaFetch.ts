@@ -254,7 +254,7 @@ export const make = Effect.gen(function* () {
       MEDIA_CONTENT_TYPE_PATTERN.test(contentTypeOf(media))
     ) {
       // The render can run under another account if the user switched mid-request.
-      const current = yield* credentialFor(request);
+      const current = yield* credentialFor(request).pipe(Effect.orElseSucceed(() => null));
       if (current?.fingerprint === signedIn.fingerprint) {
         if (signedUrls.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
           const oldest = signedUrls.keys().next().value;

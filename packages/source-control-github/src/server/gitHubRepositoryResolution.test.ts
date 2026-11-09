@@ -176,10 +176,14 @@ describe("repository credential selector spelling", () => {
     "ssh://git@github.com/OwnerA/Repo.git",
     "git@github.com:OwnerA/Repo.git",
     "git@github-work:OwnerA/Repo.git",
+    "github.com:OwnerA/Repo.git",
+    "github-work:OwnerA/Repo.git",
     "https://github.com/OwnerA/Repo.git/",
     "ssh://git@github.com/OwnerA/Repo.git/",
     "git@github.com:OwnerA/Repo.git/",
     "git@github-work:OwnerA/Repo.git/",
+    "github.com:OwnerA/Repo.git/",
+    "github-work:OwnerA/Repo.git/",
   ])("preserves %s only when requested", (remote) => {
     const input = {
       remotes: `origin\t${remote} (fetch)`,

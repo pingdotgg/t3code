@@ -14,14 +14,18 @@ import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 const PR_REPOSITORY = "enterprise/private";
 
 /** An SSO organization: the upload URL answers with a sign-in page, a rendered signed URL with bytes. */
-const makeSsoFixture = (uploadUrl: string, scoped = false) => {
+const makeSsoFixture = (uploadUrl: string, scoped = false, refreshFailure = false) => {
   const state = { account: "account-a", expired: new Set<string>() };
+  let lookups = 0;
   const rendered: Array<GitHubRest.GitHubRestInput> = [];
   const signedUrls: Array<string> = [];
   const requests: Array<{ url: string; authorization?: string; range?: string }> = [];
   const credential = (host: string, repository?: string) =>
-    Effect.sync(() => {
+    Effect.gen(function* () {
       if (scoped) expect(repository).toBe(PR_REPOSITORY);
+      if (++lookups === 2 && refreshFailure) {
+        return yield* new GitHubCredentials.GitHubGitCredentialError({ host, reason: "process" });
+      }
       return {
         host,
         token: Redacted.make(state.account),
@@ -615,11 +619,15 @@ describe("GitHubMediaFetch", () => {
     );
   });
 
-  it.effect.each([false, true])(
-    "renders SSO uploads in the PR repository and reuses the signed URL for a range (scoped: %s)",
-    (scoped) => {
+  it.effect.each([
+    { scoped: false, refreshFailure: false },
+    { scoped: true, refreshFailure: false },
+    { scoped: true, refreshFailure: true },
+  ])(
+    "renders SSO uploads and caches only after credential refresh: scoped $scoped, failure $refreshFailure",
+    ({ scoped, refreshFailure }) => {
       const url = "https://github.com/user-attachments/assets/explicit-pr-context";
-      const fixture = makeSsoFixture(url, scoped);
+      const fixture = makeSsoFixture(url, scoped, refreshFailure);
       return Effect.gen(function* () {
         const fetchMedia = yield* GitHubMediaFetch.make;
         const request = { url, headers: {}, repository: PR_REPOSITORY };
@@ -627,7 +635,7 @@ describe("GitHubMediaFetch", () => {
         expect((yield* fetchMedia({ ...request, headers: { range: "bytes=2-5" } }))?.status).toBe(
           206,
         );
-        expect(fixture.rendered).toHaveLength(1);
+        expect(fixture.rendered).toHaveLength(refreshFailure ? 2 : 1);
         expect(fixture.rendered[0]).toMatchObject({
           host: "github.com",
           method: "POST",
@@ -638,7 +646,10 @@ describe("GitHubMediaFetch", () => {
         expect(fixture.requests).toEqual([
           { url, authorization: "Bearer account-a" },
           { url: fixture.signedUrls[0] },
-          { url: fixture.signedUrls[0], range: "bytes=2-5" },
+          ...(refreshFailure
+            ? [{ url, authorization: "Bearer account-a", range: "bytes=2-5" }]
+            : []),
+          { url: fixture.signedUrls.at(-1), range: "bytes=2-5" },
         ]);
       }).pipe(
         Effect.provide(fixture.layer),
