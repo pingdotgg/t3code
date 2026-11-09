@@ -134,12 +134,20 @@ function PendingSecretRequestForm(props: {
         ) : null}
       </View>
       {link !== null ? (
-        <Button
-          label={`Open ${link.host}`}
-          tone="secondary"
-          fullWidth
-          onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
-        />
+        <View className="gap-1.5">
+          <Button
+            label={`Open ${link.host}`}
+            tone="secondary"
+            fullWidth
+            onPress={() => void tryOpenExternalUrl(link.href, "secret-request")}
+          />
+          {/* A link found in the reason is already shown there. */}
+          {item.url !== undefined ? (
+            <Text selectable className="font-mono text-xs text-foreground-muted">
+              {item.url}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
       {sources.length > 0 ? (
         <View className="flex-row flex-wrap gap-2">

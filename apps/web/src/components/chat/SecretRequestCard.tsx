@@ -154,15 +154,20 @@ function PendingSecretRequestForm(props: {
         ) : null}
       </div>
       {link !== null ? (
-        <Button
-          variant="outline"
-          size="sm"
-          className="self-start"
-          render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
-        >
-          Open {link.host}
-          <ExternalLinkIcon aria-hidden />
-        </Button>
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
+          >
+            Open {link.host}
+            <ExternalLinkIcon aria-hidden />
+          </Button>
+          {/* A link found in the reason is already shown there. */}
+          {item.url !== undefined ? (
+            <p className="font-mono text-xs wrap-anywhere text-muted-foreground">{item.url}</p>
+          ) : null}
+        </div>
       ) : null}
       <div className="flex min-w-0 items-center gap-2">
         {sources.length > 0 ? (
