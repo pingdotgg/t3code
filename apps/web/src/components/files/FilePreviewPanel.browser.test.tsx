@@ -191,17 +191,8 @@ describe("file view comments", () => {
 
     await using screen = await render(filePreview("config.ts"));
 
-    const fileView = await vi.waitFor(() => {
-      const element = screen.container.querySelector("diffs-container");
-      expect(element).not.toBeNull();
-      return element!;
-    });
-    const inlineAnnotations = Array.from(
-      fileView.querySelectorAll<HTMLElement>('[slot^="annotation-"]'),
-      (slot) => [slot.slot, slot.textContent],
-    );
-    expect(inlineAnnotations).toEqual([
-      ["annotation-2", expect.stringContaining("Repro note on line two")],
-    ]);
+    const inlineComment = screen.getByText("Repro note on line two");
+    await expect.element(inlineComment).toBeVisible();
+    expect(inlineComment.element().closest("[slot]")?.getAttribute("slot")).toBe("annotation-2");
   });
 });
