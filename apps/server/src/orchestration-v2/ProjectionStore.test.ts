@@ -8527,3 +8527,177 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 });
+
+it.effect("SCRATCH 33409: lineage loses settled children of older turns", () =>
+  Effect.gen(function* () {
+    const { omitIdleSubagentShells } = yield* Effect.promise(() => import("./ShellStream.ts"));
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:lineage-window");
+    const threadPayload = (id: ThreadId, parent: ThreadId | null) => ({
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      id,
+      projectId: ProjectId.make("project:lineage-window"),
+      title: id,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      lineage:
+        parent === null
+          ? { parentThreadId: null, relationshipToParent: null, rootThreadId: id }
+          : {
+              parentThreadId: parent,
+              relationshipToParent: "subagent" as const,
+              rootThreadId: parent,
+            },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    });
+    yield* store.apply({
+      id: EventId.make("event:lineage-window:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: threadPayload(threadId, null),
+    });
+    const turnCount = THREAD_HISTORY_PAGE_POLICY.maxUserTurns + 5;
+    let ordinal = 0;
+    for (let turn = 1; turn <= turnCount; turn += 1) {
+      const runId = RunId.make(`run:lineage-window:${turn}`);
+      const nodeId = NodeId.make(`node:lineage-window:${turn}`);
+      yield* store.apply({
+        id: EventId.make(`event:lineage-window:run:${turn}`),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: turn,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:lineage-window:${turn}`),
+          rootNodeId: nodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:lineage-window:message:${turn}`),
+        type: "turn-item.updated",
+        threadId,
+        runId,
+        nodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:lineage-window:message:${turn}`),
+          threadId,
+          runId,
+          nodeId,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: ++ordinal,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make(`message:lineage-window:${turn}`),
+          inputIntent: "turn_start",
+          text: `Turn ${turn}`,
+          attachments: [],
+        },
+      });
+      const childThreadId = ThreadId.make(`thread:lineage-window:child-${turn}`);
+      yield* store.apply({
+        id: EventId.make(`event:lineage-window:child-${turn}`),
+        type: "thread.created",
+        threadId: childThreadId,
+        occurredAt: now,
+        payload: threadPayload(childThreadId, threadId),
+      });
+      const subagentId = NodeId.make(`node:lineage-window:subagent-${turn}`);
+      yield* store.apply({
+        id: EventId.make(`event:lineage-window:subagent-${turn}`),
+        type: "subagent.updated",
+        threadId,
+        runId,
+        nodeId: subagentId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: subagentId,
+          threadId,
+          runId,
+          parentNodeId: nodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Do the work",
+          title: `child-${turn}`,
+          model: null,
+          completionDelivery: { state: "delivered", observedByRunId: null },
+          status: "completed",
+          result: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    const stored = yield* store.getThreadRecords(threadId, ["subagents"]);
+    const window = yield* store.getThreadSnapshotWindow(threadId, {
+      rowLimit: THREAD_HISTORY_PAGE_POLICY.maxItems + 2,
+      userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+    });
+    const shell = yield* store.getShellSnapshot();
+    const shellChildren = omitIdleSubagentShells(shell.threads).filter(
+      (thread) => thread.lineage.parentThreadId === threadId,
+    );
+    const windowChildren = window.projection.subagents.flatMap((s) =>
+      s.childThreadId === null ? [] : [s.childThreadId],
+    );
+    const discoverable = new Set([...windowChildren, ...shellChildren.map((t) => t.id)]);
+    console.log(
+      JSON.stringify({
+        storedSubagents: stored.subagents.length,
+        windowSubagents: window.projection.subagents.length,
+        shellChildrenAfterOmitIdle: shellChildren.length,
+        shellChildrenAll: shell.threads.filter((t) => t.lineage.parentThreadId === threadId).length,
+        discoverableChildren: discoverable.size,
+      }),
+    );
+    assert.strictEqual(discoverable.size, turnCount, "every stored child should be discoverable");
+  }).pipe(Effect.provide(layerTest)),
+);
