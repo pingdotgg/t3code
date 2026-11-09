@@ -1078,13 +1078,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
         180deg,
         color-mix(
           in srgb,
-          var(--surface-tint, var(--muted-foreground)) calc(38 / 255 * 100%),
-          transparent
+          var(--surface-tint, var(--muted-foreground)) var(--tint-fill-top, calc(38 / 255 * 100%)),
+          var(--tint-fill-base, transparent)
         ),
         color-mix(
           in srgb,
-          var(--surface-tint, var(--muted-foreground)) calc(18 / 255 * 100%),
-          transparent
+          var(--surface-tint, var(--muted-foreground))
+            var(--tint-fill-bottom, calc(18 / 255 * 100%)),
+          var(--tint-fill-base, transparent)
         )
       )
     )
@@ -1093,18 +1094,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 @utility surface-tint-rim {
   padding: 1px;
   background: var(
-    --surface-tint-rim,
-    linear-gradient(
-      180deg,
-      color-mix(
-        in srgb,
-        var(--surface-tint, var(--muted-foreground)) calc(102 / 255 * 100%),
-        transparent
-      ),
-      color-mix(
-        in srgb,
-        var(--surface-tint, var(--muted-foreground)) calc(26 / 255 * 100%),
-        transparent
+    --tint-rim,
+    var(
+      --surface-tint-rim,
+      linear-gradient(
+        180deg,
+        color-mix(
+          in srgb,
+          var(--surface-tint, var(--muted-foreground)) calc(102 / 255 * 100%),
+          transparent
+        ),
+        color-mix(
+          in srgb,
+          var(--surface-tint, var(--muted-foreground)) calc(26 / 255 * 100%),
+          transparent
+        )
       )
     )
   );
@@ -1235,8 +1239,67 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 /* The composer: tray around it, text box inside, and the user's prompt. */
 @utility surface-tray {
   border: 1px solid var(--tray-stroke);
-  background: var(--tray-fill) padding-box;
+  background: var(--tray-fill) var(--tray-background-clip, padding-box);
   box-shadow: var(--tray-shadow);
+}
+@utility surface-composer-banner {
+  background: var(--composer-banner-fill, transparent);
+}
+@utility surface-app-panel {
+  border: 1px solid
+    var(--app-panel-stroke, color-mix(in oklab, var(--color-black) 10%, transparent));
+  background: var(--app-panel-fill, light-dark(#fafafa, #171717));
+  box-shadow: var(--app-panel-shadow, 0 24px 64px #00000040);
+  @variant dark {
+    border-color: var(--app-panel-stroke, color-mix(in oklab, var(--color-white) 10%, transparent));
+    box-shadow: var(--app-panel-shadow, inset 0 1px 0 #ffffff12, 0 24px 64px #000000cc);
+  }
+}
+@utility surface-outline {
+  border-color: var(--outline-stroke, var(--contrast-border)) !important;
+  background: var(--outline-fill, transparent);
+}
+@utility surface-floating {
+  @apply shadow-sm;
+  border-color: var(
+    --floating-stroke,
+    color-mix(in oklab, var(--contrast-border) 60%, transparent)
+  );
+  background: var(--floating-fill, var(--background));
+  --tw-shadow: var(--floating-shadow, var(--shadow-sm));
+}
+@utility surface-neutral-pill {
+  @apply surface-pill;
+  --pill-fill: var(--button-pill-fill, var(--ss-default-pill-fill));
+  --pill-foreground: var(--ss-default-pill-foreground);
+  --pill-icon: var(--ss-default-pill-icon);
+  --pill-rim: var(--button-pill-rim, var(--ss-default-pill-rim, var(--ss-default-raised-rim)));
+  --pill-shadow: var(--button-pill-shadow, var(--ss-default-pill-shadow));
+}
+@utility surface-media-control {
+  @apply shadow-sm ring-1;
+  --tw-ring-color: var(
+    --media-control-rim,
+    color-mix(in oklab, var(--color-white) 20%, transparent)
+  );
+  --tw-shadow: var(--media-control-shadow, var(--shadow-sm));
+}
+@utility surface-search-separator {
+  border-color: var(
+    --search-separator-stroke,
+    color-mix(in oklab, var(--contrast-border) 70%, transparent)
+  );
+}
+@utility surface-floating-hover {
+  border-color: var(--floating-stroke, var(--contrast-border));
+}
+@utility surface-command-input {
+  background: var(--command-input-fill, transparent);
+  box-shadow: var(--command-input-shadow, inset 0 -1px var(--divider));
+}
+@utility surface-command-footer {
+  background: var(--command-footer-fill, transparent);
+  box-shadow: var(--command-footer-shadow, inset 0 1px var(--divider));
 }
 @utility surface-composer {
   background: var(--composer-fill);
@@ -3334,6 +3397,15 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 [data-surface-preview] {
+  --composer-pill-fill: initial;
+  --composer-pill-rim: initial;
+  --composer-pill-shadow: initial;
+  --composer-banner-fill: initial;
+  --tray-background-clip: initial;
+  --tint-fill-top: initial;
+  --tint-fill-bottom: initial;
+  --tint-fill-base: initial;
+  --tint-rim: initial;
   --composer-fill: var(--ss-default-composer-fill);
   --composer-shadow: var(--ss-default-composer-shadow);
   --control-radius: var(--ss-default-control-radius);
@@ -3365,176 +3437,113 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tray-stroke: var(--ss-default-tray-stroke);
 }
 
-/* Flat: T3 Code's look before the redesign (origin/main's components/ui):
-   solid fills, soft low-contrast borders, a 1px top highlight on primary
-   and destructive buttons, and outline secondary controls. Light values
-   follow main's zinc palette, dark values main's white alphas. */
+/* Flat (pen I71Cep / V9qBNv): no depth. Solid fills do all the work;
+   controls and composer use the high fill, trays the middle fill, and
+   attached banners a separate fill. Rims, gloss and shadows stay empty. */
 :root[data-surface-style="flat"] > body,
-[data-surface-preview="flat"] {
+[data-surface-preview="flat"],
+:root.black-chrome[data-surface-style="flat"] [data-chrome-scope] {
+  --flat-high: oklch(from var(--background) calc(l + 0.03) c h);
+  --flat-middle: oklch(from var(--background) calc(l + 0.015) c h);
+  --flat-banner: oklch(from var(--background) calc(l - 0.015) c h);
+  --flat-pill: oklch(from var(--background) calc(l - 0.021) c h);
+  --success-foreground: oklch(from var(--success) min(l, 0.48) c h);
+  --warning-foreground: oklch(from var(--warning) min(l, 0.48) c h);
+  --kbd-on-destructive-foreground: var(--foreground);
   --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
   --lit-hover-fill: linear-gradient(
     color-mix(in srgb, var(--primary) 90%, var(--background)),
     color-mix(in srgb, var(--primary) 90%, var(--background))
   ) !important;
   --lit-rim: var(--ss-none) !important;
-  --lit-shadow:
-    inset 0 1px rgb(255 255 255 / 16%),
-    0 1px 2px color-mix(in srgb, var(--primary) 24%, transparent) !important;
-  --lit-hover-shadow: var(--lit-shadow) !important;
+  --lit-shadow: 0 0 #0000 !important;
+  --lit-hover-shadow: 0 0 #0000 !important;
   --control-radius: 8px !important;
-  --raised-fill: linear-gradient(
-    oklch(from var(--background) calc(l + 0.03) c h),
-    oklch(from var(--background) calc(l + 0.03) c h)
-  ) !important;
+  --raised-fill: linear-gradient(var(--flat-high), var(--flat-high)) !important;
   --raised-hover-fill: linear-gradient(
-    color-mix(in srgb, oklch(from var(--background) calc(l + 0.03) c h), var(--foreground) 2.5%),
-    color-mix(in srgb, oklch(from var(--background) calc(l + 0.03) c h), var(--foreground) 2.5%)
+    color-mix(in srgb, var(--flat-high) 94%, var(--foreground)),
+    color-mix(in srgb, var(--flat-high) 94%, var(--foreground))
   ) !important;
-  --raised-rim: linear-gradient(
-    color-mix(in srgb, var(--foreground) 20%, transparent),
-    color-mix(in srgb, var(--foreground) 20%, transparent)
-  ) !important;
-  --raised-hover-rim: var(--raised-rim) !important;
-  --raised-shadow: 0 1px 2px rgb(0 0 0 / 5%) !important;
-  --raised-hover-shadow: var(--raised-shadow) !important;
+  --raised-rim: var(--ss-none) !important;
+  --raised-hover-rim: var(--ss-none) !important;
+  --raised-shadow: 0 0 #0000 !important;
+  --raised-hover-shadow: 0 0 #0000 !important;
   --raised-label: var(--foreground) !important;
-  --destructive-fill: linear-gradient(var(--destructive), var(--destructive)) !important;
+  --flat-destructive: oklch(from var(--destructive) calc(l - 0.1) c h);
+  --destructive-fill: linear-gradient(var(--flat-destructive), var(--flat-destructive)) !important;
   --destructive-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--destructive) 90%, var(--background)),
-    color-mix(in srgb, var(--destructive) 90%, var(--background))
+    color-mix(in srgb, var(--flat-destructive) 90%, #000),
+    color-mix(in srgb, var(--flat-destructive) 90%, #000)
   ) !important;
   --destructive-rim: var(--ss-none) !important;
-  --destructive-shadow:
-    inset 0 1px rgb(255 255 255 / 16%),
-    0 1px 2px color-mix(in srgb, var(--destructive) 24%, transparent) !important;
+  --destructive-shadow: 0 0 #0000 !important;
   --destructive-label: var(--destructive-fill-foreground) !important;
-  --danger-hover-fill:
-    linear-gradient(
-      color-mix(in srgb, var(--destructive) 4%, transparent),
-      color-mix(in srgb, var(--destructive) 4%, transparent)
-    ),
-    var(--raised-fill) !important;
-  --danger-hover-rim: linear-gradient(
-    color-mix(in srgb, var(--destructive) 32%, transparent),
-    color-mix(in srgb, var(--destructive) 32%, transparent)
+  --danger-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--destructive) 8%, var(--flat-high)),
+    color-mix(in srgb, var(--destructive) 8%, var(--flat-high))
   ) !important;
-  --pill-fill: var(--raised-fill) !important;
-  --pill-rim: var(--raised-rim) !important;
-  --pill-shadow: var(--raised-shadow) !important;
-  --tray-fill: linear-gradient(var(--card), var(--card)) !important;
-  --tray-stroke: color-mix(in srgb, var(--foreground) 9%, transparent) !important;
-  --tray-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%) !important;
-  --composer-fill: var(--tray-fill) !important;
+  --danger-hover-rim: var(--ss-none) !important;
+  --pill-fill: linear-gradient(var(--flat-pill), var(--flat-pill)) !important;
+  --pill-rim: var(--ss-none) !important;
+  --pill-shadow: 0 0 #0000 !important;
+  --composer-pill-fill: var(--pill-fill);
+  --composer-pill-rim: var(--ss-none);
+  --composer-pill-shadow: 0 0 #0000;
+  --tray-fill: linear-gradient(var(--flat-middle), var(--flat-middle)) !important;
+  --tray-stroke: transparent !important;
+  --tray-background-clip: border-box;
+  --tray-shadow: none !important;
+  --composer-fill: var(--raised-fill) !important;
   --composer-shadow: none !important;
+  --composer-banner-fill: var(--flat-banner);
+  --contrast-muted-foreground: color-mix(
+    in srgb,
+    var(--muted-foreground) 92%,
+    var(--foreground)
+  ) !important;
+  --contrast-placeholder: var(--contrast-muted-foreground) !important;
+  --contrast-dim-foreground: var(--contrast-muted-foreground) !important;
 }
 
 :root.dark[data-surface-style="flat"] > body,
 :root.dark [data-surface-preview="flat"],
 :root.black-chrome[data-surface-style="flat"] [data-chrome-scope] {
-  --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
-  --lit-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--primary) 90%, var(--background)),
-    color-mix(in srgb, var(--primary) 90%, var(--background))
+  --flat-high: oklch(from var(--background) calc(l + 0.073) c h);
+  --flat-middle: oklch(from var(--background) calc(l + 0.026) c h);
+  --flat-banner: oklch(from var(--background) calc(l + 0.048) c h);
+  --flat-pill: oklch(from var(--background) calc(l - 0.037) c h);
+  --contrast-muted-foreground: color-mix(
+    in srgb,
+    var(--muted-foreground) 70%,
+    var(--foreground)
   ) !important;
-  --lit-rim: var(--ss-none) !important;
-  --lit-shadow:
-    inset 0 1px rgb(255 255 255 / 16%),
-    0 1px 2px color-mix(in srgb, var(--primary) 24%, transparent) !important;
-  --lit-hover-shadow: var(--lit-shadow) !important;
-  --control-radius: 8px !important;
-  --raised-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 97%, var(--foreground)),
-    color-mix(in srgb, var(--background) 97%, var(--foreground))
-  ) !important;
-  --raised-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 94%, var(--foreground)),
-    color-mix(in srgb, var(--background) 94%, var(--foreground))
-  ) !important;
-  --raised-rim: linear-gradient(
-    color-mix(in srgb, var(--foreground) 16%, transparent) 0 1px,
-    color-mix(in srgb, var(--foreground) 10%, transparent) 1px
-  ) !important;
-  --raised-hover-rim: var(--raised-rim) !important;
-  --raised-shadow: 0 1px 2px rgb(0 0 0 / 5%) !important;
-  --raised-hover-shadow: var(--raised-shadow) !important;
-  --raised-label: var(--foreground) !important;
-  --destructive-fill: linear-gradient(var(--destructive), var(--destructive)) !important;
-  --destructive-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--destructive) 90%, var(--background)),
-    color-mix(in srgb, var(--destructive) 90%, var(--background))
-  ) !important;
-  --destructive-rim: var(--ss-none) !important;
-  --destructive-shadow:
-    inset 0 1px rgb(255 255 255 / 16%),
-    0 1px 2px color-mix(in srgb, var(--destructive) 24%, transparent) !important;
-  --destructive-label: var(--destructive-fill-foreground) !important;
-  --danger-hover-fill:
-    linear-gradient(
-      color-mix(in srgb, var(--destructive) 4%, transparent),
-      color-mix(in srgb, var(--destructive) 4%, transparent)
-    ),
-    var(--raised-fill) !important;
-  --danger-hover-rim: linear-gradient(
-    color-mix(in srgb, var(--destructive) 32%, transparent),
-    color-mix(in srgb, var(--destructive) 32%, transparent)
-  ) !important;
-  --pill-fill: var(--raised-fill) !important;
-  --pill-rim: var(--raised-rim) !important;
-  --pill-shadow: var(--raised-shadow) !important;
-  --tray-fill: var(--raised-fill) !important;
-  --tray-stroke: color-mix(in srgb, var(--foreground) 6%, transparent) !important;
-  --tray-shadow: inset 0 1px rgb(255 255 255 / 3%) !important;
-  --composer-fill: var(--tray-fill) !important;
-  --composer-shadow: none !important;
-}
-
-/* Flat composer: main's single card. A near-white card (dark: the background
-   lifted 3% toward white) inside a hairline outline with a soft drop in light
-   and a 3% top highlight in dark. The context strip and attached banners take
-   the same card and outline. */
-:is(:root[data-surface-style="flat"], [data-surface-preview="flat"])
-  [data-slot="composer-shell"]:not([data-surface-preview]:not([data-surface-preview="flat"]) *) {
-  --composer-fill: linear-gradient(var(--message-surface), var(--message-surface)) !important;
-  --chat-composer-outline: rgb(0 0 0 / 8%) !important;
-  --composer-shadow:
-    inset 0 0 0 1px var(--chat-composer-outline), 0 12px 28px -18px rgb(0 0 0 / 40%) !important;
-  --tray-fill: var(--composer-fill) !important;
-  --tray-stroke: var(--chat-composer-outline) !important;
-  --tray-shadow: none !important;
-}
-
-:is(:root.dark[data-surface-style="flat"], :root.dark [data-surface-preview="flat"])
-  [data-slot="composer-shell"]:not([data-surface-preview]:not([data-surface-preview="flat"]) *) {
-  --composer-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 97%, #fff),
-    color-mix(in srgb, var(--background) 97%, #fff)
-  ) !important;
-  --chat-composer-outline: rgb(255 255 255 / 5%) !important;
-  --composer-shadow:
-    inset 0 0 0 1px var(--chat-composer-outline), inset 0 1px rgb(255 255 255 / 3%) !important;
+  --success-foreground: oklch(from var(--success) max(l, 0.75) c h);
+  --warning-foreground: oklch(from var(--warning) max(l, 0.75) c h);
+  --error-foreground: oklch(from var(--error) max(l, 0.75) c h);
+  --destructive-foreground: var(--error-foreground);
+  --merged-foreground: oklch(from var(--merged) max(l, 0.75) c h);
 }
 
 /* The composer's mic + send pill stays neutral in every theme and style:
    black in dark mode, light gray in both light appearances, with no channel art. */
 [data-composer-send-pill] {
-  --pill-fill: linear-gradient(#0e0e0e, #0e0e0e);
+  --pill-fill: var(--composer-pill-fill, linear-gradient(#0e0e0e, #0e0e0e));
   --pill-foreground: #d4d4d4;
   --pill-icon: #9e9e9e;
-  --pill-rim: linear-gradient(180deg, #ffffff38, #ffffff05);
-  --pill-shadow: 0 1px 3px #00000054;
+  --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #ffffff38, #ffffff05));
+  --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000054);
   --error-foreground: #f85149;
 }
 
 :root:not(.dark) [data-composer-send-pill] {
-  --pill-fill: linear-gradient(#efefef, #efefef);
+  --pill-fill: var(--composer-pill-fill, linear-gradient(#efefef, #efefef));
   --pill-foreground: #252525;
   --pill-icon: #525252;
-  --pill-rim: linear-gradient(180deg, #00000022, #00000003);
-  --pill-shadow: 0 1px 3px #00000011;
+  --pill-rim: var(--composer-pill-rim, linear-gradient(180deg, #00000022, #00000003));
+  --pill-shadow: var(--composer-pill-shadow, 0 1px 3px #00000011);
 }
 
-/* Flat sliders: main's primary bar on a muted rail, and a background knob
-   ringed in primary so it reads on the bar and the rail alike. */
+/* Flat sliders use solid tracks and thumbs; only keyboard focus adds a ring. */
 @media not (forced-colors: active) {
   :root[data-surface-style="flat"] .settings-slider {
     --settings-slider-bar: linear-gradient(var(--primary), var(--primary));
@@ -3544,32 +3553,32 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     background:
       var(--settings-slider-bar) 0 0 / var(--settings-slider-fill-position) 100% no-repeat,
       color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider::-moz-range-track {
     background: color-mix(in srgb, var(--contrast-muted-foreground) 22%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--contrast-border) 55%, transparent);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider::-webkit-slider-thumb {
-    border: 2px solid var(--primary);
-    background: var(--background);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    border: 0;
+    background: var(--primary);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider::-moz-range-thumb {
-    border: 2px solid var(--primary);
-    background: var(--background);
-    box-shadow: 0 1px 2px color-mix(in srgb, var(--contrast-foreground) 12%, transparent);
+    border: 0;
+    background: var(--primary);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider:hover::-webkit-slider-thumb {
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider:hover::-moz-range-thumb {
-    box-shadow: 0 1px 3px color-mix(in srgb, var(--contrast-foreground) 20%, transparent);
+    box-shadow: none;
   }
 
   :root[data-surface-style="flat"] .settings-slider:focus-visible::-webkit-slider-thumb {
@@ -4140,165 +4149,87 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tree-row-selected-rim: var(--sidebar-row-selected-rim) !important;
 }
 
-/* Flat: main's floating and in-flow surfaces. Popovers and menus take main's
-   10% outline and long soft drop, cards main's border/60-70 hairline over a
-   near-background fill, inputs and switch tracks main's input color, hovers
-   and menu rows main's accent. Dark repeats with main's white alphas and the
-   1px top highlight main draws inside outlined controls and popovers. */
+/* Flat groups and floating surfaces use the same fill ladder as controls. */
 :root[data-surface-style="flat"] > body,
-[data-surface-preview="flat"] {
-  --popover-top: var(--popover-bottom) !important;
-  --popover-rim: linear-gradient(
-    color-mix(in srgb, var(--foreground) 10%, transparent),
-    color-mix(in srgb, var(--foreground) 10%, transparent)
-  ) !important;
-  --popover-shadow: 0 16px 40px -18px rgb(0 0 0 / 55%) !important;
-  --tooltip-shadow: 0 4px 6px -1px rgb(0 0 0 / 5%), 0 2px 4px -2px rgb(0 0 0 / 5%) !important;
-  --palette-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%) !important;
-  --dialog-shadow: 0 24px 64px -24px rgb(0 0 0 / 65%) !important;
-  /* Cards carry their hairline in the fill's border-box layer. */
-  --card-rim: var(--ss-none) !important;
-  --card-fill:
-    linear-gradient(
-        color-mix(in srgb, var(--card) 50%, var(--background)),
-        color-mix(in srgb, var(--card) 50%, var(--background))
-      )
-      padding-box,
-    linear-gradient(
-        color-mix(in srgb, var(--foreground) 9%, transparent),
-        color-mix(in srgb, var(--foreground) 9%, transparent)
-      )
-      border-box !important;
-  --card-settings-fill:
-    linear-gradient(
-        color-mix(in srgb, var(--card) 40%, var(--background)),
-        color-mix(in srgb, var(--card) 40%, var(--background))
-      )
-      padding-box,
-    linear-gradient(
-        color-mix(in srgb, var(--foreground) 7%, transparent),
-        color-mix(in srgb, var(--foreground) 7%, transparent)
-      )
-      border-box !important;
-  --kbd-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 3%, transparent),
-    color-mix(in srgb, var(--foreground) 3%, transparent)
-  ) !important;
-  --kbd-popover-fill: var(--kbd-fill) !important;
-  --kbd-shadow: none !important;
-  --ghost-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 5%, transparent),
-    color-mix(in srgb, var(--foreground) 5%, transparent)
-  ) !important;
-  --selected-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 8%, transparent),
-    color-mix(in srgb, var(--foreground) 8%, transparent)
-  ) !important;
-  --selected-soft-fill: var(--ghost-hover-fill) !important;
-  --sidebar-row-selected-fill: linear-gradient(
-    var(--sidebar-row-active),
-    var(--sidebar-row-active)
-  ) !important;
-  --sidebar-row-selected-rim: transparent !important;
-  --settings-active-rim: var(--ring) !important;
-  --well-fill: linear-gradient(var(--background), var(--background)) !important;
-  --well-rim: var(--raised-rim) !important;
-  --well-shadow: var(--raised-shadow) !important;
-  --well-switch-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 82%, var(--foreground)),
-    color-mix(in srgb, var(--background) 82%, var(--foreground))
-  ) !important;
-  --well-switch-rim: var(--ss-none) !important;
-  --gloss-thumb-fill: linear-gradient(var(--background), var(--background)) !important;
-  --gloss-off-thumb-fill: linear-gradient(var(--background), var(--background)) !important;
-  --bubble-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 95%, var(--foreground)),
-    color-mix(in srgb, var(--background) 95%, var(--foreground))
-  ) !important;
-}
-
-:root.dark[data-surface-style="flat"] > body,
-:root.dark [data-surface-preview="flat"],
+[data-surface-preview="flat"],
 :root.black-chrome[data-surface-style="flat"] [data-chrome-scope] {
-  --popover-top: var(--popover-bottom) !important;
-  --popover-rim: linear-gradient(
-    color-mix(in srgb, var(--foreground) 18%, transparent) 0 1px,
-    color-mix(in srgb, var(--foreground) 12%, transparent) 1px
-  ) !important;
-  --popover-shadow: 0 18px 44px -18px rgb(0 0 0 / 80%) !important;
-  --tooltip-shadow: 0 4px 6px -1px rgb(0 0 0 / 5%), 0 2px 4px -2px rgb(0 0 0 / 5%) !important;
-  --palette-shadow:
-    inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%) !important;
-  --dialog-shadow: inset 0 1px rgb(255 255 255 / 4%), 0 24px 72px -20px rgb(0 0 0 / 90%) !important;
-  /* Cards carry their hairline in the fill's border-box layer. */
+  --popover-top: var(--flat-middle) !important;
+  --popover-bottom: var(--flat-middle) !important;
+  --popover-rim: var(--tray-fill) !important;
+  --popover-shadow: none !important;
+  --tooltip-shadow: none !important;
+  --palette-shadow: none !important;
+  --dialog-shadow: none !important;
+  --app-panel-fill: var(--flat-middle);
+  --app-panel-stroke: transparent;
+  --app-panel-shadow: none;
   --card-rim: var(--ss-none) !important;
-  --card-fill:
-    linear-gradient(
-        color-mix(in srgb, var(--card) 50%, var(--background)),
-        color-mix(in srgb, var(--card) 50%, var(--background))
-      )
-      padding-box,
-    linear-gradient(
-        color-mix(in srgb, var(--foreground) 5.5%, transparent),
-        color-mix(in srgb, var(--foreground) 5.5%, transparent)
-      )
-      border-box !important;
-  --card-settings-fill:
-    linear-gradient(
-        color-mix(in srgb, var(--card) 40%, var(--background)),
-        color-mix(in srgb, var(--card) 40%, var(--background))
-      )
-      padding-box,
-    linear-gradient(
-        color-mix(in srgb, var(--foreground) 4.5%, transparent),
-        color-mix(in srgb, var(--foreground) 4.5%, transparent)
-      )
-      border-box !important;
-  --kbd-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 4%, transparent),
-    color-mix(in srgb, var(--foreground) 4%, transparent)
-  ) !important;
+  --card-fill: var(--tray-fill) !important;
+  --card-settings-fill: var(--tray-fill) !important;
+  --kbd-fill: linear-gradient(var(--flat-banner), var(--flat-banner)) !important;
   --kbd-popover-fill: var(--kbd-fill) !important;
   --kbd-shadow: none !important;
   --ghost-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 5%, transparent),
-    color-mix(in srgb, var(--foreground) 5%, transparent)
+    color-mix(in srgb, var(--foreground) 6%, transparent),
+    color-mix(in srgb, var(--foreground) 6%, transparent)
   ) !important;
   --selected-fill: linear-gradient(
-    color-mix(in srgb, var(--foreground) 8%, transparent),
-    color-mix(in srgb, var(--foreground) 8%, transparent)
+    color-mix(in srgb, var(--foreground) 12%, transparent),
+    color-mix(in srgb, var(--foreground) 12%, transparent)
   ) !important;
   --selected-soft-fill: var(--ghost-hover-fill) !important;
-  --sidebar-row-selected-fill: var(--ghost-hover-fill) !important;
+  --sidebar-row-selected-fill: var(--selected-fill) !important;
   --sidebar-row-selected-rim: transparent !important;
-  --settings-active-rim: var(--ring) !important;
+  --settings-active-rim: transparent !important;
+  --settings-effective-fill: var(--flat-banner) !important;
   --well-fill: var(--raised-fill) !important;
-  --well-rim: var(--raised-rim) !important;
-  --well-shadow: var(--raised-shadow) !important;
-  --well-switch-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 90%, var(--foreground)),
-    color-mix(in srgb, var(--background) 90%, var(--foreground))
-  ) !important;
+  --well-rim: var(--ss-none) !important;
+  --well-shadow: 0 0 #0000 !important;
+  --well-switch-fill: var(--raised-fill) !important;
   --well-switch-rim: var(--ss-none) !important;
-  --gloss-thumb-fill: linear-gradient(var(--background), var(--background)) !important;
+  --gloss-on-fill: var(--lit-fill) !important;
+  --gloss-on-highlight: 0 0 #0000 !important;
+  --gloss-thumb-fill: linear-gradient(
+    var(--primary-foreground),
+    var(--primary-foreground)
+  ) !important;
   --gloss-off-thumb-fill: linear-gradient(
     var(--muted-foreground),
     var(--muted-foreground)
   ) !important;
-  --bubble-fill: linear-gradient(
-    color-mix(in srgb, var(--background) 95%, var(--foreground)),
-    color-mix(in srgb, var(--background) 95%, var(--foreground))
-  ) !important;
-}
-
-/* Flat: main's outline buttons draw their icons in the muted foreground. */
-:root[data-surface-style="flat"]
-  [data-slot="button"].surface-raised:not([data-variant="destructive-outline"]):not(
-    [data-surface-preview]:not([data-surface-preview="flat"]) *
-  ),
-[data-surface-preview="flat"]
-  [data-slot="button"].surface-raised:not([data-variant="destructive-outline"]) {
-  --control-icon-color: var(--contrast-muted-foreground);
+  --slider-thumb-fill: var(--lit-fill);
+  --bubble-fill: var(--raised-fill) !important;
+  --tint-fill-top: 12%;
+  --tint-fill-bottom: 12%;
+  --tint-fill-base: var(--flat-high);
+  --tint-rim: var(--ss-none);
+  --error-alert-fill: linear-gradient(
+    color-mix(in srgb, var(--error) 12%, var(--flat-high)),
+    color-mix(in srgb, var(--error) 12%, var(--flat-high))
+  );
+  --warning-alert-fill: linear-gradient(
+    color-mix(in srgb, var(--warning) 12%, var(--flat-high)),
+    color-mix(in srgb, var(--warning) 12%, var(--flat-high))
+  );
+  --info-alert-fill: linear-gradient(
+    color-mix(in srgb, var(--info) 12%, var(--flat-high)),
+    color-mix(in srgb, var(--info) 12%, var(--flat-high))
+  );
+  --button-pill-fill: var(--raised-fill);
+  --button-pill-rim: var(--ss-none);
+  --button-pill-shadow: 0 0 #0000;
+  --media-control-rim: transparent;
+  --media-control-shadow: 0 0 #0000;
+  --search-separator-stroke: transparent;
+  --outline-stroke: transparent;
+  --outline-fill: var(--raised-fill);
+  --floating-stroke: transparent;
+  --floating-fill: var(--flat-high);
+  --floating-shadow: none;
+  --command-input-fill: var(--flat-high);
+  --command-input-shadow: none;
+  --command-footer-fill: var(--flat-high);
+  --command-footer-shadow: none;
 }
 
 /* Soft gradient: gentle top-to-bottom fills, no edges, small shadows. */
