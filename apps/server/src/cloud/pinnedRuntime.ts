@@ -1,3 +1,4 @@
+import { T3_LEARN_COMMAND } from "@t3tools/shared/t3LearnIdentity";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -470,7 +471,9 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
   const home = yield* HostProcess.HomeDirectory;
-  const launcherName = platform === "win32" ? "t3.cmd" : "t3";
+  // `ominax install` links ominax; upstream's install scripts link t3.
+  const launcherNames =
+    platform === "win32" ? [`${T3_LEARN_COMMAND}.cmd`, "t3.cmd"] : [T3_LEARN_COMMAND, "t3"];
   const launchersFile = path.join(baseDir, PINNED_RUNTIME_DIR, PINNED_RUNTIME_LAUNCHERS_FILE);
   const recorded = (yield* fs.readFileString(launchersFile).pipe(Effect.orElseSucceed(() => "")))
     .split(/\r?\n/)
@@ -480,7 +483,7 @@ const shellLauncherTargets = Effect.fn("cloud.pinned_runtime.shell_launcher_targ
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(platform === "win32" ? ";" : ":"),
   ]
     .filter((directory) => path.isAbsolute(directory))
-    .map((directory) => path.join(directory, launcherName));
+    .flatMap((directory) => launcherNames.map((name) => path.join(directory, name)));
   const versionsDir = pinnedRuntimeVersionsDir(path, baseDir);
   const realVersionsDir = yield* fs
     .realPath(versionsDir)

@@ -8,6 +8,8 @@ in once, and you choose what it may do.
 
 ## Add T3 Code to an assistant app
 
+This needs T3 Connect, which OminaX does not include yet, so OminaX hides it.
+
 Open the command palette (`Cmd/Ctrl+K`) and choose **Use OminaX in another
 app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the
 app, choose what it may do, and follow the step for that app. Assistants like

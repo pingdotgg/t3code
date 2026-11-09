@@ -1,4 +1,5 @@
 import type { TextGeneratorKind, TextGeneratorModel } from "@t3tools/contracts";
+import { T3_LEARN_PRODUCT_NAME } from "@t3tools/shared/t3LearnIdentity";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
@@ -95,7 +96,7 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
     Effect.mapError(
       (cause) =>
         new TextGeneratorRequestError({
-          detail: `${label} returned a reply T3 Code couldn't read.`,
+          detail: `${label} returned a reply ${T3_LEARN_PRODUCT_NAME} couldn't read.`,
           cause,
         }),
     ),

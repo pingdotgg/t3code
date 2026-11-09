@@ -101,6 +101,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
 
 import { APP_BASE_NAME } from "../branding";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -1750,33 +1751,36 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  actionItems.push({
-    kind: "action",
-    value: "action:use-in-another-app",
-    searchTerms: [
-      "mcp",
-      "connector",
-      "another app",
-      "poke",
-      "claude",
-      "chatgpt",
-      "grok",
-      "muse",
-      "instinct",
-      "openclaw",
-      "hermes",
-    ],
-    title: `Use ${APP_BASE_NAME} in another app (MCP)`,
-    icon: <PlugIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      openUseInAnotherApp(
-        currentProjectEnvironmentId ??
-          (paletteRouteTarget?.kind === "server"
-            ? paletteRouteTarget.threadRef.environmentId
-            : null),
-      );
-    },
-  });
+  // The wizard needs T3 Connect, which OminaX builds leave out (D37).
+  if (hasCloudPublicConfig()) {
+    actionItems.push({
+      kind: "action",
+      value: "action:use-in-another-app",
+      searchTerms: [
+        "mcp",
+        "connector",
+        "another app",
+        "poke",
+        "claude",
+        "chatgpt",
+        "grok",
+        "muse",
+        "instinct",
+        "openclaw",
+        "hermes",
+      ],
+      title: `Use ${APP_BASE_NAME} in another app (MCP)`,
+      icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openUseInAnotherApp(
+          currentProjectEnvironmentId ??
+            (paletteRouteTarget?.kind === "server"
+              ? paletteRouteTarget.threadRef.environmentId
+              : null),
+        );
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",

@@ -22,6 +22,7 @@ import { pinnedRuntimePaths, prunePinnedRuntimes } from "../cloud/pinnedRuntime.
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
+  findWindowsShim,
   repointLauncher,
   resolveLauncherPath,
   resolveMirrorVersion,
@@ -324,6 +325,22 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
     yield* fs.symlink(oldExe, launcher);
     return { root, oldExe, newExe, launcher, launchersFile: path.join(root, "runtime/launchers") };
   });
+
+  it.effect("finds the ominax.cmd that ominax install writes on Windows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const executable = path.join(root, "runtime/versions/1.0.0/t3.exe");
+      const shim = path.join(root, "bin", "ominax.cmd");
+      yield* fs.makeDirectory(path.dirname(shim), { recursive: true });
+      yield* fs.writeFileString(shim, `@echo off\r\n"${executable}" %*`);
+      const found = yield* findWindowsShim(executable).pipe(
+        Effect.provideService(HostProcess.Environment, { PATH: path.dirname(shim) }),
+      );
+      assert.equal(found, shim);
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("records a relative launcher path as absolute", () =>
     Effect.gen(function* () {
