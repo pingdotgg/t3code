@@ -192,8 +192,11 @@ it.effect("reuses verified external models without writing to or removing their 
     expect(h.requests).toHaveLength(0);
     yield* h.store.remove(h.model);
     expect(yield* h.fs.readDirectory(external)).toEqual([h.model.filename]);
+    expect([...(yield* h.fs.readFile(file))]).toEqual([...bytes]);
     expect(yield* h.store.isReady(h.model)).toBe(false);
     yield* h.fs.writeFile(file, new Uint8Array(bytes.length));
+    // Both writes can share one filesystem clock tick, and verification is keyed on mtime.
+    yield* h.fs.utimes(file, 1_000, 1_000);
     expect(yield* h.store.installedPath(h.model, [external])).toBeUndefined();
     expect(yield* h.store.isReady(h.model, [external])).toBe(false);
   }).pipe(Effect.provide(dependencies)),
