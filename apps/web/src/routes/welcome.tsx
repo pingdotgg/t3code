@@ -31,15 +31,16 @@ function WelcomeRouteView() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments, isReady } = useEnvironments();
   // Trust the id only once the catalog has it; an unknown computer falls back to this one.
+  const waitingForCatalog = resumeEnvironmentId !== undefined && !isReady;
   const resumeKnown =
     resumeEnvironmentId !== undefined &&
-    (!isReady ||
-      environments.some((environment) => environment.environmentId === resumeEnvironmentId));
+    environments.some((environment) => environment.environmentId === resumeEnvironmentId);
   const environmentId = (resumeKnown ? resumeEnvironmentId : undefined) ?? primaryEnvironmentId;
   // The root can remount this pending outlet after navigation; do not reopen setup.
   const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
   const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
+  if (waitingForCatalog) return null;
   if (environmentId === null || !isWelcomeRoute || dismissed) return <NoProjectsHero />;
   return (
     <WelcomePage

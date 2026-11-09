@@ -167,12 +167,9 @@ function RootRouteBranch() {
   if (pathname === "/welcome") {
     return (
       <>
-        {/* The Welcome page can sign in to T3 Connect; this links the computer for the phone. */}
-        <ConnectOnboardingDialog />
+        <ActionDialogHosts />
         {/* Settings can reopen the page while threads run. */}
         {isElectron ? <RunningThreadKeepAlive /> : null}
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />
@@ -206,16 +203,10 @@ function RootRouteBranch() {
           <DesktopWebLinkCoordinator />
         ) : null}
         {isElectron ? <RunningThreadKeepAlive /> : null}
-        <RelayClientInstallDialog />
-        <ConnectOnboardingDialog />
-        <SshPasswordPromptDialog />
+        <ActionDialogHosts />
         <SnapShotCoordinator />
         <ReopenClosedViewShortcut />
-        <ConfirmDialogHost />
-        <CustomSnoozeDialogHost />
-        <GuestShareDialogHost />
         <ProjectCloneToastCoordinator />
-        <AddProjectToMachineDialogHost />
         {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
         {primaryEnvironmentAuthenticated ? (
           <EventRouter skipInitialBootstrapNavigation={returningFromWelcome} />
@@ -224,6 +215,22 @@ function RootRouteBranch() {
         {/* Keep the theme editor above the router so drafts survive navigation. */}
         <ThemeEditorHost />
       </FirstRunGate>
+    </>
+  );
+}
+
+// Dialogs that the sidebar and pages open from anywhere, so both shells mount them. The Welcome
+// page's T3 Connect sign-in needs the Connect and relay client dialogs to share this computer.
+function ActionDialogHosts() {
+  return (
+    <>
+      <RelayClientInstallDialog />
+      <ConnectOnboardingDialog />
+      <SshPasswordPromptDialog />
+      <ConfirmDialogHost />
+      <CustomSnoozeDialogHost />
+      <GuestShareDialogHost />
+      <AddProjectToMachineDialogHost />
     </>
   );
 }

@@ -1,5 +1,7 @@
 import {
   isProviderAvailable,
+  managedCapabilityDenial,
+  type ManagedPolicySummary,
   ProviderDriverKind,
   resolveProjectProviderInstanceEnabled,
   type ServerProvider,
@@ -64,4 +66,40 @@ export function groupWelcomeAgents(
   );
   available.sort(byName);
   return { checking, readyCount, found: found.map((entry) => entry.provider), available };
+}
+
+/**
+ * What "Use existing CLI" does next for Codex: wait for the CLI's own check, open its terminal,
+ * or stop. Only the ChatGPT sign-in runtime reports `setup.canAuthenticate`.
+ */
+export function cliTerminalStep(
+  provider: ServerProvider,
+  settings: ComputerSettings | null | undefined,
+) {
+  if (provider.setup?.canAuthenticate === true) return "wait";
+  const state = welcomeAgentState(provider, settings);
+  if (state === "checking") return "wait";
+  // The terminal shows the command first, so it also helps a CLI whose check failed.
+  const fixable =
+    state === "install" ||
+    state === "signIn" ||
+    (state === "attention" && isProviderAvailable(provider));
+  return fixable ? "open" : "done";
+}
+
+/**
+ * How the Welcome page offers the phone: T3 Connect sign-in, a pairing code, or not at all.
+ * Both act on the primary computer, so another computer gets neither.
+ */
+export function welcomePhonePath(input: {
+  readonly isPrimary: boolean;
+  readonly cloud: boolean;
+  readonly policy: ManagedPolicySummary | undefined;
+}) {
+  if (!input.isPrimary || managedCapabilityDenial(input.policy, "remoteClients") !== undefined) {
+    return null;
+  }
+  return input.cloud && managedCapabilityDenial(input.policy, "connect") === undefined
+    ? "connect"
+    : "pairing";
 }

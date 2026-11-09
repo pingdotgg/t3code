@@ -146,6 +146,7 @@ vi.mock(import("../settings/ChatGptWelcomeCoordinator"), async (original) => ({
   ChatGptWelcomeCoordinator: () => <></>,
 }));
 
+import { welcomeImportSelectionAtom } from "../../onboarding/welcomeState";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { WelcomePage } from "./WelcomePage";
 
@@ -309,6 +310,7 @@ function setup() {
   state.cloud = false;
   state.auth = { isLoaded: true, isSignedIn: false, userId: null };
   state.linkState = Atom.make<EnvironmentCloudLinkStateResult | null>(null).pipe(Atom.keepAlive);
+  appAtomRegistry.set(welcomeImportSelectionAtom(primaryId), null);
   return now;
 }
 
@@ -320,7 +322,7 @@ it("rechecks after project creation and can retry its history without recreating
     return recordProject(input);
   });
   await using _screen = await mountWelcome();
-  await click("Add 2 projects and start");
+  await click("Import 2 projects and start");
   expect(state.createProject).toHaveBeenCalledOnce();
   await act(async () => {
     setGrant(primaryId, false);
@@ -330,10 +332,11 @@ it("rechecks after project creation and can retry its history without recreating
   expect(state.importThreads).not.toHaveBeenCalled();
   expect(state.createProject).toHaveBeenCalledOnce();
   expect(state.onDone).not.toHaveBeenCalled();
-  expect(pageText()).toContain(permissionMessage);
+  await vi.waitFor(() => expect(pageText()).toContain(permissionMessage));
 
   await act(async () => setGrant(primaryId, true));
-  await click("Add 2 projects and start");
+  // The first project now exists, so only the second counts as new.
+  await click("Import 1 project and start");
   expect(state.createProject).toHaveBeenCalledTimes(2);
   expect(state.importThreads).toHaveBeenCalledTimes(2);
   expect(state.onDone).toHaveBeenCalledOnce();
@@ -347,7 +350,7 @@ it("completes accepted imports when permission is revoked after the final server
     AsyncResult.success(await imported.promise),
   );
   await using _screen = await mountWelcome();
-  await click("Add 1 project and start");
+  await click("Import 1 project and start");
   await act(async () => {
     setGrant(primaryId, false);
     imported.resolve({ importedCount: 1, skippedCount: 0 });
@@ -368,13 +371,13 @@ it("finishes setup without landing when the imported project never reaches the c
   state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
   await using _screen = await mountWelcome();
 
-  await click("Add 1 project and start");
+  await click("Import 1 project and start");
   await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
   // A failed completion hands the step back instead of leaving it importing.
-  await vi.waitFor(() => expect(button("Add 1 project and start").disabled).toBe(false));
+  await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
   expect(state.onDone).not.toHaveBeenCalled();
 
-  await click("Add 1 project and start");
+  await click("Import 1 project and start");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.onDone).toHaveBeenCalledWith(undefined);
 });
@@ -383,7 +386,7 @@ it("waits for a ready agent to start, and Start without an agent still finishes 
   using _now = setup();
   appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, []);
   await using _screen = await mountWelcome();
-  expect(button("Add 2 projects and start").disabled).toBe(true);
+  expect(button("Import 2 projects and start").disabled).toBe(true);
 
   await click("Start without an agent");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
@@ -405,7 +408,7 @@ it("blocks leaving the page until the imported projects have landed", async () =
     },
   );
   await using screen = await mountWelcome();
-  await click("Add 2 projects and start");
+  await click("Import 2 projects and start");
 
   // A blocked navigation never settles, so it is not awaited.
   const leave = () =>
@@ -445,7 +448,7 @@ it("selects projects that a later scan finds after the selection was changed", a
   await using _screen = await mountWelcome();
   const bringIn = document.querySelector<HTMLElement>('[role="checkbox"]');
   await act(async () => bringIn?.click());
-  expect(button("Start").disabled).toBe(false);
+  await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
 
   // Turning on another agent rescans and finds a recent project the user has not seen.
   await act(async () =>
@@ -454,7 +457,46 @@ it("selects projects that a later scan finds after the selection was changed", a
       candidate("/projects/third"),
     ]),
   );
-  expect(button("Add 1 project and start").disabled).toBe(false);
+  await vi.waitFor(() => expect(button("Import 1 project and start").disabled).toBe(false));
+});
+
+it("keeps the project choice across a visit to Settings until setup finishes", async () => {
+  using _now = setup();
+  {
+    await using _first = await mountWelcome();
+    const importProjects = document.querySelector<HTMLElement>('[role="checkbox"]');
+    await act(async () => importProjects?.click());
+    await vi.waitFor(() => expect(button("Start").disabled).toBe(false));
+  }
+  // Coming back from Settings mounts the page again.
+  {
+    await using _second = await mountWelcome();
+    expect(button("Start").disabled).toBe(false);
+    await click("Start");
+    await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+    expect(state.createProject).not.toHaveBeenCalled();
+  }
+  await using _third = await mountWelcome();
+  expect(button("Import 2 projects and start").disabled).toBe(false);
+});
+
+it("stays busy while setup saves after an import with nothing to open", async () => {
+  using _now = setup();
+  appAtomRegistry.set(candidatesAtom(), [candidate("/projects/first")]);
+  state.importThreads.mockResolvedValue(AsyncResult.success({ importedCount: 0, skippedCount: 1 }));
+  const saved = deferred<void>();
+  state.completeOnboarding.mockImplementationOnce(() => saved.promise);
+  await using _screen = await mountWelcome();
+
+  await click("Import 1 project and start");
+  await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
+  expect(button("Importing…").disabled).toBe(true);
+  await act(async () => {
+    saved.resolve();
+    await saved.promise;
+  });
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.createProject).toHaveBeenCalledOnce();
 });
 
 it("starts without importing when this connection cannot import projects", async () => {
@@ -475,7 +517,7 @@ it("says the phone is set up only once this computer is shared with the signed-i
   await using _screen = await mountWelcome();
   await click("Set up");
   // Signed in, but "Not now" on the share step left this computer unreachable.
-  expect(pageText()).toContain("Set up T3 Connect");
+  await vi.waitFor(() => expect(pageText()).toContain("Set up T3 Connect"));
 
   const share = (reachability: EnvironmentCloudLinkStateResult["reachability"]) =>
     act(async () =>
@@ -501,10 +543,10 @@ it("says the phone is set up only once this computer is shared with the signed-i
     hint: null,
     fix: "Turn T3 Connect off and on.",
   });
-  expect(pageText()).toContain("Check T3 Connect");
+  await vi.waitFor(() => expect(pageText()).toContain("Check T3 Connect"));
   expect(pageText()).not.toContain("Your phone can reach this computer.");
 
   await share({ status: "reachable", checkedAt, readyConnections: 4, protocol: "quic" });
-  expect(pageText()).toContain("Your phone can reach this computer.");
+  await vi.waitFor(() => expect(pageText()).toContain("Your phone can reach this computer."));
   expect(pageText()).not.toContain("Check T3 Connect");
 });

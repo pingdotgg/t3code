@@ -1,4 +1,5 @@
 import {
+  type ManagedPolicySummary,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -7,7 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { groupWelcomeAgents } from "./welcomeAgents.logic";
+import { cliTerminalStep, groupWelcomeAgents, welcomePhonePath } from "./welcomePage.logic";
 
 function provider(name: string, overrides: Partial<ServerProvider> = {}): ServerProvider {
   return {
@@ -116,5 +117,45 @@ describe("groupWelcomeAgents", () => {
       found: [],
       available: [],
     });
+  });
+});
+
+describe("cliTerminalStep", () => {
+  it("waits for the CLI's own check, then opens its terminal unless Codex is ready", () => {
+    const codex = (overrides: Partial<ServerProvider> = {}) => provider("Codex", overrides);
+    const step = (overrides?: Partial<ServerProvider>) =>
+      cliTerminalStep(codex(overrides), undefined);
+
+    // Still the ChatGPT sign-in runtime, before the switch to the CLI lands.
+    expect(
+      step({
+        setup: { canAuthenticate: true, canInstall: true },
+        auth: { status: "unauthenticated" },
+      }),
+    ).toBe("wait");
+    expect(step({ installed: false, status: "warning", auth: { status: "unknown" } })).toBe("wait");
+    expect(step({ installed: false, status: "error", auth: { status: "unknown" } })).toBe("open");
+    expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
+    // A check that timed out still gets the sign-in command.
+    expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
+    expect(step()).toBe("done");
+  });
+});
+
+describe("welcomePhonePath", () => {
+  it("offers T3 Connect or a pairing code only for the primary computer and only when allowed", () => {
+    const policy = (limits: ManagedPolicySummary["limits"]): ManagedPolicySummary => ({
+      organization: "Acme",
+      lockedSettings: [],
+      ...(limits === undefined ? {} : { limits }),
+    });
+    const path = (input: Partial<Parameters<typeof welcomePhonePath>[0]>) =>
+      welcomePhonePath({ isPrimary: true, cloud: true, policy: undefined, ...input });
+
+    expect(path({})).toBe("connect");
+    expect(path({ cloud: false })).toBe("pairing");
+    expect(path({ policy: policy({ connect: false }) })).toBe("pairing");
+    expect(path({ policy: policy({ clients: ["desktop"] }) })).toBeNull();
+    expect(path({ isPrimary: false })).toBeNull();
   });
 });

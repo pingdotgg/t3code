@@ -1,5 +1,5 @@
 import { useAuth } from "@clerk/react";
-import { useAtomValue } from "@effect/atom-react";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   AgentSessionProjectCandidate,
   EnvironmentId,
@@ -19,7 +19,6 @@ import {
   AuthOrchestrationOperateScope,
   isManagedDriverAllowed,
   isProviderAvailable,
-  managedCapabilityDenial,
   ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
@@ -32,7 +31,7 @@ import {
   SmartphoneIcon,
   TerminalIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { isElectron } from "../../env";
@@ -57,10 +56,19 @@ import {
   resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
 } from "../../onboarding/providerReadiness.logic";
-import { groupWelcomeAgents, welcomeAgentState } from "../../onboarding/welcomeAgents.logic";
+import {
+  cliTerminalStep,
+  groupWelcomeAgents,
+  welcomeAgentState,
+  welcomePhonePath,
+} from "../../onboarding/welcomePage.logic";
+import {
+  type WelcomeImportSelection,
+  welcomeImportSelectionAtom,
+} from "../../onboarding/welcomeState";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
-import { readProjects, waitForProject } from "../../state/entities";
+import { readProjects, useProjects, waitForProject } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { managedTelemetryOffMessage, useManagedPolicy } from "../../state/managedPolicy";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -115,10 +123,14 @@ export function WelcomePage({
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
     "this computer";
   const agentReady = useWelcomeAgents(environmentId).readyCount > 0;
-  // The phone links and pairs the primary computer, so it is offered only when setting that one up.
-  const isPrimary = usePrimaryEnvironmentId() === environmentId;
+  const phonePath = welcomePhonePath({
+    isPrimary: usePrimaryEnvironmentId() === environmentId,
+    cloud: hasCloudPublicConfig(),
+    policy: useManagedPolicy(environmentId),
+  });
   const scans = useProjectScans([environmentId]);
-  const [importSelection, setImportSelection] = useState<ImportSelection | null>(null);
+  const importSelection = useAtomValue(welcomeImportSelectionAtom(environmentId));
+  const setImportSelection = useAtomSet(welcomeImportSelectionAtom(environmentId));
   const [isImporting, setIsImporting] = useState(false);
   // True from Start until the landing; leaving earlier would drop the import or the landing.
   const holdPageRef = useRef(false);
@@ -159,6 +171,7 @@ export function WelcomePage({
         // Release before onDone so its own navigation is not blocked.
         holdPageRef.current = false;
         await onDone(projectRef);
+        setImportSelection(null);
         if (importWarning) {
           toastManager.add({
             type: "warning",
@@ -207,7 +220,12 @@ export function WelcomePage({
   });
   // Without import permission, starting simply skips the projects.
   const selected = projectImport.canWrite ? projectImport.selected : [];
-  const newCount = selected.filter((candidate) => !candidate.alreadyImported).length;
+  // The scan can be a little old, so a project added a moment ago is matched here too.
+  const projects = useProjects();
+  const newCount = selected.filter(
+    (candidate) =>
+      resolveOnboardingProjectId(projects, candidate.environmentId, candidate) === null,
+  ).length;
   const start = () => {
     if (selected.length > 0) void projectImport.runImport(selected);
     else projectImport.finishAfterImport();
@@ -241,7 +259,9 @@ export function WelcomePage({
               projectImport={projectImport}
               isImporting={isImporting}
             />
-            {isPrimary ? <PhoneSection environmentId={environmentId} /> : null}
+            {phonePath === null ? null : (
+              <PhoneSection environmentId={environmentId} path={phonePath} />
+            )}
             <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
               {agentReady ? (
                 <span />
@@ -258,7 +278,7 @@ export function WelcomePage({
                   {isImporting
                     ? "Importing…"
                     : newCount > 0
-                      ? `Add ${newCount} ${newCount === 1 ? "project" : "projects"} and start`
+                      ? `Import ${newCount} ${newCount === 1 ? "project" : "projects"} and start`
                       : selected.length > 0
                         ? "Import threads and start"
                         : "Start"}
@@ -435,19 +455,16 @@ function AgentsSection({
     });
   };
 
-  // "Use existing CLI" opens the CLI's terminal once Codex has checked the CLI. Only the
-  // ChatGPT sign-in runtime reports `setup.canAuthenticate`, so its status is not the CLI's.
+  // "Use existing CLI" opens the CLI's terminal once Codex has checked the CLI.
   const cliProvider =
     cliTerminalFor === null
       ? undefined
       : providers?.find((provider) => provider.instanceId === cliTerminalFor);
-  if (
-    cliProvider !== undefined &&
-    cliProvider.setup?.canAuthenticate !== true &&
-    stateOf(cliProvider) !== "checking"
-  ) {
+  const cliStep =
+    cliProvider === undefined ? "done" : cliTerminalStep(cliProvider, serverConfig?.settings);
+  if (cliProvider !== undefined && cliStep !== "wait") {
     setCliTerminalFor(null);
-    if (needsInstallOrSignIn(cliProvider)) openTerminal(cliProvider);
+    if (cliStep === "open") openTerminal(cliProvider);
   }
 
   const turnOn = async (provider: ServerProvider) => {
@@ -550,7 +567,10 @@ function AgentsSection({
           ))}
         </div>
       ) : null}
-      {!canOperateTerminal && [...found, ...available].some(needsInstallOrSignIn) ? (
+      {!canOperateTerminal &&
+      [...found, ...available].some(
+        (provider) => needsInstallOrSignIn(provider) || codexNeedsSetup(provider),
+      ) ? (
         <p className="mt-2 text-sm text-muted-foreground">
           This connection cannot control terminals.
         </p>
@@ -611,7 +631,9 @@ function AgentsSection({
             environmentId={environmentId}
             provider={codexSetupProvider}
             serverConfig={serverConfig}
-            onUseCli={() => setCliTerminalFor(codexSetupProvider.instanceId)}
+            onUseCliChange={(useCli) =>
+              setCliTerminalFor(useCli ? codexSetupProvider.instanceId : null)
+            }
           />
         </div>
       ) : null}
@@ -719,19 +741,22 @@ function ProjectsSection({
 
   const allKeys = candidates.map((candidate) => candidate.key);
   const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
+  const isDefaultSelection =
+    selected.length === defaultKeys.length && defaultKeys.every((key) => selectedKeys.has(key));
   return (
     <WelcomeSection title="Projects" status={`From your ${IMPORT_SOURCES_LABEL} history`}>
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
         <label className="flex min-w-0 flex-1 items-center gap-3">
           <Checkbox
             checked={canWrite && selected.length > 0}
+            indeterminate={canWrite && selected.length > 0 && !isDefaultSelection}
             disabled={isImporting || !canWrite}
             onCheckedChange={(checked) => setSelectedKeys(new Set(checked ? defaultKeys : []))}
           />
           <span className="min-w-0 flex-1 text-sm text-foreground">
             {canWrite && selected.length > 0
-              ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
-              : "Bring in projects and their threads"}
+              ? `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
+              : "Import projects and their threads"}
           </span>
         </label>
         {canWrite ? (
@@ -794,13 +819,14 @@ function ProjectsSection({
   );
 }
 
-function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
+function PhoneSection({
+  environmentId,
+  path,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly path: "connect" | "pairing";
+}) {
   const [open, setOpen] = useState(false);
-  const policy = useManagedPolicy(environmentId);
-  // A policy that blocks other devices leaves the phone nothing to connect to.
-  if (managedCapabilityDenial(policy, "remoteClients") !== undefined) return null;
-  const connectAllowed =
-    hasCloudPublicConfig() && managedCapabilityDenial(policy, "connect") === undefined;
   return (
     <WelcomeSection title="Phone" status="Optional">
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -837,7 +863,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
               <span className="text-sm text-muted-foreground">Scan to get the app.</span>
             </div>
             <div className="flex flex-col justify-center gap-2 rounded-lg border border-border bg-background p-3.5">
-              {connectAllowed ? (
+              {path === "connect" ? (
                 <PhoneConnectLink environmentId={environmentId} />
               ) : (
                 <>
@@ -866,6 +892,13 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   const linkState = useCloudLinkState(environmentId);
+  const refreshLinkState = useEffectEvent(linkState.refresh);
+  // The server rechecks the tunnel every 30 s; read its latest result while this panel is open.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- 30 s interval that refreshes the cloud link reachability while mounted
+  useEffect(() => {
+    const interval = window.setInterval(() => refreshLinkState(), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
   const link = linkState.data;
   // The phone reaches this computer through its tunnel; older servers leave that flag out.
   const shared =
@@ -937,12 +970,13 @@ function OnboardingCodexSetup({
   environmentId,
   provider,
   serverConfig,
-  onUseCli,
+  onUseCliChange,
 }: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly serverConfig: ServerConfig;
-  readonly onUseCli: () => void;
+  // True asks for the CLI's install or sign-in terminal once Codex has checked the CLI.
+  readonly onUseCliChange: (useCli: boolean) => void;
 }) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
@@ -956,8 +990,8 @@ function OnboardingCodexSetup({
   const mode = readCodexSetupMode(config);
   const changeMode = (setupMode: "managed" | "existing") => {
     // "Use existing CLI" also opens a terminal to install or sign in to the CLI.
-    if (setupMode === "existing") onUseCli();
-    const unchanged = "setupMode" in config && config.setupMode === setupMode;
+    onUseCliChange(setupMode === "existing");
+    const unchanged = mode === setupMode && provider.enabled;
     if (unchanged || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     // One-instance upsert keeps a provider another client added in the meantime.
     void persistProviderInstance({
@@ -965,8 +999,11 @@ function OnboardingCodexSetup({
       instanceId,
       instance: { ...instance, enabled: true, config: { ...config, enabled: true, setupMode } },
     }).then((result) => {
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        toastManager.add({ type: "error", title: "Could not save Codex setup" });
+      if (result._tag === "Failure") {
+        onUseCliChange(false);
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({ type: "error", title: "Could not save Codex setup" });
+        }
       }
     });
   };
@@ -1226,12 +1263,6 @@ function AgentInstallTerminal({
 
 const IMPORT_PERMISSION_MESSAGE = "This connection cannot import projects or thread history.";
 
-interface ImportSelection {
-  // Projects listed when the selection changed; projects found later get the defaults.
-  readonly knownKeys: ReadonlySet<string>;
-  readonly keys: ReadonlySet<string>;
-}
-
 // Creates the selected projects, then imports each one's agent history. Owns retry state so a
 // second Start resumes instead of recreating projects.
 function useProjectImport({
@@ -1244,8 +1275,8 @@ function useProjectImport({
   onDone,
 }: {
   readonly scans: ReturnType<typeof useProjectScans>;
-  readonly importSelection: ImportSelection | null;
-  readonly onImportSelectionChange: (next: ImportSelection) => void;
+  readonly importSelection: WelcomeImportSelection | null;
+  readonly onImportSelectionChange: (next: WelcomeImportSelection) => void;
   readonly isImporting: boolean;
   readonly setIsImporting: (value: boolean) => void;
   // Blocks leaving the page; onDone releases it before landing.
@@ -1315,11 +1346,16 @@ function useProjectImport({
       projectsWithImportedHistoryRef.current,
       importedProjectsRef.current,
     );
+    // Busy until setup is saved, so Start cannot run the import again meanwhile.
+    setIsImporting(true);
     if (projectRef === undefined) {
-      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current);
+      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current).then(
+        (completed) => {
+          if (!completed) setIsImporting(false);
+        },
+      );
       return;
     }
-    setIsImporting(true);
     holdPageRef.current = true;
     const importGeneration = importGenerationRef.current;
     // waitForProject gives up after its timeout, so a project that never reaches the client
