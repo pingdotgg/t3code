@@ -1,12 +1,11 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { CheckIcon, CloudIcon, FolderGit2Icon, GitBranchIcon } from "lucide-react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
-import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
-import { shouldLoadNextBranchPageAfterScroll } from "../state/paginatedBranches";
 import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
@@ -66,10 +65,7 @@ export function BranchPicker({
 }) {
   const highlightedValueRef = useRef<string | null>(null);
   const startFromOriginSwitchId = useId();
-  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
-  const previousBranchListScrollTopRef = useRef<number | null>(null);
   const handleOpenChange = (nextOpen: boolean) => {
-    previousBranchListScrollTopRef.current = null;
     if (!nextOpen) highlightedValueRef.current = null;
     onOpenChange(nextOpen);
   };
@@ -82,59 +78,14 @@ export function BranchPicker({
 
     onLoadNext();
   };
-  const maybeFetchNextBranchPage = () => {
-    const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement) {
-      return;
-    }
-
-    const previousScrollTop = previousBranchListScrollTopRef.current;
-    previousBranchListScrollTopRef.current = scrollElement.scrollTop;
-    if (
-      !open ||
-      !hasNextPage ||
-      isFetchingNextPage ||
-      !shouldLoadNextBranchPageAfterScroll({
-        previousScrollTop,
-        scrollTop: scrollElement.scrollTop,
-        scrollHeight: scrollElement.scrollHeight,
-        clientHeight: scrollElement.clientHeight,
-      })
-    ) {
-      return;
-    }
-
-    fetchNextBranchPage();
-  };
-
   const branchListRef = useRef<LegendListRef | null>(null);
   const updateBranchListScrollFades = () => {
-    const scrollElement = branchListRef.current?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) {
-      return;
-    }
-    branchListScrollElementRef.current = scrollElement;
-    const maxScrollOffset = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    setShowTopBranchScrollFade(scrollElement.scrollTop > 1);
-    setShowBottomBranchScrollFade(maxScrollOffset - scrollElement.scrollTop > 1);
+    const metrics = branchListRef.current?.getState();
+    if (!metrics) return;
+    setShowTopBranchScrollFade(!metrics.isAtStart);
+    setShowBottomBranchScrollFade(!metrics.isAtEnd);
   };
-
-  // The popup mounts the list when it opens. Its content settles over a few
-  // frames as rows measure, so the fades follow the scroller and its content.
-  const attachBranchList = (list: LegendListRef | null) => {
-    branchListRef.current = list;
-    const scrollElement = list?.getScrollableNode?.();
-    if (!(scrollElement instanceof HTMLElement)) return;
-    const content = scrollElement.firstElementChild;
-    const stopObserving = observeResize(
-      content ? [scrollElement, content] : scrollElement,
-      updateBranchListScrollFades,
-    );
-    return () => {
-      stopObserving();
-      branchListRef.current = null;
-    };
-  };
+  const branchScrollRef = useLegendListRef(branchListRef, updateBranchListScrollFades);
 
   return (
     <Combobox
@@ -185,8 +136,9 @@ export function BranchPicker({
           <div className="relative flex min-h-0 w-full max-h-56 flex-1 flex-col overflow-hidden">
             <ComboboxListVirtualized className="flex size-full min-h-0 min-w-0 flex-col">
               <LegendList<string>
-                ref={attachBranchList}
+                ref={branchScrollRef}
                 data={filteredItems}
+                initialScrollOffset={0}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
                 renderItem={({ item, index }) => {
@@ -206,15 +158,11 @@ export function BranchPicker({
                 ItemSeparatorComponent={BranchPickerSeparator}
                 estimatedItemSize={33}
                 drawDistance={336}
-                onLayout={() => {
-                  updateBranchListScrollFades();
-                  previousBranchListScrollTopRef.current =
-                    branchListScrollElementRef.current?.scrollTop ?? null;
-                }}
-                onScroll={() => {
-                  updateBranchListScrollFades();
-                  maybeFetchNextBranchPage();
-                }}
+                onScroll={updateBranchListScrollFades}
+                onLayout={updateBranchListScrollFades}
+                onReady={updateBranchListScrollFades}
+                onEndReached={fetchNextBranchPage}
+                onEndReachedThreshold={0.5}
                 className={cn(
                   "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain px-0.5 pb-0.5",
                   getVirtualizedScrollFadeClassName({
