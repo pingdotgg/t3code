@@ -5,6 +5,8 @@ export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 export const MCP_APP_EXTENSION_ID = "io.modelcontextprotocol/ui";
 export const MCP_APP_RESOURCE_SCHEME = "ui://";
 export const MCP_APP_OUTPUT_KEY = "t3McpApp";
+/** Frame URL query parameter carrying the host's color scheme before `ui/initialize`. */
+export const MCP_APP_COLOR_SCHEME_PARAM = "t3-color-scheme";
 
 const MCP_APP_MIN_HEIGHT = 80;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
@@ -201,6 +203,16 @@ export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): strin
 export function injectMcpAppThemeBootstrap(html: string): string {
   const script = `<script>
 (() => {
+  try {
+    const initial = new URLSearchParams(location.search).get(${JSON.stringify(MCP_APP_COLOR_SCHEME_PARAM)});
+    if (initial === "light" || initial === "dark") {
+      // A meta tag, unlike an inline style, survives the app's own <html style> and yields to its CSS.
+      const meta = document.createElement("meta");
+      meta.name = "color-scheme";
+      meta.content = initial;
+      document.head.append(meta);
+    }
+  } catch {}
   window.addEventListener("message", (event) => {
     if (event.source !== window.parent) return;
     const message = event.data;
