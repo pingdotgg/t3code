@@ -470,9 +470,10 @@ returned unchanged, and a thread with no active provider turn returns
 `schedule_task`, `list_scheduled_tasks`, and `delete_scheduled_task` manage
 recurring work in the app scheduler; `schedule_task` with a `scheduledTaskId`
 updates an existing task. A schedule
-runs its prompt on an interval, at a fixed time or on a five-field cron
-expression in the server's local time zone, once at a date and time, or on each
-qualifying webhook request, even when no turn is active.
+runs its prompt on an interval, at a fixed time, on a five-field cron
+expression, once at a date and time, or on each qualifying webhook request, even
+when no turn is active. Fixed-time and cron schedules use the server's local
+time zone.
 Without a signature, anyone with the webhook URL can trigger a run.
 Signature checks, filters, and dedupe can skip a webhook request.
 `bindToCurrentThread` defaults to `true` only when the caller has a thread in

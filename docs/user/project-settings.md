@@ -90,9 +90,10 @@ Choose **Cron** for a schedule the other options can't express, such as every
 30 minutes during business hours on weekdays. Enter a standard five-field cron
 expression: minute, hour, day of month, month, and weekday. For example,
 `*/30 9-16 * * 1-5` runs at :00 and :30 from 9:00 to 16:30, Monday to Friday.
-Cron schedules use the environment's time zone, like fixed-time schedules. A
-run missed while the environment was offline is skipped, and the task waits for
-its next time.
+Cron schedules use the environment's time zone, like fixed-time schedules. If
+the environment is offline at a run's time, the run still happens when it comes
+back within 10 minutes. Later than that, the run is skipped and the task waits
+for its next time.
 
 Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post

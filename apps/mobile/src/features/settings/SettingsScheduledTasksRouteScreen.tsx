@@ -170,6 +170,9 @@ function repeatLabel(weekdays: ReadonlyArray<number>): string {
   );
 }
 
+const CRON_HELP =
+  "Minute, hour, day of month, month, weekday. */30 9-16 * * 1-5 runs every 30 minutes from 9:00 to 16:30 on weekdays.";
+
 function FormField(props: {
   readonly label: string;
   readonly value: string;
@@ -180,6 +183,7 @@ function FormField(props: {
   readonly borderTop?: boolean;
   /** For code-like values that capitalization and autocorrect would change. */
   readonly verbatim?: boolean;
+  readonly hint?: string;
 }) {
   return (
     <View
@@ -190,6 +194,7 @@ function FormField(props: {
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
       <RNTextInput
         accessibilityLabel={props.label}
+        accessibilityHint={props.hint}
         value={props.value}
         readOnly={props.disabled}
         onChangeText={props.onChange}
@@ -1216,6 +1221,7 @@ function TaskForm({
                 disabled={saving}
                 borderTop
                 verbatim
+                hint={cronError === null ? CRON_HELP : `Error: ${cronError}`}
                 onChange={(cronExpression) =>
                   setDraft({ ...draft, schedule: { ...draft.schedule, cronExpression } })
                 }
@@ -1227,8 +1233,7 @@ function TaskForm({
                     : "px-4 pb-3 text-sm text-danger-foreground"
                 }
               >
-                {cronError ??
-                  "Minute, hour, day of month, month, weekday. */30 9-16 * * 1-5 runs every 30 minutes from 9:00 to 16:30 on weekdays."}
+                {cronError ?? CRON_HELP}
               </Text>
             </>
           ) : draft.schedule.mode === "webhook" ? (
