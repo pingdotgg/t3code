@@ -88,6 +88,7 @@ export const make = Effect.gen(function* () {
   ) {
     const textGenerator = yield* textGenerators.runner(selection.instanceId);
     // A review guide reaches a text generator only through a fallback; it needs an agent instead.
+    const textGeneratorId = selection.instanceId;
     const textGeneratorCannotRun =
       textGenerator !== undefined && operation === "generateReviewGuide";
     if (textGenerator !== undefined && !textGeneratorCannotRun) {
@@ -140,6 +141,13 @@ export const make = Effect.gen(function* () {
           },
           { includeConfiguredInstances: true },
         ) ?? selection;
+    }
+    if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
+      return yield* new TextGenerationError({
+        operation,
+        detail:
+          "Review guides need an agent that can read the checkout, such as Codex or Claude, and none is ready. Choose one as the review guide model in Settings → Source control.",
+      });
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(
       Effect.flatMap((service) => invoke(service, selection)),

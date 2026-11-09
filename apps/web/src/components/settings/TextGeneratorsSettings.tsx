@@ -17,8 +17,10 @@ import {
   refreshTextGeneratorModels,
   TEXT_GENERATOR_PRESETS,
   type TextGeneratorPreset,
+  textGeneratorBrand,
   textGeneratorDisplayName,
 } from "../../textGenerators";
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -100,7 +102,17 @@ export function TextGeneratorsSettings({
           return (
             <SettingsRow
               key={id}
-              title={name}
+              title={
+                <span className="inline-flex items-center gap-2">
+                  <ProviderInstanceIcon
+                    driverKind={textGeneratorBrand(config)}
+                    displayName={name}
+                    badgeContent="none"
+                    size="compact"
+                  />
+                  {name}
+                </span>
+              }
               description={
                 <span className="break-all">
                   {KIND_LABELS[config.kind]}

@@ -697,24 +697,31 @@ it.effect(
             }),
         }),
       } satisfies ProviderInstance;
-      const service = yield* TextGeneration.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              listInstances: Effect.succeed([instance]),
-              getInstance: (id) => Effect.succeed(id === claude ? instance : undefined),
-            }),
-            ServerSettings.layerTest({}),
-            Layer.mock(TextGenerators.TextGenerators)({
-              runner: () => Effect.succeed(() => Effect.die("a text generator cannot investigate")),
-            }),
-            Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
-              resolveLink: () => Effect.die("unused"),
-            }),
+      const serviceWith = (instances: ReadonlyArray<ProviderInstance>) =>
+        TextGeneration.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+                listInstances: Effect.succeed(instances),
+                getInstance: (id) =>
+                  Effect.succeed(instances.find((candidate) => candidate.instanceId === id)),
+              }),
+              ServerSettings.layerTest({}),
+              Layer.mock(TextGenerators.TextGenerators)({
+                runner: (id) =>
+                  Effect.succeed(
+                    id === "openrouter"
+                      ? () => Effect.die("a text generator cannot investigate")
+                      : undefined,
+                  ),
+              }),
+              Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+                resolveLink: () => Effect.die("unused"),
+              }),
+            ),
           ),
-        ),
-      );
-      yield* service.generateReviewGuide({
+        );
+      const input = {
         cwd: "/tmp",
         number: 1,
         title: "Change",
@@ -723,7 +730,12 @@ it.effect(
         baseCommit: "abc",
         settledReview: "",
         modelSelection: { instanceId: ProviderInstanceId.make("openrouter"), model: "some/model" },
-      });
+      };
+      yield* (yield* serviceWith([instance])).generateReviewGuide(input);
       expect(calls.map((selection) => selection.instanceId)).toEqual([claude]);
+
+      // With no agent ready, it says what is missing instead of looking up a provider by that id.
+      const failure = yield* Effect.flip((yield* serviceWith([])).generateReviewGuide(input));
+      expect(failure.detail).toMatch(/^Review guides need an agent that can read the checkout/);
     }),
 );

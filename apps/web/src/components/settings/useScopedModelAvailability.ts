@@ -6,6 +6,7 @@ import {
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import { textGeneratorBrand } from "../../textGenerators";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -32,7 +33,7 @@ export function useScopedModelDisabledReason(
       const generator = textGeneratorForSelection(candidate.settings, instanceId);
       if (isTextGenerator || generator !== undefined) {
         // Only the shown environment's model list is loaded; elsewhere the generator must match.
-        if (!generator?.enabled || generator.kind !== sourceEntry?.driverKind) {
+        if (!generator?.enabled || textGeneratorBrand(generator) !== sourceEntry?.driverKind) {
           return unavailable;
         }
         continue;

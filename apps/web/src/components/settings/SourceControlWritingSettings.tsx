@@ -327,7 +327,7 @@ export function SourceControlWritingSettingsSection() {
             serverScoped
             settingKeys={["reviewGuideModelSelection"]}
             {...searchableSetting("review-guide-model")}
-            description="Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
+            description="Agent that reads a pull request over many steps to write its review guide; a stronger model helps. Off uses the source control writer model, or Codex or Claude when that is a text generator."
             control={
               !hasServerTargets ? (
                 <span className="text-sm text-muted-foreground">

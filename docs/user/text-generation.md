@@ -28,8 +28,10 @@ task needs, such as the staged diff for a commit message.
 
 ## Limits
 
-- Review guides need an agent that can read the checkout, so they always use a coding agent.
-  Pick one in **Settings → Source control → Review guide model**.
+- Review guides need an agent that can read the checkout, so they always use a coding agent. When
+  the source control writer model is a text generator, review guides use Codex or Claude instead,
+  and fail with a message if neither is ready. Pick one in **Settings → Source control → Review
+  guide model** to choose which.
 - A [managed policy](./managed-policy.md) that limits providers also turns off text generators.
 - Turning a text generator off, or removing it, sends its tasks back to the environment's text
   generation model.

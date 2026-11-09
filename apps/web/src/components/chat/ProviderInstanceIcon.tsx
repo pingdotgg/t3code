@@ -1,4 +1,4 @@
-import { SparklesIcon } from "lucide-react";
+import { ServerIcon } from "lucide-react";
 import { type CSSProperties, memo } from "react";
 
 import {
@@ -8,7 +8,15 @@ import {
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { AntigravityIcon, ClaudeAI, Icon, OpenAI } from "../Icons";
+import {
+  AnthropicIcon,
+  AntigravityIcon,
+  ClaudeAI,
+  Icon,
+  OllamaIcon,
+  OpenAI,
+  OpenRouterIcon,
+} from "../Icons";
 
 import { cn } from "~/lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -23,16 +31,22 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("codex")]: OpenAI,
   [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
   [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
-  // Text generator kinds: the compatible kind also serves OpenRouter and local servers, so no brand.
-  [ProviderDriverKind.make("anthropic")]: ClaudeAI,
-  [ProviderDriverKind.make("openaiCompatible")]: SparklesIcon,
+  // Text generators, by the service they reach (see textGeneratorBrand).
+  [ProviderDriverKind.make("openai")]: OpenAI,
+  [ProviderDriverKind.make("anthropic")]: AnthropicIcon,
+  [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
+  [ProviderDriverKind.make("ollama")]: OllamaIcon,
+  [ProviderDriverKind.make("openaiCompatible")]: ServerIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [ProviderDriverKind.make("codex")]: "text-black dark:text-white",
   [ProviderDriverKind.make("claudeAgent")]: "text-[#d97757]",
   [ProviderDriverKind.make("antigravity")]: "text-[#5b87bf]",
-  [ProviderDriverKind.make("anthropic")]: "text-[#d97757]",
+  [ProviderDriverKind.make("openai")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("anthropic")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("openrouter")]: "text-black dark:text-white",
+  [ProviderDriverKind.make("ollama")]: "text-black dark:text-white",
 };
 
 export function providerTextColor(driverKind: ProviderDriverKind): {

@@ -66,6 +66,25 @@ export function textGeneratorDisplayName(config: TextGeneratorConfig): string {
 }
 
 /**
+ * The service a text generator reaches, which picks its picker icon. It stands in for the driver
+ * kind in picker entries only, so generators of one service share an icon and get instance badges.
+ */
+export function textGeneratorBrand(config: Pick<TextGeneratorConfig, "kind" | "baseUrl">) {
+  if (config.kind === "anthropic") return ProviderDriverKind.make("anthropic");
+  let url: URL | null = null;
+  try {
+    url = new URL(config.baseUrl);
+  } catch {}
+  const host = url?.hostname ?? "";
+  if (host === "openrouter.ai" || host.endsWith(".openrouter.ai")) {
+    return ProviderDriverKind.make("openrouter");
+  }
+  if (host === "api.openai.com") return ProviderDriverKind.make("openai");
+  if (url?.port === "11434" || host.includes("ollama")) return ProviderDriverKind.make("ollama");
+  return ProviderDriverKind.make("openaiCompatible");
+}
+
+/**
  * A new text generator id. Selections name a text generator by the same id as a provider
  * instance, so it must not match a configured instance, a driver's default instance, or
  * another text generator.
@@ -157,7 +176,7 @@ function textGeneratorSnapshot(
   const failure = Option.getOrUndefined(AsyncResult.error(result));
   return {
     instanceId: id,
-    driver: ProviderDriverKind.make(config.kind),
+    driver: textGeneratorBrand(config),
     displayName: textGeneratorDisplayName(config),
     supportsTextGeneration: true,
     enabled: config.enabled,
