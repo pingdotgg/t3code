@@ -138,6 +138,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 function resolveCommandEditorArgs(
   editor: (typeof EDITORS)[number],
   target: string,
+  projectRoot: string | undefined,
 ): ReadonlyArray<string> {
   const parsedTarget = parseTargetPathAndPosition(target);
 
@@ -150,6 +151,8 @@ function resolveCommandEditorArgs(
       return Option.match(parsedTarget, {
         onNone: () => [target],
         onSome: ({ path, line, column }) => [
+          // Only positioned targets get the root: a folder target would open as a second project.
+          ...(projectRoot === undefined ? [] : [projectRoot]),
           "--line",
           line,
           // JetBrains IDEs count `--column` from 0; targets count columns from 1.
@@ -487,7 +490,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
       editor: editorDef.id,
       target: input.cwd,
       command,
-      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd)],
+      args: [...baseArgs, ...resolveCommandEditorArgs(editorDef, input.cwd, input.projectRoot)],
     };
   }
 
