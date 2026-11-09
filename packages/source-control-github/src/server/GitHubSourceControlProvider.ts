@@ -574,7 +574,10 @@ export const make = Effect.gen(function* () {
     ) {
       if (environment.T3CODE_GITHUB_USE_GIT_CREDENTIALS !== "1")
         return yield* effect.pipe(GitHubGraphQlClient.call(target));
-      const credential = yield* api.credential(target.host, { repository: target.repository });
+      const credential =
+        target.repository === undefined
+          ? yield* api.credential(target.host)
+          : yield* appAccess.credentialFor(target.host, target.repository);
       return yield* effect.pipe(
         GitHubGraphQlClient.call(target),
         Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {

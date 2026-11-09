@@ -36,6 +36,7 @@ function harness(
     readonly fallbackGh?: boolean;
     readonly sameToken?: boolean;
     readonly rateLimited?: boolean;
+    readonly appCoverage?: "covered" | "not-covered" | "unknown";
     readonly restAnswers?: Readonly<Record<string, string>>;
   } = {},
 ) {
@@ -64,28 +65,45 @@ function harness(
               { message: options.rateLimited ? "API rate limit exceeded" : "Bad credentials" },
               refusalStatus,
             )
-          : pathname === "/user"
-            ? json({ id: 123, login: "Chinoman10" })
-            : restAnswer !== undefined
-              ? new Response(restAnswer)
-              : pathname.startsWith("/repos/")
-                ? json({
-                    full_name: pathname.slice("/repos/".length),
-                    html_url: `https://github.com/${pathname.slice(7)}`,
-                    ssh_url: `git@github.com:${pathname.slice(7)}.git`,
-                  })
-                : successfulGraphql
-                  ? json({
-                      data: {
-                        repository: { pullRequest: { id: "PR_1" }, pullRequests: { nodes: [] } },
-                        addComment: { clientMutationId: null },
-                        addReaction: { reaction: { content: "THUMBS_UP" } },
-                        _0_markFileAsViewed: { clientMutationId: null },
-                        _1_unmarkFileAsViewed: { clientMutationId: null },
-                        _0_repository: { pullRequests: { nodes: [] } },
-                      },
-                    })
-                  : json({ message: "Not Found" }, 404);
+          : pathname === "/user/installations"
+            ? json(
+                {
+                  installations:
+                    options.appCoverage === "covered"
+                      ? [{ id: 1, repository_selection: "all", account: { login: "OwnerA" } }]
+                      : [],
+                },
+                options.appCoverage === "unknown" ? 502 : 200,
+              )
+            : pathname === "/graphql" &&
+                token === "Bearer fake-app" &&
+                options.appCoverage !== "covered"
+              ? json({ data: { repository: null, _0_repository: null } })
+              : pathname === "/user"
+                ? json({ id: 123, login: "Chinoman10" })
+                : restAnswer !== undefined
+                  ? new Response(restAnswer)
+                  : pathname.startsWith("/repos/")
+                    ? json({
+                        full_name: pathname.slice("/repos/".length),
+                        html_url: `https://github.com/${pathname.slice(7)}`,
+                        ssh_url: `git@github.com:${pathname.slice(7)}.git`,
+                      })
+                    : successfulGraphql
+                      ? json({
+                          data: {
+                            repository: {
+                              pullRequest: { id: "PR_1" },
+                              pullRequests: { nodes: [] },
+                            },
+                            addComment: { clientMutationId: null },
+                            addReaction: { reaction: { content: "THUMBS_UP" } },
+                            _0_markFileAsViewed: { clientMutationId: null },
+                            _1_unmarkFileAsViewed: { clientMutationId: null },
+                            _0_repository: { pullRequests: { nodes: [] } },
+                          },
+                        })
+                      : json({ message: "Not Found" }, 404);
         return Effect.succeed(HttpClientResponse.fromWeb(request, result));
       }),
     ),
@@ -93,7 +111,20 @@ function harness(
   const host = TestSourceControlHost.layer({
     settings: applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       sourceControlHosts: {
-        github: { tokens: options.fallbackGh ? {} : { "github.com": "host-default" } },
+        github: {
+          tokens: options.fallbackGh ? {} : { "github.com": "host-default" },
+          signIns:
+            options.appCoverage === undefined
+              ? {}
+              : {
+                  "github.com": JSON.stringify({
+                    accessToken: "fake-app",
+                    accessTokenExpiresAt: 28_800_000,
+                    refreshToken: "fake-refresh",
+                    refreshTokenExpiresAt: 28_800_000,
+                  }),
+                },
+        },
       },
     }),
     process: {
@@ -138,7 +169,12 @@ function harness(
     Layer.provideMerge(api),
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(
-      Layer.succeed(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+      Layer.succeed(HostProcess.Environment, {
+        T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1",
+        ...(options.appCoverage === undefined
+          ? {}
+          : { [GitHubAppSignIn.CLIENT_ID_VARIABLE]: "Iv-synthetic" }),
+      }),
     ),
     Layer.provide(Layer.succeed(HostProcess.WorkingDirectory, "/trusted")),
   );
@@ -973,6 +1009,46 @@ describe("native GitHub repository routing", () => {
           "Bearer fake-OwnerA-1",
           "Bearer fake-OwnerB-1",
         ]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
+      );
+    },
+  );
+
+  it.effect.each(["covered", "not-covered", "unknown"] as const)(
+    "selects a source GraphQL credential before pinning when app coverage is %s",
+    (appCoverage) => {
+      const { layer, requests, helperPaths } = harness(401, true, {
+        missingOwners: ["OwnerA"],
+        fallbackGh: true,
+        appCoverage,
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const pending = yield* provider
+          .listChangeRequests({
+            cwd: "/w",
+            state: "open",
+            headSelector: "feature",
+            context: {
+              provider: {
+                kind: SourceControlProviderKind.make("github"),
+                name: "GitHub",
+                baseUrl: "https://github.com",
+              },
+              remoteName: "origin",
+              remoteUrl: "https://github.com/OwnerA/Repo.git",
+            },
+          })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("500 millis");
+        expect(yield* Fiber.join(pending)).toEqual([]);
+        const queries = requests.filter((request) => new URL(request.url).pathname === "/graphql");
+        expect(queries.map((request) => request.headers.authorization)).toEqual([
+          appCoverage === "covered" ? "Bearer fake-app" : "Bearer fake-gh-1",
+        ]);
+        expect(helperPaths).toEqual(["OwnerA/Repo.git"]);
       }).pipe(
         Effect.provide(layer),
         Effect.provideService(HostProcess.Environment, { T3CODE_GITHUB_USE_GIT_CREDENTIALS: "1" }),
