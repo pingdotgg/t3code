@@ -31,7 +31,8 @@ const FLAG_RST = 8;
 /** yamux's initial stream window. The host never grows its own. */
 export const STREAM_WINDOW = 256 * 1024;
 const MAX_FRAME_PAYLOAD = 32 * 1024;
-const MAX_STREAMS = 128;
+// Above the gateway's 256 so streams that are still closing never refuse a new request.
+const MAX_STREAMS = 512;
 const CLOSED_STREAM_IDLE_MS = 30_000;
 
 export function encodeFrame(

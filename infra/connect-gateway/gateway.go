@@ -184,8 +184,9 @@ func proxyFor(hostname string, tunnel *yamux.Session) *httputil.ReverseProxy {
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return tunnel.Open(ctx) },
 			// Each request gets a fresh stream. In particular the Transport cannot retry a lost write on a reused connection.
-			DisableKeepAlives:      true,
-			ResponseHeaderTimeout:  30 * time.Second,
+			DisableKeepAlives: true,
+			// /mcp holds a wait open for up to 50 s before it replies. Cloudflare tunnels allow 100 s.
+			ResponseHeaderTimeout:  100 * time.Second,
 			MaxResponseHeaderBytes: 64 << 10,
 		},
 		ErrorLog: log.New(io.Discard, "", 0),

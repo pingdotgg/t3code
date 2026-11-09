@@ -7,7 +7,8 @@ import (
 	"github.com/libp2p/go-yamux/v5"
 )
 
-const maxStreams = 64
+// Requests in flight per host, WebSockets and streams included. One HTTP/2 client can open 100 at once.
+const maxStreams = 256
 const protocol = "t3-connect-v1"
 
 // The host's connector stops retrying a token closed with this code.
