@@ -37,6 +37,7 @@ const mocks = vi.hoisted(() => ({
   retargetDraft: vi.fn(),
   writeSettings: vi.fn(),
   writeText: vi.fn(),
+  openScratch: vi.fn(),
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -79,7 +80,7 @@ vi.mock("../../state/project-grouping", () => ({
   useMobileProjectGroupingSettings: () => ({ sidebarProjectGroupingMode: "none" }),
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.openScratch }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
   useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
@@ -119,6 +120,7 @@ vi.mock("../../state/workspace", () => ({
 vi.mock("../../state/shell", () => ({ useEnvironmentShellReadiness: () => ({}) }));
 vi.mock("../../lib/clock", () => ({ useNowMinuteMs: () => 0 }));
 
+import { startComposerDraftOperation } from "../../state/composerDraftOperations";
 import { NewTaskFlowProvider, useNewTaskFlow } from "./new-task-flow-provider";
 
 function project(environment: string, id: string): EnvironmentProject {
@@ -143,6 +145,7 @@ function setup() {
   const registry = AtomRegistry.make();
   mocks.registry.mockReturnValue(registry);
   mocks.config.mockReturnValue(null);
+  mocks.openScratch.mockReset();
   const projects = [project("one", "a"), project("one", "b"), project("two", "b")];
   mocks.projects.mockReturnValue(projects);
   mocks.presentation.mockReturnValue({
@@ -377,7 +380,7 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.selectedBranchName).toBe("main");
 });
 
-it.each(["removed", "disabled", "valid"] as const)(
+it.each(["removed", "disabled", "valid", "switch-pending", "switch-during", "picker"] as const)(
   "queues the displayed model when the saved pick is %s",
   async (state) => {
     using screen = setup();
@@ -400,6 +403,7 @@ it.each(["removed", "disabled", "valid"] as const)(
     );
     mocks.config.mockReturnValue({
       providers,
+      scratchWorkspaceRoot: "/a",
       settings: {
         ...DEFAULT_SERVER_SETTINGS,
         defaultModelSelection: primary,
@@ -414,14 +418,68 @@ it.each(["removed", "disabled", "valid"] as const)(
       screen.current.setPrompt("hello");
       mocks.writeSettings(screen.current.draftKey!, { modelSelection: saved });
     });
-    const shown = state === "valid" ? saved : primary;
+    const shown = state === "removed" || state === "disabled" ? primary : saved;
     expect(screen.current.selectedModel).toEqual(shown);
-    const message = await screen.current.buildPendingTaskMessage({
+    let completeSwitch!: (value: AsyncResult.Success<EnvironmentProject>) => void;
+    mocks.openScratch.mockReturnValue(
+      new Promise<AsyncResult.Success<EnvironmentProject>>((resolve) => {
+        completeSwitch = resolve;
+      }),
+    );
+    let switching: Promise<boolean> | undefined;
+    if (state === "switch-pending") {
+      act(() => {
+        switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+      });
+    }
+    const operation =
+      state === "picker" ? startComposerDraftOperation(screen.current.draftKey!) : undefined;
+    let finished = false;
+    const pending = screen.current.buildPendingTaskMessage({
       commandId: "command",
       messageId: "message",
       threadId: "thread",
       createdAt: "2026-01-01T00:00:00Z",
     });
-    expect(message?.modelSelection).toEqual(shown);
+    pending.then(() => {
+      finished = true;
+    });
+    if (state === "switch-during") {
+      act(() => {
+        switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+      });
+    }
+    if (operation) {
+      await act(async () => {});
+      expect(finished).toBe(false);
+      act(() =>
+        mocks.writeSettings(screen.current.draftKey!, {
+          attachments: [
+            {
+              type: "file",
+              id: "picked",
+              name: "picked.txt",
+              mimeType: "text/plain",
+              sizeBytes: 1,
+              fileUri: "file:///picked.txt",
+            },
+          ],
+        }),
+      );
+      operation.finish();
+    }
+    const message = await pending;
+    if (switching) {
+      expect(message).toBeNull();
+      await act(async () => {
+        completeSwitch(AsyncResult.success(screen.projects[2]!));
+        await switching;
+      });
+      expect(screen.current.selectedEnvironmentId).toBe("two");
+    } else {
+      expect(message?.modelSelection).toEqual(shown);
+      if (state === "picker")
+        expect(message?.attachments).toMatchObject([{ id: "picked", name: "picked.txt" }]);
+    }
   },
 );

@@ -1,3 +1,4 @@
+import { waitForComposerDraftOperations } from "../../state/composerDraftOperations";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import { refreshNewThreadUsage } from "@t3tools/client-runtime/state/usage";
@@ -581,7 +582,9 @@ export function NewTaskFlowProvider(
     null,
   );
   const latestSwitchRef = useRef<object | null>(null);
+  const switchRevisionRef = useRef(0);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
+    switchRevisionRef.current += 1;
     if (environmentId === selectedEnvironmentId) {
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
@@ -696,8 +699,23 @@ export function NewTaskFlowProvider(
     if (!selectedProject || !selectedProjectDraftKey) {
       return null;
     }
-    const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
-    const text = draft.text.trim();
+    const origin = readFlow();
+    const switchRevision = switchRevisionRef.current;
+    const changed = () => {
+      const current = readFlow();
+      return (
+        latestSwitchRef.current !== null ||
+        switchRevisionRef.current !== switchRevision ||
+        current.environmentId !== origin.environmentId ||
+        current.projectKey !== origin.projectKey ||
+        current.draftKey !== origin.draftKey
+      );
+    };
+    if (changed()) return null;
+    await waitForComposerDraftOperations(selectedProjectDraftKey);
+    if (changed()) return null;
+    let draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    let text = draft.text.trim();
     const savedSelection = resolveSelectableModelSelection(
       selectedEnvironmentServerConfig,
       draft.modelSelection ?? null,
@@ -721,6 +739,10 @@ export function NewTaskFlowProvider(
       environmentId: selectedProject.environmentId,
       input: selectionInput,
     });
+    await waitForComposerDraftOperations(selectedProjectDraftKey);
+    if (changed()) return null;
+    draft = getComposerDraftSnapshot(selectedProjectDraftKey);
+    text = draft.text.trim();
     const refreshedSelection = resolveNewThreadModelSelection({
       ...selectionInput,
       providers,

@@ -3,15 +3,18 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   abortComposerDraftOperations,
   startComposerDraftOperation,
+  waitForComposerDraftOperations,
 } from "./composerDraftOperations";
 
 describe("composer draft operations", () => {
-  it("aborts every running operation for the draft and leaves other drafts alone", () => {
+  it("aborts every running operation for the draft and leaves other drafts alone", async () => {
     const first = startComposerDraftOperation("thread-a");
     const second = startComposerDraftOperation("thread-a");
     const other = startComposerDraftOperation("thread-b");
 
+    const waiting = waitForComposerDraftOperations("thread-a");
     abortComposerDraftOperations("thread-a");
+    await waiting;
 
     expect(first.signal.aborted).toBe(true);
     expect(second.signal.aborted).toBe(true);

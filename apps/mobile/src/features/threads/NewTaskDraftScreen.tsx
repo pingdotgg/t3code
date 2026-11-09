@@ -40,7 +40,10 @@ import {
 
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
-import { abortComposerDraftOperations } from "../../state/composerDraftOperations";
+import {
+  abortComposerDraftOperations,
+  waitForComposerDraftOperations,
+} from "../../state/composerDraftOperations";
 import { composerContextSendBlockReason } from "../../lib/composerContext";
 import { ComposerInlineControl } from "../../components/ComposerToolbar";
 
@@ -262,6 +265,7 @@ export function NewTaskDraftScreen(props: {
     });
   const queuesInsteadOfStarting = !environmentConnected || attachmentsUploading;
   const promptInputRef = useRef<ComposerEditorHandle>(null);
+  const submittingRef = useRef(false);
   const loadedBranchesProjectKeyRef = useRef<string | null>(null);
   const [isReturningToProjectPicker, setIsReturningToProjectPicker] = useState(false);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
@@ -348,7 +352,10 @@ export function NewTaskDraftScreen(props: {
   const contextImports = useAtomValue(composerContextImportsAtom);
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
-    isIncomingShareTransferPending || flow.submitting || isImportingContext;
+    isIncomingShareTransferPending ||
+    flow.submitting ||
+    isImportingContext ||
+    flow.switchingToEnvironmentId !== null;
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
@@ -556,6 +563,14 @@ export function NewTaskDraftScreen(props: {
   });
 
   async function handleStart(): Promise<import("@t3tools/contracts").MessageId | null> {
+    if (submittingRef.current) return null;
+    submittingRef.current = true;
+    return submitDraft().finally(() => {
+      submittingRef.current = false;
+    });
+  }
+
+  async function submitDraft(): Promise<import("@t3tools/contracts").MessageId | null> {
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (
@@ -574,6 +589,9 @@ export function NewTaskDraftScreen(props: {
     ) {
       return null;
     }
+    const projectKey = flow.getSelectedProjectKey();
+    await waitForComposerDraftOperations(draftKey);
+    if (flow.getSelectedProjectKey() !== projectKey) return null;
     const draft = getComposerDraftSnapshot(draftKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[draftKey]) return null;
     const modelSelection =
