@@ -85,15 +85,23 @@ const runZcodeDoctor = Effect.fn("ZcodeProviderStatus.runDoctor")(function* (
 export const zcodeAuthFromCredentials = (
   data: unknown,
 ): "authenticated" | "unauthenticated" | "unknown" => {
-  if (!Array.isArray(data)) return "unknown";
-  const hasActiveProvider = data.some(
-    (entry) =>
-      Array.isArray(entry) &&
-      entry[0] === "oauth:active_provider" &&
-      typeof entry[1] === "string" &&
-      entry[1].length > 0,
-  );
-  return hasActiveProvider ? "authenticated" : "unauthenticated";
+  if (Array.isArray(data)) {
+    const hasActiveProvider = data.some(
+      (entry) =>
+        Array.isArray(entry) &&
+        entry[0] === "oauth:active_provider" &&
+        typeof entry[1] === "string" &&
+        entry[1].length > 0,
+    );
+    return hasActiveProvider ? "authenticated" : "unauthenticated";
+  }
+  // The CLI store is a JSON object keyed by credential id.
+  if (typeof data === "object" && data !== null) {
+    const active = (data as Record<string, unknown>)["oauth:active_provider"];
+    if (active === undefined) return "unauthenticated";
+    return typeof active === "string" && active.length > 0 ? "authenticated" : "unknown";
+  }
+  return "unknown";
 };
 
 const decodeCredentials = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));

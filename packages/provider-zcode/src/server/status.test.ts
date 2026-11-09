@@ -46,7 +46,10 @@ describe("zcodeAuthFromCredentials", () => {
     assert.equal(zcodeAuthFromCredentials([["oauth:active_provider", ""]]), "unauthenticated");
     assert.equal(zcodeAuthFromCredentials(["oauth:active_provider"]), "unauthenticated");
     assert.equal(zcodeAuthFromCredentials(undefined), "unknown");
-    assert.equal(zcodeAuthFromCredentials({ oauth: true }), "unknown");
+    // A readable store without an active provider is a not-signed-in store, whatever the shape.
+    assert.equal(zcodeAuthFromCredentials({}), "unauthenticated");
+    assert.equal(zcodeAuthFromCredentials({ oauth: true }), "unauthenticated");
+    assert.equal(zcodeAuthFromCredentials({ "oauth:active_provider": "zai" }), "authenticated");
   });
 });
 
