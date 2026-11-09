@@ -359,8 +359,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
-        { key: "mod+shift+d", command: "diff.toggle" },
+        { key: "mod+d", command: "layout.splitRight", when: "!terminalFocus" },
+        { key: "mod+shift+d", command: "layout.splitRight" },
         { key: "mod+w", command: "rightPanel.close", when: "(!terminalFocus)" },
       ]);
 
@@ -371,13 +371,15 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.isFalse(
-        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+d"),
-      );
-      assert.isTrue(
-        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+shift+d"),
-      );
-      assert.isTrue(
         persisted.some((entry) => entry.command === "layout.splitRight" && entry.key === "mod+d"),
+      );
+      assert.isTrue(
+        persisted.some(
+          (entry) => entry.command === "layout.splitRight" && entry.key === "mod+shift+d",
+        ),
+      );
+      assert.isTrue(
+        persisted.some((entry) => entry.command === "diff.toggle" && entry.key === "mod+d"),
       );
       assert.deepInclude(persisted, {
         key: "mod+w",
