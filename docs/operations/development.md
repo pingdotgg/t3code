@@ -352,7 +352,8 @@ rustup target add aarch64-pc-windows-msvc
 ```
 
 NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
-passed as `--wsl-runtime`; see the
+passed as `--wsl-runtime`, and GNU `tar` and `gzip` as `tar` and `gzip` on `PATH` to repack it, so
+release builds bundle it on Linux; see the
 [release runbook](./release.md#windows-payload-topology-and-update-validation).
 
 ### Signing and passkeys

@@ -718,6 +718,32 @@ export class WslRuntimeArchiveMissingError extends Schema.TaggedError<WslRuntime
   }
 }
 
+const WslRuntimeArchiveStagingReason = Schema.Literals([
+  "tools-missing",
+  "unexpected-root",
+  "repack-failed",
+]);
+
+export class WslRuntimeArchiveStagingError extends Schema.TaggedError<WslRuntimeArchiveStagingError>()(
+  "WslRuntimeArchiveStagingError",
+  {
+    archivePath: Schema.String,
+    reason: WslRuntimeArchiveStagingReason,
+    missingTools: Schema.optionalKey(Schema.Array(Schema.String)),
+    detail: Schema.optionalKey(Schema.String),
+  },
+) {
+  override get message(): string {
+    if (this.reason === "tools-missing") {
+      return `Staging the WSL runtime needs ${(this.missingTools ?? []).join(" and ")} as \`tar\` and \`gzip\` on PATH. Release builds bundle it on Ubuntu runners.`;
+    }
+    if (this.reason === "unexpected-root") {
+      return `WSL runtime archive ${this.archivePath} is not this build's Linux CLI archive: ${this.detail ?? ""}`;
+    }
+    return `Failed to repack the WSL runtime archive ${this.archivePath}: ${this.detail ?? ""}`;
+  }
+}
+
 export class WindowsServerSidecarPackError extends Schema.TaggedError<WindowsServerSidecarPackError>()(
   "WindowsServerSidecarPackError",
   {
@@ -751,6 +777,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "resource-monitor-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
+  "wsl-runtime-recompressed",
   "file-limit-exceeded",
 ]);
 
@@ -780,6 +807,9 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     }
     if (this.reason === "wsl-runtime-invalid") {
       return "Windows packaged payload contains an invalid WSL runtime archive.";
+    }
+    if (this.reason === "wsl-runtime-recompressed") {
+      return "The Windows installer does not store the WSL runtime archive verbatim; check the app-builder-lib patch that stores .tar.gz entries.";
     }
     if (this.reason === "sidecar-invalid") {
       return "Windows packaged payload contains an invalid server.asar sidecar.";
@@ -3000,22 +3030,122 @@ const assertPlatformBuildResources = Effect.fn("assertPlatformBuildResources")(f
   }
 });
 
-// The digest verifies extraction and names the cache; hash the exact archive bytes that ship.
+export const WSL_RUNTIME_ARCHIVE_ROOT = "t3";
+
+const GNU_WSL_RUNTIME_REPACK_TOOLS = [
+  { name: "GNU tar", command: "tar", version: /\bGNU tar\b/ },
+  { name: "GNU gzip", command: "gzip", version: /^gzip \d/m },
+] as const;
+
+/**
+ * Repacks the Linux CLI archive the installer ships for WSL: the same files and modes under a
+ * fixed root, sorted, with zeroed times and owners, through `gzip --rsyncable`. The installer
+ * stores it uncompressed, so unchanged files reach the NSIS blockmap as unchanged bytes and a
+ * differential update skips them. The digest pins what WSL extracts and names its cache.
+ */
 export const stageWslRuntimeArchive = Effect.fn("stageWslRuntimeArchive")(function* (input: {
   readonly sourceArchivePath: string;
   readonly archivePath: string;
   readonly hashPath: string;
+  readonly appVersion: string;
+  readonly targetArch: typeof BuildArch.Type;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const sourceExists = yield* fs
     .exists(input.sourceArchivePath)
     .pipe(Effect.orElseSucceed(() => false));
   if (!sourceExists) {
     return yield* new WslRuntimeArchiveMissingError({ archivePath: input.sourceArchivePath });
   }
-  yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
-  yield* fs.copyFile(input.sourceArchivePath, input.archivePath);
+
+  const toolVersions = yield* Effect.forEach(
+    GNU_WSL_RUNTIME_REPACK_TOOLS,
+    (tool) =>
+      spawner
+        .string(ChildProcess.make(tool.command, ["--version"], { stdin: "ignore" }))
+        .pipe(Effect.orElseSucceed(() => "")),
+    { concurrency: "unbounded" },
+  );
+  const missingTools = GNU_WSL_RUNTIME_REPACK_TOOLS.filter(
+    (tool, index) => !tool.version.test(toolVersions[index] ?? ""),
+  ).map((tool) => tool.name);
+  if (missingTools.length > 0) {
+    return yield* new WslRuntimeArchiveStagingError({
+      archivePath: input.sourceArchivePath,
+      reason: "tools-missing",
+      missingTools,
+    });
+  }
+
+  const runTar = (args: ReadonlyArray<string>) =>
+    spawnAndCollectOutput(
+      ChildProcess.make("tar", args, {
+        // GNU tar's --sort=name follows the locale's collation.
+        env: { LC_ALL: "C" },
+        extendEnv: true,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      }),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new WslRuntimeArchiveStagingError({
+            archivePath: input.sourceArchivePath,
+            reason: "repack-failed",
+            detail: String(cause),
+          }),
+      ),
+      Effect.flatMap((result) =>
+        result.exitCode === 0
+          ? Effect.void
+          : Effect.fail(
+              new WslRuntimeArchiveStagingError({
+                archivePath: input.sourceArchivePath,
+                reason: "repack-failed",
+                detail: `tar exited ${String(result.exitCode)}: ${result.stderr.trim()}`,
+              }),
+            ),
+      ),
+    );
+
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const scratchDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-wsl-runtime-" });
+      yield* runTar(["-xzpf", input.sourceArchivePath, "-C", scratchDir, "--no-same-owner"]);
+      const expectedRoot = wslRuntimeArchiveStem(input.appVersion, input.targetArch);
+      const roots = yield* fs.readDirectory(scratchDir);
+      if (roots.length !== 1 || roots[0] !== expectedRoot) {
+        return yield* new WslRuntimeArchiveStagingError({
+          archivePath: input.sourceArchivePath,
+          reason: "unexpected-root",
+          detail: `expected a single ${expectedRoot} directory, found ${roots.join(", ") || "nothing"}`,
+        });
+      }
+      yield* fs.rename(
+        path.join(scratchDir, expectedRoot),
+        path.join(scratchDir, WSL_RUNTIME_ARCHIVE_ROOT),
+      );
+      yield* fs.makeDirectory(path.dirname(input.archivePath), { recursive: true });
+      yield* runTar([
+        "--sort=name",
+        "--mtime=@0",
+        "--owner=0",
+        "--group=0",
+        "--numeric-owner",
+        "--format=gnu",
+        "--use-compress-program=gzip -n --rsyncable",
+        "-cf",
+        input.archivePath,
+        "-C",
+        scratchDir,
+        WSL_RUNTIME_ARCHIVE_ROOT,
+      ]);
+    }),
+  );
+
   const hash = NodeCrypto.createHash("sha256");
   yield* fs
     .stream(input.archivePath)
@@ -3321,7 +3451,6 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly stageDistDir: string;
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
-  readonly appVersion: string;
   readonly expectWslRuntime?: boolean;
   readonly fileLimit?: number;
   readonly verbose?: boolean;
@@ -3480,21 +3609,21 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
     const members = parseWslRuntimeArchiveMembers(listing.stdout);
-    // The WSL installer finds t3 under the archive's single stem-named directory.
-    const stem = wslRuntimeArchiveStem(input.appVersion, input.targetArch);
+    // The WSL installer finds t3 under the archive's single top-level directory.
+    const root = WSL_RUNTIME_ARCHIVE_ROOT;
     const topLevel = new Set(members.map((member) => member.split("/")[0]));
-    if (topLevel.size !== 1 || !topLevel.has(stem)) {
+    if (topLevel.size !== 1 || !topLevel.has(root)) {
       return yield* invalidWslRuntime(
         new Error(
-          `WSL runtime archive must contain a single top-level directory ${stem}, found ${[...topLevel].join(", ") || "nothing"}`,
+          `WSL runtime archive must contain a single top-level directory ${root}, found ${[...topLevel].join(", ") || "nothing"}`,
         ),
       );
     }
-    const requiredMembers = [`${stem}/t3`, `${stem}/client`, `${stem}/node_modules`];
+    const requiredMembers = [`${root}/t3`, `${root}/client`, `${root}/node_modules`];
     const missingMembers = requiredMembers.filter((member) => !members.includes(member));
     const ptyCandidates = [
-      `${stem}/node_modules/node-pty/build/Release/pty.node`,
-      `${stem}/node_modules/node-pty/prebuilds/linux-${input.targetArch}/pty.node`,
+      `${root}/node_modules/node-pty/build/Release/pty.node`,
+      `${root}/node_modules/node-pty/prebuilds/linux-${input.targetArch}/pty.node`,
     ];
     if (!ptyCandidates.some((member) => members.includes(member))) {
       missingMembers.push(...ptyCandidates);
@@ -3512,6 +3641,32 @@ export const validateWindowsPackagedPayload = Effect.fn(
       return yield* invalidWslRuntime(
         new Error(`WSL runtime archive contains a server bundle entry ${bundleEntry}`),
       );
+    }
+
+    // NSIS embeds the app package as is, so a stored archive appears byte for byte in the
+    // installer. Recompressed, every update downloads the whole runtime again.
+    const installers = stageEntries.filter((entry) => entry.toLowerCase().endsWith(".exe"));
+    if (installers.length > 0) {
+      const readBuffer = (filePath: string) =>
+        fs.readFile(filePath).pipe(
+          Effect.map((bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
+          Effect.mapError(invalidWslRuntime),
+        );
+      const archive = yield* readBuffer(wslArchivePath);
+      for (const installer of installers) {
+        const installerBytes = yield* readBuffer(path.join(input.stageDistDir, installer));
+        const offset = installerBytes.indexOf(archive.subarray(0, 64 * 1024));
+        if (
+          offset === -1 ||
+          !installerBytes.subarray(offset, offset + archive.length).equals(archive)
+        ) {
+          return yield* new WindowsPackagedPayloadValidationError({
+            reason: "wsl-runtime-recompressed",
+            packagedAppDir,
+            missingFiles: [installer],
+          });
+        }
+      }
     }
   }
 
@@ -3967,6 +4122,8 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       sourceArchivePath: options.wslRuntime,
       archivePath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_EXTRA_RESOURCE.from),
       hashPath: path.join(stageAppDir, WSL_RUNTIME_ARCHIVE_HASH_EXTRA_RESOURCE.from),
+      appVersion,
+      targetArch: options.arch,
     });
   }
 
@@ -4061,7 +4218,6 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
-      appVersion,
       expectWslRuntime: bundlesWslRuntime({
         platform: options.platform,
         runtimeArchivePath: options.wslRuntime,

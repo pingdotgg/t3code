@@ -1,8 +1,47 @@
 diff --git a/out/targets/nsis/NsisTarget.js b/out/targets/nsis/NsisTarget.js
-index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7f22148a0 100644
+index 8a3462b185b078a260483635e6d774e2ece6e269..45dacef348291e3920ed3bf07e3b0407f880cbf7 100644
 --- a/out/targets/nsis/NsisTarget.js
 +++ b/out/targets/nsis/NsisTarget.js
-@@ -366,7 +366,9 @@ class NsisTarget extends core_1.Target {
+@@ -21,6 +21,7 @@ const nsisLicense_1 = require("./nsisLicense");
+ const nsisScriptGenerator_1 = require("./nsisScriptGenerator");
+ const windows_1 = require("../../toolsets/windows");
+ const nsisUtil_1 = require("./nsisUtil");
++const _7zip_1 = require("../../toolsets/7zip");
+ const nsisValidation_1 = require("./nsisValidation");
+ const WineVm_1 = require("../../vm/WineVm");
+ const debug = (0, debug_1.default)("electron-builder:nsis");
+@@ -78,6 +79,14 @@ class NsisTarget extends core_1.Target {
+         const format = !isBuildDifferentialAware && options.useZip ? "zip" : "7z";
+         const archiveFile = path.join(this.outDir, `${packager.appInfo.sanitizedName}-${packager.appInfo.version}-${builder_util_1.Arch[arch]}.nsis.${format}`);
+         const preCompressedFileExtensions = this.getPreCompressedFileExtensions();
++        // T3 Code: store already-gzipped tarballs (Copy) instead of compressing them again, so the
++        // unchanged regions of a `gzip --rsyncable` stream reach the installer blockmap unchanged
++        // and differential updates skip them. Nsis7z decodes Copy entries.
++        const storedExtensions = format === "7z" ? [".tar.gz"] : [];
++        const storedFiles = storedExtensions.length === 0
++            ? []
++            : (await (0, builder_util_1.walk)(appOutDir, (file, stat) => stat.isDirectory() || storedExtensions.some(it => file.endsWith(it)))).map(file => path.relative(appOutDir, file));
++        const excludedExtensions = [...(preCompressedFileExtensions ?? []), ...(storedFiles.length === 0 ? [] : storedExtensions)];
+         const archiveOptions = {
+             withoutDir: true,
+             compression: packager.compression,
+@@ -86,11 +95,14 @@ class NsisTarget extends core_1.Target {
+             // arm64), which it silently skips, dropping the main exe and every native binary from the
+             // install. Pin the payload to a filter it can decode. See #9983.
+             installTimeDecodable: true,
+-            excluded: preCompressedFileExtensions == null ? null : preCompressedFileExtensions.map(it => `*${it}`),
++            excluded: excludedExtensions.length === 0 ? null : excludedExtensions.map(it => `*${it}`),
+         };
+         const timer = (0, timer_1.time)(`nsis package, ${builder_util_1.Arch[arch]}`);
+         await (0, archive_1.archive)(format, archiveFile, appOutDir, isBuildDifferentialAware ? (0, differentialUpdateInfoBuilder_1.configureDifferentialAwareArchiveOptions)(archiveOptions) : archiveOptions);
+         timer.end();
++        if (storedFiles.length !== 0) {
++            await (0, builder_util_1.exec)(await (0, _7zip_1.getPath7za)(), ["a", "-bd", "-m0=Copy", "-mtc=off", "-mtm=off", "-mta=off", archiveFile, ...storedFiles], { cwd: appOutDir }, builder_util_1.debug7z.enabled);
++        }
+         // Inject elevate.exe into the archive via a temp staging dir, never by mutating appOutDir
+         // during packaging. The copy into win-unpacked is deferred until all targets finish, so
+         // concurrent targets (Squirrel, ZIP, etc.) never pick up elevate.exe non-deterministically.
+@@ -366,7 +378,9 @@ class NsisTarget extends core_1.Target {
          await this.executeMakensis(defines, commands, sharedHeader + (await this.computeFinalScript(script, false, archs)));
          // http://forums.winamp.com/showthread.php?p=3078545
          // TODO: remove workaround when wine is fully upgraded to 11

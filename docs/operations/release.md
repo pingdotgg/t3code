@@ -492,11 +492,14 @@ dependency closure in `resources/server.asar`. Native modules and helper
 executables declared as unpacked by that archive must be present at the matching
 paths below `resources/server.asar.unpacked`. The Windows-native backend reads
 the archive in place through Electron. Packaged Windows builds also ship
-`resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar: the Linux CLI archive
-(`t3-<version>-linux-<arch>.tar.gz`, the same arch as the Windows host) built
-by the Linux desktop job and handed to the Windows desktop build as
-`--wsl-runtime`, copied in verbatim so WSL runs the exact bytes a Linux user
-downloads. WSL verifies and extracts that archive
+`resources/wsl-runtime.tar.gz` plus its SHA-256 sidecar, built from the Linux
+CLI archive (`t3-<version>-linux-<arch>.tar.gz`, the same arch as the Windows
+host) that the Linux desktop job hands to the Windows desktop build as
+`--wsl-runtime`. WSL runs the same files, modes and bytes a Linux user
+downloads, but the archive is a private repack: a fixed `t3/` root, sorted
+entries, zeroed times and owners, and `gzip -n --rsyncable`, so files that did
+not change between nightlies keep their compressed bytes. Repacking needs GNU
+`tar` and GNU `gzip` on the build host. WSL verifies and extracts that archive
 into `~/.t3/wsl-runtime/sha256-<archive-digest>` inside the selected distro,
 then reuses it for later launches of the same update.
 
@@ -516,10 +519,12 @@ break:
 - The isolated, extracted sidecar cannot load the server entry with plain Node.
 - A Windows build given `--wsl-runtime` omits the WSL archive or SHA-256
   sidecar, or the sidecar digest does not match the emitted archive.
+- The `--wsl-runtime` archive does not unpack to a single
+  `t3-<version>-linux-<arch>` directory for this build.
 - The emitted WSL archive is not a Linux CLI release archive: it must unpack to
-  a single `t3-<version>-linux-<arch>` directory holding `t3`, `client/`, and
-  `node_modules/` with the Linux node-pty binary, and must not carry a loose
-  server bundle (`bin.mjs`).
+  a single `t3` directory holding `t3`, `client/`, and `node_modules/` with the
+  Linux node-pty binary, and must not carry a loose server bundle (`bin.mjs`).
+- The NSIS installer does not contain the emitted WSL archive byte for byte.
 - The external Windows resource monitor is absent.
 - The unpacked Windows application contains more than 80 files.
 
@@ -527,9 +532,12 @@ Cross-architecture Windows builds retain every structural and extracted-sidecar
 check, but skip executing the target Electron binary. A same-architecture build
 for each release target must exercise the primary native-load probe.
 
-NSIS differential packaging remains enabled. A sidecar layout transition can
-produce a larger one-time download; subsequent small releases retain their
-blockmaps, with a 60 MB maximum for a representative sidecar-to-sidecar update.
+NSIS differential packaging remains enabled, and updates download only the
+installer blocks that changed. The app package compresses every entry with
+LZMA except `.tar.gz` files, which the `app-builder-lib` patch stores, so the
+WSL archive's unchanged regions keep their bytes in the installer. A change to
+the app package's layout or compression can produce a larger one-time
+download.
 
 ## 0) npm OIDC trusted publishing setup (CLI)
 
