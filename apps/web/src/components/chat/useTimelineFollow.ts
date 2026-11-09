@@ -369,7 +369,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     const list = legendListRef.current;
     const rows = list?.getState().data as ReadonlyArray<MessagesTimelineRow> | undefined;
     const index = rows?.findLastIndex(timelineRowIsOwnUserMessage) ?? -1;
-    if (!list || index < 0) return;
+    if (!list || index < 0) return false;
     viewportRef.current?.navigate({ releasesFollow: true });
     void list.scrollToIndex({
       index,
@@ -377,6 +377,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       viewPosition: 0,
       viewOffset: 24,
     });
+    return true;
   };
   // The list does not follow footer layout, so the resting composer cannot scroll it. Growth
   // above the composer (a new notice) would cover the last rows instead.

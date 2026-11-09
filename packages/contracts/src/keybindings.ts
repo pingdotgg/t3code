@@ -104,6 +104,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "chat.newLocal",
   "chat.newWithoutProject",
   "chat.find",
+  "chat.jumpToLastUserMessage",
   "editor.openFavorite",
   "usage.cost",
   "usage.tokens",

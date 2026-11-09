@@ -158,6 +158,10 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`chat.jumpToLastUserMessage` scrolls your last message to the top of the thread, like the
+**Your last message** button beside **Scroll to end**. It works even at the end of the thread,
+where the button is hidden. It has no default shortcut; assign one in **Settings → Keybindings**.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive

@@ -2709,6 +2709,7 @@ export default function ChatView(props: ChatViewProps) {
           return false;
         openThreadFind(activeThreadKey);
       },
+      "chat.jumpToLastUserMessage": () => scrollToLastUserMessage(),
       "composer.cycleHost": ({ event }) => {
         if (!canChangeEnvironment) return false;
         if (event.repeat) return;
