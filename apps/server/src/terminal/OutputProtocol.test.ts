@@ -392,16 +392,17 @@ describe("terminal output stream", () => {
       const data = "界".repeat(1024);
       for (let index = 0; index < 1024; index++) yield* publisher.publish(output(data));
 
-      const outputBytes = (batch: ReadonlyArray<TerminalAttachStreamEvent>) =>
-        batch.reduce(
-          (bytes, event) => bytes + (event.type === "output" ? Buffer.byteLength(event.data) : 0),
-          0,
-        );
       // Twenty 3 KiB events fill a 64 KiB batch, so full batches skip the deadline.
       let delivered = 0;
       while (delivered < 1020) {
         const batch = yield* pull;
-        assert.isAtMost(outputBytes(batch), 64 * 1024);
+        assert.isAtMost(
+          batch.reduce(
+            (bytes, event) => bytes + (event.type === "output" ? Buffer.byteLength(event.data) : 0),
+            0,
+          ),
+          64 * 1024,
+        );
         delivered += batch.length;
       }
       assert.equal(delivered, 1020);
