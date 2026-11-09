@@ -47,6 +47,7 @@ import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { BUNDLED_CLAUDE_MODEL_CATALOG } from "./ClaudeModelCatalog.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
+import { claudeResetCreditsToContract } from "./claudeResetCredits.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import * as ModelManifest from "./ModelManifest.ts";
@@ -3101,6 +3102,62 @@ it.layer(
           layerMockSpawner((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("maps a model-scoped reset to the window the usage probe named", () =>
+      Effect.gen(function* () {
+        const grant = {
+          id: "fable_week",
+          resets_left: 1,
+          clears: ["five_hour", "seven_day_overage_included"],
+          paused: false,
+          usable_now: true,
+        };
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          () =>
+            Effect.succeed({
+              email: undefined,
+              subscriptionType: "pro",
+              tokenSource: undefined,
+              apiKeySource: undefined,
+              apiProvider: undefined,
+              slashCommands: [],
+              usage: {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: { utilization: 59, resets_at: null },
+                  seven_day: { utilization: 93, resets_at: null },
+                  model_scoped: [{ display_name: "Fable", utilization: 3, resets_at: null }],
+                } as never,
+              },
+            }),
+          undefined,
+          undefined,
+          BUNDLED_CLAUDE_MODEL_CATALOG,
+          undefined,
+          (_version, overageIncludedName) =>
+            Effect.succeed(
+              claudeResetCreditsToContract(
+                { eligible: true, grants: [grant], next_grant_id: grant.id },
+                0,
+                overageIncludedName,
+              ),
+            ),
+        );
+
+        assert.deepStrictEqual(status.usageLimits?.resetCredits?.grants, [
+          { id: "fable_week", count: 1, clearsWindowIds: ["five_hour", "seven_day_fable"] },
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "2.1.0\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
