@@ -2734,6 +2734,158 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         );
       }),
     );
+
+    it.effect("holds a follow-up open while the child's own subagent still runs", () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("thread:followup-grandchild-parent");
+        const projectId = ProjectId.make("project:followup-grandchild");
+        const parentRunId = RunId.make("run:followup-grandchild-parent");
+        const rootNodeId = NodeId.make("node:followup-grandchild-parent");
+        yield* seedParentWithTerminalTask({
+          threadId: parentThreadId,
+          projectId,
+          runId: parentRunId,
+          rootNodeId,
+          taskId: NodeId.make("node:followup-grandchild-seed"),
+          deliveryState: "acknowledged",
+          now,
+        });
+        const child = yield* seedRestartCancelledChild({
+          parentThreadId,
+          projectId,
+          parentRunId,
+          rootNodeId,
+          name: "followup-grandchild-child",
+          completionWake: "always",
+          continuationPending: false,
+          runStatus: "completed",
+          now,
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+            (task) => task.id === child.taskId,
+          )?.status,
+          "completed",
+        );
+
+        const followupMessageId = MessageId.make("message:followup-grandchild-send");
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("command:followup-grandchild-send"),
+          threadId: child.childThreadId,
+          senderThreadId: parentThreadId,
+          messageId: followupMessageId,
+          text: "Now delegate the next step.",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+        });
+        const followupRun = (yield* orchestrator.getThreadProjection(
+          child.childThreadId,
+        )).runs.find((run) => run.userMessageId === followupMessageId)!;
+        assert.isDefined(followupRun.delegatedTaskId);
+        const followupTaskId = followupRun.delegatedTaskId!;
+
+        const grandchildId = NodeId.make("node:followup-grandchild-grandchild");
+        const grandchild = {
+          id: grandchildId,
+          threadId: child.childThreadId,
+          runId: followupRun.id,
+          parentNodeId: NodeId.make("node:followup-grandchild-child-root"),
+          origin: "app_owned" as const,
+          createdBy: "agent" as const,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerThreadId: null,
+          childThreadId: ThreadId.make("thread:followup-grandchild-grandchild"),
+          nativeTaskRef: null,
+          prompt: "Do the next step.",
+          title: null,
+          model: null,
+          completionWake: "always" as const,
+          status: "running" as const,
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-grandchild-turn-ended"),
+          events: [
+            {
+              id: EventId.make("event:followup-grandchild-started"),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              nodeId: grandchildId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: grandchild,
+            },
+            {
+              id: EventId.make("event:followup-grandchild-run-completed"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              occurredAt: now,
+              payload: { ...followupRun, status: "completed", startedAt: now, completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+
+        const waiting = yield* orchestrator.getThreadProjection(parentThreadId);
+        const heldFollowup = waiting.subagents.find((task) => task.id === followupTaskId);
+        assert.isNull(
+          heldFollowup?.result ?? null,
+          "the follow-up closed while the child's own subagent was still running",
+        );
+        assert.equal(heldFollowup?.status, "running");
+        assert.equal(
+          waiting.contextTransfers.filter(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === child.childThreadId,
+          ).length,
+          1,
+        );
+
+        yield* eventSink.write({
+          commandId: reconcileCommandId("followup-grandchild-settled"),
+          events: [
+            {
+              id: EventId.make("event:followup-grandchild-completed"),
+              type: "subagent.updated",
+              threadId: child.childThreadId,
+              runId: followupRun.id,
+              nodeId: grandchildId,
+              driver,
+              providerInstanceId: modelSelection.instanceId,
+              occurredAt: now,
+              payload: {
+                ...grandchild,
+                status: "completed",
+                result: "grandchild finished",
+                completionDelivery: { state: "acknowledged", observedByRunId: followupRun.id },
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTasks;
+        const settled = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (task) => task.id === followupTaskId,
+        );
+        assert.equal(settled?.status, "completed");
+        assert.isNotNull(settled?.result ?? null);
+      }),
+    );
   },
 );
 

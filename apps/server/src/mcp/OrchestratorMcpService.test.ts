@@ -347,6 +347,107 @@ describe("OrchestratorMcpService", () => {
     }),
   );
 
+  it.effect("reports a follow-up as waiting while the child's own subagent runs", () =>
+    Effect.gen(function* () {
+      const parentThreadId = ThreadId.make("thread:mcp-followup-parent");
+      const childThreadId = ThreadId.make("thread:mcp-followup-child");
+      const followupTaskId = NodeId.make("node:mcp-followup-task");
+      const parentProjection = {
+        thread: { id: parentThreadId },
+        runs: [],
+        contextTransfers: [],
+        subagents: [
+          {
+            id: followupTaskId,
+            threadId: parentThreadId,
+            origin: "app_owned",
+            childThreadId,
+            driver: "codex",
+            model: "gpt-5.6-terra",
+            status: "running",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const childProjection = {
+        thread: { id: childThreadId, title: "Child" },
+        runs: [
+          {
+            id: RunId.make("run:mcp-followup-original"),
+            ordinal: 1,
+            status: "completed",
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:01:00Z"),
+          },
+          {
+            id: RunId.make("run:mcp-followup"),
+            ordinal: 2,
+            status: "completed",
+            delegatedTaskId: followupTaskId,
+            startedAt: DateTime.makeUnsafe("2026-10-03T10:02:00Z"),
+            completedAt: DateTime.makeUnsafe("2026-10-03T10:03:00Z"),
+          },
+        ],
+        contextTransfers: [],
+        messages: [],
+        subagents: [
+          {
+            id: NodeId.make("node:mcp-followup-grandchild"),
+            origin: "app_owned",
+            childThreadId: ThreadId.make("thread:mcp-followup-grandchild"),
+            status: "running",
+            result: null,
+            completionDelivery: { state: "pending" },
+          },
+        ],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        turnItems: [],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection : childProjection),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          dispatch: () => Effect.succeed({} as never),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        }),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const scope: McpInvocationScope = {
+        environmentId: EnvironmentId.make("environment:mcp-followup"),
+        requestNamespace: "provider-session:mcp-followup",
+        thread: {
+          threadId: parentThreadId,
+          providerSessionId: "provider-session:mcp-followup",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        },
+        client: undefined,
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      };
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const status = yield* service.taskStatus(scope, followupTaskId);
+        assert.equal(status.workState, "waiting_for_children");
+        assert.equal(status.status, "running");
+        assert.isNull(status.summary);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
+
   it.effect("tells the parent to end its turn only while its task still runs", () =>
     Effect.gen(function* () {
       const parentThreadId = ThreadId.make("thread:mcp-next-parent");
