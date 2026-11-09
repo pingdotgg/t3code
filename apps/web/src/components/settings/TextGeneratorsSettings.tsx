@@ -86,15 +86,15 @@ export function TextGeneratorsSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
               <PlusIcon className="size-3" aria-hidden />
-              Add API
+              Add generator
             </Button>
           ) : null
         }
       >
         {generators.length === 0 ? (
           <SettingsRow
-            title="No text generators configured."
-            description="Model APIs that write titles, commit messages, and other text, but can't run agents."
+            title="No text generators yet"
+            description="Add a model API to write thread titles, commit messages, and other short text without starting a coding agent."
           />
         ) : null}
         {generators.map(([id, config]) => {
@@ -116,7 +116,7 @@ export function TextGeneratorsSettings({
               description={
                 <span className="break-all">
                   {KIND_LABELS[config.kind]}
-                  {config.enabled ? "" : " · Disabled"} · {config.baseUrl}
+                  {config.enabled ? "" : " · Off"} · {config.baseUrl}
                 </span>
               }
               control={
@@ -154,7 +154,6 @@ export function TextGeneratorsSettings({
       {editing !== null ? (
         <TextGeneratorDialog
           environmentId={environmentId}
-          environmentLabel={environmentLabel}
           editing={editing}
           onClose={() => setEditing(null)}
           onSave={(id, config) => {
@@ -176,8 +175,8 @@ export function TextGeneratorsSettings({
               Remove {removingConfig ? textGeneratorDisplayName(removingConfig) : ""}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Its API key is deleted from {environmentLabel}. Text it was chosen to write falls back
-              to the text generation model.
+              This deletes the API key stored on {environmentLabel}. Anything set to use this
+              generator falls back to the text generation model.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -201,14 +200,12 @@ export function TextGeneratorsSettings({
 /** The key goes once to the server's secret storage; settings keep only a redaction marker. */
 function TextGeneratorDialog({
   environmentId,
-  environmentLabel,
   editing,
   onClose,
   onSave,
   newId,
 }: {
   readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string;
   readonly editing: Editing;
   readonly onClose: () => void;
   readonly onSave: (id: ProviderInstanceId, config: TextGeneratorConfig) => void;
@@ -255,8 +252,9 @@ function TextGeneratorDialog({
             {existing ? `Edit ${textGeneratorDisplayName(existing)}` : "Add a text generator"}
           </DialogTitle>
           <DialogDescription>
-            Choose it for thread titles, commit messages, and other generated text on{" "}
-            {environmentLabel}. The key stays on that server.
+            {existing
+              ? "Your API key is stored on this environment. Changes apply wherever this generator is picked."
+              : "For thread titles, commit messages, and other short text, without starting a coding agent. Your API key is stored on this environment."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -323,10 +321,16 @@ function TextGeneratorDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="text-generator-label">Label (optional)</Label>
+              <Label htmlFor="text-generator-label">Name (optional)</Label>
               <Input
                 id="text-generator-label"
-                placeholder={existing === null ? preset.label : "Defaults to the service name"}
+                placeholder={
+                  existing !== null
+                    ? textGeneratorDisplayName(existing)
+                    : preset.id === "custom"
+                      ? "e.g. My local model"
+                      : preset.label
+                }
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />

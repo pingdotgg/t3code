@@ -946,7 +946,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Text generators",
     to: "/settings/providers",
     searchTerms: [
-      "model api key openai openrouter anthropic ollama lm studio openai-compatible base url text generation titles commit messages add remove refresh models",
+      "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
     ],
     providerSettingsOnly: true,
   },

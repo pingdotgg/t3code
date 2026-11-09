@@ -1781,7 +1781,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["textGenerationModelSelection"]}
           {...searchableSetting("text-generation-model")}
-          description="Used for thread titles and other generated text on connected devices with this provider. Source control can override it. Add a model API as a text generator in Providers."
+          description="For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here."
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton

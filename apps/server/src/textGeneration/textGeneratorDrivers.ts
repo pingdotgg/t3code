@@ -51,9 +51,9 @@ const describeStatus = (label: string, status: number, message: string | undefin
     status === 401 || status === 403
       ? "rejected the API key"
       : status === 404
-        ? "has no such model or endpoint"
+        ? "couldn't find that model or endpoint"
         : status === 429
-          ? "is rate limiting requests"
+          ? "is rate-limiting requests"
           : `returned HTTP ${status}`;
   const detail = message?.trim().slice(0, 300);
   return `${label} ${reason}${detail ? `: ${detail}` : "."}`;
@@ -74,7 +74,11 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
     Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
     Effect.provideService(HttpClient.TracerPropagationEnabled, false),
     Effect.mapError(
-      (cause) => new TextGeneratorRequestError({ detail: `Could not reach ${label}.`, cause }),
+      (cause) =>
+        new TextGeneratorRequestError({
+          detail: `Couldn't reach ${label}. Check the base URL and your connection.`,
+          cause,
+        }),
     ),
   );
   const body = yield* response.json.pipe(Effect.orElseSucceed((): unknown => undefined));
@@ -89,7 +93,10 @@ const sendJson = Effect.fn("TextGenerator.sendJson")(function* <S extends Schema
   return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
     Effect.mapError(
       (cause) =>
-        new TextGeneratorRequestError({ detail: `${label} sent an unexpected reply.`, cause }),
+        new TextGeneratorRequestError({
+          detail: `${label} returned a reply T3 Code couldn't read.`,
+          cause,
+        }),
     ),
   );
 });
@@ -102,7 +109,7 @@ const withTimeout =
         duration,
         orElse: () =>
           Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} did not answer in time.` }),
+            new TextGeneratorRequestError({ detail: `${label} took too long to respond.` }),
           ),
       }),
     );
@@ -129,7 +136,7 @@ const OpenAIModelList = Schema.Struct({
 
 const openAICompatible: TextGeneratorDriver = {
   kind: "openaiCompatible",
-  label: "The model API",
+  label: "This model API",
   generate: (connection, model, prompt) => {
     const label = openAICompatible.label;
     let request = HttpClientRequest.post(endpoint(connection, "/chat/completions")).pipe(
@@ -142,7 +149,7 @@ const openAICompatible: TextGeneratorDriver = {
         const text = choice?.message.content?.trim();
         if (choice?.finish_reason === "length") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} stopped at its output limit.` }),
+            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
           );
         }
         return text
@@ -203,7 +210,7 @@ const anthropic: TextGeneratorDriver = {
       Effect.flatMap((message) => {
         if (message.stop_reason === "max_tokens") {
           return Effect.fail(
-            new TextGeneratorRequestError({ detail: `${label} stopped at its output limit.` }),
+            new TextGeneratorRequestError({ detail: `${label} reached its output limit.` }),
           );
         }
         const text = message.content

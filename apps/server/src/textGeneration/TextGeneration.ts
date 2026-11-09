@@ -146,7 +146,7 @@ export const make = Effect.gen(function* () {
       return yield* new TextGenerationError({
         operation,
         detail:
-          "Review guides need an agent that can read the checkout, such as Codex or Claude, and none is ready. Choose one as the review guide model in Settings → Source control.",
+          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control.",
       });
     }
     return yield* resolveInstance(registry, operation, selection.instanceId).pipe(

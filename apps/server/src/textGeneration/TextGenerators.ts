@@ -54,7 +54,10 @@ export const make = Effect.gen(function* () {
 
   const readConfig = Effect.fn("TextGenerators.readConfig")(function* (id: ProviderInstanceId) {
     const settings = yield* settingsService.getSettings.pipe(
-      Effect.mapError(() => new TextGeneratorRequestError({ detail: "Could not read settings." })),
+      Effect.mapError(
+        () =>
+          new TextGeneratorRequestError({ detail: "Couldn't read this environment's settings." }),
+      ),
     );
     return textGeneratorForSelection(settings, id);
   });
@@ -97,7 +100,7 @@ export const make = Effect.gen(function* () {
         Effect.fail(
           new TextGenerationError({
             operation: request.operation,
-            detail: `${label} is turned off in Settings.`,
+            detail: `${label} is off. Turn it on in Settings → Providers.`,
           }),
         )) satisfies TextGenerationOperations.Runner;
     }
@@ -108,7 +111,9 @@ export const make = Effect.gen(function* () {
     function* (input: ListTextGeneratorModelsInput) {
       const config = yield* readConfig(input.id);
       if (config === undefined) {
-        return yield* new TextGeneratorRequestError({ detail: "No such text generator." });
+        return yield* new TextGeneratorRequestError({
+          detail: "That text generator no longer exists.",
+        });
       }
       const cached = (yield* Ref.get(modelCache)).get(input.id);
       // Keyed on the whole config so a changed URL or key never serves another API's list.

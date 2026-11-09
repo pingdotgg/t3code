@@ -49,7 +49,7 @@ export const TEXT_GENERATOR_PRESETS: ReadonlyArray<TextGeneratorPreset> = [
     kind: "anthropic",
     baseUrl: "https://api.anthropic.com/v1",
   },
-  { id: "custom", label: "OpenAI-compatible", kind: "openaiCompatible", baseUrl: "" },
+  { id: "custom", label: "Custom (OpenAI-compatible)", kind: "openaiCompatible", baseUrl: "" },
 ];
 
 export function textGeneratorDisplayName(config: TextGeneratorConfig): string {

@@ -736,6 +736,8 @@ it.effect(
 
       // With no agent ready, it says what is missing instead of looking up a provider by that id.
       const failure = yield* Effect.flip((yield* serviceWith([])).generateReviewGuide(input));
-      expect(failure.detail).toMatch(/^Review guides need an agent that can read the checkout/);
+      expect(failure.detail).toMatch(
+        /^Review guides need a coding agent that can read the checkout/,
+      );
     }),
 );

@@ -1,37 +1,38 @@
 # Text generation models
 
 T3 Code writes some text for you: thread titles, commit messages, pull request titles and
-descriptions, branch names, review guides, and voice transcript cleanup. Each environment picks the
-model for this in **Settings → Threads → Text generation model**. **Settings → Source control** and
-**Settings → Voice** can pick a different model for their own tasks.
+descriptions, branch names, and voice transcript cleanup. Pick the model for this in
+**Settings → Threads → Text generation model**. **Settings → Source control** and
+**Settings → Voice** can each pick a different one.
 
-By default these models come from your coding agents, such as Codex or Claude. A coding agent
-starts a full session for each request, so you can instead add a **text generator**: a model API
-that only writes text. It is usually faster and costs fewer tokens.
+By default, a coding agent such as Codex or Claude writes this text, starting a session for each
+request. A **text generator** — a model API that only writes text — is usually faster and cheaper.
 
 ## Add a text generator
 
-In **Settings → Providers**, choose **Add API** next to **Text generators** and pick a service:
+Go to **Settings → Providers → Text generators** and choose **Add generator**:
 
-- **OpenAI** or **Anthropic**, with an API key.
-- **OpenRouter**, with an OpenRouter key, to use any model it serves.
-- **OpenAI-compatible**, for any other endpoint, such as Ollama at `http://localhost:11434/v1`
-  or LM Studio. A local server usually needs no key.
+- **OpenAI** or **Anthropic** — enter an API key.
+- **OpenRouter** — enter an OpenRouter key to use any model it serves.
+- **Custom (OpenAI-compatible)** — enter the base URL of any other endpoint, such as Ollama at
+  `http://localhost:11434/v1` or LM Studio. Local endpoints usually need no key.
 
-The key is stored on the environment like other [secrets](./secrets.md) and can point at a secret
-provider. Its models then appear in each text generation model picker on that environment. The
-model list is loaded the first time you open a picker; refresh it from the text generator's row
-after the API adds models.
+Give it a name if you add more than one from the same service. Your key is stored on the
+environment, like other [secrets](./secrets.md), and can come from a secret provider instead of
+being typed in.
 
-Requests go from the environment's server to the API you configured, and they include what the
-task needs, such as the staged diff for a commit message.
+Then pick one of its models in a text generation model picker. If a model is missing, use the
+refresh button on the generator's row in **Settings → Providers** to load the list again.
 
-## Limits
+Each request sends the API what the task needs, such as the staged diff for a commit message.
 
-- Review guides need an agent that can read the checkout, so they always use a coding agent. When
-  the source control writer model is a text generator, review guides use Codex or Claude instead,
-  and fail with a message if neither is ready. Pick one in **Settings → Source control → Review
-  guide model** to choose which.
-- A [managed policy](./managed-policy.md) that limits providers also turns off text generators.
-- Turning a text generator off, or removing it, sends its tasks back to the environment's text
-  generation model.
+Turning a generator off or removing it sends its work back to the environment's text generation
+model.
+
+## What text generators can't do
+
+Review guides read the checkout over many steps, so they always use a coding agent. If your source
+control writer model is a text generator, review guides use Codex or Claude instead. To choose
+which, pick one in **Settings → Source control → Review guide model**.
+
+A [managed policy](./managed-policy.md) that limits providers also turns off text generators.
