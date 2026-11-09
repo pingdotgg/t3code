@@ -29,9 +29,13 @@ interface EscapeCompileContext {
 function keepWindowsPathEscape(this: EscapeCompileContext) {
   const text = this.stack.at(-1)?.children?.at(-1);
   if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
+  // A prose path cannot cross whitespace, so preceding words cannot affect this escape.
+  const end = text.value.length - 1;
+  let start = end;
+  while (start > 0 && !/\s/.test(text.value[start - 1]!)) start -= 1;
+  const before = text.value.slice(start, end);
   if (UNFINISHED_DRIVE_PATH.test(before)) {
-    text.value = `${before}\\${text.value.slice(-1)}`;
+    text.value = `${text.value.slice(0, end)}\\${text.value.slice(end)}`;
   }
 }
 
