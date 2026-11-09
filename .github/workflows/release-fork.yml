@@ -3,8 +3,12 @@ name: Release fork
 on:
   push:
     branches: [main]
-    paths: [fork-version]
   workflow_dispatch:
+    inputs:
+      version:
+        description: Force this version (X.Y.Z) instead of bumping the latest patch
+        required: false
+        type: string
 
 concurrency:
   group: release-fork
@@ -34,9 +38,18 @@ jobs:
 
       - name: Resolve version
         id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < fork-version)"
+          version="$INPUT_VERSION"
+          if [ -z "$version" ]; then
+            latest="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName --jq '.[0].tagName // empty')"
+            latest="${latest#v}"
+            IFS=. read -r major minor patch <<< "${latest:-1.0.-1}"
+            version="$major.$minor.$((patch + 1))"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $version"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "v$version is already released; skipping."
