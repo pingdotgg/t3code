@@ -482,7 +482,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     const sent = sentRef.current;
     sentRef.current = false;
     if (!editor.isEditable) return;
-    // The send rewrites the document after this commit; a caret move now would emit the old prompt.
+    // The send's controlled rewrite hasn't reached the editor yet; a caret move now would emit the old prompt.
     if (sent) {
       editor.view.focus();
       return;
