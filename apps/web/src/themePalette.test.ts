@@ -111,6 +111,16 @@ describe("theme files", () => {
     expect(legacy.colors.searchMatchBackground).toBe(
       getDefaultThemeColors("dark").searchMatchBackground,
     );
+    // A plugin's theme file imports too; its status colors and radius stay with the plugin.
+    const fromPlugin = parseThemeFile({
+      version: THEME_FILE_VERSION,
+      name: "From plugin",
+      appearance: "dark",
+      radius: "0.625rem",
+      colors: { canvas: "#151515", success: "#3fb950" },
+    });
+    expect(fromPlugin).not.toHaveProperty("radius");
+    expect(fromPlugin).not.toHaveProperty("statusColors");
     const theme = parseThemeFile({
       version: THEME_FILE_VERSION,
       name: "Search",

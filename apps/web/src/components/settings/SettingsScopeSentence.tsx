@@ -54,6 +54,9 @@ export const SETTINGS_DEVICE_ONLY_PATHS: ReadonlySet<string> = new Set([
   "/settings/about",
 ]);
 
+/** Pages whose settings belong to whole environments, so they have no project picker. */
+export const SETTINGS_ENVIRONMENT_ONLY_PATHS: ReadonlySet<string> = new Set(["/settings/plugins"]);
+
 interface SettingsScopeMenuProps {
   readonly value: SettingsScopeSearch;
   readonly groups: readonly SidebarProjectSnapshot[];
@@ -76,10 +79,14 @@ export function SettingsScopeSentence() {
   };
   return (
     <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 px-3 text-sm text-muted-foreground sm:px-4">
-      <span className="flex min-w-0 items-center gap-1.5">
-        <span className="shrink-0">Applying settings for</span>
-        <ProjectScopeMenu {...props} />
-      </span>
+      {SETTINGS_ENVIRONMENT_ONLY_PATHS.has(pathname) ? (
+        <span className="shrink-0">Applying settings</span>
+      ) : (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="shrink-0">Applying settings for</span>
+          <ProjectScopeMenu {...props} />
+        </span>
+      )}
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">
           {scope.search.machine || scope.scope.kind === "checkout" ? "on" : "across"}

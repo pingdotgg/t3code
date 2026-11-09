@@ -15,6 +15,7 @@
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#000000";
         const CUSTOM_THEMES_STORAGE_KEY = "t3code:themes:v1";
+        const ENVIRONMENT_THEMES_STORAGE_KEY = "t3code:environment-themes:v1";
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
         const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
@@ -197,19 +198,20 @@
               (appearance === value.appearance || isRecord(colors)),
           );
         };
+        // Custom themes first, then the palettes the server last published (a plugin's theme,
+        // say), in the order the runtime looks them up.
         const findCustomTheme = (themeId) => {
           if (RESERVED_THEME_IDS.includes(themeId)) return null;
-          try {
-            const parsed = JSON.parse(
-              window.localStorage.getItem(CUSTOM_THEMES_STORAGE_KEY) ?? "null",
-            );
-            if (!Array.isArray(parsed)) return null;
-            return (
-              parsed.find((value) => isStoredCustomTheme(value) && value.id === themeId) ?? null
-            );
-          } catch {
-            return null;
+          for (const storageKey of [CUSTOM_THEMES_STORAGE_KEY, ENVIRONMENT_THEMES_STORAGE_KEY]) {
+            try {
+              const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "null");
+              const theme = Array.isArray(parsed)
+                ? parsed.find((value) => isStoredCustomTheme(value) && value.id === themeId)
+                : undefined;
+              if (theme) return theme;
+            } catch {}
           }
+          return null;
         };
 
         try {

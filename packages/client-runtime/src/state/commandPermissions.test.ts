@@ -161,6 +161,14 @@ describe("command permissions", () => {
   it.effect.each([
     { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
     { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    // Installing, enabling, reloading or configuring a plugin runs its code in the server.
+    { method: WS_METHODS.pluginsSetEnabled, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsReload, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsCreateUploadUrl, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsRescan, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsLink, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsUninstall, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.pluginsSettingsUpdate, scope: AuthSettingsWriteScope },
   ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.scoped(
       Effect.gen(function* () {

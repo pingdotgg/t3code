@@ -1,6 +1,6 @@
 import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { memo } from "react";
+import { lazy, memo, Suspense } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
@@ -11,6 +11,7 @@ import {
   useCanNavigateHistory,
   type HistoryDirection,
 } from "../../navigationHistory";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
@@ -33,7 +34,14 @@ import {
 } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
-import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
+import {
+  isAppModalPage,
+  isSidebarUtilityPage,
+  sidebarBackShownAtom,
+  sidebarSettingsNavShownAtom,
+  useCloseAppModal,
+  useNavigateToMainApp,
+} from "./mainAppLocation";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
 import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
@@ -218,12 +226,31 @@ function SidebarUtilityItem({
   );
 }
 
-const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+const T3ConnectSidebarAvatar = lazy(() =>
+  import("../clerk/T3ConnectSidebarSignIn").then((module) => ({
+    default: module.T3ConnectSidebarAvatar,
+  })),
+);
+
+/** What the footer row starts with: T3's page buttons, a Back button, or nothing. */
+type SidebarFooterUtility = "menu" | "back" | "none";
+
+const SidebarUtilityMenu = memo(function SidebarUtilityMenu({
+  utility,
+}: {
+  utility: SidebarFooterUtility;
+}) {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const closeAppModal = useCloseAppModal();
   const { isMobile, setOpenMobile } = useSidebar();
+  // Settings' sections in the sidebar leave their account avatar to this row, beside Back.
+  const settingsNavShown = useAtomValue(sidebarSettingsNavShownAtom);
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
+  });
+  const isOnAppModalPage = useLocation({
+    select: (location) => isAppModalPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const closeMobileSidebar = () => {
@@ -250,15 +277,19 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     void navigate({ to: "/usage" });
   };
 
+  const showBack = () => {
+    appAtomRegistry.set(sidebarBackShownAtom, true);
+    return () => appAtomRegistry.set(sidebarBackShownAtom, false);
+  };
   const handleBackClick = () => {
     closeMobileSidebar();
-    void navigateToMainApp();
+    void (isOnAppModalPage ? closeAppModal() : navigateToMainApp());
   };
 
   return (
     <SidebarMenu className="flex-row items-center">
-      {isOnUtilityPage ? (
-        <SidebarMenuItem className="min-w-0 flex-1">
+      {utility === "none" ? null : utility === "back" || isOnUtilityPage ? (
+        <SidebarMenuItem ref={showBack} className="min-w-0 flex-1">
           <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
             <span>Back</span>
@@ -287,16 +318,26 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       )}
       <SidebarThreadUndoNotice />
       <SidebarUpdatePill />
+      {/* At the row's end, as in Settings' own footer. */}
+      {settingsNavShown && utility !== "none" && (utility === "back" || isOnUtilityPage) ? (
+        <Suspense fallback={null}>
+          <T3ConnectSidebarAvatar />
+        </Suspense>
+      ) : null}
     </SidebarMenu>
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  utility = "menu",
+}: {
+  utility?: SidebarFooterUtility;
+}) {
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
-      <SidebarUtilityMenu />
+      <SidebarUtilityMenu utility={utility} />
     </SidebarFooter>
   );
 });

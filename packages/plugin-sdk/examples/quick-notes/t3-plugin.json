@@ -1,0 +1,9 @@
+{
+  "id": "quick-notes",
+  "name": "Quick notes",
+  "version": "0.1.1",
+  "description": "Short notes kept on the server, in a right panel.",
+  "engines": { "t3": ">=0.1.5" },
+  "server": "./server.cjs",
+  "web": "./dist/web.js"
+}

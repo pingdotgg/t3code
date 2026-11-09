@@ -1,5 +1,5 @@
 import { pipe } from "effect/Function";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopWindowBackground } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
@@ -16,6 +16,7 @@ import {
   resolveThemeAppearance,
   resolveThemeHalf,
   subscribeToThemePreview,
+  themeCanvasHex,
   THEME_PREVIEW_ID,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
@@ -37,6 +38,8 @@ type ThemeSnapshot = {
 };
 
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
+// Undefined until the first report, so colors left from a removed theme are cleared too.
+let lastDesktopWindowBackground: string | undefined;
 
 const STORAGE_KEY = "t3code:theme";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
@@ -333,11 +336,13 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const appliedTheme = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  applyThemePalette(appliedTheme, resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);
+  syncDesktopWindowBackground(theme, followSystem, appearanceMode, themeHalves);
   if (suppressTransitions) {
     // Force a reflow so the no-transitions class takes effect before removal
     void document.documentElement.offsetHeight;
@@ -389,6 +394,42 @@ function syncDesktopTheme(
       }
     },
   );
+}
+
+/**
+ * New desktop windows start in the theme's canvas instead of flashing black or white. The desktop
+ * app gets what the page paints while its native theme is light and while it is dark.
+ */
+function syncDesktopWindowBackground(
+  theme: Theme,
+  followSystem: boolean,
+  appearanceMode: ThemePreferenceMode,
+  themeHalves: ThemeHalves | null,
+) {
+  if (typeof window === "undefined") return;
+  const bridge = window.desktopBridge;
+  if (typeof bridge?.setWindowBackground !== "function") return;
+  const canvas = (systemDark: boolean) => {
+    const appearance = resolveThemeAppearance(
+      theme,
+      systemDark,
+      followSystem,
+      appearanceMode,
+      themeHalves,
+    );
+    return {
+      appearance,
+      color: themeCanvasHex(resolveThemeHalf(theme, themeHalves, appearance), appearance),
+    };
+  };
+  const background: DesktopWindowBackground = { light: canvas(false), dark: canvas(true) };
+  const signature = JSON.stringify(background);
+  if (lastDesktopWindowBackground === signature) return;
+  lastDesktopWindowBackground = signature;
+  void bridge.setWindowBackground(background).catch((cause: unknown) => {
+    console.error("Could not set the desktop window background.", safeErrorLogAttributes(cause));
+    if (lastDesktopWindowBackground === signature) lastDesktopWindowBackground = undefined;
+  });
 }
 
 if (typeof document !== "undefined" && typeof window !== "undefined") {

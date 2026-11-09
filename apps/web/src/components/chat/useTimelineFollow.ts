@@ -1,9 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type MessageId, type RunId } from "@t3tools/contracts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { Debouncer } from "@tanstack/react-pacer";
+import { Atom } from "effect/reactivity";
 import {
   type SetStateAction,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -39,6 +42,19 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import type { deriveThreadActivityRun } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentThreadStatus } from "@t3tools/client-runtime/state/threads";
 import type { TimelineEntry } from "../../session-logic";
+import { pluginComposerCollapseOnScrollAtom } from "../../plugins/pluginUi";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+
+const REFOLD_SCROLL_PX = 24;
+
+/**
+ * Whether the reader scrolled a thread's timeline away from its end during this visit, while the
+ * scroll-to-end pill shows. A restored position or a jump, such as to a find result, doesn't
+ * count. The composer clears it when the reader reopens it, and their next scroll sets it again.
+ */
+export const timelineAwayFromEndAtom = Atom.family((threadKey: string) =>
+  Atom.make(false).pipe(Atom.withLabel(`timeline-away-from-end:${threadKey}`)),
+);
 
 interface TimelineAnchor {
   readonly threadKey: string | null;
@@ -196,6 +212,16 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     { visit, show: false },
   );
   const showScrollToBottom = pill.visit === visit ? pill.show : !visit.followEnd;
+  // Only a plugin's collapse on scroll reads it, so threads cost nothing while none asks.
+  const collapseRequested = useAtomValue(pluginComposerCollapseOnScrollAtom);
+  const [readerScrolledVisit, setReaderScrolledVisit] = useState<TimelineFollowVisit | null>(null);
+  const tellComposer = collapseRequested && showScrollToBottom && readerScrolledVisit === visit;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tells the thread's composer, which lives outside this hook, that the reader left the end
+  useEffect(() => {
+    if (!tellComposer) return;
+    appAtomRegistry.set(timelineAwayFromEndAtom(routeThreadKey), true);
+    return () => appAtomRegistry.set(timelineAwayFromEndAtom(routeThreadKey), false);
+  }, [routeThreadKey, tellComposer]);
   // Called on every streamed chunk while following; an unchanged pill must
   // bail out instead of re-rendering ChatView.
   const setShowScrollToBottom = (show: boolean) =>
@@ -235,6 +261,24 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const anchorPending =
     timelineAnchorMessageId !== null && laidOutAnchor !== timelineAnchorMessageId;
   const viewportRef = useRef<TimelineViewport | null>(null);
+  // Where the timeline sat at the reader's first scroll after reopening the composer.
+  const refoldFromRef = useRef<number | null>(null);
+  const noteReaderScroll = () => {
+    if (!collapseRequested) return;
+    if (readerScrolledVisit !== visit) return setReaderScrolledVisit(visit);
+    const away = timelineAwayFromEndAtom(routeThreadKey);
+    const top = viewportRef.current?.scrollNode.scrollTop;
+    if (!tellComposer || appAtomRegistry.get(away) || top === undefined) {
+      refoldFromRef.current = null;
+      return;
+    }
+    // A composer the reader reopened folds again once they scroll 24px, not on a brushed trackpad.
+    if (refoldFromRef.current === null) refoldFromRef.current = top;
+    else if (Math.abs(top - refoldFromRef.current) >= REFOLD_SCROLL_PX) {
+      refoldFromRef.current = null;
+      appAtomRegistry.set(away, true);
+    }
+  };
   const releaseFollowForNavigation = () => {
     const { before } = followStore.dispatch(visit, { type: "navigated" });
     if (before.mode === "following") viewportRef.current?.followReleased();
@@ -284,6 +328,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
   const pageScrollControllerRef = useRef<ReturnType<typeof createPageScrollController> | null>(
     null,
   );
+  // Paging from the composer doesn't fold it, since folding would take the caret it pages with.
   const handlePageScrollStart = useStableCallback((key: PageScrollKey) => {
     if ((key === "PageUp" && timelineRealContentOverflowsViewport()) || !isTimelineAtLogicalEnd()) {
       // Through the viewport, so a running position restore stops too.
@@ -345,6 +390,15 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       awayFromEnd,
     });
     if (releases) releaseFollowForNavigation();
+    // Only the reader's own input. A minimap click or a find jump arrives as a command and
+    // then as an unmarked "scroll", so neither counts.
+    if (
+      navigation.source === "wheel" ||
+      navigation.source === "key" ||
+      navigation.source === "touch" ||
+      (navigation.source === "pointer" && navigation.onScrollbar)
+    )
+      noteReaderScroll();
   };
   const handleNavigationStable = useStableCallback(handleNavigation);
   /**

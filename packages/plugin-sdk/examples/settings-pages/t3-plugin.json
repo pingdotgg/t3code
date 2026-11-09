@@ -1,0 +1,10 @@
+{
+  "id": "settings-pages",
+  "name": "Settings pages",
+  "version": "0.3.0",
+  "description": "Settings and Usage open as pages beside the sidebar instead of a window over the chat.",
+  "engines": {
+    "t3": ">=0.1.5"
+  },
+  "web": "./dist/web.js"
+}

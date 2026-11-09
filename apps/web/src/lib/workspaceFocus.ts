@@ -8,10 +8,32 @@ const FOCUS_BOUNDARY_SELECTOR =
 const FOCUSABLE_SELECTOR =
   'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable="true"], [tabindex]';
 
+/**
+ * Each area's `data-t3-region`, which plugin CSS targets. Plugins depend on these names, so they
+ * stay when an area's F6 name, label or element changes. A region goes on the element that paints
+ * the area, so an area painted by an element inside it is null here and that element names it.
+ */
+const T3_REGIONS = {
+  sidebar: null,
+  conversation: "timeline",
+  composer: null,
+  details: null,
+  panel: "right-panel",
+  terminal: "terminal",
+  home: null,
+  "pull-requests": "pull-requests",
+  settings: "settings",
+  "settings-nav": "settings-nav",
+} as const;
+
 /** Props that make an element one stop in the F6 cycle; `order` sets its place in the cycle. */
-export function workspaceAreaProps(name: string, order: number, label: string) {
+export function workspaceAreaProps(name: keyof typeof T3_REGIONS, order: number, label: string) {
+  const region = T3_REGIONS[name];
   return {
     "data-workspace-area": name,
+    // Left out rather than undefined, which would clear the region a component such as
+    // SidebarInset sets before spreading these props.
+    ...(region === null ? {} : { "data-t3-region": region }),
     "data-workspace-order": order,
     "aria-label": label,
     role: "region",

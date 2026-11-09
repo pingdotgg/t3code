@@ -90,6 +90,63 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("adds plugin themes after the environment's own, which win on the same id", () =>
+    withEnvironmentThemes(
+      { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
+      Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const pluginThemes = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-themes-" });
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "nightfall.json"),
+          encodeThemeFile({ ...NIGHTFALL_THEME, name: "Plugin Nightfall" }),
+        );
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "shared-light.json"),
+          encodeThemeFile(SHARED_THEME),
+        );
+
+        yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
+        // Marked, so clients show a plugin's themes only where they load its UI.
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => [theme.id, theme.name, theme.fromPlugin]),
+          [
+            ["nightfall", "Nightfall", undefined],
+            ["shared-light", "Shared Light", true],
+          ],
+        );
+
+        // The same folders read again, so a plugin restarted with edited files reaches windows.
+        const seen = yield* Queue.unbounded<ReadonlyArray<{ readonly name: string }>>();
+        yield* Stream.runForEach(environmentTheme.streamChanges, (themes) =>
+          Queue.offer(seen, themes),
+        ).pipe(Effect.forkScoped);
+        yield* Queue.take(seen);
+        yield* fs.writeFileString(
+          path.join(pluginThemes, "shared-light.json"),
+          encodeThemeFile({ ...SHARED_THEME, name: "Shared Light Edited" }),
+        );
+        // Only setting the folders reads them, so a client connecting doesn't read every plugin's.
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => theme.name),
+          ["Nightfall", "Shared Light"],
+        );
+        yield* environmentTheme.setPluginThemeDirectories([pluginThemes]);
+        assert.deepEqual(
+          (yield* Queue.take(seen)).map((theme) => theme.name),
+          ["Nightfall", "Shared Light Edited"],
+        );
+
+        yield* environmentTheme.setPluginThemeDirectories([]);
+        assert.deepEqual(
+          (yield* currentThemes).map((theme) => theme.id),
+          ["nightfall"],
+        );
+      }),
+    ),
+  );
+
   it.effect("never replays a set older than the snapshot it started from", () =>
     withEnvironmentThemes(
       { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -154,6 +211,28 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
         const outside = path.join(environmentThemesDir, "..", "outside.json");
         yield* fs.writeFileString(outside, encodeThemeFile(NIGHTFALL_THEME));
         yield* fs.symlink(outside, path.join(environmentThemesDir, "nightfall.json"));
+        assert.deepEqual(yield* currentThemes, []);
+      }),
+    ),
+  );
+
+  it.effect.skipIf(!symlinksSupported)("ignores a plugin's themes folder linked out of it", () =>
+    withEnvironmentThemes(
+      {},
+      Effect.gen(function* () {
+        const environmentTheme = yield* EnvironmentTheme.EnvironmentThemeService;
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const base = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-plugin-themes-" });
+        const outside = path.join(base, "outside");
+        yield* fs.makeDirectory(outside);
+        yield* fs.writeFileString(
+          path.join(outside, "nightfall.json"),
+          encodeThemeFile(NIGHTFALL_THEME),
+        );
+        yield* fs.makeDirectory(path.join(base, "plugin"));
+        yield* fs.symlink(outside, path.join(base, "plugin", "themes"));
+        yield* environmentTheme.setPluginThemeDirectories([path.join(base, "plugin", "themes")]);
         assert.deepEqual(yield* currentThemes, []);
       }),
     ),

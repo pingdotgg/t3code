@@ -1,0 +1,9 @@
+{
+  "id": "hello-web",
+  "name": "Hello web",
+  "version": "0.1.0",
+  "description": "Test fixture with a right panel and a settings panel that call its server half.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs",
+  "web": "./web.js"
+}

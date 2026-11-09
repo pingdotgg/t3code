@@ -1,0 +1,70 @@
+{
+  "name": "@t3tools/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types and build helpers for T3 Code plugins.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pingdotgg/t3code",
+    "directory": "packages/plugin-sdk"
+  },
+  "type": "module",
+  "exports": {
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts"
+    },
+    "./web": {
+      "types": "./src/web.ts",
+      "import": "./src/web.ts"
+    },
+    "./atom": {
+      "types": "./src/atom.ts",
+      "import": "./src/atom.ts"
+    },
+    "./atom-react": {
+      "types": "./src/atom-react.ts",
+      "import": "./src/atom-react.ts"
+    },
+    "./shared": {
+      "types": "./src/shared.ts",
+      "import": "./src/shared.ts"
+    },
+    "./ui": {
+      "types": "./src/ui.ts",
+      "import": "./src/ui.ts"
+    },
+    "./vite": {
+      "types": "./src/vite.ts",
+      "import": "./src/vite.ts"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "build:examples": "node scripts/build-examples.ts",
+    "typecheck": "effect-tsgo tsrs --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "react": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "peerDependencies": {
+    "@types/node": "*",
+    "@types/react": ">=19",
+    "react": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "@types/node": {
+      "optional": true
+    },
+    "@types/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  }
+}

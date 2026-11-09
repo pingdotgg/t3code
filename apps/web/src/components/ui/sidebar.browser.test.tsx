@@ -36,6 +36,11 @@ describe("Sidebar", () => {
   it("hands focus to the outside trigger when it collapses around the focused control", async () => {
     await page.viewport(1280, 800);
     await using screen = await render(<Harness />, { router: false /* no routes involved */ });
+    // Plugin styles target the sidebar by this name, on the element that paints it.
+    expect(screen.container.querySelector('[data-slot="sidebar-inner"]')).toHaveAttribute(
+      "data-t3-region",
+      "sidebar",
+    );
 
     await userEvent.click(screen.getByRole("button", { name: "Collapse" }));
 

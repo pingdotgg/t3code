@@ -48,7 +48,10 @@ import {
   TerminalSquare,
   Volume2Icon,
   VolumeOffIcon,
+  Puzzle,
 } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { pluginUiAtom } from "../plugins/pluginUi";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -315,6 +318,7 @@ function SurfaceMenuItem(props: {
 }
 
 function RightPanelEmptyState(props: {
+  environmentId: EnvironmentId | null;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -337,6 +341,7 @@ function RightPanelEmptyState(props: {
   sideChatDisabledReason: string | null;
 }) {
   const [highlight, setHighlight] = useState(-1);
+  const pluginUi = useAtomValue(pluginUiAtom);
 
   const actions = [
     {
@@ -563,6 +568,9 @@ function RightPanelEmptyState(props: {
               />
             ),
           )}
+          {pluginUi === null ? null : (
+            <pluginUi.PluginPanelLauncherItems environmentId={props.environmentId} />
+          )}
         </div>
       </div>
     </div>
@@ -596,6 +604,8 @@ function surfaceTitle(
       return surface.title ?? surface.target?.name ?? "Device";
     case "side-chat":
       return "Side chat";
+    case "plugin":
+      return surface.title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -694,6 +704,8 @@ function SurfaceIcon({
       ) : (
         <Smartphone className="size-3 shrink-0" />
       );
+    case "plugin":
+      return <Puzzle className="size-3 shrink-0" />;
   }
 }
 
@@ -1032,6 +1044,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const focusedSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
+  const pluginUi = useAtomValue(pluginUiAtom);
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1475,6 +1488,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       </SurfaceMenuItem>
                     );
                   })}
+                  {pluginUi === null ? null : (
+                    <pluginUi.PluginPanelMenuItems
+                      environmentId={props.environmentId}
+                      onOpen={() => setAddSurfaceMenuOpen(false)}
+                    />
+                  )}
                 </MenuPopup>
               </Menu>
             ) : null}
@@ -1538,6 +1557,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            environmentId={props.environmentId}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
