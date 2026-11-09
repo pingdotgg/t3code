@@ -14,6 +14,9 @@ import {
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
   makeAntigravityReadRepair,
+  extractAntigravityBackgroundTaskId,
+  extractAntigravityBackgroundTaskCompletion,
+  extractAntigravityBackgroundToolMutation,
 } from "./AntigravityProtocol.ts";
 import {
   mergeToolCallState,
@@ -621,5 +624,176 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+});
+
+describe("Antigravity background tasks", () => {
+  it("extracts background task ID from background run_command and schedule outputs", () => {
+    expect(
+      extractAntigravityBackgroundTaskId({
+        toolCallId: "call-1",
+        title: "run_command",
+        data: {
+          rawOutput:
+            "Tool is running as a background task with task id: 4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-756\nTask Description: ./build.sh",
+        },
+      }),
+    ).toBe("4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-756");
+
+    expect(
+      extractAntigravityBackgroundTaskId({
+        toolCallId: "call-2",
+        title: "schedule",
+        data: {
+          rawOutput: "Scheduled task with ID: cron-job-99",
+        },
+      }),
+    ).toBe("cron-job-99");
+
+    expect(
+      extractAntigravityBackgroundTaskId({
+        toolCallId: "call-3",
+        title: "run_command",
+        data: {
+          rawOutput: { taskId: "task-custom-123" },
+        },
+      }),
+    ).toBe("task-custom-123");
+
+    // Does not identify manage_task as a background task
+    expect(
+      extractAntigravityBackgroundTaskId({
+        toolCallId: "call-4",
+        title: "manage_task",
+        data: {
+          rawInput: { Action: "kill", TaskId: "task-custom-123" },
+          rawOutput: 'Task "task-custom-123" cancelled.',
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("extracts task completion when manage_task kills or inspects a task", () => {
+    // manage_task kill completed
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-kill-1",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "kill", TaskId: "task-123" },
+          rawOutput: 'Task "task-123" cancelled.',
+        },
+      }),
+    ).toEqual([
+      { taskId: "task-123", status: "completed", appendOutput: 'Task "task-123" cancelled.' },
+    ]);
+
+    // manage_task status shows completed
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-status-1",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "status", TaskId: "task-123" },
+          rawOutput: "Task: task-123\nStatus: COMPLETED\nThe command exited with code 0.",
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "task-123",
+        status: "completed",
+        appendOutput: "Task: task-123\nStatus: COMPLETED\nThe command exited with code 0.",
+      },
+    ]);
+
+    // manage_task status shows failed
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-status-2",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "status", TaskId: "task-123" },
+          rawOutput: "Task: task-123\nStatus: FAILED\nThe command exited with code 1.",
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "task-123",
+        status: "failed",
+        appendOutput: "Task: task-123\nStatus: FAILED\nThe command exited with code 1.",
+      },
+    ]);
+
+    // manage_task status shows running
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-status-3",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "status", TaskId: "task-123" },
+          rawOutput: "Task: task-123\nStatus: RUNNING",
+        },
+      }),
+    ).toEqual([
+      {
+        taskId: "task-123",
+        status: "running",
+        appendOutput: "Task: task-123\nStatus: RUNNING",
+      },
+    ]);
+  });
+
+  it("extracts background tool mutations from injected system messages", () => {
+    // Task finished with exit 0
+    expect(
+      extractAntigravityBackgroundToolMutation(
+        'Task id "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265" finished with result:\n\nThe command exited with code 0.',
+      ),
+    ).toEqual([
+      {
+        taskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265",
+        status: "completed",
+        appendOutput: expect.stringContaining("4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265"),
+      },
+    ]);
+
+    // Task finished with nonzero exit code
+    expect(
+      extractAntigravityBackgroundToolMutation(
+        'Task id "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265" finished with result:\n\nThe command exited with code 1.',
+      ),
+    ).toEqual([
+      {
+        taskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265",
+        status: "failed",
+        appendOutput: expect.stringContaining("4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-1265"),
+      },
+    ]);
+
+    // Task was canceled
+    expect(
+      extractAntigravityBackgroundToolMutation(
+        'Task id "task-xyz" was canceled with result:\nStep was canceled: context canceled by manage_task',
+      ),
+    ).toEqual([
+      {
+        taskId: "task-xyz",
+        status: "completed",
+        appendOutput: expect.stringContaining("task-xyz"),
+      },
+    ]);
+
+    // Task cancelled simple string
+    expect(extractAntigravityBackgroundToolMutation('Task "task-xyz" cancelled.')).toEqual([
+      {
+        taskId: "task-xyz",
+        status: "completed",
+        appendOutput: 'Task "task-xyz" cancelled.',
+      },
+    ]);
   });
 });

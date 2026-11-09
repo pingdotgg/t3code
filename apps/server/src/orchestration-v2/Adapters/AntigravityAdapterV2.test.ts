@@ -37,6 +37,7 @@ import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravity
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import {
+  acpCompletedTurnShouldTerminalizeTool,
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
@@ -132,6 +133,61 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.deepEqual(question?.respond({ interaction_2: "opt-dev" }), {
       outcome: { outcome: "selected", optionId: "opt-dev" },
     });
+  });
+
+  it("enables background task tracking and completion de-registration", () => {
+    assert.isTrue(flavor.backgroundTasksIdleOnTurnCompletion);
+    assert.isDefined(flavor.extractBackgroundTaskId);
+    assert.isDefined(flavor.extractBackgroundTaskCompletion);
+    assert.isDefined(flavor.extractBackgroundToolMutation);
+
+    const taskId = flavor.extractBackgroundTaskId?.({
+      toolCallId: "call-bg-1",
+      title: "run_command",
+      data: {
+        rawOutput:
+          "Tool is running as a background task with task id: 4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999",
+      },
+    });
+    assert.equal(taskId, "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999");
+
+    const completed = flavor.extractBackgroundTaskCompletion?.({
+      toolCallId: "call-kill-1",
+      title: "manage_task",
+      status: "completed",
+      data: {
+        rawInput: { Action: "kill", TaskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" },
+        rawOutput: 'Task "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" cancelled.',
+      },
+    });
+    assert.deepEqual(completed, [
+      {
+        taskId: "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999",
+        status: "completed",
+        appendOutput: 'Task "4bb4a8ac-7126-4867-a8d8-b4d62dc6c581/task-999" cancelled.',
+      },
+    ]);
+  });
+
+  it("terminalizes background task tools on turn completion when backgroundTasksIdleOnTurnCompletion is enabled", () => {
+    const bgTool = {
+      toolCallId: "bg-1",
+      title: "run_command",
+      status: "inProgress" as const,
+      data: {
+        rawOutput: "Tool is running as a background task with task id: task-1",
+      },
+    };
+    // Under Antigravity flavor (backgroundTasksIdleOnTurnCompletion: true), background tools terminalize on completed turn
+    assert.isTrue(acpCompletedTurnShouldTerminalizeTool(bgTool, flavor));
+
+    // Under a flavor where backgroundTasksIdleOnTurnCompletion is false/undefined, background tools are excluded
+    assert.isFalse(
+      acpCompletedTurnShouldTerminalizeTool(bgTool, {
+        ...flavor,
+        backgroundTasksIdleOnTurnCompletion: false,
+      }),
+    );
   });
 });
 

@@ -38,6 +38,9 @@ import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  extractAntigravityBackgroundTaskId,
+  extractAntigravityBackgroundTaskCompletion,
+  extractAntigravityBackgroundToolMutation,
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
@@ -46,10 +49,13 @@ import {
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
 import {
   AcpProviderCapabilitiesV2,
+  acpCompletedTurnShouldTerminalizeTool,
   makeAcpAdapterV2,
   type AcpAdapterV2Flavor,
   type AcpAdapterV2RuntimeInput,
 } from "@t3tools/provider-acp/server/adapter";
+
+export { acpCompletedTurnShouldTerminalizeTool };
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
 
@@ -233,6 +239,10 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    backgroundTasksIdleOnTurnCompletion: true,
+    extractBackgroundTaskId: extractAntigravityBackgroundTaskId,
+    extractBackgroundTaskCompletion: extractAntigravityBackgroundTaskCompletion,
+    extractBackgroundToolMutation: extractAntigravityBackgroundToolMutation,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

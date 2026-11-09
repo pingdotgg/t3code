@@ -440,6 +440,7 @@ export interface AcpAdapterV2Flavor {
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
+  readonly backgroundTasksIdleOnTurnCompletion?: boolean;
   readonly supportsCompaction?: boolean;
   /**
    * Native steering: `send` queues a message into the running turn and returns the
@@ -1553,11 +1554,19 @@ function acpPostSettleMonitorPromptShouldSuppress(
 
 export function acpCompletedTurnShouldTerminalizeTool(
   tool: AcpToolCallState,
-  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
+  flavor: Pick<
+    AcpAdapterV2Flavor,
+    "extractBackgroundTaskId" | "extractSubagentUpdate" | "backgroundTasksIdleOnTurnCompletion"
+  >,
 ): boolean {
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
-  if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
+  if (
+    flavor.backgroundTasksIdleOnTurnCompletion !== true &&
+    flavor.extractBackgroundTaskId?.(tool) !== undefined
+  ) {
+    return false;
+  }
   return flavor.extractSubagentUpdate?.(tool) === undefined;
 }
 
@@ -7633,12 +7642,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
+          if (flavor.backgroundTasksIdleOnTurnCompletion === true) {
+            yield* Ref.set(runningBackgroundTaskIds, new Set());
+          }
           if (settledStatus === "completed") {
             yield* terminalizeOpenForegroundTools(context);
-          } else if (settledStatus === "interrupted") {
+          } else if (settledStatus === "interrupted" || settledStatus === "cancelled") {
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
             });
+          } else if (settledStatus === "failed") {
+            yield* terminalizeOpenForegroundTools(context, "failed");
           }
           yield* closeTextStreams(context);
           if (settledStatus !== "failed") {
