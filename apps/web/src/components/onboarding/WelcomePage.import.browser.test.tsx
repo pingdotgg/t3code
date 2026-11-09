@@ -152,6 +152,7 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
 
 import { welcomeImportSelectionKey } from "../../onboarding/welcomeState";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { toastManager } from "../ui/toast";
 import { WelcomePage } from "./WelcomePage";
 
 const primaryId = EnvironmentId.make("primary");
@@ -382,6 +383,7 @@ it("finishes setup without landing when the imported project never reaches the c
   state.waitForProject.mockRejectedValue(new Error("The project did not appear."));
   state.completeOnboarding.mockRejectedValueOnce(new Error("offline"));
   await using _screen = await mountWelcome();
+  using toastAdd = vi.spyOn(toastManager, "add");
 
   await click("Import 1 project and start");
   await vi.waitFor(() => expect(state.completeOnboarding).toHaveBeenCalledOnce());
@@ -392,6 +394,12 @@ it("finishes setup without landing when the imported project never reaches the c
   await click("Import 1 project and start");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.onDone).toHaveBeenCalledWith(undefined);
+  // The retry skips the project it already imported, but still counts its thread.
+  await vi.waitFor(() =>
+    expect(toastAdd).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "success", title: "Imported 1 thread" }),
+    ),
+  );
 });
 
 it("waits for a ready agent to start, and Start without an agent still finishes setup", async () => {

@@ -1382,7 +1382,8 @@ function useProjectImport({
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const importWarningRef = useRef("");
-  const importedThreadCountRef = useRef(0);
+  // Per project, so a retry that skips finished projects still counts their threads.
+  const importedThreadsRef = useRef(new Map<string, number>());
   const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
@@ -1438,6 +1439,12 @@ function useProjectImport({
   );
   const visibleImportError = canWrite && canImport ? "" : IMPORT_PERMISSION_MESSAGE;
 
+  const importedThreadTotal = () =>
+    lastImportSelectionRef.current.reduce(
+      (total, key) => total + (importedThreadsRef.current.get(key) ?? 0),
+      0,
+    );
+
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
       lastImportSelectionRef.current,
@@ -1447,11 +1454,9 @@ function useProjectImport({
     // Busy until setup is saved, so Start cannot run the import again meanwhile.
     setIsImporting(true);
     if (projectRef === undefined) {
-      void onDone(undefined, importWarningRef.current, importedThreadCountRef.current).then(
-        (completed) => {
-          if (!completed) setIsImporting(false);
-        },
-      );
+      void onDone(undefined, importWarningRef.current, importedThreadTotal()).then((completed) => {
+        if (!completed) setIsImporting(false);
+      });
       return;
     }
     holdPageRef.current = true;
@@ -1468,11 +1473,7 @@ function useProjectImport({
           holdPageRef.current = false;
           return;
         }
-        const completed = await onDone(
-          landing,
-          importWarningRef.current,
-          importedThreadCountRef.current,
-        );
+        const completed = await onDone(landing, importWarningRef.current, importedThreadTotal());
         if (!completed) setIsImporting(false);
       });
   };
@@ -1491,16 +1492,15 @@ function useProjectImport({
     }
     setIsImporting(true);
     importWarningRef.current = "";
-    importedThreadCountRef.current = 0;
     lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
     const importGeneration = importGenerationRef.current;
+    const importedThreads = importedThreadsRef.current;
     const importedProjects = importedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
     let importedProjectsCount =
       importedProjects.size > 0
         ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
         : 0;
-    let importedThreadCount = 0;
     let skippedThreadCount = 0;
     const refreshEnvironments = new Set<EnvironmentId>();
     // Resolves false when the run stopped early: a newer run, an unmount, or lost access.
@@ -1556,7 +1556,10 @@ function useProjectImport({
         });
         if (importGeneration !== importGenerationRef.current) return false;
         if (threadImportResult._tag === "Success") {
-          importedThreadCount += threadImportResult.value.importedCount;
+          importedThreads.set(
+            candidate.key,
+            (importedThreads.get(candidate.key) ?? 0) + threadImportResult.value.importedCount,
+          );
           skippedThreadCount += threadImportResult.value.skippedCount;
           if (threadImportResult.value.importedCount > 0) {
             projectsWithImportedHistoryRef.current.set(
@@ -1584,7 +1587,7 @@ function useProjectImport({
       if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
     }
     setIsImporting(false);
-    importedThreadCountRef.current = importedThreadCount;
+    const importedThreadCount = importedThreadTotal();
     if (importedProjectsCount < selection.length) {
       if (importedThreadCount > 0 && skippedThreadCount > 0) {
         importWarningRef.current = `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`;

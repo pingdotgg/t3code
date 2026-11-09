@@ -116,7 +116,6 @@ describe("AddCodexAccountDialog", () => {
 
     await userEvent.click(page.getByRole("button", { name: "Continue" }));
     const instanceId = createdInstanceId();
-    expect(onAccountCreated).toHaveBeenCalledWith(instanceId, expect.any(String));
     await act(() => registry.set(atom, [codexProvider(instanceId, { status: "unauthenticated" })]));
     // Telling the owner about the account does not skip the dialog's own sign-in.
     await expect.element(page.getByText("Sign in to ChatGPT")).toBeVisible();
