@@ -1,0 +1,16 @@
+{
+  "id": "hello-plugin",
+  "name": "Hello",
+  "version": "0.1.0",
+  "description": "Test fixture that answers ping with its greeting setting and counts calls in storage.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs",
+  "settingsSchema": {
+    "type": "object",
+    "properties": {
+      "greeting": { "type": "string", "maxLength": 40 },
+      "token": { "type": "string", "format": "t3-secret" }
+    },
+    "additionalProperties": false
+  }
+}

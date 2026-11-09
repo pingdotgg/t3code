@@ -1019,6 +1019,23 @@ export const DesktopPreviewRecordingSaveInputSchema = Schema.Struct({
   data: Schema.Uint8Array,
 });
 
+/** The canvas the page paints in one appearance, as `#rrggbb`; null for plain black or white. */
+export const DesktopWindowCanvasSchema = Schema.Struct({
+  appearance: Schema.Literals(["light", "dark"]),
+  color: Schema.NullOr(Schema.String),
+});
+export type DesktopWindowCanvas = typeof DesktopWindowCanvasSchema.Type;
+
+/**
+ * What the page paints while Electron's native theme is light and while it is dark. A theme
+ * pinned to one appearance paints that appearance in both.
+ */
+export const DesktopWindowBackgroundSchema = Schema.Struct({
+  light: DesktopWindowCanvasSchema,
+  dark: DesktopWindowCanvasSchema,
+});
+export type DesktopWindowBackground = typeof DesktopWindowBackgroundSchema.Type;
+
 export const DesktopMediaReadSchema = Schema.Struct({
   status: Schema.Number,
   mimeType: Schema.String,
@@ -1110,6 +1127,8 @@ export interface DesktopBridge {
   pickProjectFavicon: (initialPath?: string) => Promise<string | null>;
   pickThemeFiles: () => Promise<readonly PickedThemeFile[] | null>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  /** The theme's canvases, which new windows start in so they don't flash black or white. */
+  setWindowBackground: (background: DesktopWindowBackground) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

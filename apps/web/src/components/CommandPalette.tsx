@@ -77,6 +77,7 @@ import {
   SquarePenIcon,
   TextSearchIcon,
   UserPlusIcon,
+  BlocksIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
 import {
@@ -90,6 +91,7 @@ import {
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { useAtomValue } from "@effect/atom-react";
+import { pluginCommandsAtom } from "../plugins/pluginUi";
 
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
 import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstraps";
@@ -358,6 +360,7 @@ function CommandPaletteDialog(props: {
       }
       className={cn("overflow-hidden", props.mode === "content" && "h-105")}
       data-command-palette="true"
+      data-t3-region="command-palette"
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
@@ -466,6 +469,7 @@ function OpenCommandPaletteDialog(props: {
   const { environments } = useEnvironments();
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const pluginCommands = useAtomValue(pluginCommandsAtom);
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
@@ -1723,6 +1727,19 @@ function OpenCommandPaletteDialog(props: {
           params: { projectKey: contextualProjectGroup.projectKey },
         });
       },
+    });
+  }
+
+  for (const command of pluginCommands) {
+    actionItems.push({
+      kind: "action",
+      value: `action:${command.command}`,
+      searchTerms: [command.pluginName, ...command.keywords],
+      title: command.title,
+      description: command.pluginName,
+      icon: <BlocksIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: command.command,
+      run: async () => command.run(),
     });
   }
 

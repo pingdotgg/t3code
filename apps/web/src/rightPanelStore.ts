@@ -22,6 +22,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "side-chat",
+  "plugin",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -76,7 +77,9 @@ export type RightPanelSurface =
       detailTab?: PullRequestDetailTab;
     }
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId };
+  | { id: `side-chat:${string}`; kind: "side-chat"; threadId: ThreadId }
+  /** A panel a web plugin registered; the panel says its plugin is not active while unloaded. */
+  | { id: `plugin:${string}`; kind: "plugin"; pluginId: string; panel: string; title: string };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 const RIGHT_PANEL_STORAGE_VERSION = 14;
@@ -123,7 +126,11 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat" | "plugin">,
+  ) => void;
+  openPlugin: (
+    ref: ScopedThreadRef,
+    target: { pluginId: string; panel: string; title: string },
   ) => void;
   openSideChat: (ref: ScopedThreadRef, threadId: ThreadId) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
@@ -185,7 +192,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "side-chat" | "plugin">,
   ) => void;
   setThreadPanelOpen: (
     ref: ScopedThreadRef,
@@ -208,7 +215,10 @@ const DEFAULT_THREAD_PANEL_VISIBILITY: ThreadPanelVisibility = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "side-chat">,
+  kind: Exclude<
+    RightPanelKind,
+    "file" | "preview" | "terminal" | "pull-request" | "side-chat" | "plugin"
+  >,
 ): RightPanelSurface => {
   switch (kind) {
     case "diff":
@@ -746,6 +756,18 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : current.surfaces;
             return upsertSurface({ ...current, surfaces: withoutPlaceholder }, surface);
           }),
+        ),
+      openPlugin: (ref, target) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) =>
+            upsertSurface(current, {
+              id: `plugin:${target.pluginId}:${target.panel}`,
+              kind: "plugin",
+              pluginId: target.pluginId,
+              panel: target.panel,
+              title: target.title,
+            }),
+          ),
         ),
       openPullRequest: (ref, target) =>
         set((state) =>

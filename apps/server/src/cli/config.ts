@@ -56,6 +56,12 @@ const noBrowserFlag = Flag.Boolean("no-browser").pipe(
   Flag.withDescription("Disable automatic browser opening."),
   Flag.optional,
 );
+const noPluginsFlag = Flag.Boolean("no-plugins").pipe(
+  Flag.withDescription(
+    "Start without running any plugin, such as to turn off one that stops the server.",
+  ),
+  Flag.optional,
+);
 const bootstrapFdFlag = Flag.Int("bootstrap-fd").pipe(
   Flag.withSchema(Schema.Int),
   Flag.withDescription("Read one-time bootstrap secrets from the given file descriptor."),
@@ -202,6 +208,7 @@ export interface CliServerFlags {
   readonly cwd: Option.Option<string>;
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
+  readonly noPlugins: Option.Option<boolean>;
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
@@ -237,6 +244,7 @@ export const sharedServerCommandFlags = {
   ),
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
+  noPlugins: noPluginsFlag,
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
@@ -285,6 +293,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     cwd: flags.cwd ?? Option.none(),
     devUrl: flags.devUrl ?? Option.none(),
     noBrowser: flags.noBrowser ?? Option.none(),
+    noPlugins: flags.noPlugins ?? Option.none(),
     bootstrapFd: flags.bootstrapFd ?? Option.none(),
     autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
     logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
@@ -510,6 +519,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
     ...(devAuthToken === undefined ? {} : { devAuthToken }),
     devAllowedOrigins: env.devAllowedOrigins,
     noBrowser,
+    ...(Option.getOrElse(normalizedFlags.noPlugins, () => false) ? { noPlugins: true } : {}),
     startupPresentation,
     desktopBootstrapToken,
     ...(desktopBootstrapSecret === undefined ? {} : { desktopBootstrapSecret }),
@@ -542,6 +552,7 @@ export const resolveCliAuthConfig = (
       cwd: Option.none(),
       devUrl: flags.devUrl ?? Option.none(),
       noBrowser: Option.none(),
+      noPlugins: Option.none(),
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
       logWebSocketEvents: Option.none(),

@@ -1,0 +1,8 @@
+{
+  "id": "mcp-plugin",
+  "name": "MCP tools",
+  "version": "0.1.0",
+  "description": "Test fixture that offers agents a read tool that echoes and a write tool that counts.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

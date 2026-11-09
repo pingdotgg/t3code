@@ -77,6 +77,10 @@ describe("CommandPalette open intents", () => {
     const input = page.getByPlaceholder("Search commands, projects, and threads...");
     await expect.element(input).toHaveFocus();
     await expect.element(input).toHaveValue("acme");
+    // Plugin styles target the palette by this name.
+    await expect
+      .element(page.getByTestId("command-palette"))
+      .toHaveAttribute("data-t3-region", "command-palette");
   });
 
   it("opens a searched project's latest listed thread, not a newer subagent", async () => {

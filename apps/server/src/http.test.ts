@@ -18,6 +18,7 @@ import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "e
 import { ASSET_ROUTE_PREFIX } from "./assets/AssetAccess.ts";
 import { ATTACHMENT_UPLOAD_ROUTE_PREFIX } from "./assets/AttachmentUpload.ts";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import { PLUGIN_UPLOAD_ROUTE_PREFIX } from "./plugins/PluginUploads.ts";
 
 import {
   injectMcpAppCsp,
@@ -164,6 +165,7 @@ describe("untraced requests", () => {
             `${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/*`,
             HttpServerResponse.empty(),
           );
+          yield* router.add("POST", `${PLUGIN_UPLOAD_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
           yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
         }),
       );
@@ -182,6 +184,7 @@ describe("untraced requests", () => {
         HttpClientRequest.get(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png?v=1`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature`),
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
+        HttpClientRequest.post(`${PLUGIN_UPLOAD_ROUTE_PREFIX}/payload.signature`),
         HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
       ]) {
         expect((yield* client.execute(request)).status).toBe(204);

@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
+  lazy,
+  Suspense,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -40,8 +42,17 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
-import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
-import { isAppModalPage } from "./sidebar/mainAppLocation";
+import { PluginPart } from "../plugins/PluginPart";
+import {
+  SidebarBrandWidthProbe,
+  SidebarChromeFooter,
+  SidebarChromeHeader,
+} from "./sidebar/SidebarChrome";
+import {
+  isAppModalPage,
+  shownAppPageAtom,
+  sidebarSettingsNavShownAtom,
+} from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
@@ -66,6 +77,13 @@ import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
+
+// Loaded only when a plugin draws Settings' sections in the sidebar.
+const SettingsSidebarNav = lazy(() =>
+  import("./settings/SettingsSidebarNav").then((module) => ({
+    default: module.SettingsSidebarNav,
+  })),
+);
 
 function subscribeToViewportWidth(onChange: () => void): () => void {
   window.addEventListener("resize", onChange);
@@ -233,7 +251,10 @@ function registerThreadUndoCommands(
   router: AnyRouter,
   readSidebarVisible: () => boolean,
 ): () => void {
-  const threadSidebarShown = () => !isAppModalPage(router.state.location.pathname);
+  // A plugin's page frame shows Usage beside the thread list, which then keeps its undo.
+  const threadSidebarShown = () =>
+    !isAppModalPage(router.state.location.pathname) ||
+    appAtomRegistry.get(shownAppPageAtom) === "usage";
   const unregister = registerCommands(
     {},
     {
@@ -405,6 +426,58 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 }
 
+function SidebarSettingsNav() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { isMobile, setOpen, setOpenMobile } = useSidebar();
+  const showSettingsNav = () => {
+    appAtomRegistry.set(sidebarSettingsNavShownAtom, true);
+    return () => appAtomRegistry.set(sidebarSettingsNavShownAtom, false);
+  };
+  return (
+    <div ref={showSettingsNav} className="contents">
+      <Suspense fallback={<div className="min-h-0 flex-1" />}>
+        <SettingsSidebarNav
+          pathname={pathname}
+          placement="sidebar"
+          onNavigate={() => {
+            if (isMobile) setOpenMobile(false);
+          }}
+          onRevealSearch={() => (isMobile ? setOpenMobile(true) : setOpen(true))}
+        />
+      </Suspense>
+    </div>
+  );
+}
+
+/** The sidebar's content, which a plugin may rearrange through the `app.sidebar` part. */
+function AppSidebarContent({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
+  const page = useAtomValue(shownAppPageAtom);
+  const header = <SidebarChromeHeader isElectron={isElectron} />;
+  const threads = <ThreadSidebar routeReveal={routeReveal} />;
+  const footer = <SidebarChromeFooter />;
+  return (
+    <PluginPart
+      part="app.sidebar"
+      pieces={{
+        original: (
+          <>
+            {header}
+            {threads}
+            {footer}
+          </>
+        ),
+        header,
+        threads,
+        footer,
+        back: <SidebarChromeFooter utility="back" />,
+        update: <SidebarChromeFooter utility="none" />,
+        nav: page === "settings" ? <SidebarSettingsNav /> : null,
+        page,
+      }}
+    />
+  );
+}
+
 export function AppSidebarLayout({
   children,
   showSidebar = true,
@@ -412,7 +485,9 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
-  const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
+  // A plugin can put Settings' sections in the sidebar.
+  const settingsNavShown = useAtomValue(sidebarSettingsNavShownAtom);
+  const sidebarArea = workspaceAreaProps("sidebar", 0, settingsNavShown ? "Settings" : "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
     pendingKey: null,
@@ -469,7 +544,6 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label="Threads"
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,
@@ -481,7 +555,7 @@ export function AppSidebarLayout({
               }}
               style={windowControlsInsetStyle}
             >
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
+              <AppSidebarContent routeReveal={sidebarRouteReveal} />
               <SidebarRail onDoubleClick={resetSidebarWidth} />
             </Sidebar>
           </>

@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { pluginCommandsAtom } from "../../plugins/pluginUi";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentsWithScope, readEnvironmentScope } from "../../state/session";
 import {
@@ -1304,10 +1306,14 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
-  const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
-  const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  const { environment } = useSettingsScope();
+  const pluginCommands = useAtomValue(pluginCommandsAtom);
+  const merged = mergeWithDefaultKeybindings(environment?.serverConfig?.keybindings ?? []);
   return {
-    commandOptions: buildKeybindingCommandOptions(merged),
+    commandOptions: buildKeybindingCommandOptions(
+      merged,
+      pluginCommands.map((entry) => entry.command),
+    ),
     allRows: buildKeybindingRows(merged),
   };
 }

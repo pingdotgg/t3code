@@ -108,7 +108,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
-  const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const environmentIdentificationMode = useEnvironmentIdentificationMode("composer");
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
     !isEditingQueuedMessage &&

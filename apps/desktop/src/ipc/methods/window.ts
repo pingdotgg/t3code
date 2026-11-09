@@ -4,6 +4,7 @@ import {
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
   DesktopThemeSchema,
+  DesktopWindowBackgroundSchema,
   EDITORS,
   EditorId,
   PickedThemeFileSchema,
@@ -40,6 +41,7 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -287,6 +289,17 @@ export const setTheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     yield* electronTheme.setSource(theme);
+  }),
+});
+
+export const setWindowBackground = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_WINDOW_BACKGROUND_CHANNEL,
+  payload: DesktopWindowBackgroundSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.setWindowBackground")(function* (background) {
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
+    const change = yield* appSettings.setWindowBackground(background);
+    if (change.changed) yield* (yield* DesktopWindow.DesktopWindow).syncAppearance;
   }),
 });
 

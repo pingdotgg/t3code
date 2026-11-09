@@ -4,9 +4,12 @@ import { ThreadId } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
+
+import "~/index.css";
 
 import { AppRoot } from "~/AppRoot";
+import { NoProjectsHero } from "~/components/NoProjectsHero";
 // The route loads ChatView lazily, and its first transform (React Compiler over ~4k lines)
 // takes 6-11s; importing it here keeps that out of the test's timeout.
 import "~/components/ChatView";
@@ -64,4 +67,69 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("marks the window's main areas with the region names plugin styles target", async () => {
+  using _environment = installFakeEnvironment([]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const draftId = DraftId.make("draft-regions");
+  useComposerDraftStore
+    .getState()
+    .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+      threadId: ThreadId.make("thread-regions"),
+    });
+
+  const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+
+  // Plugins style these by name, so renaming or moving one breaks them. The sidebar, thread
+  // details, terminal and command palette tests check the other names the SDK README lists.
+  expect(document.querySelector('[data-slot="sidebar-inset"]')).toHaveAttribute(
+    "data-t3-region",
+    "main",
+  );
+  await expect
+    .element(page.getByRole("region", { name: "Conversation" }))
+    .toHaveAttribute("data-t3-region", "timeline");
+
+  // A region sits on the element that paints its area, so a plugin's plain rule recolors it.
+  const pluginSheet = document.createElement("style");
+  pluginSheet.textContent = '[data-t3-region="composer"] { background: rgb(1, 2, 3); }';
+  document.head.append(pluginSheet);
+  using _pluginSheet = { [Symbol.dispose]: () => pluginSheet.remove() };
+  const composerBox = document.querySelector("[data-chat-composer-main-surface]");
+  expect(composerBox && getComputedStyle(composerBox).backgroundColor).toBe("rgb(1, 2, 3)");
+
+  await userEvent.click(page.getByRole("button", { name: "Toggle right panel" }));
+  await expect
+    .element(page.getByRole("region", { name: "Workspace panel" }))
+    .toHaveAttribute("data-t3-region", "right-panel");
+
+  await router.navigate({ to: "/settings/general" });
+  await expect
+    .element(page.getByRole("region", { name: "Settings content" }))
+    .toHaveAttribute("data-t3-region", "settings");
+  await expect
+    .element(page.getByRole("navigation", { name: "Settings sections" }))
+    .toHaveAttribute("data-t3-region", "settings-nav");
+
+  await router.navigate({ to: "/pull-requests", search: { involvement: "all", state: "open" } });
+  await expect
+    .element(page.getByRole("region", { name: "Pull requests" }))
+    .toHaveAttribute("data-t3-region", "pull-requests");
+});
+
+it("marks the home page with the region name plugin styles target", async () => {
+  await using _screen = await render(<NoProjectsHero />);
+  const homeTitle = page.getByText("What should we work on?");
+  await expect.element(homeTitle).toBeInTheDocument();
+  expect(homeTitle.element().closest("[data-t3-region]")).toHaveAttribute("data-t3-region", "home");
 });

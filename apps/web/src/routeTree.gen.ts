@@ -32,6 +32,7 @@ import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings
 import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.settings.scheduled-tasks'
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
+import { Route as ChatSettingsPluginsRouteImport } from './routes/_chat.settings.plugins'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
 import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.labs'
@@ -169,6 +170,11 @@ const ChatSettingsProjectsRoute = ChatSettingsProjectsRouteImport.update({
   path: '/projects',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsPluginsRoute = ChatSettingsPluginsRouteImport.update({
+  id: '/plugins',
+  path: '/plugins',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsOpenSourceLicensesRoute =
   ChatSettingsOpenSourceLicensesRouteImport.update({
     id: '/open-source-licenses',
@@ -299,6 +305,7 @@ export interface FileRoutesByFullPath {
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
+  '/settings/plugins': typeof ChatSettingsPluginsRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
@@ -342,6 +349,7 @@ export interface FileRoutesByTo {
   '/settings/labs': typeof ChatSettingsLabsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
+  '/settings/plugins': typeof ChatSettingsPluginsRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
@@ -387,6 +395,7 @@ export interface FileRoutesById {
   '/_chat/settings/labs': typeof ChatSettingsLabsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
+  '/_chat/settings/plugins': typeof ChatSettingsPluginsRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
   '/_chat/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
@@ -432,6 +441,7 @@ export interface FileRouteTypes {
     | '/settings/labs'
     | '/settings/maintenance'
     | '/settings/open-source-licenses'
+    | '/settings/plugins'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
@@ -475,6 +485,7 @@ export interface FileRouteTypes {
     | '/settings/labs'
     | '/settings/maintenance'
     | '/settings/open-source-licenses'
+    | '/settings/plugins'
     | '/settings/projects'
     | '/settings/providers'
     | '/settings/scheduled-tasks'
@@ -519,6 +530,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/labs'
     | '/_chat/settings/maintenance'
     | '/_chat/settings/open-source-licenses'
+    | '/_chat/settings/plugins'
     | '/_chat/settings/projects'
     | '/_chat/settings/providers'
     | '/_chat/settings/scheduled-tasks'
@@ -706,6 +718,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsProjectsRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/plugins': {
+      id: '/_chat/settings/plugins'
+      path: '/plugins'
+      fullPath: '/settings/plugins'
+      preLoaderRoute: typeof ChatSettingsPluginsRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/open-source-licenses': {
       id: '/_chat/settings/open-source-licenses'
       path: '/open-source-licenses'
@@ -860,6 +879,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsLabsRoute: typeof ChatSettingsLabsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
+  ChatSettingsPluginsRoute: typeof ChatSettingsPluginsRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
   ChatSettingsScheduledTasksRoute: typeof ChatSettingsScheduledTasksRoute
@@ -890,6 +910,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsLabsRoute: ChatSettingsLabsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
+  ChatSettingsPluginsRoute: ChatSettingsPluginsRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
   ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,

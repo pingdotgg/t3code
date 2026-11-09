@@ -125,9 +125,19 @@ export const SCRIPT_RUN_COMMAND_PATTERN = Schema.TemplateLiteral([
   Schema.Literal(".run"),
 ]);
 
+/** A command a web plugin registered: `plugin.<pluginId>.<commandId>`. */
+export const PLUGIN_COMMAND_PATTERN = Schema.TemplateLiteral([
+  Schema.Literal("plugin."),
+  // The `PluginId` rule; that schema is branded, which a template literal cannot hold.
+  Schema.NonEmptyString.check(Schema.isMaxLength(32), Schema.isPattern(/^[a-z][a-z0-9-]*$/)),
+  Schema.Literal("."),
+  Schema.NonEmptyString.check(Schema.isMaxLength(32), Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/)),
+]);
+
 export const KeybindingCommand = Schema.Union([
   Schema.Literals(STATIC_KEYBINDING_COMMANDS),
   SCRIPT_RUN_COMMAND_PATTERN,
+  PLUGIN_COMMAND_PATTERN,
 ]);
 export type KeybindingCommand = typeof KeybindingCommand.Type;
 

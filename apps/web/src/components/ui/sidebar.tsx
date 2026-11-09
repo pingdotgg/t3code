@@ -297,6 +297,7 @@ function Sidebar({
             className,
           )}
           data-slot="sidebar"
+          data-t3-region="sidebar"
           {...props}
         >
           {children}
@@ -318,6 +319,7 @@ function Sidebar({
             data-mobile="true"
             data-sidebar="sidebar"
             data-slot="sidebar"
+            data-t3-region="sidebar"
             showCloseButton={false}
             side={side}
             style={
@@ -389,6 +391,7 @@ function Sidebar({
             className="flex h-full w-full flex-col bg-sidebar surface-grain group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow-sm/5"
             data-sidebar="sidebar"
             data-slot="sidebar-inner"
+            data-t3-region="sidebar"
           >
             {children}
           </div>
@@ -619,6 +622,7 @@ function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
         className,
       )}
       data-slot="sidebar-inset"
+      data-t3-region="main"
       {...props}
     />
   );

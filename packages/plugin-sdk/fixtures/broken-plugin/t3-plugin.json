@@ -1,0 +1,8 @@
+{
+  "id": "broken-plugin",
+  "name": "Broken",
+  "version": "0.1.0",
+  "description": "Test fixture whose activate throws.",
+  "engines": { "t3": ">=0.1.0" },
+  "server": "./server.cjs"
+}

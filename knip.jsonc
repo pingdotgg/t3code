@@ -152,6 +152,19 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/plugin-sdk": {
+      // Plugin authors outside this repository import these exports.
+      "includeEntryExports": false,
+      // The plugin host and the web loader load example and fixture entries from their manifests.
+      "entry": [
+        "examples/*/*.cjs",
+        "examples/*/web.tsx",
+        "examples/*/vite.config.ts",
+        "fixtures/*/*.cjs",
+        "fixtures/*/web.{js,tsx}",
+        "fixtures/*/vite.config.ts",
+      ],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],

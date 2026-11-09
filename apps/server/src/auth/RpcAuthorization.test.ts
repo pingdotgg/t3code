@@ -74,6 +74,17 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps linking, enabling, reloading and configuring plugins, which runs their code, behind settings write", () => {
+    for (const method of [
+      WS_METHODS.pluginsLink,
+      WS_METHODS.pluginsSetEnabled,
+      WS_METHODS.pluginsReload,
+      WS_METHODS.pluginsSettingsUpdate,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+    }
+  });
+
   it("rejects unknown RPC method names", () => {
     for (const method of ["server.notRegistered", "toString", "constructor"]) {
       expect(() => requiredScopeForRpcMethod(method)).toThrow(

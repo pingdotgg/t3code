@@ -94,6 +94,18 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+
+/** Status colors a published theme may set in its colors; T3's own stay otherwise. */
+export const THEME_STATUS_COLOR_ROLES = [
+  "success",
+  "successForeground",
+  "info",
+  "infoForeground",
+] as const;
+export type ThemeStatusColors = Readonly<
+  Partial<Record<(typeof THEME_STATUS_COLOR_ROLES)[number], string>>
+>;
+
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
@@ -103,6 +115,10 @@ export type ThemeDefinition = Readonly<{
   collection?: Readonly<{ id: string; label: string }>;
   sidebarArtwork?: boolean;
   managed?: boolean;
+  /** Published themes only: T3's corner radius, such as `0.625rem`. */
+  radius?: string;
+  /** Published themes only, per appearance. */
+  statusColors?: Readonly<Partial<Record<ThemeAppearance, ThemeStatusColors>>>;
 }>;
 
 export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {

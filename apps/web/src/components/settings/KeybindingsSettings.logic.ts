@@ -16,6 +16,7 @@ import {
 import { shortcutConflictKey, shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
 import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
+import { pluginCommandLabel } from "../../plugins/pluginUi";
 
 // Rank every usage command; mixing rank and alphabetical comparisons makes order input-dependent.
 const usageCommandOrder = new Map<KeybindingCommand, number>(
@@ -220,6 +221,7 @@ const KEYBINDING_GROUPS = [
   { id: "preview", title: "Preview & diff", prefixes: ["preview", "diff"] },
   { id: "appearance", title: "Appearance", prefixes: ["theme", "appearance", "themeEditor"] },
   { id: "scripts", title: "Project scripts", prefixes: ["script"] },
+  { id: "plugins", title: "Plugins", prefixes: ["plugin"] },
 ] as const;
 const OTHER_KEYBINDING_GROUP = { id: "other", title: "Other" } as const;
 
@@ -360,8 +362,9 @@ export function buildWhenVariableOptions(): ReadonlyArray<WhenVariableOption> {
 
 export function buildKeybindingCommandOptions(
   keybindings: ResolvedKeybindingsConfig,
+  pluginCommands: ReadonlyArray<KeybindingCommand> = [],
 ): ReadonlyArray<KeybindingCommandOption> {
-  const commands = new Set<KeybindingCommand>(STATIC_KEYBINDING_COMMANDS);
+  const commands = new Set<KeybindingCommand>([...STATIC_KEYBINDING_COMMANDS, ...pluginCommands]);
   for (const binding of keybindings) {
     commands.add(binding.command);
   }
@@ -385,6 +388,10 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "view.reopenClosed") return "Reopen Closed Tab";
   if (command === "preview.focusUrl") return "Preview: Focus URL";
   const raw = String(command);
+  if (raw.startsWith("plugin.")) {
+    const label = pluginCommandLabel(raw);
+    if (label !== undefined) return label;
+  }
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return `Run Script: ${titleCaseCommandSegment(raw.slice("script.".length, -".run".length))}`;
   }

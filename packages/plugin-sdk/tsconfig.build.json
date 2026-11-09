@@ -1,0 +1,14 @@
+// Declarations for `scripts/build.ts`, which bundles them per entry.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "allowJs": false,
+    "checkJs": false,
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "**/testing/**"]
+}

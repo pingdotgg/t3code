@@ -122,6 +122,7 @@ export function ThreadDetailsCard({
       style={placement ? { maxHeight: height } : undefined}
       onContextMenu={onContextMenu}
       data-thread-details-card
+      data-t3-region="thread-details"
     >
       <ScrollArea scrollFade className="min-h-0">
         <div ref={setContentElement}>{children(density)}</div>
