@@ -344,10 +344,16 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   };
 
   return (
+    // Material sheet drags follow the first nested-scrolling native view, and the AppBar's
+    // Compose buttons are some, so Android renders content first and reverses the column.
     <View
       collapsable={false}
-      className={cn("flex-1 android:bg-header", isInspector ? "ios:bg-screen" : "ios:bg-sheet")}
+      className={cn(
+        "flex-1 android:flex-col-reverse android:bg-header",
+        isInspector ? "ios:bg-screen" : "ios:bg-sheet",
+      )}
     >
+      <ScreenContent insetHorizontal={isInspector ? true : undefined}>{content}</ScreenContent>
       <AppBar
         title={currentBranchLabel}
         subtitle={currentStatusSummary}
@@ -355,7 +361,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         onClose={isInspector ? undefined : () => navigation.goBack()}
         refresh={refresh}
       />
-      <ScreenContent insetHorizontal={isInspector ? true : undefined}>{content}</ScreenContent>
     </View>
   );
 }
