@@ -344,7 +344,7 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
+  it.effect("rejects merged PRs and keeps an active watch usable without hosting access", () =>
     Effect.gen(function* () {
       const watch = {
         startedAt: "2026-08-20T00:00:00.000Z",
@@ -359,6 +359,7 @@ describe("pull request toolkit handlers", () => {
       };
       const merged = makeLink(1, { headBranch: "done" });
       const harness = yield* makeHarness({
+        readFailure: new PullRequestUnavailableError({ reason: "cli-missing" }),
         thread: makeThread([
           { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
           makeLink(2, { headBranch: "idle" }),
@@ -370,9 +371,13 @@ describe("pull request toolkit handlers", () => {
         .pipe(Effect.flip);
       expect(error).toMatchObject({ _tag: "PullRequestNotOpenError", state: "merged" });
       expect(
+        yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 3 }),
+      ).toMatchObject({ watching: true, wasWatching: true });
+      expect(
         yield* harness.call("unwatch_pull_request", { repository: "t3tools/t3code", number: 3 }),
       ).toMatchObject({ wasWatching: true });
       expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.watch", number: 3, watching: true },
         { type: "thread.pull-request.watch", number: 3, watching: false },
       ]);
     }),

@@ -279,7 +279,7 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
-    if (watching) {
+    if (watching && before?.watch === undefined) {
       const pullRequests = yield* PullRequestService.PullRequestService;
       yield* pullRequests
         .summary(
