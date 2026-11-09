@@ -648,13 +648,12 @@ function PairingForm({
             </Button>
           </div>
           <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">
-              On the computer with your code, start T3 Code or run{" "}
-              <code className="font-mono">t3 serve</code>, then run:
-            </p>
+            <p className="pt-3 text-sm text-muted-foreground">On the computer with your code:</p>
             <InstallT3Commands command="t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              On a tailnet, run <code className="font-mono">t3 pair --tailscale</code> instead.
+              Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
+              <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
+              <code className="font-mono">t3 pair --tailscale</code> instead.
             </p>
           </CollapsiblePanel>
         </Collapsible>
