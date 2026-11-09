@@ -36,7 +36,7 @@ fx offers two composer modes.
 | **Supervised** | fx asks before it changes files or runs commands. Read requests run without asking. |
 | **Auto**       | fx handles routine actions itself. Anything it still asks about reaches you.        |
 
-T3 Code does not offer **Full access** or **Auto-accept edits** for fx. A thread already set to one of those runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
+T3 Code does not offer **Full access** or **Auto-accept edits** for fx. A thread set to **Full access** runs in **Auto**, and one set to **Auto-accept edits** runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
 
 On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pull/1189), fx saves the mode T3 Code sets as its default permission mode. T3 Code sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
 

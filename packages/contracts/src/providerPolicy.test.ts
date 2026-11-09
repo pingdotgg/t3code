@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { type RuntimeMode, resolveSupportedRuntimeMode } from "./providerPolicy.ts";
 
-const pi: ReadonlyArray<RuntimeMode> = ["approval-required", "auto-accept-edits", "full-access"];
+const pi: ReadonlyArray<RuntimeMode> = ["full-access", "auto-accept-edits", "approval-required"];
 const fx: ReadonlyArray<RuntimeMode> = ["approval-required", "auto"];
 
 describe("resolveSupportedRuntimeMode", () => {

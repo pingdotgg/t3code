@@ -278,7 +278,7 @@ it.effect(
 
 it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
   Effect.gen(function* () {
-    // Pi offers no Auto; a mode a provider lacks steps down to the broadest one it offers.
+    // Pi offers no Auto; an inherited mode steps down to the broadest supported mode below it.
     const pi = ProviderInstanceId.make("pi");
     const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];

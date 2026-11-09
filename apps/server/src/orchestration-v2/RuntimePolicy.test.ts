@@ -138,7 +138,7 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
-  it.effect("steps a mode the provider does not offer down to the broadest one it does", () =>
+  it.effect("steps an unsupported mode down to the broadest supported mode below it", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
