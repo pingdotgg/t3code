@@ -1481,15 +1481,18 @@ const make = Effect.gen(function* () {
           error,
         }).pipe(Effect.andThen(Effect.sync(() => failures.push(error))));
     const stoppedChildThreadIds = new Set<ThreadId>();
-    const stops = subagents.flatMap((task): ReadonlyArray<Effect.Effect<unknown>> => {
-      if (task.origin !== "app_owned") return [];
-      if (task.childThreadId === null) {
-        // A task in a linked environment ends here; its follower then stops it there.
-        // One with its result keeps it, but its thread there may run follow-up work.
-        if (task.remoteChild === undefined) return [];
-        const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
-        return [
-          dispatch(
+    // Each task stops under its own thread's lock, so one that waits on a busy thread must not
+    // hold back its siblings until the effect deadline cuts the walk short.
+    yield* Effect.forEach(
+      subagents,
+      (task) => {
+        if (task.origin !== "app_owned") return Effect.void;
+        if (task.childThreadId === null) {
+          // A task in a linked environment ends here; its follower then stops it there.
+          // One with its result keeps it, but its thread there may run follow-up work.
+          if (task.remoteChild === undefined) return Effect.void;
+          const commandId = CommandId.make(`${input.commandId}:stop:${task.id}`);
+          return dispatch(
             task.result === null
               ? {
                   type: "delegated_task.remote.complete",
@@ -1508,15 +1511,13 @@ const make = Effect.gen(function* () {
                   parentThreadId: input.threadId,
                   taskId: task.id,
                 },
-          ).pipe(Effect.catch(recordFailure({ taskId: task.id }))),
-        ];
-      }
-      const threadId = task.childThreadId;
-      // Follow-up tasks reuse a child thread; walk its subtree only once.
-      if (stoppedChildThreadIds.has(threadId)) return [];
-      stoppedChildThreadIds.add(threadId);
-      return [
-        dispatch({
+          ).pipe(Effect.catch(recordFailure({ taskId: task.id })));
+        }
+        const threadId = task.childThreadId;
+        // Follow-up tasks reuse a child thread; walk its subtree only once.
+        if (stoppedChildThreadIds.has(threadId)) return Effect.void;
+        stoppedChildThreadIds.add(threadId);
+        return dispatch({
           type: "thread.stop",
           commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
           threadId,
@@ -1525,12 +1526,10 @@ const make = Effect.gen(function* () {
         }).pipe(
           Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
           Effect.catch(recordFailure({ threadId })),
-        ),
-      ];
-    });
-    // Each task stops under its own thread's lock, so one that waits on a busy thread must not
-    // hold back its siblings until the effect deadline cuts the walk short.
-    yield* Effect.all(stops, { concurrency: "unbounded", discard: true });
+        );
+      },
+      { concurrency: "unbounded", discard: true },
+    );
     if (failures[0] !== undefined) return yield* failures[0];
   });
 

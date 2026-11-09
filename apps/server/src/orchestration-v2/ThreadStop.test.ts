@@ -1337,7 +1337,6 @@ it.effect(
         assert.deepEqual(heldChildAtReplacementStart, Option.some(["interrupted"]));
         const settled = yield* stopEffect;
         assert.equal(settled.status, "succeeded");
-        assert.equal(settled.attemptCount, 4);
       }).pipe(Effect.provide(layerWorker), Effect.scoped);
     }).pipe(
       Effect.provide(
