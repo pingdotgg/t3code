@@ -8,6 +8,7 @@ export const SUPPORTED_LOCALES: ReadonlyArray<string> = [DEFAULT_LOCALE, ...gtCo
 const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   en: "English",
   es: "Español",
+  "pt-BR": "Português (Brasil)",
   zh: "中文（简体）",
 };
 
