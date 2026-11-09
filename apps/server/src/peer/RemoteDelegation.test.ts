@@ -1036,7 +1036,7 @@ it.effect.each(["no active parent run", "a newer run owned by another provider"]
         });
         expect(acknowledged.subagents[0]?.completionDelivery).toEqual({
           state: "acknowledged",
-          observedByRunId: null,
+          observedByRunId: parentRunId,
         });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),

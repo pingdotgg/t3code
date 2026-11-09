@@ -16,8 +16,9 @@ example:
 https://<environment-address>/mcp
 ```
 
-The copied URL uses the route this device is connected over, so an agent on the
-same device can reach it.
+When T3 Connect serves the environment, the copied URL is its T3 Connect
+address, which agents can reach from anywhere. Otherwise it uses the route this
+device is connected over, so an agent on the same device can reach it.
 
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as
