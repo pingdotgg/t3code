@@ -422,8 +422,11 @@ const probeClaudeCapabilities = (
               catch: (cause) => new ClaudeCapabilitiesProbeSdkError({ operation: "usage", cause }),
             }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS), Effect.result)
           : undefined;
+        // Claude answers available-but-null while it holds back usage reads; retry it like a failure.
         const usage =
-          usageResult && Result.isSuccess(usageResult)
+          usageResult &&
+          Result.isSuccess(usageResult) &&
+          (usageResult.success.rate_limits !== null || !usageResult.success.rate_limits_available)
             ? {
                 rate_limits_available: usageResult.success.rate_limits_available,
                 rate_limits: usageResult.success.rate_limits,

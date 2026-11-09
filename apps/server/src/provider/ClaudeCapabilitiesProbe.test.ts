@@ -88,3 +88,29 @@ it.effect("keeps the probe subprocess alive while gateway model discovery can fi
     assert.equal(abortSignal?.aborted, true);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("treats limits Claude could not fetch as a failed usage read", () =>
+  Effect.gen(function* () {
+    const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+      () =>
+        ({
+          initializationResult: async () => ({
+            account: { subscriptionType: "max", tokenSource: "claude.ai" },
+            commands: [],
+          }),
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => ({
+            rate_limits_available: true,
+            rate_limits: null,
+          }),
+        }) as unknown as ReturnType<typeof ClaudeSdk.query>,
+    );
+    yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+    const configDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+    const capabilities = yield* probeClaudeCapabilities(
+      yield* decodeClaudeSettings({ binaryPath: "claude" }),
+      { PATH: (yield* HostProcess.Environment).PATH, CLAUDE_CONFIG_DIR: configDir },
+    );
+    assert.strictEqual(capabilities.subscriptionType, "max");
+    assert.strictEqual(capabilities.usage, undefined);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
