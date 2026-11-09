@@ -22,6 +22,7 @@ import {
   TimelineRowActivityCtx,
   type TimelineRowActivityState,
   TimelineRowCtx,
+  TimelineWakeUpsRailCtx,
   type TimelineRowSharedState,
   type TimelineUsageLimit,
   type WorkGroupViewState,
@@ -134,6 +135,8 @@ import {
   withRunGroupsOpen,
   withTurnFoldOpen,
   liveRunlessTurnFoldRunId,
+  wakeUpsRailKey,
+  wakeUpsRailRows,
 } from "./MessagesTimeline.logic";
 import { type ThreadFindMatch } from "./threadFind";
 import { useThreadFindNavigation } from "./useThreadFindNavigation";
@@ -1125,6 +1128,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       .filter(isVisiblePendingApproval)
       .map((approval) => [approval.requestId, approval]),
   );
+  const wakeUpsRail = wakeUpsRailRows(wakeUpsRailKey(rows));
   const sharedState: TimelineRowSharedState = {
     pendingApprovals: pendingApprovalsByRequestId,
     respondingRequestIds,
@@ -1353,26 +1357,28 @@ const ConversationTimeline = memo(function ConversationTimeline({
   });
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
-      <div
-        className="messages-timeline-row-frame"
-        data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
-        onAnimationEnd={(event) => {
-          if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
-        }}
-        onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
-        onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
-      >
+      <TimelineWakeUpsRailCtx value={wakeUpsRail}>
         <div
-          ref={observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
-          data-timeline-root="true"
+          className="messages-timeline-row-frame"
+          data-fold-reveal={foldRevealBaseIds?.has(item.id) === false ? "" : undefined}
+          onAnimationEnd={(event) => {
+            if (event.target === event.currentTarget) setFoldRevealBaseIds(null);
+          }}
+          onPlayCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
+          onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
         >
-          <AudioPreviewUnmountContext value={onAudioUnmount}>
-            <TimelineRowContent row={item} />
-          </AudioPreviewUnmountContext>
+          <div
+            ref={observeLaneWidth}
+            className="chat-content-lane overflow-x-clip"
+            data-timeline-root="true"
+          >
+            <AudioPreviewUnmountContext value={onAudioUnmount}>
+              <TimelineRowContent row={item} />
+            </AudioPreviewUnmountContext>
+          </div>
         </div>
-      </div>
+      </TimelineWakeUpsRailCtx>
     </TimelineRowCtx>
   );
   const listExtraData = {
@@ -1380,6 +1386,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rowCount: rows.length,
     sharedState,
     foldRevealBaseIds,
+    wakeUpsRail,
   };
   const timelineListFooter = (
     <TimelineListFooter
@@ -1573,6 +1580,7 @@ function getItemType(item: MessagesTimelineRow) {
 }
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const wakeUpsRail = use(TimelineWakeUpsRailCtx).get(row.id);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
   const command = row.kind === "message" && row.command?.standalone ? row.command : null;
@@ -1613,6 +1621,11 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           row.kind === "assistant-meta"
           ? "group/assistant"
           : null,
+        // The rail drops from the fold's bell, through each row's bottom gap, to the last row.
+        wakeUpsRail &&
+          "relative ps-6 before:absolute before:start-[11px] before:top-0 before:w-px before:bg-border",
+        wakeUpsRail === "body" && "before:bottom-0",
+        wakeUpsRail === "end" && "before:bottom-3",
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}

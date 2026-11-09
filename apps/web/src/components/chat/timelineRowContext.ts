@@ -125,6 +125,9 @@ export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 
+/** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
+export const TimelineWakeUpsRailCtx = createContext<ReadonlyMap<string, "body" | "end">>(new Map());
+
 export interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
