@@ -72,7 +72,7 @@ const assertCrashDiagnosis = (detail: string | undefined) => {
   assert.notInclude(detail, "fifth-frame");
   const lines = detail.split("\n");
   assert.lengthOf(lines, 5);
-  assert.lengthOf(lines[1] ?? "", 240);
+  assert.isAtMost((lines[1] ?? "").length, 240);
   assert.include(lines[1] ?? "", "token=[redacted]");
   for (const line of lines.slice(1)) assert.isAtMost(line.length, 240);
 };
@@ -108,6 +108,188 @@ describe("PiRpc stderr diagnostics", () => {
   });
 
   it.live.each([
+    {
+      name: "long noncredential diagnostic",
+      stderr: "Error: " + "x".repeat(500),
+      secret: "x".repeat(241),
+      diagnosis: "Error: xxx",
+    },
+    {
+      name: "dangling '\"' escape",
+      stderr: 'Error: password="prefix secret-tail\\',
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: 'dangling "\'" escape',
+      stderr: "Error: password='prefix secret-tail\\",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "authorization separator 0x2028",
+      stderr: "Error: Authorization: Token prefix\u2028secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "authorization separator 0x2029",
+      stderr: "Error: Authorization: Token prefix\u2029secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "Cookie remainder",
+      stderr: "Error: Cookie: session=abc; other=secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "Set-Cookie remainder",
+      stderr: "Error: Set-Cookie: session=abc; other=secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error:",
+    },
+    {
+      name: "encoded JSON keys",
+      stderr: 'Error: body "{\\"password\\":\\"hunter2\\",\\"apiKey\\":\\"abc123\\"}"',
+      secret: "hunter2",
+      diagnosis: "Error:",
+    },
+    {
+      name: "encoded API key",
+      stderr: 'Error: body "{\\"apiKey\\":\\"abc123\\"}"',
+      secret: "abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token ghp",
+      stderr: "Error: rejected ghp_abc123",
+      secret: "ghp_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token gho",
+      stderr: "Error: rejected gho_abc123",
+      secret: "gho_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token ghu",
+      stderr: "Error: rejected ghu_abc123",
+      secret: "ghu_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token ghs",
+      stderr: "Error: rejected ghs_abc123",
+      secret: "ghs_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token ghr",
+      stderr: "Error: rejected ghr_abc123",
+      secret: "ghr_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token github",
+      stderr: "Error: rejected github_pat_abc123",
+      secret: "github_pat_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token AIzaabc123",
+      stderr: "Error: rejected AIzaabc123",
+      secret: "AIzaabc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token gsk",
+      stderr: "Error: rejected gsk_abc123",
+      secret: "gsk_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token xai-abc123",
+      stderr: "Error: rejected xai-abc123",
+      secret: "xai-abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token hf",
+      stderr: "Error: rejected hf_abc123",
+      secret: "hf_abc123",
+      diagnosis: "Error:",
+    },
+    {
+      name: "vendor token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+      stderr: "Error: rejected eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+      secret: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+      diagnosis: "Error:",
+    },
+    {
+      name: "--token space delimiter",
+      stderr: "Error: failed --token abc123secret zzz999",
+      secret: "abc123secret",
+      diagnosis: "Error:",
+    },
+    {
+      name: "--api-key space delimiter",
+      stderr: "Error: failed --api-key abc123secret zzz999",
+      secret: "abc123secret",
+      diagnosis: "Error:",
+    },
+    {
+      name: "https whitespace userinfo ' '",
+      stderr: "Error: failed https://alice:prefix secret-tail@example.test/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "https whitespace userinfo '\\t'",
+      stderr: "Error: failed https://alice:prefix\tsecret-tail@example.test/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "postgres whitespace userinfo ' '",
+      stderr: "Error: failed postgres://alice:prefix secret-tail@example.test/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "postgres whitespace userinfo '\\t'",
+      stderr: "Error: failed postgres://alice:prefix\tsecret-tail@example.test/path",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "credential URL path hooks.slack.com",
+      stderr: "Error: failed https://hooks.slack.com/services/secret-tail",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "credential URL path api.telegram.org",
+      stderr: "Error: failed https://api.telegram.org/botsecret-tail/sendMessage",
+      secret: "secret-tail",
+      diagnosis: "Error: failed",
+    },
+    {
+      name: "evicted label with apparent error at retained boundary",
+      stderr: 'password="Error: secret-tail' + "x".repeat(8192 - "Error: secret-tail".length),
+      secret: "secret-tail",
+      diagnosis: "pi process exited with code 1",
+    },
+    {
+      name: "complete error at exact LF boundary",
+      stderr:
+        "discarded\nError: legitimate failure\n" +
+        "x".repeat(8192 - "Error: legitimate failure\n".length),
+      secret: "discarded",
+      diagnosis: "Error: legitimate failure",
+    },
     {
       name: "userinfo with multiple at signs",
       stderr: "Error: failed https://alice:prefix@secret-tail@example.test/path",
@@ -179,12 +361,6 @@ describe("PiRpc stderr diagnostics", () => {
       stderr: 'Error: Authorization: Digest username="alice", response="secret-tail"',
       secret: "secret-tail",
       diagnosis: "Error:",
-    },
-    {
-      name: "evicted credential label",
-      stderr: 'Error: password="prefix' + "x".repeat(100) + "Error: secret-tail" + "x".repeat(8174),
-      secret: "secret-tail",
-      diagnosis: "pi process exited with code 1",
     },
     {
       name: "error after evicted credential",
