@@ -152,6 +152,7 @@ function UsageLimitsBannerBody({
                   environmentId={environmentId}
                   input={resetCreditInput}
                   credits={account.limits.resetCredits}
+                  windows={account.limits.windows}
                   now={now}
                 />
               ) : null}

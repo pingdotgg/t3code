@@ -23,6 +23,7 @@ import {
   paceRemainingPercent,
   usesChatGptSharing,
   resolveNewThreadModelSelection,
+  resetCreditsForWindow,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1515,5 +1516,75 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("reset credits per window", () => {
+  const windows = [
+    window,
+    { ...window, id: "seven_day", kind: "weekly", label: "Weekly" },
+    { ...window, id: "seven_day_fable", kind: "weekly", label: "Weekly · Fable" },
+    { id: "monthly_spend", kind: "monthly", label: "Monthly spend", usedPercent: 10 },
+  ] as const;
+  const fable = {
+    id: "launch-fable",
+    availableCount: 1,
+    expiresAt: "2026-09-10T00:00:00.000Z",
+    clearsWindowIds: ["five_hour", "seven_day_fable"],
+    givesBackWeekly: true,
+  };
+  const standard = {
+    id: "standard",
+    availableCount: 2,
+    clearsWindowIds: ["five_hour", "seven_day"],
+  };
+  const credits = { availableCount: 3, nextCreditId: "launch-fable", grants: [fable, standard] };
+
+  it("counts each grant only on the windows it clears", () => {
+    expect(resetCreditsForWindow(credits, windows, "seven_day")).toMatchObject({
+      count: 2,
+      scope: undefined,
+    });
+    expect(resetCreditsForWindow(credits, windows, "seven_day_fable")).toMatchObject({
+      count: 1,
+      scope: "Fable",
+      grants: [
+        {
+          scope: "Fable",
+          effect: "Clears Weekly · Fable and gives back Fable's share of Weekly.",
+          expiresAt: "2026-09-10T00:00:00.000Z",
+        },
+      ],
+    });
+    expect(resetCreditsForWindow(credits, windows, "five_hour")).toMatchObject({
+      count: 2,
+      scope: undefined,
+      grants: [{ id: "standard" }],
+    });
+    expect(resetCreditsForWindow(credits, windows).count).toBe(3);
+    const everything = {
+      availableCount: 1,
+      grants: [
+        { id: "full", availableCount: 1, clearsWindowIds: windows.map((window) => window.id) },
+      ],
+    };
+    expect(resetCreditsForWindow(everything, windows, "five_hour")).toMatchObject({
+      count: 1,
+      scope: undefined,
+      grants: [{ effect: "Clears Session, Weekly and Weekly · Fable." }],
+    });
+  });
+
+  it("treats credits without grant details as clearing every window", () => {
+    expect(
+      resetCreditsForWindow({ availableCount: 2, nextCreditId: "grant_a" }, windows, "seven_day"),
+    ).toMatchObject({ count: 2, scope: undefined, grants: [{ id: undefined }] });
+    expect(
+      resetCreditsForWindow(
+        { availableCount: 1, grants: [{ id: "grant_a", availableCount: 1 }] },
+        windows,
+        "seven_day_fable",
+      ),
+    ).toMatchObject({ count: 1, scope: undefined, grants: [{ id: "grant_a" }] });
   });
 });

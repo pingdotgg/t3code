@@ -62,6 +62,46 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      grants: [{ id: "grant_a", availableCount: 2, expiresAt: "2026-10-01T00:00:00.000Z" }],
+    });
+  });
+
+  it("keeps the usage windows each grant clears", () => {
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "launch-fable",
+          grants: [
+            grant({ id: "standard", clears: ["five_hour", "seven_day"] }),
+            grant({
+              id: "launch-fable",
+              clears: ["five_hour", "seven_day_overage_included"],
+              gives_back_weekly: true,
+            }),
+            grant({ id: "legacy" }),
+          ],
+        },
+        NOW,
+        "Fable",
+      ),
+    ).toEqual({
+      availableCount: 3,
+      nextCreditId: "launch-fable",
+      grants: [
+        {
+          id: "standard",
+          availableCount: 1,
+          clearsWindowIds: ["five_hour", "seven_day"],
+        },
+        {
+          id: "launch-fable",
+          availableCount: 1,
+          clearsWindowIds: ["five_hour", "seven_day_fable"],
+          givesBackWeekly: true,
+        },
+        { id: "legacy", availableCount: 1 },
+      ],
     });
   });
 
@@ -107,22 +147,38 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
           ),
         );
       });
-      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const credits = yield* ClaudeResetCredits.readClaudeResetCredits(
+        configDir,
+        "2.1.0",
+        undefined,
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(credits).toEqual({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+        grants: [{ id: "grant_a", availableCount: 1 }],
+      });
     }),
   );
 
   it.effect("reads nothing from keychain logins or failed requests", () =>
     Effect.gen(function* () {
       const { configDir } = yield* writeLogin;
-      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const darwin = yield* ClaudeResetCredits.readClaudeResetCredits(
+        configDir,
+        "2.1.0",
+        undefined,
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provideService(HttpClient.HttpClient, refuseRequests),
       );
-      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(configDir, "2.1.0").pipe(
+      const limited = yield* ClaudeResetCredits.readClaudeResetCredits(
+        configDir,
+        "2.1.0",
+        undefined,
+      ).pipe(
         Effect.provideService(HostProcess.Platform, "linux"),
         Effect.provideService(HttpClient.HttpClient, respond(429, {})),
       );

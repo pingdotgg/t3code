@@ -17,6 +17,8 @@ import {
   paceOf,
   paceRemainingPercent,
   remainingPercent,
+  resetCreditsForWindow,
+  withResetCreditId,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useContext, useRef, useState } from "react";
 import { Atom } from "effect/reactivity";
@@ -221,7 +223,7 @@ export function AccountLimits(props: {
 }
 
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
-  reset: "Reset applied. Your windows have cleared.",
+  reset: "Reset applied.",
   nothingToReset: "Nothing to reset right now.",
   noCredit: "No reset credit left.",
   alreadyRedeemed: "That credit was already redeemed.",
@@ -231,34 +233,27 @@ export function ResetCredits(props: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
   readonly credits: ServerProviderResetCredits;
+  readonly windows: ReadonlyArray<ServerProviderUsageWindow>;
   readonly now: number;
   readonly dense?: boolean;
 }) {
-  const { environmentId, input, credits, now, dense = false } = props;
+  const { environmentId, input, credits, windows, now, dense = false } = props;
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, {
     reportFailure: false,
   });
-  const [busy, setBusy] = useState(false);
+  const [busyCreditId, setBusyCreditId] = useState<string | null | undefined>(null);
   const [status, setStatus] = useState<string | null>(null);
-  if (dense && credits.availableCount === 0 && status === null) return null;
+  const { grants } = resetCreditsForWindow(credits, windows);
+  if (dense && grants.length === 0 && status === null) return null;
+  const busy = busyCreditId !== null;
 
-  const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
-    : null;
-  const summary =
-    credits.availableCount === 0
-      ? "No reset credits banked"
-      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
-
-  const redeem = async () => {
+  const redeem = async (creditId: string | undefined) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    setBusy(true);
+    setBusyCreditId(creditId);
     setStatus(null);
-    const result = await consume({ environmentId, input });
-    setBusy(false);
+    const result = await consume({ environmentId, input: withResetCreditId(input, creditId) });
+    setBusyCreditId(null);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
@@ -270,44 +265,59 @@ export function ResetCredits(props: {
     );
   };
 
-  const confirm = () => {
+  const confirm = (creditId: string | undefined, effect: string | undefined) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Dialog.alert(
       "Use a reset credit?",
-      "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
+      `${effect ?? "Clears the current rate-limit windows."} This can't be undone.`,
       [
         { text: "Cancel", style: "cancel" },
-        { text: "Use credit", onPress: () => void redeem() },
+        { text: "Use credit", onPress: () => void redeem(creditId) },
       ],
     );
   };
 
   return (
-    <View className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
-      <Text className="text-xs tabular-nums text-foreground-tertiary">{summary}</Text>
-      {credits.availableCount > 0 ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ disabled: busy || !canManageProviders }}
-          disabled={busy || !canManageProviders}
-          onPress={confirm}
-          className={
-            dense
-              ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
-              : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
-          }
-        >
-          <Text
-            className={
-              dense
-                ? "text-xs font-t3-medium text-foreground"
-                : "text-sm font-t3-medium text-foreground"
-            }
-          >
-            {busy ? "Using…" : "Use reset"}
-          </Text>
-        </Pressable>
+    <View className="gap-2">
+      {grants.length === 0 ? (
+        <Text className="text-xs text-foreground-tertiary">No reset credits banked</Text>
       ) : null}
+      {grants.map((grant) => {
+        const expiresIn = grant.expiresAt
+          ? formatDuration(Date.parse(grant.expiresAt) - now)
+          : null;
+        const scope = grant.scope ? `${grant.scope} ` : "";
+        return (
+          <View key={grant.id ?? "all"} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
+            <Text className="min-w-0 shrink text-xs tabular-nums text-foreground-tertiary">
+              {`${grant.count} ${scope}${grant.count === 1 ? "reset credit" : "reset credits"} banked${
+                expiresIn ? ` · expires in ${expiresIn}` : ""
+              }`}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ disabled: busy || !canManageProviders }}
+              disabled={busy || !canManageProviders}
+              onPress={() => confirm(grant.id, grant.effect)}
+              className={
+                dense
+                  ? "rounded-full bg-subtle-strong px-2.5 py-1 disabled:opacity-[0.45]"
+                  : "min-h-[44px] justify-center rounded-full bg-subtle-strong px-3 py-1.5 disabled:opacity-[0.45]"
+              }
+            >
+              <Text
+                className={
+                  dense
+                    ? "text-xs font-t3-medium text-foreground"
+                    : "text-sm font-t3-medium text-foreground"
+                }
+              >
+                {busy && busyCreditId === grant.id ? "Using…" : "Use reset"}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
       {!canManageProviders ? (
         <Text className="text-xs text-foreground-tertiary">
           This connection cannot manage provider accounts.

@@ -65,6 +65,7 @@ export function ComposerUsageLimits({
                     environmentId={environmentId}
                     input={resetCreditInput}
                     credits={account.limits.resetCredits}
+                    windows={account.limits.windows}
                     now={now}
                   />
                 ) : undefined

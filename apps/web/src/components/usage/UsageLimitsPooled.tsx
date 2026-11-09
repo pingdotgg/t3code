@@ -13,6 +13,7 @@ import {
   type LimitPoolWindow,
   paceRemainingPercent,
   remainingPercent,
+  resetCreditsForWindow,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -146,7 +147,7 @@ function SegmentPopover({
   readonly reset: LimitPoolWindow["resets"][number] | undefined;
   readonly now: number;
   readonly redeem: ReturnType<typeof useResetCredit> | null;
-  readonly onRedeem: () => void;
+  readonly onRedeem: (creditId: string | undefined) => void;
 }) {
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
@@ -156,8 +157,11 @@ function SegmentPopover({
     account.environments.length > 0
       ? account.environments.map((environment) => environment.label).join(", ")
       : account.sourceLabel;
-  const credits =
-    redeem && account.limits.resetCredits?.availableCount ? account.limits.resetCredits : null;
+  const credits = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   return (
     <div className="flex w-72 max-w-[calc(100vw-3rem)] flex-col gap-2.5 text-xs">
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -196,20 +200,24 @@ function SegmentPopover({
           <Row label="Restores">+{reset.restoresPercent}% of pool</Row>
         ) : null}
       </div>
-      {credits && redeem ? (
-        <div className="border-t border-border/60 pt-2.5 text-muted-foreground">
-          <span className="flex items-center gap-3">
-            <span className="tabular-nums">{resetCreditsSummary(credits, now, true)}</span>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={redeem.busy || !redeem.canManageProviders}
-              className="ms-auto"
-              onClick={onRedeem}
-            >
-              {redeem.busy ? "Using…" : "Use reset"}
-            </Button>
-          </span>
+      {credits.count > 0 && redeem ? (
+        <div className="flex flex-col gap-2 border-t border-border/60 pt-2.5 text-muted-foreground">
+          {credits.grants.map((grant) => (
+            <div key={grant.id ?? "all"} className="flex items-start gap-3">
+              <span className="min-w-0 text-foreground tabular-nums">
+                {resetCreditsSummary(grant, now, true)}
+              </span>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={redeem.busy || !redeem.canManageProviders}
+                className="ms-auto shrink-0"
+                onClick={() => onRedeem(grant.id)}
+              >
+                {redeem.busy && redeem.creditId === grant.id ? "Using…" : "Use reset"}
+              </Button>
+            </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -264,9 +272,9 @@ function ActiveSegmentPopover({
       <SegmentPopover
         {...payload}
         now={now}
-        onRedeem={() => {
+        onRedeem={(creditId) => {
           handle.close();
-          payload.redeem?.setConfirming(true);
+          payload.redeem?.confirm(creditId);
         }}
       />
     </PopoverPopup>
@@ -304,6 +312,11 @@ function RedeemableSegment({
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
   const redeem = useResetCredit(redeemAt.environmentId, redeemAt.input);
+  const effect = resetCreditsForWindow(
+    props.account.limits.resetCredits,
+    props.account.limits.windows,
+    props.window.id,
+  ).grants.find((grant) => grant.id === redeem.creditId)?.effect;
   return (
     <>
       <SegmentTriggers redeem={redeem} {...props} />
@@ -311,6 +324,7 @@ function RedeemableSegment({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
+        effect={effect}
         disabled={!redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
@@ -347,7 +361,12 @@ function SegmentTriggers({
   const timeLeft = paceRemainingPercent(window, now);
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
+  const creditsLabel = `${credits} ${scope ? `${scope} ` : ""}reset ${credits === 1 ? "credit" : "credits"} banked`;
   return (
     <>
       <PopoverTrigger
@@ -359,7 +378,7 @@ function SegmentTriggers({
             ref={segmentRef}
             type="button"
             style={{ gridColumn: index, gridRow: 1, ...paceMark?.gappedTrack }}
-            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${credits} reset ${credits === 1 ? "credit" : "credits"} banked` : ""}`}
+            aria-label={`${account.displayName ?? (account.email ? accountInitials(account.email) : account.driver)}: ${remaining}% left${resetsIn ? `, ${resetsIn}` : ""}${timeLeft === null ? "" : `, ${timeLeft}% of the window left`}${credits ? `, ${creditsLabel}` : ""}`}
             className="relative h-5 min-w-0 cursor-pointer rounded-md bg-muted text-start outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[popup-open]:ring-1 data-[popup-open]:ring-inset data-[popup-open]:ring-border @2xl/pool:h-8"
           />
         }
@@ -423,6 +442,9 @@ function SegmentTriggers({
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
+                    {scope ? (
+                      <span className="font-normal text-muted-foreground">{scope}</span>
+                    ) : null}
                   </span>
                 </>
               ) : null}
@@ -450,7 +472,11 @@ function LegendRow({
   const { account, window } = payload;
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
-  const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const { count: credits, scope } = resetCreditsForWindow(
+    account.limits.resetCredits,
+    account.limits.windows,
+    window.id,
+  );
   return (
     <PopoverTrigger
       handle={popover}
@@ -481,9 +507,11 @@ function LegendRow({
             >
               <TicketIcon className="size-3" aria-hidden />
               {credits}
+              {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
-              {credits} reset {credits === 1 ? "credit" : "credits"} banked
+              {credits} {scope ? `${scope} ` : ""}reset {credits === 1 ? "credit" : "credits"}{" "}
+              banked
             </span>
           </>
         ) : null}
