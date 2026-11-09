@@ -14,7 +14,9 @@ basics, see [Secrets](./secrets.md).
 3. Install the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on the machine
    that runs the T3 Code server.
 4. Put `OP_CONNECT_HOST` and `OP_CONNECT_TOKEN` in the server's environment. `OP_CONNECT_HOST` is the Connect
-   API's address, including the port if it is not the default for its scheme. For a
+   API's address, including the port if it is not the default for its scheme. Use an `https://` address
+   unless Connect runs on the same machine or a private network you trust, because the token and secrets
+   travel over that connection. For a
    [background service](./background-service.md), add both to `service.env` and restart the service. See
    [Configure the service environment](./background-service.md#configure-the-service-environment).
 5. In **Settings → Secrets**, select **Add provider**. The account is required, but `op` ignores it while
@@ -37,12 +39,16 @@ env -i PATH="$PATH" HOME="$(mktemp -d)" OP_CONNECT_HOST="$OP_CONNECT_HOST" OP_CO
 The health response names the 1Password Connect API. Any other page means the address points at something
 else, such as a reverse proxy that answers for every hostname.
 
+This checks the Connect variables in your shell, not the server's own environment. To confirm the server
+can read the secret, use the reference in a setting and select **Refresh** in **Settings → Providers**. A
+secret it cannot read shows an error naming the secret provider.
+
 ## Things to know
 
 - Agents run with the server's environment, so an agent can use the Connect token to read anything it can.
   Give the token only vaults whose items you would let an agent read.
-- Through Connect, `op` can read items but cannot list vaults or accounts. Test with `op read` or
-  `op item get`, not `op vault list`.
+- Through Connect, `op` can read items but cannot list vaults or accounts. Test with `op read`, not
+  `op vault list`.
 - A name in a reference can contain letters, digits, spaces, `.`, `_`, and `-`. An item titled
   `Service Token: CI` cannot be written as a reference, so use its item ID instead, for example
   `op://Automation/<item-id>/credential`.
