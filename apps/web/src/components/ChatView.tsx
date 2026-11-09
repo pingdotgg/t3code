@@ -114,7 +114,9 @@ import { resolveThreadReferenceCopyTarget } from "@t3tools/client-runtime/thread
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { useAtomValue } from "@effect/atom-react";
 import {
+  type ComponentProps,
   type CSSProperties,
+  type ReactNode,
   type SetStateAction,
   use,
   useEffect,
@@ -1368,17 +1370,20 @@ export default function ChatView(props: ChatViewProps) {
   const phase = derivePhase(activeRuntime);
   const serverThreadId = serverThread?.id;
   const serverThreadEnvironmentId = serverThread?.environmentId;
-  const setThreadError = makeThreadErrorSetter({
-    routeThreadRef,
-    routeThreadKey,
-    draftId,
-    serverThreadRef:
-      serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
-        ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
-        : null,
-    setLocalServerErrorsByThreadKey,
-    setLocalDraftErrorsByDraftId,
-  });
+  // Stable, so a chat view render does not re-render the composer and every hook it feeds.
+  const setThreadError = useStableCallback(
+    makeThreadErrorSetter({
+      routeThreadRef,
+      routeThreadKey,
+      draftId,
+      serverThreadRef:
+        serverThreadId !== undefined && serverThreadEnvironmentId !== undefined
+          ? { threadId: serverThreadId, environmentId: serverThreadEnvironmentId }
+          : null,
+      setLocalServerErrorsByThreadKey,
+      setLocalDraftErrorsByDraftId,
+    }),
+  );
   const {
     pendingApprovals,
     pendingUserInputs,
@@ -2457,9 +2462,12 @@ export default function ChatView(props: ChatViewProps) {
       entry.enabled &&
       entry.isAvailable,
   );
+  const usablePendingHandoffSelection = pendingHandoffSelectionUsable
+    ? pendingHandoffSelection
+    : null;
   const pendingHandoff = resolvePendingHandoff(
     serverProjection,
-    pendingHandoffSelectionUsable ? pendingHandoffSelection : null,
+    usablePendingHandoffSelection,
     providerStatuses,
   );
   const compactThreadUnavailable =
@@ -3103,9 +3111,10 @@ export default function ChatView(props: ChatViewProps) {
     setThreadError,
     setThreadErrorBannerDismissTick,
   });
+  // The empty list is the shared constant, so an empty tray keeps the composer element memoized.
   const trayBannerItems =
-    trayStatusItems.length === 0
-      ? composerBannerItems
+    trayStatusItems.length === 0 && composerBannerItems.length === 0
+      ? EMPTY_COMPOSER_BANNER_ITEMS
       : [...trayStatusItems, ...composerBannerItems];
 
   const onWorktreeSetupWorkLocally = () => {
@@ -3292,35 +3301,6 @@ export default function ChatView(props: ChatViewProps) {
     childInputNow?.waitingLabel ?? null,
     queuedRunCount === 0 ? null : `${queuedRunCount} queued`,
   ].filter((part) => part !== null);
-  // The end of the timeline holds the thread's present and next turns: what it is doing now,
-  // its lifecycle status, guest messages awaiting you, then your queued messages.
-  const timelineFooter =
-    pendingHandoff === null &&
-    !hasThreadNow &&
-    threadStatusLine === null &&
-    pendingGuestMessageCount === 0 &&
-    !hasQueuedTurns ? null : (
-      <>
-        {pendingHandoff === null ? null : (
-          <div className="chat-content-lane">
-            <HandoffRow
-              environmentId={environmentId}
-              endpoints={pendingHandoff}
-              providers={providerStatuses}
-              pending
-            />
-          </div>
-        )}
-        {threadStatusLine}
-        {pendingGuestMessageCount > 0 && isServerThread && activeThread ? (
-          <GuestPendingMessages
-            threadRef={scopeThreadRef(activeThread.environmentId, activeThread.id)}
-            onImageExpand={onExpandTimelineImageStable}
-            onFileOpen={openFileAttachmentStable}
-          />
-        ) : null}
-      </>
-    );
 
   const pendingSidebarFileDrops = useSidebarPendingFileDropStore((state) => state.pending);
   const consumePendingFileDrop = useSidebarPendingFileDropStore(
@@ -3368,6 +3348,30 @@ export default function ChatView(props: ChatViewProps) {
   if (!activeThread) {
     return embedded ? null : <NoActiveThreadState />;
   }
+
+  // The end of the timeline holds the thread's present and next turns: what it is doing now,
+  // its lifecycle status, guest messages awaiting you, then your queued messages.
+  // Built outside the condition, where the compiler memoizes it.
+  const timelineFooterContent = (
+    <TimelineFooter
+      environmentId={environmentId}
+      projection={serverProjection}
+      handoffSelection={usablePendingHandoffSelection}
+      providerEnvironmentId={activeThread.environmentId}
+      statusLine={threadStatusLine}
+      guestThreadRef={pendingGuestMessageCount > 0 && isServerThread ? activeThreadRef : null}
+      onImageExpand={onExpandTimelineImageStable}
+      onFileOpen={openFileAttachmentStable}
+    />
+  );
+  const timelineFooter =
+    pendingHandoff === null &&
+    !hasThreadNow &&
+    threadStatusLine === null &&
+    pendingGuestMessageCount === 0 &&
+    !hasQueuedTurns
+      ? null
+      : timelineFooterContent;
 
   const panelToggleControlProps = {
     threadPanelOpen,
@@ -3762,11 +3766,7 @@ export default function ChatView(props: ChatViewProps) {
                                             : projectCloneSendBlockReason
                               }
                               isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
-                              bannerItems={
-                                trayBannerItems.length === 0
-                                  ? EMPTY_COMPOSER_BANNER_ITEMS
-                                  : trayBannerItems
-                              }
+                              bannerItems={trayBannerItems}
                               resumeCompactionTokens={resumeCompactionTokens}
                               keepFullHistory={keepFullHistory}
                               onToggleKeepFullHistory={toggleKeepFullHistoryStable}
@@ -4065,6 +4065,46 @@ export default function ChatView(props: ChatViewProps) {
     >
       {content}
     </FileMetadataThreadProvider>
+  );
+}
+
+// A new footer element re-renders the whole timeline. Reading the providers and resolving
+// the handoff here keeps the element memoized; the compiler leaves it unmemoized when it
+// depends on either from the chat view.
+function TimelineFooter(props: {
+  readonly environmentId: EnvironmentId;
+  readonly projection: Parameters<typeof resolvePendingHandoff>[0];
+  readonly handoffSelection: Parameters<typeof resolvePendingHandoff>[1];
+  readonly providerEnvironmentId: EnvironmentId;
+  readonly statusLine: ReactNode;
+  readonly guestThreadRef: ScopedThreadRef | null;
+  readonly onImageExpand: ComponentProps<typeof GuestPendingMessages>["onImageExpand"];
+  readonly onFileOpen: ComponentProps<typeof GuestPendingMessages>["onFileOpen"];
+}) {
+  const providersByEnvironment = useEnvironmentProviders();
+  const providers = providersByEnvironment.get(props.providerEnvironmentId) ?? EMPTY_PROVIDERS;
+  const pendingHandoff = resolvePendingHandoff(props.projection, props.handoffSelection, providers);
+  return (
+    <>
+      {pendingHandoff === null ? null : (
+        <div className="chat-content-lane">
+          <HandoffRow
+            environmentId={props.environmentId}
+            endpoints={pendingHandoff}
+            providers={providers}
+            pending
+          />
+        </div>
+      )}
+      {props.statusLine}
+      {props.guestThreadRef === null ? null : (
+        <GuestPendingMessages
+          threadRef={props.guestThreadRef}
+          onImageExpand={props.onImageExpand}
+          onFileOpen={props.onFileOpen}
+        />
+      )}
+    </>
   );
 }
 

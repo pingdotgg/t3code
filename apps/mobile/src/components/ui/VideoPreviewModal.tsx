@@ -1,23 +1,23 @@
-import * as Dialog from "./ui/Dialog";
+import * as Dialog from "./Dialog";
 import { requireNativeModule } from "expo";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useEffectEvent, useId } from "react";
 
-import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { usePreviewPresentation, videoPreviewKey } from "../lib/previewPresentation";
-import { fullscreenVideoClosed, fullscreenVideoOpened } from "../lib/videoAudioSession";
-import { mediaVideoPreviewUri, type VideoPreviewSource } from "../lib/videoPreviewSource";
-import { refreshAssetUrl } from "../state/assets";
-import { usePreparedConnection } from "../state/session";
+import { loadLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
+import { usePreviewPresentation, videoPreviewKey } from "../../lib/previewPresentation";
+import { fullscreenVideoClosed, fullscreenVideoOpened } from "../../lib/videoAudioSession";
+import { mediaVideoPreviewUri, type VideoPreviewSource } from "../../lib/videoPreviewSource";
+import { refreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
 import {
   acquireAudioSession,
   activateAudioSession,
   isAudioSessionOwner,
   releaseAudioSession,
-} from "../lib/audioSession";
+} from "../../lib/audioSession";
 
-export type { VideoPreviewSource } from "../lib/videoPreviewSource";
+export type { VideoPreviewSource } from "../../lib/videoPreviewSource";
 
 const NativeControls = requireNativeModule<{
   presentVideo(

@@ -6,7 +6,7 @@ import { useLayoutPane, useLayoutPaneOwnsThreadRef } from "../../layout/layoutPa
 import { registerLayoutOpenBesideAction, type LayoutBesideKind } from "../../layout/layoutActions";
 import { requestLayoutSurfacePlacement } from "../../layout/surfaceSync";
 import { getLayoutBehavior } from "../../layout/layoutBehavior";
-import { toggleThreadSidePane } from "../../layout/openRules";
+import { toggleThreadDiff, toggleThreadSidePane } from "../../layout/openRules";
 import type { useChatTerminalActions } from "./useChatTerminalActions";
 import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -100,15 +100,11 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   );
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const onToggleDiff = () => {
-    if (!isServerThread) {
-      return;
-    }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
-    }
-    if (activeThreadRef) {
+    if (!isServerThread || !activeThreadRef) return;
+    toggleThreadDiff(activeThreadRef, () => {
+      if (!diffOpen) onDiffPanelOpen?.();
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
-    }
+    });
   };
   const createBrowserSurface = (profileId?: string) => {
     if (!activeThreadRef || !canOperatePreview) return;
