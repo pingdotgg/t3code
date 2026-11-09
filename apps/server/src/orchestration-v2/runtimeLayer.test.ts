@@ -3081,7 +3081,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           ...key,
           watching: true,
-          ...(wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove }),
+          wakeOnBaseMove,
         });
       yield* rewatch("pr-watch-base-on", true);
       assert.deepEqual(yield* watchOf, { ...recorded, wakeOnBaseMove: true });
@@ -3706,7 +3706,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           threadId,
           ...key,
           watching: true,
-          ...(wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove }),
+          wakeOnBaseMove,
           link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
         });
       yield* watch("pr-watch-base-start");

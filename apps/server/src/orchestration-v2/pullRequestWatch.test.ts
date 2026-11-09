@@ -533,7 +533,7 @@ describe("evaluatePullRequestWatch", () => {
     const behind = (behindBy?: number) =>
       detail({
         baseComparison: "behind",
-        ...(behindBy === undefined ? {} : { behindBy }),
+        behindBy,
       });
     const first = evaluatePullRequestWatch(opted, behind(2), noRemarks);
     assert.deepEqual(first.changes, [{ kind: "behind", behindBy: 2 }]);

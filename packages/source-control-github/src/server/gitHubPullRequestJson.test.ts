@@ -1824,7 +1824,7 @@ describe("pull request watch fingerprints", () => {
     expect(before.base).toBe("def456");
     expect(baseMoved).toEqual({ ...before, base: "fed789" });
     expect(
-      toPullRequestWatchFingerprint(decodeWatched({ ...pullRequest(base), baseRef: null })),
-    ).not.toHaveProperty("base");
+      toPullRequestWatchFingerprint(decodeWatched({ ...pullRequest(base), baseRef: null })).base,
+    ).toBeUndefined();
   });
 });

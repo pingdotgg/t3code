@@ -288,7 +288,7 @@ const make = Effect.gen(function* () {
         repository: target.repository,
         number: target.number,
         watching,
-        ...(input.wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove: input.wakeOnBaseMove }),
+        wakeOnBaseMove: input.wakeOnBaseMove,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
       })
       .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));

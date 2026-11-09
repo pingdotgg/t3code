@@ -723,13 +723,67 @@ function hasLiveRun(projection: Pick<OrchestrationV2ThreadProjection, "runs">): 
   return projection.runs.some(isLiveRun);
 }
 
-/** The setting belongs to watch commands, so a sync read before a re-watch cannot undo it. */
-function withWakeOnBaseMove(
-  watch: ThreadPullRequestWatch,
+/** The link's watch after a watch command or a host read; undefined ends it. */
+function nextPullRequestWatch(
+  command: Extract<
+    OrchestrationV2ServerCommand,
+    { readonly type: "thread.pull-request.watch" | "thread.pull-request-watch.sync" }
+  >,
+  link: ThreadPullRequestLink,
+  startedAt: string,
+): ThreadPullRequestWatch | undefined {
+  const existing = link.watch;
+  if (command.type === "thread.pull-request-watch.sync") {
+    if (existing?.startedAt !== command.startedAt) return existing;
+    if (command.watch === null) return undefined;
+    // The setting belongs to watch commands, so a read before a re-watch cannot undo it.
+    return { ...command.watch, wakeOnBaseMove: existing.wakeOnBaseMove };
+  }
+  if (!command.watching) return undefined;
+  if (existing === undefined) return freshPullRequestWatch(link, startedAt, command.wakeOnBaseMove);
+  const wakeOnBaseMove = command.wakeOnBaseMove ?? existing.wakeOnBaseMove ?? false;
+  if (wakeOnBaseMove === (existing.wakeOnBaseMove ?? false)) return existing;
+  return { ...existing, wakeOnBaseMove };
+}
+
+function freshPullRequestWatch(
+  link: ThreadPullRequestLink,
+  startedAt: string,
   wakeOnBaseMove: boolean | undefined,
 ): ThreadPullRequestWatch {
-  const { wakeOnBaseMove: _previous, ...rest } = watch;
-  return wakeOnBaseMove === undefined ? rest : { ...rest, wakeOnBaseMove };
+  return {
+    startedAt,
+    headSha: null,
+    failedChecks: [],
+    passed: false,
+    passedChecks: [],
+    conflicting: false,
+    // Watching again must not repeat check or conflict news the last watch told.
+    ...(link.endedWatch && {
+      headSha: link.endedWatch.headSha,
+      failedChecks: link.endedWatch.failedChecks,
+      passed: link.endedWatch.passed,
+      passedChecks: link.endedWatch.passedChecks,
+      conflicting: link.endedWatch.conflicting,
+    }),
+    ...(link.endedWatch?.owedChecks !== undefined && {
+      owedChecks: link.endedWatch.owedChecks,
+    }),
+    ...(link.endedWatch?.awaitingApproval !== undefined && {
+      awaitingApproval: link.endedWatch.awaitingApproval,
+    }),
+    ...(link.endedWatch?.approvalAnnounced !== undefined && {
+      approvalAnnounced: link.endedWatch.approvalAnnounced,
+    }),
+    ...(link.endedWatch?.checksAwaitedSince !== undefined && {
+      checksAwaitedSince: link.endedWatch.checksAwaitedSince,
+    }),
+    behindBy: link.endedWatch?.behindBy,
+    remarksThrough: startedAt,
+    remarkIds: [],
+    wakes: 0,
+    wakeOnBaseMove,
+  };
 }
 
 function withPullRequestWatch(
@@ -4142,57 +4196,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : linked;
           const existing = links.find(visible);
           if (existing === undefined) return thread;
-          const watch =
-            command.type === "thread.pull-request-watch.sync"
-              ? existing.watch?.startedAt === command.startedAt
-                ? command.watch === null
-                  ? undefined
-                  : withWakeOnBaseMove(command.watch, existing.watch.wakeOnBaseMove)
-                : existing.watch
-              : !command.watching
-                ? undefined
-                : existing.watch !== undefined
-                  ? command.wakeOnBaseMove === undefined ||
-                    command.wakeOnBaseMove === (existing.watch.wakeOnBaseMove ?? false)
-                    ? existing.watch
-                    : withWakeOnBaseMove(existing.watch, command.wakeOnBaseMove)
-                  : withWakeOnBaseMove(
-                      {
-                        startedAt,
-                        headSha: null,
-                        failedChecks: [],
-                        passed: false,
-                        passedChecks: [],
-                        conflicting: false,
-                        // Watching again must not repeat check or conflict news the last watch told.
-                        ...(existing.endedWatch && {
-                          headSha: existing.endedWatch.headSha,
-                          failedChecks: existing.endedWatch.failedChecks,
-                          passed: existing.endedWatch.passed,
-                          passedChecks: existing.endedWatch.passedChecks,
-                          conflicting: existing.endedWatch.conflicting,
-                        }),
-                        ...(existing.endedWatch?.owedChecks !== undefined && {
-                          owedChecks: existing.endedWatch.owedChecks,
-                        }),
-                        ...(existing.endedWatch?.awaitingApproval !== undefined && {
-                          awaitingApproval: existing.endedWatch.awaitingApproval,
-                        }),
-                        ...(existing.endedWatch?.approvalAnnounced !== undefined && {
-                          approvalAnnounced: existing.endedWatch.approvalAnnounced,
-                        }),
-                        ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
-                          checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
-                        }),
-                        ...(existing.endedWatch?.behindBy !== undefined && {
-                          behindBy: existing.endedWatch.behindBy,
-                        }),
-                        remarksThrough: startedAt,
-                        remarkIds: [],
-                        wakes: 0,
-                      },
-                      command.wakeOnBaseMove,
-                    );
+          const watch = nextPullRequestWatch(command, existing, startedAt);
           if (watch === existing.watch && links === linked) return thread;
           const final =
             command.type === "thread.pull-request-watch.sync" && watch === undefined

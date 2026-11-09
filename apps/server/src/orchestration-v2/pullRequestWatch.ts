@@ -194,20 +194,8 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
-  // Like a conflict, a push resets what was told. An unknown count still wakes once.
-  // A watch that didn't ask keeps no count, so opting in tells the current one.
-  let behindBy: number | undefined;
-  if (watch.wakeOnBaseMove === true) {
-    const told = headMoved ? 0 : (watch.behindBy ?? 0);
-    behindBy = told;
-    if (detail.baseComparison === "behind") {
-      const count = detail.behindBy ?? null;
-      if ((count ?? 1) > told) changes.push({ kind: "behind", behindBy: count });
-      behindBy = count ?? Math.max(told, 1);
-    } else if (detail.baseComparison === "up-to-date") {
-      behindBy = 0;
-    }
-  }
+  const behind = readBehind(watch, detail, headMoved);
+  if (behind.wake !== null) changes.push(behind.wake);
 
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
@@ -228,11 +216,27 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
-      ...(watch.wakeOnBaseMove === undefined ? {} : { wakeOnBaseMove: watch.wakeOnBaseMove }),
-      ...(behindBy === undefined ? {} : { behindBy }),
+      wakeOnBaseMove: watch.wakeOnBaseMove,
+      behindBy: behind.behindBy,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };
+}
+
+// Like a conflict, a push resets what was told. An unknown count still wakes once.
+// A watch that didn't ask keeps no count, so opting in tells the current one.
+function readBehind(
+  watch: ThreadPullRequestWatch,
+  detail: Pick<PullRequestDetail, "baseComparison" | "behindBy">,
+  headMoved: boolean,
+): { readonly behindBy: number | undefined; readonly wake: PullRequestWatchChange | null } {
+  if (watch.wakeOnBaseMove !== true) return { behindBy: undefined, wake: null };
+  const told = headMoved ? 0 : (watch.behindBy ?? 0);
+  if (detail.baseComparison === "up-to-date") return { behindBy: 0, wake: null };
+  if (detail.baseComparison !== "behind") return { behindBy: told, wake: null };
+  const count = detail.behindBy ?? null;
+  const wake = (count ?? 1) > told ? ({ kind: "behind", behindBy: count } as const) : null;
+  return { behindBy: count ?? Math.max(told, 1), wake };
 }
 
 function snippet(body: string): string {
@@ -292,12 +296,11 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
-    case "behind":
-      return [
-        change.behindBy === null
-          ? `- The branch is behind ${context.baseBranch}.`
-          : `- The branch is ${change.behindBy} ${change.behindBy === 1 ? "commit" : "commits"} behind ${context.baseBranch}.`,
-      ];
+    case "behind": {
+      if (change.behindBy === null) return [`- The branch is behind ${context.baseBranch}.`];
+      const commits = change.behindBy === 1 ? "commit" : "commits";
+      return [`- The branch is ${change.behindBy} ${commits} behind ${context.baseBranch}.`];
+    }
   }
 }
 
