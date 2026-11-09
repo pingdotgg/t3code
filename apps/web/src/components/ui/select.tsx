@@ -6,6 +6,7 @@ import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { POPUP_SURFACE_CLASS } from "./popup-styles";
 
 const Select = SelectPrimitive.Root;
 
@@ -140,7 +141,8 @@ function SelectPopup({
           </SelectPrimitive.ScrollUpArrow>
           <div
             className={cn(
-              "dropdown-glass relative h-full rounded-lg shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
+              POPUP_SURFACE_CLASS,
+              "relative h-full rounded-lg",
               matchTriggerWidth && "min-w-(--anchor-width)",
             )}
           >
