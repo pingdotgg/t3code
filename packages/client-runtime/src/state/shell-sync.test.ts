@@ -1137,3 +1137,182 @@ describe("environment shell synchronization", () => {
     }),
   );
 });
+
+describe("environment shell cold start", () => {
+  const NOW = 1_800_000_000_000;
+  const HOUR = 60 * 60 * 1000;
+  const CACHED_SEQUENCE = 7;
+  const HTTP_SEQUENCE = 9;
+  // What `session()` advertises: server 1.0.0, no omissions, no migration.
+  const CURRENT_ORIGIN = {
+    serverVersion: "1.0.0",
+    databaseMigration: null,
+    omitIdleSubagents: false,
+    omitOlderSettled: false,
+  };
+  const RECENT_ORIGIN = { ...CURRENT_ORIGIN, snapshotAt: NOW - HOUR };
+
+  const makeColdStart = Effect.fn("test.makeColdStartShell")(function* (
+    origin: Persistence.ShellCacheOrigin | undefined,
+  ) {
+    yield* TestClock.setTime(NOW);
+    const subscriptions = yield* Queue.unbounded<{
+      readonly input: unknown;
+      readonly events: Queue.Queue<OrchestrationV2ShellStreamItem>;
+    }>();
+    const saved = yield* Queue.unbounded<{
+      readonly snapshot: OrchestrationV2ShellSnapshot;
+      readonly origin: Persistence.ShellCacheOrigin | undefined;
+    }>();
+    const httpLoads = yield* Ref.make(0);
+    const client = {
+      [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (input: unknown) =>
+        Stream.unwrap(
+          Effect.gen(function* () {
+            const events = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+            yield* Queue.offer(subscriptions, { input, events });
+            return Stream.fromQueue(events);
+          }),
+        ),
+    } as unknown as WsRpcProtocolClient;
+    const activeSession = yield* SubscriptionRef.make(Option.some(session(client)));
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: activeSession,
+      prepared: yield* SubscriptionRef.make(Option.some(PREPARED)),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () =>
+        Effect.succeedSome({
+          ...v2ShellSnapshot,
+          snapshotSequence: CACHED_SEQUENCE,
+          ...(origin === undefined ? {} : { origin }),
+        }),
+      saveShell: (_environmentId, snapshot, origin?: Persistence.ShellCacheOrigin) =>
+        Queue.offer(saved, { snapshot, origin }).pipe(Effect.asVoid),
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    const snapshotLoader = ShellSnapshotLoader.ShellSnapshotLoader.of({
+      load: () =>
+        Ref.updateAndGet(httpLoads, (count) => count + 1).pipe(
+          Effect.map((count) =>
+            Option.some({ ...v2ShellSnapshot, snapshotSequence: HTTP_SEQUENCE + count - 1 }),
+          ),
+        ),
+    });
+    const shellState = yield* makeEnvironmentShellState().pipe(
+      Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+      Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+      Effect.provideService(ShellSnapshotLoader.ShellSnapshotLoader, snapshotLoader),
+    );
+    return {
+      subscriptions,
+      saved,
+      httpLoads,
+      reconnect: SubscriptionRef.set(activeSession, Option.some(session(client))),
+      liveAt: (sequence: number) =>
+        SubscriptionRef.changes(shellState).pipe(
+          Stream.filter(
+            (state) =>
+              state.status === "live" &&
+              Option.exists(state.snapshot, (snapshot) => snapshot.snapshotSequence === sequence),
+          ),
+          Stream.runHead,
+          Effect.map(Option.getOrThrow),
+        ),
+    };
+  });
+
+  it.effect.each([
+    { label: "a recent matching origin", origin: RECENT_ORIGIN, resumes: true },
+    { label: "no origin", origin: undefined, resumes: false },
+    {
+      label: "other omissions",
+      origin: { ...RECENT_ORIGIN, omitIdleSubagents: true },
+      resumes: false,
+    },
+    {
+      label: "another migration",
+      origin: { ...RECENT_ORIGIN, databaseMigration: 70 },
+      resumes: false,
+    },
+    {
+      label: "another server version",
+      origin: { ...RECENT_ORIGIN, serverVersion: "0.9.0" },
+      resumes: false,
+    },
+    {
+      label: "a 12 hour old origin",
+      origin: { ...RECENT_ORIGIN, snapshotAt: NOW - 12 * HOUR },
+      resumes: false,
+    },
+  ])("starts from a cache with $label (resumes: $resumes)", ({ origin, resumes }) =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(origin);
+      const first = yield* Queue.take(h.subscriptions);
+      const sequence = resumes ? CACHED_SEQUENCE : HTTP_SEQUENCE;
+      expect(first.input).toMatchObject({ afterSequence: sequence });
+      // Only held rows may be refused; a fresh snapshot's cursor never loops back to HTTP.
+      if (resumes) expect(first.input).toMatchObject({ httpSnapshotFallback: true });
+      else expect(first.input).not.toHaveProperty("httpSnapshotFallback");
+      expect(yield* Ref.get(h.httpLoads)).toBe(resumes ? 0 : 1);
+
+      // Thread families, older threads, and search wait for a nonzero generation.
+      yield* Queue.offer(first.events, { kind: "synchronized" });
+      expect((yield* h.liveAt(sequence)).generation).toBeGreaterThan(0);
+
+      if (!resumes) {
+        // The next cold start may resume from this snapshot.
+        yield* TestClock.adjust("500 millis");
+        expect(yield* Queue.take(h.saved)).toMatchObject({
+          snapshot: { snapshotSequence: HTTP_SEQUENCE },
+          origin: { ...CURRENT_ORIGIN, snapshotAt: NOW },
+        });
+      }
+    }),
+  );
+
+  it.effect("reloads over HTTP when the server answers a resume with snapshot-required", () =>
+    Effect.gen(function* () {
+      const h = yield* makeColdStart(RECENT_ORIGIN);
+
+      const coldResume = yield* Queue.take(h.subscriptions);
+      expect(coldResume.input).toMatchObject({ afterSequence: CACHED_SEQUENCE });
+      yield* Queue.offer(coldResume.events, { kind: "snapshot-required" });
+      const coldReload = yield* Queue.take(h.subscriptions);
+      expect(coldReload.input).toMatchObject({ afterSequence: HTTP_SEQUENCE });
+      expect(coldReload.input).not.toHaveProperty("httpSnapshotFallback");
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
+      yield* Queue.offer(coldReload.events, { kind: "synchronized" });
+      expect((yield* h.liveAt(HTTP_SEQUENCE)).generation).toBeGreaterThan(0);
+
+      // A warm reconnect resumes the in-memory shell and falls back the same way.
+      yield* h.reconnect;
+      const warmResume = yield* Queue.take(h.subscriptions);
+      expect(warmResume.input).toMatchObject({
+        afterSequence: HTTP_SEQUENCE,
+        httpSnapshotFallback: true,
+      });
+      expect(yield* Ref.get(h.httpLoads)).toBe(1);
+      yield* Queue.offer(warmResume.events, { kind: "snapshot-required" });
+      const warmReload = yield* Queue.take(h.subscriptions);
+      expect(warmReload.input).toMatchObject({ afterSequence: HTTP_SEQUENCE + 1 });
+      expect(yield* Ref.get(h.httpLoads)).toBe(2);
+      yield* Queue.offer(warmReload.events, { kind: "synchronized" });
+      yield* h.liveAt(HTTP_SEQUENCE + 1);
+    }),
+  );
+});
