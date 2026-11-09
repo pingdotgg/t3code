@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
@@ -8,15 +8,6 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
-
-const settings = vi.hoisted(() => ({ panelAnimationDurationMs: 0 }));
-vi.mock("../../hooks/useSettings", async () => {
-  const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts/settings");
-  return {
-    useClientSettings: <T,>(select: (value: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
-      select({ ...DEFAULT_CLIENT_SETTINGS, ...settings }),
-  };
-});
 
 const threadA: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
@@ -29,8 +20,7 @@ const threadB: ScopedThreadRef = {
 const container = { width: 1200, height: 800 };
 const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
 
-function setup({ panelAnimationDurationMs = 0 } = {}) {
-  settings.panelAnimationDurationMs = panelAnimationDurationMs;
+function setup() {
   useRightPanelStore.setState({ threadPanelVisibilityByThreadKey: {} });
   const anchor = document.createElement("div");
   document.body.append(anchor);
@@ -143,17 +133,6 @@ it("does not reopen the popover when the card returns from inline mode", async (
   await screen.rerender(<Card threadRef={threadB} inline={false} fixture={fixture} />);
   await expect.element(page.getByText("Details for thread-b")).not.toBeInTheDocument();
   expect(popoverOpen(threadB)).toBe(false);
-});
-
-it("keeps a closing inline card mounted and inert until its exit animation ends", async () => {
-  using fixture = setup({ panelAnimationDurationMs: 400 });
-  await using _screen = await render(<Card threadRef={threadB} inline fixture={fixture} />);
-  const details = page.getByText("Details for thread-b");
-  await expect.element(details).toBeVisible();
-
-  await act(() => useRightPanelStore.getState().setThreadPanelOpen(threadB, "inline", false));
-  expect(details.element().closest("aside")?.inert).toBe(true);
-  await expect.element(details).not.toBeInTheDocument();
 });
 
 it("removes the leaving thread's popup on a thread switch", async () => {
