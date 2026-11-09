@@ -948,6 +948,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // status. A replacement session or foreground resubscribe on the same scope
   // may have missed events, so those show sync progress until confirmed.
   const resumingLive = yield* Ref.make(initialState.status === "live");
+  const socketSnapshotFailed = yield* Ref.make(false);
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -970,12 +971,20 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           return yield* Effect.never;
         }
 
-        yield* Effect.ignore(session.initialConfig);
+        const config = yield* Effect.option(session.initialConfig);
         yield* Ref.set(awaitingCompletion, true);
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
+        // A server that pages snapshots sends the same bounded window over the
+        // socket, so a cold open skips the HTTP round trip. After a socket
+        // failure, HTTP tells a missing thread apart from a failed load.
+        const socketSnapshot =
+          canLoadHistory &&
+          !(yield* Ref.get(socketSnapshotFailed)) &&
+          Option.exists(config, (value) => value.threadSnapshotPagination === true);
+
+        if (Option.isNone(current.data) && !socketSnapshot) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
             Effect.flatMap(
               Option.match({
@@ -1054,7 +1063,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }),
       {
         onDefect: () => setStreamError("Could not synchronize the thread."),
-        onExpectedFailure: (cause) => setStreamError(formatThreadError(cause)),
+        // A socket-only open that fails retries over HTTP, which tells a
+        // missing thread apart from a failure, before showing an error.
+        onExpectedFailure: Effect.fnUntraced(function* (cause) {
+          const retryOverHttp =
+            !(yield* Ref.getAndSet(socketSnapshotFailed, true)) &&
+            Option.isNone((yield* SubscriptionRef.get(state)).data);
+          if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
+        }),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
