@@ -12,6 +12,8 @@ it("grades length and complete sentence endings", () => {
 
 it("parses a judge's yes or no answer", () => {
   assert.strictEqual(parseYesNo("YES"), true);
+  assert.strictEqual(parseYesNo("answer: YES"), true);
+  assert.strictEqual(parseYesNo("The answer is NO"), false);
   assert.strictEqual(parseYesNo("**NO**\n"), false);
   assert.strictEqual(parseYesNo("Maybe"), null);
   assert.strictEqual(parseYesNo("YESTERDAY"), null);

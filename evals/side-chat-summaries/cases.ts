@@ -108,6 +108,7 @@ const shortMessages: LessonMessage[] = [
 export const sideChatSummaryCases = [
   {
     id: "long-learner-confusion",
+    kind: "opening_summary",
     source:
       "~/t3-learn-notes/context-management/lesson.md (the side-chat summary finding near line 969; 63% of summaries hit the cap)",
     messages: longMessages,
@@ -117,6 +118,7 @@ export const sideChatSummaryCases = [
   },
   {
     id: "short-control",
+    kind: "opening_summary",
     source:
       "~/t3-learn-notes/context-management/lesson.md (control for the side-chat summary finding near line 969)",
     messages: shortMessages,
@@ -126,4 +128,26 @@ export const sideChatSummaryCases = [
   },
 ] as const;
 
+export const sideChatOutcomeCases = [
+  {
+    id: "r8-deduction-limit-question",
+    kind: "outcome_note",
+    source: "~/t3-learn-team/notes/golden-walk-2026-11-08-r8/transcript.md (walk r8, Side chat)",
+    excerpt: "Its score falls in a straight line from 1 at the ideal to 0 at a fail limit",
+    messages: [
+      {
+        role: "user",
+        text: "wait so where does the line start and stop for a real check, like the doc example has an ideal, a deduction limit and a fail limit. what's the deduction limit for if the line already goes from ideal to fail limit?",
+      },
+      {
+        role: "assistant",
+        text: "The deduction limit doesn't change the score. It's a marker on the line, not a bend in it. The score is one straight line from 1 at the ideal down to 0 at the fail limit. The deduction limit is the task's own stated rule and adds no extra penalty.",
+      },
+    ],
+    rubric:
+      "Answer YES if the note reports the learner's question about what the deduction limit is for (any wording). Answer NO if it claims the learner held a specific wrong idea they never stated, such as that the deduction limit bends or changes the score line. Saying the learner asked or was unsure is fine: a question is not a misconception.",
+  },
+] as const;
+
 export type SideChatSummaryCase = (typeof sideChatSummaryCases)[number];
+export type SideChatOutcomeCase = (typeof sideChatOutcomeCases)[number];
