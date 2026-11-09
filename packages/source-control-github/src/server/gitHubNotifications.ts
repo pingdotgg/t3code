@@ -3,7 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import type * as GitHubRest from "./GitHubRest.ts";
+import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 
 const OPERATION = "listPullRequestNotifications";
@@ -25,8 +25,9 @@ const decodeThreads = Schema.decodeUnknownEffect(
  * result as a 304 that costs no quota. Fine-grained and GitHub App tokens cannot read
  * notifications, so a refusal is null.
  */
-export const makeListPullRequestNotifications = (rest: GitHubRest.GitHubRest["Service"]) =>
-  Effect.fn("GitHubPullRequestApi.listPullRequestNotifications")(function* (input: {
+export const makeListPullRequestNotifications = Effect.gen(function* () {
+  const rest = yield* GitHubRest.GitHubRest;
+  return Effect.fn("GitHubPullRequestApi.listPullRequestNotifications")(function* (input: {
     readonly host: string;
     readonly repository: string;
     readonly since: number;
@@ -81,3 +82,4 @@ export const makeListPullRequestNotifications = (rest: GitHubRest.GitHubRest["Se
       truncated: threads.length >= PAGE_SIZE,
     } satisfies ProviderChangeRequestNotifications;
   });
+});

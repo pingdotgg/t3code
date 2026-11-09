@@ -647,7 +647,7 @@ describe("listPullRequestNotifications", () => {
     );
     return Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const list = makeListPullRequestNotifications(yield* GitHubRest.GitHubRest);
+      const list = yield* makeListPullRequestNotifications;
       const since = Date.parse("2026-10-05T11:55:00.400Z");
       const input = { host: "github.com", repository: "acme/web", since };
       expect(yield* list(input)).toBeNull();

@@ -927,6 +927,7 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
+  const listPullRequestNotifications = yield* makeListPullRequestNotifications;
   const client = yield* GraphQLClient.make(PullRequestGraphQLGroup).pipe(
     Effect.provide(GitHubGraphQlClient.layer),
   );
@@ -2028,7 +2029,7 @@ export const make = Effect.gen(function* () {
 
     getPullRequestSummary,
     getPullRequestWatchFingerprint,
-    listPullRequestNotifications: makeListPullRequestNotifications(api),
+    listPullRequestNotifications,
 
     getPullRequestDetail,
     getPullRequestPreview: Effect.fn("GitHubPullRequestApi.getPullRequestPreview")(
