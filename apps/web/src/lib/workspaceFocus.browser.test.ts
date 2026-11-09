@@ -265,6 +265,9 @@ describe("workspace area focus", () => {
     composer.element.append(editor);
     expect(fixture.controller.focus("panel")).toBe(true);
     expect(document.activeElement).toBe(editor);
+    // F6 from the message input moves on to the panel's own controls.
+    expect(fixture.controller.move(1)).toBe(true);
+    expect(document.activeElement).toBe(bringBack);
   });
 
   it("waits for a requested area to mount", async () => {
