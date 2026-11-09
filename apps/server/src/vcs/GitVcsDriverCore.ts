@@ -2772,20 +2772,37 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       };
     }
 
-    const currentUpstream = yield* resolveCurrentUpstream(cwd).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    const localUpstreamBranch =
+      (yield* readConfigValue(cwd, `branch.${branch}.remote`)) === "."
+        ? yield* readCurrentUpstreamRef(cwd).pipe(Effect.orElseSucceed(() => null))
+        : null;
+    const isLocalUpstream = localUpstreamBranch !== null;
+    const currentUpstream = isLocalUpstream
+      ? { remoteName: ".", branchName: localUpstreamBranch, upstreamRef: localUpstreamBranch }
+      : yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null));
     if (currentUpstream) {
       // Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
       const isAliasOfUpstreamHead =
-        branch === currentUpstream.branchName ||
-        (branch.endsWith(`/${currentUpstream.branchName}`) &&
-          currentUpstream.upstreamRef.endsWith(`/${branch}`));
+        !isLocalUpstream &&
+        (branch === currentUpstream.branchName ||
+          (branch.endsWith(`/${currentUpstream.branchName}`) &&
+            currentUpstream.upstreamRef.endsWith(`/${branch}`)));
       if (!isAliasOfUpstreamHead) {
         const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
           Effect.orElseSucceed(() => null),
         );
-        const remoteName = publishRemoteName ?? currentUpstream.remoteName;
+        const remoteName =
+          publishRemoteName ?? (isLocalUpstream ? null : currentUpstream.remoteName);
+        if (!remoteName) {
+          return yield* new GitCommandError({
+            ...gitCommandContext({
+              operation: "GitVcsDriver.pushCurrentBranch",
+              cwd,
+              args: ["push"],
+            }),
+            detail: "Cannot push because no git remote is configured for this repository.",
+          });
+        }
         const publishBranch = yield* resolvePublishBranchName(cwd, branch);
         // Publishing retargets the upstream, so preserve its comparison base first.
         if ((yield* readBranchBase(cwd, branch)) === null) {
@@ -2798,7 +2815,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             yield* writeConfigValue({
               cwd,
               key: `branch.${branch}.t3-merge-base-ref`,
-              value: `refs/remotes/${currentUpstream.upstreamRef}`,
+              value: isLocalUpstream
+                ? `refs/heads/${currentUpstream.branchName}`
+                : `refs/remotes/${currentUpstream.upstreamRef}`,
             });
           }
         }
