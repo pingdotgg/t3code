@@ -147,7 +147,12 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
     const seen: Array<{ url: string; auth: string | null }> = [];
     const upstream = vi.fn<typeof fetch>(async (url, init) => {
       seen.push({ url: String(url), auth: new Headers(init?.headers).get("authorization") });
-      return Response.json({ data: [{ id: "model-a" }] });
+      return String(url).endsWith("/chat/completions")
+        ? Response.json({
+            model: JSON.parse(String(init?.body)).model,
+            choices: [{ finish_reason: "stop", message: { content: "OK" } }],
+          })
+        : Response.json({ data: [{ id: "model-a" }] });
     });
     const generators = yield* TextGenerators.TextGenerators.pipe(
       Effect.provide(layer({ apiKey: "saved-key" })),
@@ -174,5 +179,15 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
       { url: "https://new.test/v1/models", auth: "Bearer typed-key" },
       { url: "https://new.test/v1/models", auth: "Bearer saved-key" },
     ]);
+
+    // Listing alone proves nothing about the key on some APIs; a test asks the model itself.
+    const tested = yield* generators
+      .listModels({ id: ID, test: true, model: "chosen/model" })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
+    expect(tested.testedModel).toBe("chosen/model");
+    expect(seen.at(-1)).toEqual({
+      url: "https://api.test/v1/chat/completions",
+      auth: "Bearer saved-key",
+    });
   }),
 );

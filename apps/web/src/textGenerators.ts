@@ -186,6 +186,24 @@ export async function checkTextGeneratorConfig(
     : { error: formatEnvironmentQueryError(result.cause) };
 }
 
+/**
+ * Has a saved generator's model answer a tiny prompt. Some APIs list models without checking the
+ * key, so only this proves the key, endpoint, and model together. Resolves to the error, if any.
+ */
+export async function testTextGeneratorModel(
+  environmentId: EnvironmentId,
+  id: ProviderInstanceId,
+  model: string,
+): Promise<string | null> {
+  const result = await runAtomCommand(
+    appAtomRegistry,
+    serverEnvironment.listTextGeneratorModels,
+    { environmentId, input: { id, test: true, model } },
+    { reportFailure: false },
+  );
+  return result._tag === "Success" ? null : formatEnvironmentQueryError(result.cause);
+}
+
 /** A saved text generator's model list, shared with the pickers. */
 export function useTextGeneratorModels(
   environmentId: EnvironmentId,

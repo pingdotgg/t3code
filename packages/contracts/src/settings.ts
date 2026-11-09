@@ -961,11 +961,17 @@ export const ListTextGeneratorModelsInput = Schema.Struct({
   config: Schema.optional(TextGeneratorConfig),
   /** Skip the server's cached list and ask the API again. */
   refresh: Schema.optional(Schema.Boolean),
+  /** Also have a model answer a tiny prompt, which proves the key, endpoint, and model. */
+  test: Schema.optional(Schema.Boolean),
+  /** With `test`, the model to try; a cheap listed one when omitted. */
+  model: Schema.optional(TrimmedNonEmptyString),
 });
 export type ListTextGeneratorModelsInput = typeof ListTextGeneratorModelsInput.Type;
 
 export const ListTextGeneratorModelsResult = Schema.Struct({
   models: Schema.Array(TextGeneratorModel),
+  /** The model that answered, when `test` was set. */
+  testedModel: Schema.optional(TrimmedNonEmptyString),
 });
 export type ListTextGeneratorModelsResult = typeof ListTextGeneratorModelsResult.Type;
 

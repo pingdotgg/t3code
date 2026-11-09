@@ -133,15 +133,39 @@ export const make = Effect.gen(function* () {
           detail: "That text generator no longer exists.",
         });
       }
+      // Checking unsaved settings, or testing, must reach the API rather than trust the cache.
+      const fresh = input.config !== undefined || input.test === true;
       const cached = (yield* Ref.get(modelCache)).get(input.id);
       // Keyed on the whole config so a changed URL or key never serves another API's list.
-      if (input.refresh !== true && cached !== undefined && Equal.equals(cached.config, config)) {
+      if (
+        !fresh &&
+        input.refresh !== true &&
+        cached !== undefined &&
+        Equal.equals(cached.config, config)
+      ) {
         return { models: cached.models };
       }
       const connection = yield* connect(config);
-      const models = yield* TEXT_GENERATOR_DRIVERS[config.kind]
+      const driver = TEXT_GENERATOR_DRIVERS[config.kind];
+      const models = yield* driver
         .listModels(connection)
         .pipe(Effect.provideService(HttpClient.HttpClient, http));
+      if (input.test === true) {
+        // An explicit test sends one tiny request: some APIs list models without checking the key.
+        const model =
+          input.model ??
+          (models.find((candidate) => /haiku|mini|flash|nano/i.test(candidate.id)) ?? models[0])
+            ?.id;
+        if (model === undefined) {
+          return yield* new TextGeneratorRequestError({
+            detail: `${connection.label} lists no models to test with.`,
+          });
+        }
+        yield* driver
+          .generate(connection, model, "Reply with OK.")
+          .pipe(Effect.provideService(HttpClient.HttpClient, http));
+        return { models, testedModel: model };
+      }
       yield* Ref.update(modelCache, (current) =>
         new Map(current).set(input.id, { config, models }),
       );

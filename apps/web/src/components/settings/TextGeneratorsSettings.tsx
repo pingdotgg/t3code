@@ -19,6 +19,7 @@ import {
   checkTextGeneratorConfig,
   nextTextGeneratorId,
   refreshTextGeneratorModels,
+  testTextGeneratorModel,
   useTextGenerationTargets,
   useTextGeneratorModels,
   TEXT_GENERATOR_PRESETS,
@@ -479,31 +480,72 @@ function TextGenerationTaskPicker({
     projectId: null,
     selections: [selection],
   });
+  // Only a text generator's model can be tried cheaply; agents start a whole session.
+  const testable = Object.hasOwn(settings.textGenerators, selection.instanceId);
+  const testKey = `${selection.instanceId}:${selection.model}`;
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<{
+    readonly key: string;
+    readonly error: string | null;
+  } | null>(null);
+  const shown = result?.key === testKey ? result : null;
+  const test = async () => {
+    setTesting(true);
+    const error = await testTextGeneratorModel(
+      environmentId,
+      selection.instanceId,
+      selection.model,
+    );
+    setTesting(false);
+    setResult({ key: testKey, error });
+  };
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <div className="grid min-w-0 gap-0.5">
+    <div className="flex items-center justify-between gap-3">
+      <div className="grid min-w-0 flex-1 gap-0.5">
         <span className="text-sm">{label}</span>
-        {own === null ? (
+        {shown?.error ? (
+          <span role="alert" className="text-xs text-destructive">
+            {shown.error}
+          </span>
+        ) : shown ? (
+          <span role="status" className="text-xs text-muted-foreground">
+            {selection.model} answered. It works.
+          </span>
+        ) : own === null ? (
           <span className="text-xs text-muted-foreground">Follows the text generation model</span>
         ) : null}
       </div>
-      <ProviderModelPicker
-        environmentId={environmentId}
-        activeInstanceId={selection.instanceId}
-        model={selection.model}
-        lockedProvider={null}
-        instanceEntries={targets.entries}
-        modelOptionsByInstance={getCustomModelOptionsByInstance(
-          settings,
-          targets.providers,
-          selection.instanceId,
-          selection.model,
-        )}
-        triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-        onInstanceModelChange={(instanceId, model) =>
-          updateSettings({ [settingKey]: createModelSelection(instanceId, model) })
-        }
-      />
+      <div className="flex shrink-0 items-center gap-1.5">
+        {testable ? (
+          <Button
+            size="xs"
+            variant="ghost"
+            aria-busy={testing}
+            disabled={testing}
+            onClick={() => void test()}
+          >
+            {testing ? <Spinner /> : null}
+            {testing ? "Testing" : "Test"}
+          </Button>
+        ) : null}
+        <ProviderModelPicker
+          environmentId={environmentId}
+          activeInstanceId={selection.instanceId}
+          model={selection.model}
+          lockedProvider={null}
+          instanceEntries={targets.entries}
+          modelOptionsByInstance={getCustomModelOptionsByInstance(
+            settings,
+            targets.providers,
+            selection.instanceId,
+            selection.model,
+          )}
+          triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+          onInstanceModelChange={(instanceId, model) =>
+            updateSettings({ [settingKey]: createModelSelection(instanceId, model) })
+          }
+        />
+      </div>
     </div>
   );
 }

@@ -22,7 +22,9 @@ environment, like other [secrets](./secrets.md), and can come from a secret prov
 being typed in.
 
 T3 Code lists the service's models to check the connection, then shows the model picker for each
-text task so you can switch any of them to the new generator, or keep what they use. **Models** on
+text task so you can switch any of them to the new generator, or keep what they use. **Test** next
+to a picker has the chosen model answer a tiny prompt, which proves the key works; some services
+list their models without checking it. **Models** on
 the generator's row shows its model list and refreshes it after the service adds models.
 
 Each request sends the API what the task needs, such as the staged diff for a commit message.
