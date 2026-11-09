@@ -74,37 +74,29 @@ describe("queued message file edits", () => {
     ).rejects.toThrow("Retry or remove");
   });
 
-  it("keeps file-only edits when another client starts the queued run", () => {
+  const citation = {
+    version: 1 as const,
+    environmentId,
+    threadId: threadTarget.threadId,
+    messageId: MessageId.make("message"),
+    text: "Quote",
+    start: 0,
+    end: 5,
+    prefix: "",
+    suffix: "",
+  };
+  it.each(["file", "citation"])("keeps %s-only edits when the queued run leaves", (kind) => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(editTarget, "Original message");
-    store.addFiles(editTarget, [file]);
+    if (kind === "file") store.addFiles(editTarget, [file]);
+    else store.setTrayCitations(editTarget, [citation]);
     expect(
       recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
     ).toBe("kept");
-    expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
-    expect(store.getComposerDraft(threadTarget)?.files).toEqual([file]);
-    expect(store.getComposerDraft(editTarget)).toBeNull();
-  });
-
-  it("keeps citation-only edits when the queued run leaves", () => {
-    const store = useComposerDraftStore.getState();
-    const citation = {
-      version: 1 as const,
-      environmentId,
-      threadId: threadTarget.threadId,
-      messageId: MessageId.make("message"),
-      text: "Quote",
-      start: 0,
-      end: 5,
-      prefix: "",
-      suffix: "",
-    };
-    store.setPrompt(editTarget, "Original message");
-    store.setTrayCitations(editTarget, [citation]);
-    expect(
-      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
-    ).toBe("kept");
-    expect(store.getComposerDraft(threadTarget)?.trayCitations).toEqual([citation]);
+    const recovered = store.getComposerDraft(threadTarget);
+    expect(recovered?.prompt).toBe("Original message");
+    expect(recovered?.files).toEqual(kind === "file" ? [file] : []);
+    expect(recovered?.trayCitations ?? []).toEqual(kind === "citation" ? [citation] : []);
     expect(store.getComposerDraft(editTarget)).toBeNull();
   });
 
