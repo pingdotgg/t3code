@@ -1083,9 +1083,13 @@ export interface DesktopBridge {
    * regardless of OS settings.
    */
   getSystemLocale: () => string | null;
+  /** The OS's preferred languages, most preferred first; `navigator.languages` is pinned like the locale. */
+  getPreferredSystemLanguages: () => readonly string[];
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
+  getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;
   getClientSettings: () => Promise<ClientSettings | null>;
   setClientSettings: (settings: ClientSettings) => Promise<void>;

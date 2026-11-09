@@ -3,12 +3,18 @@ import {
   CodexSettings,
   ProviderDriverKind,
   type ProviderInstallCancelInput,
+  type ProviderInstallState,
   type ProviderInstanceId,
   ProviderSetupError,
   type ProviderSetupInput,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -25,12 +31,34 @@ const hasBinaryPath = Schema.is(Schema.Struct({ binaryPath: Schema.String }));
 const decodeCodexSettings = Schema.decodeUnknownEffect(CodexSettings);
 const decodeAntigravitySettings = Schema.decodeUnknownEffect(AntigravitySettings);
 
-export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(function* () {
+export class ProviderInstallation extends Context.Service<
+  ProviderInstallation,
+  {
+    readonly start: (
+      input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    readonly cancel: (
+      input: ProviderInstallCancelInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+    readonly subscribe: (
+      input: ProviderSetupInput,
+    ) => Stream.Stream<ProviderInstallState, ProviderSetupError>;
+    readonly remove: (
+      input: ProviderSetupInput,
+    ) => Effect.Effect<ProviderInstallState, ProviderSetupError>;
+  }
+>()("t3/provider/providerInstallation") {}
+
+const make = Effect.fn("makeProviderInstallation")(function* () {
   const antigravityInstallation = yield* AntigravityInstallation.AntigravityInstallation;
   const codexInstallation = yield* CodexInstallation.CodexInstallation;
   const instances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const scope = yield* Effect.scope;
+  const accountCheckOperations = new Map<ProviderInstanceId, string>();
 
   const readEntries = Effect.fn("ProviderInstallation.readEntries")(function* (
     instanceId: ProviderInstanceId,
@@ -106,8 +134,47 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
       new ProviderSetupError({ instanceId, operation: error.operation, detail: error.detail });
 
   const start = Effect.fn("ProviderInstallation.start")(function* (input: ProviderSetupInput) {
-    const { installation } = yield* requireInstance(input.instanceId, "install", true);
-    return yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
+    const { installation, driver } = yield* requireInstance(input.instanceId, "install", true);
+    const started = yield* installation.start.pipe(Effect.mapError(failure(input.instanceId)));
+    if (
+      driver === ANTIGRAVITY &&
+      started.operationId !== null &&
+      accountCheckOperations.get(input.instanceId) !== started.operationId
+    ) {
+      accountCheckOperations.set(input.instanceId, started.operationId);
+      // Installation outlives the request and may finish while every client is disconnected.
+      yield* installation.changes.pipe(
+        Stream.filter(
+          (state) =>
+            state.operationId !== started.operationId ||
+            state.phase === "succeeded" ||
+            state.phase === "failed" ||
+            state.phase === "cancelled",
+        ),
+        Stream.runHead,
+        Effect.flatMap(
+          Effect.fnUntraced(function* (result) {
+            if (
+              Option.isNone(result) ||
+              result.value.operationId !== started.operationId ||
+              result.value.phase !== "succeeded"
+            )
+              return;
+            const instance = yield* instances.getInstance(input.instanceId);
+            if (
+              instance?.driverKind !== ANTIGRAVITY ||
+              !instance.enabled ||
+              !instance.refreshModels
+            )
+              return;
+            yield* instance.refreshModels().pipe(Effect.ignore({ log: true }));
+            yield* providers.refreshInstance(input.instanceId);
+          }),
+        ),
+        Effect.forkIn(scope),
+      );
+    }
+    return started;
   });
 
   const cancel = Effect.fn("ProviderInstallation.cancel")(function* (
@@ -142,7 +209,10 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
         const binaryPath = entry.config.binaryPath.trim();
         const resolved = yield* resolveCommandPath(binaryPath, {
           env: yield* mergeProviderInstanceEnvironment(entry.environment),
-        });
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
         return resolved === null ? [binaryPath] : [binaryPath, resolved];
       }),
     );
@@ -160,3 +230,5 @@ export const makeProviderInstallation = Effect.fn("makeProviderInstallation")(fu
 
   return { start, cancel, subscribe, remove };
 });
+
+export const layer = Layer.effect(ProviderInstallation, make());
