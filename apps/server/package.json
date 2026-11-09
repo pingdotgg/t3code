@@ -71,7 +71,7 @@
     "proper-lockfile": "4.1.2",
     "saxes": "6.0.0",
     "stream-chain": "^4.2.5",
-    "stream-json": "3.6.0",
+    "stream-json": "3.7.0",
     "transcribe-cpp": "0.4.1",
     "undici": "catalog:",
     "yaml": "catalog:",
