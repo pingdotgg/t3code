@@ -92,6 +92,29 @@ const PI_UNSOLICITED_ACTIVITY_ERROR =
 const SETTLE_PROBE_MAX_ATTEMPTS = 3;
 const SETTLE_PROBE_RETRY_DELAY = Duration.millis(100);
 
+const PI_USAGE_LIMIT = /usage[ _]limit/i;
+// Pi rounds the server's resets_at to whole minutes; the margin keeps recovery after the real reset.
+const PI_USAGE_LIMIT_RESET = /Try again in ~(\d{1,6}) min\b/;
+const PI_USAGE_LIMIT_RESET_MARGIN_MS = 30_000;
+
+function piModelErrorFailure(message: string, receivedAt: DateTime.Utc) {
+  if (!PI_USAGE_LIMIT.test(message))
+    return makeProviderFailure({ message, class: "provider_error" });
+  const minutes = PI_USAGE_LIMIT_RESET.exec(message)?.[1];
+  return makeProviderFailure({
+    message,
+    class: "usage_limit",
+    resetAt:
+      minutes === undefined
+        ? null
+        : DateTime.formatIso(
+            DateTime.add(receivedAt, {
+              milliseconds: Number(minutes) * 60_000 + PI_USAGE_LIMIT_RESET_MARGIN_MS,
+            }),
+          ),
+  });
+}
+
 const PiProviderCapabilitiesV2 = {
   runtimePolicy: { enforcement: "client-boundary" },
   sessions: {
@@ -1974,10 +1997,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (recordString(message, "role") !== "assistant") return;
             yield* completeOpenStreamItems(turn);
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
-              turn.failure = makeProviderFailure({
-                message: recordString(message, "errorMessage") ?? "Pi reported a model error.",
-                class: "provider_error",
-              });
+              turn.failure = piModelErrorFailure(
+                recordString(message, "errorMessage") ?? "Pi reported a model error.",
+                yield* DateTime.now,
+              );
             }
             return;
           }

@@ -846,6 +846,13 @@ describe("PiAdapterV2", () => {
         }
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+        if (
+          failure === "model error" &&
+          terminal.type === "turn.terminal" &&
+          terminal.status === "failed"
+        ) {
+          assert.strictEqual(terminal.failure.class, "provider_error");
+        }
         assert.deepInclude(runtime.providerSession, {
           status: "error",
           extensionStatuses: [{ key: "watch", text: "Watching 3 files" }],
