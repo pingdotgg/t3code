@@ -3249,7 +3249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerBanner.Attachment>
               <ComposerBanner.Root
                 data-chat-composer-top-drawer="true"
-                surface={pendingUserInputs.length > 0 || showPlanFollowUpPrompt ? "panel" : "tint"}
+                surface="panel"
                 variant="info"
               >
                 {pendingUserInputs.length > 0 ? (
