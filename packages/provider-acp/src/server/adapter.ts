@@ -7655,8 +7655,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* terminalizeOpenRunOwnedItems(context, {
               terminalizeSubagents: directStopQuarantine,
             });
-          } else if (settledStatus === "failed") {
-            yield* terminalizeOpenForegroundTools(context, "failed");
           }
           yield* closeTextStreams(context);
           if (settledStatus !== "failed") {
