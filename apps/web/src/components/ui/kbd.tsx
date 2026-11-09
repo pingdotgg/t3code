@@ -8,12 +8,20 @@ import { cn } from "~/lib/utils";
 function Kbd({
   className,
   size = "default",
+  variant = "default",
   ...props
-}: React.ComponentProps<"kbd"> & { size?: "default" | "sm" }) {
+}: React.ComponentProps<"kbd"> & {
+  size?: "default" | "sm";
+  /** `outline` always draws the standalone key, so the hint stays distinct inside surrounding text. */
+  variant?: "default" | "outline";
+}) {
   return (
     <kbd
       className={cn(
-        "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded-[var(--kbd-radius,var(--radius-badge))] px-1 font-sans text-caption text-[color:var(--kbd-foreground,var(--contrast-muted-foreground))] [background:var(--kbd-background,var(--kbd-fill))] [box-shadow:var(--kbd-box-shadow,var(--kbd-shadow))] [&_svg:not([class*='size-'])]:size-3",
+        "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded-[var(--kbd-radius,var(--radius-badge))] px-1 font-sans text-caption text-[color:var(--kbd-foreground,var(--contrast-muted-foreground))] [&_svg:not([class*='size-'])]:size-3",
+        variant === "outline"
+          ? "px-1.5 [background:var(--kbd-fill)] [box-shadow:var(--kbd-shadow)]"
+          : "[background:var(--kbd-background,var(--kbd-fill))] [box-shadow:var(--kbd-box-shadow,var(--kbd-shadow))]",
         size === "sm" && "h-4.5 min-w-0 gap-0 px-1.25",
         className,
       )}
