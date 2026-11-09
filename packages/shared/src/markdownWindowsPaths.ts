@@ -26,12 +26,21 @@ interface EscapeCompileContext {
   }>;
 }
 
+function isAsciiWhitespace(code: number) {
+  return code === 32 || (code >= 9 && code <= 13);
+}
+
 function keepWindowsPathEscape(this: EscapeCompileContext) {
   const text = this.stack.at(-1)?.children?.at(-1);
   if (text?.type !== "text" || text.value === undefined) return;
-  const before = text.value.slice(0, -1);
-  if (UNFINISHED_DRIVE_PATH.test(before)) {
-    text.value = `${before}\\${text.value.slice(-1)}`;
+  // A drive path cannot cross whitespace, so only the run this escape ends can hold one.
+  // ASCII whitespace bounds it; a run spanning other spaces is longer but matches the same.
+  const { value } = text;
+  const end = value.length - 1;
+  let start = end;
+  while (start > 0 && !isAsciiWhitespace(value.charCodeAt(start - 1))) start -= 1;
+  if (UNFINISHED_DRIVE_PATH.test(value.slice(start, end))) {
+    text.value = `${value.slice(0, end)}\\${value.slice(end)}`;
   }
 }
 
