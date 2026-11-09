@@ -31,6 +31,11 @@ vi.mock("electron", async (importOriginal) => ({
       },
     ]),
   },
+  webContents: {
+    fromId: vi.fn(),
+    getAllWebContents: vi.fn(() => []),
+    getFocusedWebContents: vi.fn(() => null),
+  },
 }));
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
@@ -1043,6 +1048,63 @@ describe("DesktopWindow", () => {
         swipe({}, "right");
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("routes macOS swipes to the focused Browser tab instead of the app history", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+      const guestHistory = {
+        canGoBack: vi.fn(() => true),
+        canGoForward: vi.fn(() => true),
+        goBack: vi.fn(),
+        goForward: vi.fn(),
+      };
+      const guest = {
+        id: 42,
+        hostWebContents: fakeWindow.window.webContents,
+        isDestroyed: () => false,
+        isFocused: () => true,
+        focusedFrame: {},
+        navigationHistory: guestHistory,
+        on: vi.fn(),
+      } as unknown as Electron.WebContents;
+      using _all = vi
+        .mocked(Electron.webContents.getAllWebContents)
+        .mockReturnValue([fakeWindow.window.webContents, guest]);
+      using _focused = vi.mocked(Electron.webContents.getFocusedWebContents).mockReturnValue(guest);
+      using _fromId = vi
+        .mocked(Electron.webContents.fromId)
+        .mockImplementation((id) => (id === guest.id ? guest : undefined));
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        fakeWindow.webContentsListeners.get("did-attach-webview")?.({}, guest);
+        const swipe = fakeWindow.windowListeners.get("swipe");
+        assert.isDefined(swipe);
+        if (!swipe) return;
+
+        swipe({}, "left");
+        swipe({}, "right");
+        assert.deepEqual(
+          {
+            app: [
+              fakeWindow.navigationHistory.goBack.mock.calls.length,
+              fakeWindow.navigationHistory.goForward.mock.calls.length,
+            ],
+            browserTab: [
+              guestHistory.goBack.mock.calls.length,
+              guestHistory.goForward.mock.calls.length,
+            ],
+          },
+          { app: [0, 0], browserTab: [1, 1] },
+          "swipe back/forward should navigate the focused Browser tab, not the app router",
+        );
       }).pipe(Effect.provide(layer));
     }),
   );
