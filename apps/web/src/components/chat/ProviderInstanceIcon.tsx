@@ -1,4 +1,3 @@
-import { ServerIcon } from "lucide-react";
 import { type CSSProperties, memo } from "react";
 
 import {
@@ -36,7 +35,6 @@ const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
   [ProviderDriverKind.make("anthropic")]: AnthropicIcon,
   [ProviderDriverKind.make("openrouter")]: OpenRouterIcon,
   [ProviderDriverKind.make("ollama")]: OllamaIcon,
-  [ProviderDriverKind.make("openaiCompatible")]: ServerIcon,
 };
 
 const PROVIDER_TEXT_COLOR_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
@@ -103,6 +101,8 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
+  // A custom OpenAI-compatible endpoint has no brand: show its name, marked with the protocol.
+  const isCustomEndpoint = props.driverKind === "openaiCompatible";
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
     driverKind: props.driverKind,
     agentId: props.acpRegistryAgentId,
@@ -124,6 +124,16 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           fallbackClassName="size-full"
           icon={acpRegistryIconUrl}
         />
+      ) : isCustomEndpoint ? (
+        <span
+          className={cn(
+            "flex size-5 shrink-0 items-center justify-center rounded-md border bg-card text-4xs font-semibold leading-none text-foreground",
+            iconClassName,
+          )}
+          aria-hidden
+        >
+          {providerInstanceInitials(props.displayName)}
+        </span>
       ) : packageIcon ? (
         <ProviderPackageIcon
           icon={packageIcon}
@@ -137,7 +147,18 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {props.showBadge ? (
+      {isCustomEndpoint ? (
+        <span
+          className={cn(
+            "pointer-events-none absolute right-[-0.1875rem] bottom-[-0.1875rem] z-10 flex size-3 items-center justify-center rounded-full border bg-card text-foreground shadow-sm",
+            props.badgeClassName,
+          )}
+          style={{ borderColor: indicatorBackground }}
+          aria-hidden
+        >
+          <OpenAI className="size-2" />
+        </span>
+      ) : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",
