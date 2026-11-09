@@ -20,6 +20,14 @@ const kiroCompact = {
   type: "expect_outbound" as const,
   frame: { kind: "request", method: "_kiro/session/compact", params: { sessionId } },
 };
+const selectModel = (value: string) => ({
+  type: "expect_outbound" as const,
+  frame: {
+    kind: "request",
+    method: "session/set_config_option",
+    params: { sessionId, configId: "model", value },
+  },
+});
 const update = (update: Record<string, unknown>) => ({
   type: "emit_inbound" as const,
   frame: { kind: "notification", method: "session/update", params: { sessionId, update } },
@@ -194,18 +202,23 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
     expect(notes).toEqual([true, false, true]);
   });
 
-  it("resends the first model's notes after switching back from a recorded second model", () => {
-    const otherModel = "<runtime_info>Other model notes</runtime_info>";
-    const [onA, onB, backOnA] = lastPromptBlocks([
+  it("sends each model's notes once, and the first model's again after switching back", () => {
+    const [onA, onB, againOnB, backOnA] = lastPromptBlocks([
       prompt("on A"),
       promptAnswer,
-      prompt("on B", otherModel),
+      selectModel("model-b"),
+      prompt("on B"),
       promptAnswer,
+      prompt("again on B"),
+      promptAnswer,
+      selectModel("auto"),
       prompt("back on A"),
       promptAnswer,
     ]);
     expect(onA).toMatch(/^<runtime_info>/);
-    expect(onB).toBe(otherModel);
+    expect(onB).toMatch(/^<runtime_info>/);
+    expect(onB).toContain("model-b");
+    expect(againOnB).toBe("again on B");
     expect(backOnA).toBe(onA);
   });
 });

@@ -20,6 +20,12 @@ export function materializeReplayTranscriptRuntimeInstructions(
               : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
+  // The notes name the model, so each prompt expects the ones for its session's current model.
+  const sessionModels = new Map<unknown, string>();
+  const notesFor = (sessionId: unknown) => {
+    const model = sessionModels.get(sessionId) ?? runtime.model;
+    return model === runtime.model ? instructions : buildRuntimeInstructions({ harness, model });
+  };
   // Grok's flavor sets `supportsCompaction`; Kiro compacts through its own request instead.
   const compactsThroughPrompt = runtime.driver === "grok";
   // The ACP adapter resends the runtime notes until a prompt that carried that exact text
@@ -137,6 +143,19 @@ export function materializeReplayTranscriptRuntimeInstructions(
         pendingKiroCompact = undefined;
         return entry;
       }
+      const params = "params" in frame && isRecord(frame.params) ? frame.params : undefined;
+      const selectedModel =
+        "method" in frame && frame.method === "session/set_config_option"
+          ? params?.configId === "model"
+            ? params.value
+            : undefined
+          : "method" in frame && frame.method === "session/set_model"
+            ? params?.modelId
+            : undefined;
+      if (typeof selectedModel === "string") {
+        sessionModels.set(params?.sessionId, selectedModel);
+        return entry;
+      }
       if (
         "method" in frame &&
         frame.method === "_kiro/session/compact" &&
@@ -174,17 +193,18 @@ export function materializeReplayTranscriptRuntimeInstructions(
           return entry;
         }
         const lastText = promptPartText(prompt.at(-1));
+        const expected = notesFor(promptSessionId);
         // A recording that switched models mid-thread already carries the
         // instructions for the model each prompt ran on.
         const recordedNotes =
-          lastText === instructions || lastText?.startsWith("<runtime_info>") === true
+          lastText === expected || lastText?.startsWith("<runtime_info>") === true
             ? lastText
             : undefined;
         const resend =
-          recordedNotes === undefined && deliveredNotes.get(promptSessionId) !== instructions;
+          recordedNotes === undefined && deliveredNotes.get(promptSessionId) !== expected;
         pendingPrompt = {
           sessionId: promptSessionId,
-          notes: recordedNotes ?? (resend ? instructions : undefined),
+          notes: recordedNotes ?? (resend ? expected : undefined),
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };
@@ -193,7 +213,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ...entry,
           frame: {
             ...frame,
-            params: { ...frame.params, prompt: [...prompt, { type: "text", text: instructions }] },
+            params: { ...frame.params, prompt: [...prompt, { type: "text", text: expected }] },
           },
         };
       }
