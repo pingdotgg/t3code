@@ -192,12 +192,17 @@ export const MuseAccountState = Schema.Struct({
   credentialRequired: Schema.optional(Schema.Boolean),
 });
 export type MuseAccountState = typeof MuseAccountState.Type;
-export const MuseTurnRetryScheduled = Schema.Struct({
+/** `turn/retryScheduled` carries `reason`; `turn/modelRetryScheduled` carries the HTTP failure. */
+export const MuseRetryScheduled = Schema.Struct({
   turnId: NonEmptyString,
+  attempt: Schema.Int.check(Schema.isGreaterThan(0)),
   nextAttempt: Schema.Int.check(Schema.isGreaterThan(0)),
   maxAttempts: Schema.Int.check(Schema.isGreaterThan(0)),
-  reason: NonEmptyString,
+  reason: Schema.optional(NonEmptyString),
+  errorKind: Schema.optional(Schema.String),
+  httpStatus: Schema.optional(Schema.Int),
   retryDelayMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  sourceRange: Schema.Struct({ first: Schema.Struct({ id: NonEmptyString }) }),
 });
 export const MuseCompactResult = Schema.Struct({
   status: Schema.String,
