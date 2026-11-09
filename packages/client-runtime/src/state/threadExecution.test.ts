@@ -630,6 +630,20 @@ describe("formatSubagentEffort", () => {
       [{ id: "thinking", value: "low" }],
       "low",
     ],
+    [
+      "keeps a stated level for a catalogued model without option descriptors",
+      { driver: pi.driver, models: [{ ...piModel, capabilities: null }] },
+      piModel.slug,
+      [{ id: "thinking", value: "high" }],
+      "high",
+    ],
+    [
+      "keeps a stated level before the provider catalog loads",
+      undefined,
+      "pi-local",
+      [{ id: "thinking", value: "low" }],
+      "low",
+    ],
     ["never shows the catalog default for a Pi child that stated none", pi, piModel.slug, [], null],
     [
       "never reads Claude's boolean thinking as effort",

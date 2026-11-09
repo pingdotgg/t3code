@@ -203,14 +203,18 @@ export function workflowMemberModelSelection(
 }
 
 /**
- * The selection a subagent runs on: a T3 delegated child's saved selection, or what the provider
- * reported for its own subagent. Undefined when unknown, never the parent's.
+ * The selection a subagent runs on: a T3 delegated child's saved selection first, then what was
+ * reported for the subagent itself, on the subagent's own provider instance. Never the parent's.
  */
 export function subagentModelSelection(
-  subagent: Pick<OrchestrationV2Subagent, "origin" | "modelSelection">,
+  subagent: Pick<OrchestrationV2Subagent, "origin" | "modelSelection" | "providerInstanceId">,
   childThread: Pick<OrchestrationV2AppThread, "modelSelection"> | null | undefined,
 ): ModelSelection | undefined {
-  return subagent.origin === "app_owned" ? childThread?.modelSelection : subagent.modelSelection;
+  // A provider-native child thread is not where its subagent's selection is saved.
+  const saved = subagent.origin === "app_owned" ? childThread?.modelSelection : undefined;
+  return [saved, subagent.modelSelection].find(
+    (selection) => selection?.instanceId === subagent.providerInstanceId,
+  );
 }
 
 export function projectedSubagentsToRuntime(

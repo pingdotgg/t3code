@@ -128,12 +128,23 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
         provider,
       });
 
-    expect(effortOf(subagentModelSelection({ origin: "app_owned" }, child))).toBe("high");
-    expect(effortOf(subagentModelSelection({ origin: "app_owned" }, undefined))).toBeNull();
+    const delegated = {
+      origin: "app_owned",
+      providerInstanceId: instanceId,
+      modelSelection: reported,
+    } as const;
+    const movedChild = {
+      modelSelection: { ...child.modelSelection, instanceId: ProviderInstanceId.make("pi-work") },
+    };
+
+    expect(effortOf(subagentModelSelection(delegated, child))).toBe("high");
+    expect(effortOf(subagentModelSelection(delegated, undefined))).toBe("max");
+    expect(effortOf(subagentModelSelection(delegated, movedChild))).toBe("max");
     expect(
-      effortOf(
-        subagentModelSelection({ origin: "provider_native", modelSelection: reported }, child),
-      ),
+      effortOf(subagentModelSelection({ ...delegated, modelSelection: undefined }, undefined)),
+    ).toBeNull();
+    expect(
+      effortOf(subagentModelSelection({ ...delegated, origin: "provider_native" }, child)),
     ).toBe("max");
   });
 
