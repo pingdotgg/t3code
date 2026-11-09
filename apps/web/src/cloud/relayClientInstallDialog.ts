@@ -127,6 +127,7 @@ export function cancelRelayClientInstall(): void {
 
 export function onRelayClientInstallCancel(listener: () => void): () => void {
   cancelListeners.add(listener);
+  if (state.status === "installing" && state.cancelling) listener();
   return () => {
     cancelListeners.delete(listener);
   };
