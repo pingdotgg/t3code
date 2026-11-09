@@ -189,12 +189,18 @@ it("renews the URL and keeps the latest reading position through a page error an
       await scrolled;
     });
 
-    const failure = Promise.withResolvers<void>();
+    let failRender!: () => void;
+    const released = new Promise<void>((resolve) => {
+      failRender = resolve;
+    });
     const renderText = TextLayer.prototype.render;
     using failingPage = vi.spyOn(TextLayer.prototype, "render").mockImplementationOnce(function (
       this: TextLayer,
     ) {
-      return renderText.call(this).then(() => failure.promise);
+      return renderText.call(this).then(async () => {
+        await released;
+        throw new Error("This PDF page could not render.");
+      });
     });
     await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
     await vi.waitFor(() => expect(failingPage).toHaveBeenCalled());
@@ -204,7 +210,7 @@ it("renews the URL and keeps the latest reading position through a page error an
     const collapsed = new Promise((resolve) =>
       region().addEventListener("scroll", resolve, { once: true }),
     );
-    failure.reject(new Error("This PDF page could not render."));
+    failRender();
     await collapsed;
     await expect.element(screen.getByRole("alert")).toBeVisible();
 
