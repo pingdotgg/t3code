@@ -1147,7 +1147,7 @@ export default function FilePreviewPanel({
     file.data?.invalidUtf8 === true &&
     attachment === undefined &&
     !isMedia &&
-    (showsRawText || (isMarkdown && renderMarkdown)) &&
+    (showsRawText || (isMarkdown && renderMarkdown) || renderMermaid || renderTable) &&
     !(file.data.truncated && !draft && !isMarkdown && !isMermaid && !isHtml);
   const rendered = isMermaid
     ? renderMermaid

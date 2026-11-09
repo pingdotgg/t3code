@@ -195,4 +195,16 @@ describe("rendered Markdown task saves", () => {
     expect(screen.container.querySelector(".file-preview-virtualizer")).toBeNull();
     expect(screen.container.textContent).toContain(NOT_UTF8_NOTICE);
   });
+
+  it("shows the notice above a rendered non-UTF-8 table", async () => {
+    using _settings = setup();
+    await using screen = await render(nonUtf8Preview("data.csv", "name,city\ncaf�,Paris\n"));
+    expect(screen.container.textContent).toContain(NOT_UTF8_NOTICE);
+  });
+
+  it("shows the notice above a rendered non-UTF-8 Mermaid diagram", async () => {
+    using _settings = setup();
+    await using screen = await render(nonUtf8Preview("flow.mmd", "graph TD\n  A[caf�] --> B\n"));
+    expect(screen.container.textContent).toContain(NOT_UTF8_NOTICE);
+  });
 });
