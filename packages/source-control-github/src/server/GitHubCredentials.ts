@@ -179,7 +179,8 @@ export const make = Effect.gen(function* () {
               ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
               : new GitHubCliFailedError({ host, cause: error }),
         ),
-        Effect.map((output) => output.stdout.trim()),
+        // A gh wrapper (a mise shim, say) can print its own lines before the token line.
+        Effect.map((output) => output.stdout.trim().split("\n").pop()?.trim() ?? ""),
         Effect.filterOrFail(
           (token) => token !== "",
           () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
