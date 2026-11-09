@@ -53,7 +53,8 @@ export function InspectorPanes(props: {
                   position: "absolute",
                   inset: 0,
                   opacity: visible ? 1 : 0,
-                  zIndex: visible ? 1 : 0,
+                  // Material searches children in drawing order, including prewarmed hidden panes.
+                  zIndex: visible ? 0 : 1,
                 }}
               >
                 <PaneContent pane={pane} resetKeys={props.content?.resetKeys} />

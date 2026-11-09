@@ -65,6 +65,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const presentation = props.presentation ?? "sheet";
   const isInspector = presentation === "inspector";
   const closeInspectorSheet = use(InspectorSheetContext);
+  const isAndroidSheet =
+    Platform.OS === "android" && (!isInspector || closeInspectorSheet !== null);
   const presentRoute = (present: () => void) =>
     closeInspectorSheet ? closeInspectorSheet(present) : present();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
@@ -241,7 +243,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         gap: Platform.OS === "android" ? 8 : 14,
       }}
       refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        // Material must track the ScrollView instead of Android's refresh wrapper.
+        !isAndroidSheet ? (
+          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        ) : undefined
       }
     >
       <ListSection>
@@ -343,19 +348,28 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     onPress: () => void handleRefresh(),
   };
 
+  // Material targets the first nested scroll child; Compose headers must follow the body.
+  const header = (
+    <AppBar
+      title={currentBranchLabel}
+      subtitle={currentStatusSummary}
+      hideBottomBorder={!isInspector}
+      onClose={isInspector ? undefined : () => navigation.goBack()}
+      refresh={refresh}
+    />
+  );
+
   return (
     <View
       collapsable={false}
-      className={cn("flex-1 android:bg-header", isInspector ? "ios:bg-screen" : "ios:bg-sheet")}
+      className={cn(
+        "flex-1 android:flex-col-reverse android:bg-header",
+        isInspector ? "ios:bg-screen" : "ios:bg-sheet",
+      )}
     >
-      <AppBar
-        title={currentBranchLabel}
-        subtitle={currentStatusSummary}
-        hideBottomBorder={!isInspector}
-        onClose={isInspector ? undefined : () => navigation.goBack()}
-        refresh={refresh}
-      />
+      {Platform.OS === "android" ? null : header}
       <ScreenContent insetHorizontal={isInspector ? true : undefined}>{content}</ScreenContent>
+      {Platform.OS === "android" ? header : null}
     </View>
   );
 }
