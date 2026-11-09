@@ -94,6 +94,7 @@ function makeFakeBrowserWindow() {
     replaceMisspelling: vi.fn(),
     send: vi.fn(),
     setBackgroundThrottling: vi.fn(),
+    setIgnoreMenuShortcuts: vi.fn(),
     setWindowOpenHandler: vi.fn(),
     toggleDevTools: vi.fn(),
   };
@@ -143,6 +144,7 @@ function makeFakeBrowserWindow() {
     reloadIgnoringCache: webContents.reloadIgnoringCache,
     toggleDevTools: webContents.toggleDevTools,
     navigationHistory: webContents.navigationHistory,
+    setIgnoreMenuShortcuts: webContents.setIgnoreMenuShortcuts,
     send: webContents.send,
     setZoomLevel: webContents.setZoomLevel,
     setWindowButtonPosition: window.setWindowButtonPosition,
@@ -646,7 +648,7 @@ describe("DesktopWindow", () => {
       }),
   );
 
-  it.effect("blocks only repeated Cmd+W input before it reaches the native window menu", () =>
+  it.effect("leaves Cmd+W to the renderer and blocks repeated presses", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
@@ -687,6 +689,13 @@ describe("DesktopWindow", () => {
         prevented = false;
         beforeInput(event, { ...input, meta: false });
         assert.isFalse(prevented);
+
+        assert.deepEqual(
+          fakeWindow.setIgnoreMenuShortcuts.mock.calls.map(([ignore]) => ignore),
+          [true, true, false],
+        );
+        beforeInput(event, { ...input, key: "r", isAutoRepeat: false });
+        assert.isFalse(fakeWindow.setIgnoreMenuShortcuts.mock.lastCall?.[0]);
       }).pipe(Effect.provide(layer));
     }),
   );
