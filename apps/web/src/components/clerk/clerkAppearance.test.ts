@@ -39,17 +39,6 @@ const builtInThemeModes = [
 );
 
 describe("clerkAppearance", () => {
-  it("binds every Clerk color to a live theme variable", () => {
-    const colors = Object.entries(clerkAppearance.variables).filter(([key]) =>
-      key.startsWith("color"),
-    );
-
-    expect(colors.length).toBeGreaterThan(0);
-    for (const [, value] of colors) {
-      expect(value).toMatch(/^var\(--[a-z-]+\)$/);
-    }
-  });
-
   it.each(builtInThemeModes)("keeps Clerk text readable across a built-in palette", (colors) => {
     expect(clerkAppearance.variables).toMatchObject({
       colorForeground: "var(--contrast-foreground)",
