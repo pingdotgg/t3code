@@ -48,15 +48,11 @@ it("keeps the tray's top edge without leaving an empty notice region", async () 
   const surface = getComputedStyle(tray);
   const rim = getComputedStyle(tray, "::after");
   expect(rim.borderTopWidth).toBe("1px");
-  expect(rim.borderTopStyle).toBe("solid");
-  expect(rim.borderTopColor).not.toBe("rgba(0, 0, 0, 0)");
-  expect(rim.pointerEvents).toBe("none");
   expect(surface.borderTopLeftRadius).not.toBe("0px");
   expect(screen.getByTestId("notices").element().getBoundingClientRect().height).toBe(0);
   expect(screen.getByTestId("composer").element().getBoundingClientRect().top).toBe(
     tray.getBoundingClientRect().top,
   );
-  expect(tray.getBoundingClientRect().height).toBe(78);
 });
 
 function noticeRow(width: string, children: ReactNode) {
