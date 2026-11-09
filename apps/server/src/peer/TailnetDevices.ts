@@ -51,6 +51,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as DevicePolicy from "./DevicePolicy.ts";
@@ -220,6 +221,7 @@ const make = Effect.gen(function* () {
   const identity = yield* TailnetIdentity.TailnetIdentity;
   const policy = yield* DevicePolicy.DevicePolicy;
   const sessions = yield* SessionStore.SessionStore;
+  const { devUrl } = yield* ServerConfig.ServerConfig;
   const pending = yield* Ref.make<ReadonlyMap<string, PendingChallenge>>(new Map());
   const handshakes = yield* Semaphore.make(HANDSHAKE_CONCURRENCY);
 
@@ -264,9 +266,12 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Linked environments is on, and so is linking tailnet devices automatically. */
+  /**
+   * Linked environments is on, and so is linking tailnet devices automatically. Never on a dev
+   * server: each worktree has a fresh environment that would join every one of my devices.
+   */
   const enabled = Effect.all([links.enabled, settings]).pipe(
-    Effect.map(([linksOn, current]) => linksOn && current.autoLink),
+    Effect.map(([linksOn, current]) => devUrl === undefined && linksOn && current.autoLink),
   );
 
   const readDevices = sql<DeviceRow>`SELECT * FROM tailnet_devices`.pipe(

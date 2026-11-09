@@ -113,7 +113,7 @@ type FakeTailnet = Effect.Success<typeof makeTailnet>;
 const serveDevice = (
   descriptor: ExecutionEnvironmentDescriptor,
   tailnet: FakeTailnet,
-  options: { readonly userId?: string } = {},
+  options: { readonly userId?: string; readonly devUrl?: URL } = {},
 ) =>
   Layer.build(Layer.fresh(NodeHttpServer.layerTest)).pipe(
     Effect.flatMap((server) =>
@@ -124,7 +124,7 @@ const serveDevice = (
 const serveDeviceOn = (
   descriptor: ExecutionEnvironmentDescriptor,
   tailnet: FakeTailnet,
-  options: { readonly userId?: string } = {},
+  options: { readonly userId?: string; readonly devUrl?: URL } = {},
 ) =>
   Effect.gen(function* () {
     const url = yield* Ref.make("http://127.0.0.1:0");
@@ -151,7 +151,16 @@ const serveDeviceOn = (
           getDescriptor: Effect.succeed(descriptor),
         }),
       ),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-tailnet-device-" })),
+      Layer.provideMerge(
+        Layer.effect(
+          ServerConfig.ServerConfig,
+          ServerConfig.ServerConfig.pipe(
+            Effect.map((config) => ({ ...config, devUrl: options.devUrl ?? config.devUrl })),
+          ),
+        ).pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-tailnet-device-" })),
+        ),
+      ),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provideMerge(NodeServices.layer),
       Layer.fresh,
@@ -380,21 +389,33 @@ describe("tailnet device handshake", () => {
     }),
   );
 
-  it.live("refuses every request while linking tailnet devices is off", () =>
+  // A dev server's fresh environment would otherwise join every one of the developer's devices.
+  it.live.each([
+    { name: "linking tailnet devices is off", off: true, dev: false },
+    { name: "it runs as a dev server", off: false, dev: true },
+  ])("refuses every request while $name", ({ off, dev }) =>
     Effect.gen(function* () {
       const tailnet = yield* makeTailnet;
       const a = yield* serveDevice(laptop, tailnet);
-      const b = yield* serveDevice(studio, tailnet);
+      const b = yield* serveDevice(
+        studio,
+        tailnet,
+        dev ? { devUrl: new URL("http://127.0.0.1:5733") } : {},
+      );
       yield* tailnet.join(a.url);
       yield* tailnet.join(b.url);
-      yield* b.devices.updateSettings({ autoLink: false });
+      if (off) yield* b.devices.updateSettings({ autoLink: false });
 
       expect(yield* requestAs(b, { environmentId: laptop.environmentId, urls: [a.url] })).toEqual({
         outcome: "refused",
         reason: "disabled",
       });
       expect(yield* a.devices.linkIfMine({ url: b.url })).toEqual(Option.none());
+      expect(yield* b.devices.linkIfMine({ url: a.url })).toEqual(Option.none());
       expect(yield* Ref.get(a.grants)).toBe(0);
+      expect(yield* Ref.get(b.grants)).toBe(0);
+      expect(yield* a.issued).toEqual([]);
+      expect(yield* b.issued).toEqual([]);
     }),
   );
 });
