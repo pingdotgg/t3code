@@ -1525,6 +1525,10 @@ html[data-theme-id] :is(.chat-markdown, .composer-tiptap) .chat-markdown-codeblo
   color: var(--code-foreground);
 }
 
+html.dark[data-theme-id="codex"] .chat-markdown {
+  color: var(--foreground);
+}
+
 html[data-theme-id] .chat-markdown pre {
   background-color: var(--code-background);
   color: var(--code-foreground);

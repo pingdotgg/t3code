@@ -121,6 +121,20 @@
               chrome: "oklch(0.225975 0.031062 293.741)",
             },
           },
+          codex: {
+            light: {
+              background: "#fcfcfc",
+              foreground: "#27272a",
+              accent: "#1b4ed8",
+              chrome: "#fcfcfc",
+            },
+            dark: {
+              background: "#181818",
+              foreground: "#ffffff",
+              accent: "#4d8cdb",
+              chrome: "#181818",
+            },
+          },
         };
         const BUILT_IN_THEME_MODES = Object.fromEntries(
           Object.entries(BUILT_IN_THEME_PALETTES).map(([id, palettes]) => [
@@ -137,6 +151,7 @@
           "ocean",
           "ember",
           "iris",
+          "codex",
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",

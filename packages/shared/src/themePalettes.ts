@@ -1,4 +1,4 @@
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris", "codex"] as const;
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
@@ -908,12 +908,75 @@ export const IRIS_THEME: ThemeDefinition = {
   sidebarArtwork: true,
 };
 
+export const CODEX_THEME: ThemeDefinition = {
+  id: "codex",
+  label: "Codex",
+  appearance: "light",
+  colors: { ...T3_CODE_LIGHT_THEME_COLORS, muted: "#f4f4f5" },
+  variants: {
+    dark: {
+      ...T3_CODE_DARK_THEME_COLORS,
+      canvas: "#181818",
+      chrome: "#181818",
+      toolbar: "#181818",
+      toolbarForeground: "#ffffff",
+      toolbarBorder: "#333333",
+      toolbarControl: "#222222",
+      toolbarControlForeground: "#ffffff",
+      toolbarControlHover: "#333333",
+      surface: "#262626",
+      surfaceRaised: "#2c2c2c",
+      surfaceOverlay: "#333333",
+      text: "#ffffff",
+      textMuted: "#999999",
+      border: "#333333",
+      input: "#3b3b3b",
+      focus: "#4d8cdb",
+      accent: "#4d8cdb",
+      secondary: "#222222",
+      secondaryForeground: "#ffffff",
+      muted: "#222222",
+      mutedForeground: "#999999",
+      placeholder: "#999999",
+      secondaryLabel: "#999999",
+      iconMuted: "#999999",
+      update: "#4d8cdb",
+      updateForeground: "#8ab4ed",
+      updateSurface: "#20334e",
+      accentSurface: "#333333",
+      accentSurfaceForeground: "#ffffff",
+      messageSurface: "#183e73",
+      messageForeground: "#ffffff",
+      messageAction: "#a17bd6",
+      messageActionForeground: "#181818",
+      messageActionHover: "#8e6cbd",
+      codeBackground: "#2c2c2c",
+      codeForeground: "#ffffff",
+      sidebar: "#1e1e1e",
+      sidebarForeground: "#ffffff",
+      sidebarMutedForeground: "#999999",
+      sidebarControlSurface: "#292929",
+      sidebarRowHover: "#292929",
+      sidebarRowActive: "#2f2f2f",
+      sidebarRowSelected: "#333333",
+      sidebarBorder: "#333333",
+      terminalBackground: "#181818",
+      terminalForeground: "#ffffff",
+      terminalCursor: "#4d8cdb",
+      terminalSelection: "#2b405c",
+      terminalScrollbar: "#333333",
+      terminalScrollbarHover: "#454545",
+    },
+  },
+};
+
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  CODEX_THEME,
 ];
 
 export function getThemeColorsForAppearance(
