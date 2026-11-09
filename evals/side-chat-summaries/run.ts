@@ -2,10 +2,18 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetch:off globalConsole:off - Eval runner uses Node's file, HTTP and stdout boundaries.
 import * as NodeFS from "node:fs";
 import * as NodeUtil from "node:util";
+import { SIDE_CHAT_NOTE_MAX_CHARS } from "@t3tools/contracts";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import { buildSideChatTextPrompt } from "@t3tools/provider-core/server/textGenerationPrompts";
+import { buildSideChatOutcomeInput } from "../../apps/server/src/orchestration-v2/sideChat/notes.ts";
 import { buildSideChatSummarizerInput } from "../../apps/server/src/orchestration-v2/sideChat/sideChatText.ts";
-import { sideChatSummaryCases, type SideChatSummaryCase } from "./cases.ts";
+import {
+  sideChatOutcomeCases,
+  sideChatSummaryCases,
+  type SideChatOutcomeCase,
+  type SideChatSummaryCase,
+} from "./cases.ts";
+import { proxyConfig } from "../shared/proxy.ts";
 
 const MODEL = "claude-haiku-4-5";
 const MAX_EVAL_CHARS = 1_800;
@@ -16,16 +24,18 @@ type SampleResult = {
   readonly id: string;
   readonly sample: number;
   readonly summary: string;
+  readonly judgeOutput: string;
   readonly checks: ReadonlyArray<Check>;
   readonly pass: boolean;
 };
+type EvalCase = SideChatSummaryCase | SideChatOutcomeCase;
 
 const ending = /[.!?](?:["'”’)]*)$/;
 
 export const parseYesNo = (text: string): boolean | null => {
   const answer = text
     .trim()
-    .match(/^(?:\*\*)?\s*(YES|NO)\b/i)?.[1]
+    .match(/^(?:\*\*)?\s*(?:the answer is\s*|answer\s*:?\s*)?(YES|NO)\b/i)?.[1]
     ?.toUpperCase();
   return answer === "YES" ? true : answer === "NO" ? false : null;
 };
@@ -63,44 +73,58 @@ const summarizerInput = (fixture: SideChatSummaryCase) =>
     anchorOpeningText: null,
   });
 
-const writerBody = (fixture: SideChatSummaryCase, model: string) => {
+const outcomeInput = (fixture: SideChatOutcomeCase) =>
+  buildSideChatOutcomeInput({
+    excerpt: fixture.excerpt,
+    messages: fixture.messages,
+    childNotes: [],
+    previousNote: null,
+  });
+
+const writerBody = (fixture: EvalCase, model: string) => {
   const prompt = buildSideChatTextPrompt({
-    kind: "opening_summary",
-    prompt: summarizerInput(fixture),
+    kind: fixture.kind,
+    prompt: fixture.kind === "opening_summary" ? summarizerInput(fixture) : outcomeInput(fixture),
   });
   return {
     model,
-    max_tokens: 800,
+    max_tokens: 4_000,
     system: prompt.prompt,
     messages: [{ role: "user", content: "Return the requested JSON summary." }],
   };
 };
 
-const judgeBody = (fixture: SideChatSummaryCase, summary: string, model: string) => ({
+const judgeBody = (fixture: EvalCase, summary: string, model: string) => ({
   model,
-  max_tokens: 20,
-  system: "Answer only YES or NO.",
+  max_tokens: 40,
+  thinking: { type: "disabled" },
+  system: "Evaluate the rubric using only the note. Return exactly YES or NO with no explanation.",
   messages: [
     {
       role: "user",
-      content: `Rubric: ${fixture.rubric}\nThe summary is:\n${fixture.judgeChars === null ? summary : summary.slice(0, fixture.judgeChars)}\n\nDoes it pass the rubric? Answer YES or NO.`,
+      content: `Rubric: ${fixture.rubric}\nThe ${fixture.kind === "opening_summary" ? "summary" : "note"} is:\n${fixture.kind === "opening_summary" && fixture.judgeChars !== null ? summary.slice(0, fixture.judgeChars) : summary}\n\nDoes it pass the rubric? Answer YES or NO.`,
     },
   ],
 });
 
-const apiCall = async (body: unknown, apiKey: string): Promise<string> => {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+type ApiAuth = { readonly apiKey: string; readonly proxy?: ReturnType<typeof proxyConfig> };
+
+const apiCall = async (body: unknown, auth: ApiAuth): Promise<string> => {
+  const response = await fetch(`${auth.proxy?.url ?? "https://api.anthropic.com/v1"}/messages`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
+      ...(auth.apiKey ? { "x-api-key": auth.apiKey } : {}),
+      ...auth.proxy?.headers,
     },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(`Anthropic API ${response.status}: ${await response.text()}`);
   const json = (await response.json()) as { content?: Array<{ text?: string }> };
-  return json.content?.map((part) => part.text ?? "").join("") ?? "";
+  if (json.content === undefined)
+    throw new Error(`Anthropic response missing content: ${JSON.stringify(json)}`);
+  return json.content.map((part) => part.text ?? "").join("");
 };
 
 const parseWriter = (text: string): WriterResult => {
@@ -108,40 +132,68 @@ const parseWriter = (text: string): WriterResult => {
   return { text: typeof json.text === "string" ? json.text.trim() : null };
 };
 
-const selectedCases = (ids: string[] | undefined): ReadonlyArray<SideChatSummaryCase> => {
+const gradeOutcomeNote = (summary: string, judge: boolean | null): ReadonlyArray<Check> => [
+  {
+    name: "judge",
+    pass: judge === true,
+    detail: "Haiku rubric",
+  },
+  {
+    name: "length",
+    pass: true,
+    detail: `${summary.length}/${SIDE_CHAT_NOTE_MAX_CHARS} characters`,
+  },
+  {
+    name: "no-invented-belief",
+    pass: !/\b(?:think|thought|believe|believed|believes|assum)\w*\b/i.test(summary),
+    detail: "does not attribute a belief to the learner",
+  },
+];
+
+const selectedCases = (ids: string[] | undefined): ReadonlyArray<EvalCase> => {
+  const allCases = [...sideChatSummaryCases, ...sideChatOutcomeCases];
   const selected =
-    ids === undefined
-      ? sideChatSummaryCases
-      : sideChatSummaryCases.filter((entry) => ids.includes(entry.id));
+    ids === undefined ? allCases : allCases.filter((entry) => ids.includes(entry.id));
   if (selected.length === 0) throw new Error("No case matches --case.");
   return selected;
 };
 
 const run = async (
-  fixture: SideChatSummaryCase,
+  fixture: EvalCase,
   sample: number,
   model: string,
-  apiKey: string,
+  auth: ApiAuth,
 ): Promise<SampleResult> => {
   try {
-    return await runOnce(fixture, sample, model, apiKey);
+    return await runOnce(fixture, sample, model, auth);
   } catch (error) {
     const checks = [{ name: "error", pass: false, detail: String(error) }];
-    return { id: fixture.id, sample, summary: "", checks, pass: false };
+    return { id: fixture.id, sample, summary: "", judgeOutput: "", checks, pass: false };
   }
 };
 
 const runOnce = async (
-  fixture: SideChatSummaryCase,
+  fixture: EvalCase,
   sample: number,
   model: string,
-  apiKey: string,
+  auth: ApiAuth,
 ): Promise<SampleResult> => {
-  const writer = parseWriter(await apiCall(writerBody(fixture, model), apiKey));
+  const writer = parseWriter(await apiCall(writerBody(fixture, model), auth));
   const summary = writer.text ?? "";
-  const judge = parseYesNo(await apiCall(judgeBody(fixture, summary, model), apiKey));
-  const checks = gradeSummary(fixture, summary, judge);
-  return { id: fixture.id, sample, summary, checks, pass: checks.every((check) => check.pass) };
+  const judgeOutput = await apiCall(judgeBody(fixture, summary, model), auth);
+  const judge = parseYesNo(judgeOutput);
+  const checks =
+    fixture.kind === "opening_summary"
+      ? gradeSummary(fixture, summary, judge)
+      : gradeOutcomeNote(summary, judge);
+  return {
+    id: fixture.id,
+    sample,
+    summary,
+    judgeOutput,
+    checks,
+    pass: checks.every((check) => check.pass),
+  };
 };
 
 const main = async () => {
@@ -152,6 +204,7 @@ const main = async () => {
       case: { type: "string", multiple: true },
       samples: { type: "string", default: "3" },
       baseline: { type: "string" },
+      proxy: { type: "string" },
       "dry-run": { type: "boolean", default: false },
     },
   });
@@ -174,11 +227,18 @@ const main = async () => {
     }
     return;
   }
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Set ANTHROPIC_API_KEY or use --dry-run.");
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const proxySource = values.proxy ?? (apiKey ? undefined : "pool");
+  if (proxySource !== undefined && proxySource !== "pool" && proxySource !== "vibeproxy") {
+    throw new Error("--proxy must be pool or vibeproxy.");
+  }
+  const auth: ApiAuth = {
+    apiKey: proxySource === undefined ? apiKey : "",
+    ...(proxySource === undefined ? {} : { proxy: proxyConfig(proxySource) }),
+  };
   const results = await Promise.all(
     fixtures.flatMap((fixture) =>
-      Array.from({ length: samples }, (_, sample) => run(fixture, sample + 1, model, apiKey)),
+      Array.from({ length: samples }, (_, sample) => run(fixture, sample + 1, model, auth)),
     ),
   );
   const baseline = values.baseline

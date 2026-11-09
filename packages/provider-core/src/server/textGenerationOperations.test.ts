@@ -55,6 +55,8 @@ describe("fromRunner generateSideChatText", () => {
         "one or two sentences",
         "Null is the default.",
         "carry each of their points",
+        "naming the learner's question in a few words (not a full quote)",
+        "A question is not a misconception",
         "gap",
         "misconception",
         "preference",
