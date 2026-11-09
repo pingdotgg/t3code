@@ -5,10 +5,13 @@ import { mermaidSvgForNative, withDiagramBackground } from "./mermaidSvg";
 
 describe("mermaidSvgForNative", () => {
   it("turns Pele's CSS variables and styles into attributes react-native-svg draws", () => {
-    const { svg } = render("flowchart LR\n  A[Client] -->|ws| B(Server)", {
-      links: false,
-      images: false,
-    });
+    const { svg } = render(
+      'flowchart LR\n  A[Client] -->|ws| B(Server)\n  B --> C["var(--pele-fg)"]',
+      {
+        links: false,
+        images: false,
+      },
+    );
 
     const native = mermaidSvgForNative(svg, {
       "--pele-fg": "#111111",
@@ -16,7 +19,9 @@ describe("mermaidSvgForNative", () => {
       "--pele-font": "Helvetica",
     });
 
-    expect(native).not.toMatch(/var\(|style=/);
+    expect(native).not.toMatch(/="[^"]*var\(|style=/);
+    // A label that reads like a variable keeps its text.
+    expect(native).toContain(">var(--pele-fg)<");
     expect(native).toMatch(
       /^<svg[^>]* fill="#111111"[^>]* font-family="Helvetica" font-size="16">/,
     );

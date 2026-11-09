@@ -295,16 +295,21 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     };
   }, [props.contextClipboardFragment, props.markdown]);
   const { fontScale } = useWindowDimensions();
-  const markdownStyle = useMemo(() => {
+  const baseMarkdownStyle = useMemo(() => {
     const style = enrichedStyle(props.textStyle, themeAppearance === "dark", fontScale);
     return {
       ...style,
       paragraph: props.textAlign
         ? { ...style.paragraph, textAlign: props.textAlign }
         : style.paragraph,
-      linkVariants,
     };
-  }, [props.textStyle, props.textAlign, themeAppearance, fontScale, linkVariants]);
+  }, [props.textStyle, props.textAlign, themeAppearance, fontScale]);
+  // Link variants change as a message streams. The code renderer reads only the base style, so
+  // it stays the same function and the library keeps its rendered blocks.
+  const markdownStyle = useMemo(
+    () => ({ ...baseMarkdownStyle, linkVariants }),
+    [baseMarkdownStyle, linkVariants],
+  );
   const renderers = {
     image: renderImage
       ? (block: MarkdownImageBlock) => {
@@ -317,7 +322,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
         }
       : undefined,
     code: (block: MarkdownCodeBlock) =>
-      codeBlockElement(block, props.textStyle, markdownStyle, mathRenderingEnabled),
+      codeBlockElement(block, props.textStyle, baseMarkdownStyle, mathRenderingEnabled),
   };
   const resolveNativeImageSource = useRetryingImageSource(resolveImageSource);
   const renderMarkdown = (openAndroidMenu?: () => void) => {

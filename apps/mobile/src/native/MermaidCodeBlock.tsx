@@ -173,6 +173,11 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
     const pixels = Platform.OS === "ios" ? 1 : PixelRatio.get();
     exportSvg.current.toDataURL(
       (base64) => {
+        // A failed capture calls back with nothing; let the next tap try again.
+        if (!base64) {
+          setExpansion(null);
+          return;
+        }
         // iOS wraps the encoding in line feeds.
         writeDiagramImage(exportXml, base64.replace(/\s/g, "")).then(
           (uri) => setExpansion({ status: "open", uri }),

@@ -29,7 +29,14 @@ export function mermaidSvgForNative(svg: string, theme: Readonly<Record<string, 
         .map(([name, value]) => ` ${name}="${resolve(value).replace(/^(-?[\d.]+)px$/, "$1")}"`)
         .join(""),
     );
-  return root + resolve(body);
+  // Attribute values only: a label's text can itself read `var(--…)`.
+  return (
+    root +
+    body.replace(
+      /(\s[\w:-]+=")([^"]*)"/g,
+      (_match, prefix: string, value: string) => `${prefix}${resolve(value)}"`,
+    )
+  );
 }
 
 /** Fills the diagram's viewBox, so an exported image reads on any background. */
