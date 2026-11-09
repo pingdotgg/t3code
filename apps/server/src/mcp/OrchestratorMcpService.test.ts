@@ -37,6 +37,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -2793,7 +2794,19 @@ describe("OrchestratorMcpService provider resolution", () => {
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
-        Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)(git)),
+        Layer.provide(
+          Layer.mock(GitVcsDriver.GitVcsDriver)({
+            execute: () =>
+              Effect.succeed({
+                stdout: ".git\n",
+                stderr: "",
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+            ...git,
+          }),
+        ),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
@@ -2838,6 +2851,44 @@ describe("OrchestratorMcpService provider resolution", () => {
       resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
     };
     const schedule = { type: "interval", everyMs: 3_600_000 } as const;
+
+    it.effect.each([
+      { name: "confirmed non-repository", reason: "not_a_repository" as const, root: true },
+      { name: "unclassified Git failure", reason: undefined, root: false },
+    ])("selects the workspace strategy for a $name", ({ reason, root }) =>
+      Effect.gen(function* () {
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["workspaceStrategy"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(
+            service(
+              {
+                ...masterRepository,
+                execute: () =>
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "GitVcsDriver.execute",
+                      command: "git rev-parse --git-dir",
+                      cwd: workspaceRoot,
+                      detail: "Repository probe failed.",
+                      ...(reason === undefined ? {} : { reason }),
+                    }),
+                  ),
+              },
+              saved,
+            ),
+          ),
+        );
+        yield* mcp.scheduleTask(client, { projectId, prompt: "Check the build", schedule });
+        yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: existing.id,
+          bindToCurrentThread: false,
+        });
+        const expected = root
+          ? { type: "root" as const }
+          : { type: "worktree" as const, baseRef: "origin/master", startFromOrigin: true };
+        assert.deepEqual(yield* Ref.get(saved), [expected, expected]);
+      }),
+    );
 
     it.effect("starts from the project's default branch", () =>
       Effect.gen(function* () {

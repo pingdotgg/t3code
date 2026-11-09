@@ -1924,6 +1924,23 @@ const make = Effect.gen(function* () {
   )(function* (boundToThread: boolean, projectId: ProjectId) {
     if (boundToThread) return { type: "root" as const };
     const { workspaceRoot } = yield* requireProject(projectId);
+    const isRepository = yield* gitDriver
+      .execute({
+        operation: "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+        cwd: workspaceRoot,
+        args: ["rev-parse", "--git-dir"],
+        env: { LC_ALL: "C" },
+        timeoutMs: 5_000,
+        maxOutputBytes: 4_096,
+      })
+      .pipe(
+        Effect.as(true),
+        Effect.catchTags({
+          // Other Git failures must still surface when worktree preparation runs.
+          GitCommandError: (error) => Effect.succeed(error.reason !== "not_a_repository"),
+        }),
+      );
+    if (!isRepository) return { type: "root" as const };
     return {
       type: "worktree" as const,
       baseRef: yield* resolveScheduledTaskBaseRef(workspaceRoot),
@@ -2127,7 +2144,7 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
-        // Update workspace strategy on rebinding so unbound root tasks cannot run in the shared checkout.
+        // Update workspace strategy on rebinding so unbound tasks in Git projects get a worktree.
         const workspaceStrategy =
           input.bindToCurrentThread === undefined
             ? existing.workspaceStrategy
