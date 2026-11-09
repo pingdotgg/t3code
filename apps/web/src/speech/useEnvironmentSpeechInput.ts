@@ -574,6 +574,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         submit(current.readDraft().text);
         return;
       }
+      if (!voiceInputBlocksSubmission(controller.currentState)) {
+        cancel?.();
+        return;
+      }
       const pending: PendingSubmission = {
         environmentId: current.environmentId,
         ownerKey: current.ownerKey,

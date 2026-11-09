@@ -2141,7 +2141,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return composerSendState.hasSendableContent;
+    return composerSendState.hasSendableContent || voiceInputActive;
   };
 
   const submitComposerRef = useRef<
