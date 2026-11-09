@@ -462,6 +462,27 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("says whether the user's own shell or only a fallback gave the PATH", () =>
+    Effect.gen(function* () {
+      const discover = (shell: string, failing: string) =>
+        runShellEnvironment({
+          env: { SHELL: shell, PATH: "/usr/bin" },
+          platform: "linux",
+          use: (service) =>
+            Effect.all([service.awaitDiscovery, service.awaitUserShellDiscovery]).pipe(
+              Effect.map(([prepared, fromUserShell]) => prepared && !fromUserShell),
+            ),
+          handler: (command) =>
+            command._tag === "StandardCommand" && command.command === failing
+              ? { output: "", exitCode: 7 }
+              : envOutput({ PATH: "/usr/bin" }),
+        }).pipe(Effect.provide(Logger.layer([])));
+      // fish failed and bash answered: its PATH can miss folders fish adds.
+      assert.isTrue(yield* discover("/usr/bin/fish", "/usr/bin/fish"));
+      assert.isFalse(yield* discover("/usr/bin/fish", "none"));
+    }),
+  );
+
   it.effect("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {

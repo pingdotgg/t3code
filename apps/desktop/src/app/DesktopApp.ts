@@ -193,11 +193,11 @@ const bootstrap = Effect.gen(function* () {
   );
 
   yield* snapShot.initialize;
-  // A fresh install has no cached shell PATH yet; without it, another t3 on PATH goes unseen.
-  // If the login shell gives none, a later launch tries again.
+  // Only the user's own login shell PATH shows every t3 a new terminal runs; a fresh install has
+  // no cached one. Without it, the command is left to Settings.
   const installCli = (yield* DesktopCliCommand.DesktopCliCommand).installOnFirstLaunch;
   yield* Effect.forkScoped(
-    (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitDiscovery.pipe(
+    (yield* DesktopShellEnvironment.DesktopShellEnvironment).awaitUserShellDiscovery.pipe(
       Effect.flatMap((found) =>
         found || environment.platform === "win32"
           ? installCli
