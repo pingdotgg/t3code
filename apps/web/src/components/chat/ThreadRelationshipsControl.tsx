@@ -81,7 +81,6 @@ import { useEnvironmentQuery } from "../../state/query";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
-import { visibleRowCount } from "./visibleRowCount";
 import { openSideChatTab } from "../../lib/sideChatPane";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -104,14 +103,13 @@ const THREAD_LINEAGE_PAGE_COUNT = 12;
 function resolveThreadLineageWindow<Row>(
   rows: ReadonlyArray<Row>,
   visibleCount: number,
-): { readonly visibleRows: ReadonlyArray<Row>; readonly showMoreCount: number } {
-  const visibleRows = rows.slice(0, visibleRowCount(rows.length, visibleCount));
-  const nextCount = visibleRowCount(rows.length, visibleRows.length + THREAD_LINEAGE_PAGE_COUNT);
-  return { visibleRows, showMoreCount: nextCount - visibleRows.length };
+): { readonly visibleRows: ReadonlyArray<Row>; readonly hiddenCount: number } {
+  const visibleRows = rows.slice(0, visibleCount);
+  return { visibleRows, hiddenCount: rows.length - visibleRows.length };
 }
 
 function ThreadLineageRowList(props: {
-  readonly showMoreCount: number;
+  readonly hiddenCount: number;
   readonly onShowMore: () => void;
   readonly children: ReactNode;
 }) {
@@ -124,14 +122,14 @@ function ThreadLineageRowList(props: {
       >
         {props.children}
       </ul>
-      {props.showMoreCount > 0 ? (
+      {props.hiddenCount > 0 ? (
         <button
           type="button"
           onClick={props.onShowMore}
           className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
-          Show {props.showMoreCount} more
+          Show {Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)} more
         </button>
       ) : null}
     </>
@@ -159,7 +157,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
 }) {
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
-  const { visibleRows, showMoreCount } = resolveThreadLineageWindow(props.rows, visibleCount);
+  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
   const failedCount = props.rows.filter((row) => {
     const status = lineageRowStatus(row);
     return status === "failed" || status === "error";
@@ -191,7 +189,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
       ) : null}
       {expanded ? (
         <ThreadLineageRowList
-          showMoreCount={showMoreCount}
+          hiddenCount={hiddenCount}
           onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
         >
           {props.children(visibleRows)}
@@ -982,7 +980,7 @@ export function ThreadRelationshipsPanel(props: {
           }
         >
           {delegatedFrom === undefined ? null : (
-            <ThreadLineageRowList showMoreCount={0} onShowMore={() => {}}>
+            <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
               <DelegatedFromRow
                 delegatedFrom={delegatedFrom}
                 fallbackLabel={currentThread?.linkOrigin?.label}
