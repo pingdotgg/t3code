@@ -197,7 +197,7 @@ function siblingChangeRequestUrl(url: string, number: number): string | null {
   });
 }
 
-function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
+export function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
   return {
     state: summary.state,
     title: summary.title,

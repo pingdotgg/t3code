@@ -9,11 +9,14 @@ import {
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import * as Cause from "effect/Cause";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
+import { snapshotFieldsOf } from "../../../orchestration-v2/PullRequestSyncReactor.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
 import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import { sourceControlDefinitions } from "../../../sourceControl/sourceControlDefinitions.ts";
@@ -198,6 +201,7 @@ function projectForPullRequest(
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
+  const pullRequests = yield* PullRequestService.PullRequestService;
 
   const projects = yield* ProjectService.ProjectService;
   const random = yield* SecureRandom.SecureRandom;
@@ -276,7 +280,40 @@ const make = Effect.gen(function* () {
     }
     const before = watchedLink(thread);
     if (watching && before?.snapshot?.state === "merged") {
-      return yield* new PullRequestNotOpenError({ state: "merged" });
+      // A recreated repository reuses PR numbers, so the saved merge may belong to an older PR.
+      const reference = {
+        projectId: thread.projectId,
+        host: target.host,
+        repository: target.repository,
+        number: target.number,
+      };
+      const fresh = yield* pullRequests.invalidate({ reference }).pipe(
+        Effect.andThen(
+          pullRequests.summary(
+            { ...reference, allowStale: false },
+            { recoverTransientFailure: false },
+          ),
+        ),
+        Effect.mapError((cause) => new PullRequestWatchFailedError({ cause })),
+      );
+      if (fresh.state === "merged") {
+        return yield* new PullRequestNotOpenError({ state: "merged" });
+      }
+      yield* engine
+        .dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: yield* commandId("mcp-pr-watch-refresh", thread.id),
+          threadId: thread.id,
+          host: target.host,
+          repository: target.repository,
+          number: target.number,
+          snapshot: {
+            ...snapshotFieldsOf(fresh),
+            syncedAt: DateTime.formatIso(yield* DateTime.now),
+          },
+          stack: before.stack,
+        })
+        .pipe(Effect.catchCause(dispatchFailure(PullRequestWatchFailedError)));
     }
     yield* engine
       .dispatch({

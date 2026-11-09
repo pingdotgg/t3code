@@ -27,6 +27,7 @@ import {
 } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -136,6 +137,7 @@ interface HarnessOptions {
   readonly thread?: PullRequestTestThread | null;
   readonly project?: OrchestrationProjectShell | null;
   readonly reject?: (command: OrchestrationCommand) => string | null;
+  readonly hostState?: "open" | "merged";
   readonly projects?: ReadonlyArray<OrchestrationProjectShell>;
   readonly generate?: (
     input: PullRequestRef,
@@ -193,6 +195,24 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       getThreadShell: (id) =>
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
+    }),
+    Layer.mock(PullRequestService.PullRequestService)({
+      invalidate: () => Effect.void,
+      summary: (input, summaryOptions) =>
+        input.allowStale === false && summaryOptions?.recoverTransientFailure === false
+          ? Effect.succeed({
+              provider: SourceControlProviderKind.make("github"),
+              projectId: input.projectId,
+              repository: input.repository,
+              number: input.number,
+              title: "Host PR",
+              url: `https://github.com/${input.repository}/pull/${input.number}`,
+              state: options.hostState ?? "open",
+              headBranch: "feature",
+              baseBranch: "main",
+              updatedAt: "2026-08-28T00:00:00.000Z",
+            })
+          : Effect.die("Watch refresh must read the host fresh"),
     }),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
@@ -296,6 +316,22 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("watches a pull request saved as merged when the host says it is open", () =>
+    Effect.gen(function* () {
+      const link = makeLink(7, { headBranch: "feature" });
+      const harness = yield* makeHarness({
+        thread: makeThread([
+          { ...link, snapshot: link.snapshot && { ...link.snapshot, state: "merged" } },
+        ]),
+      });
+      yield* harness.call("watch_pull_request", { repository: "t3tools/t3code", number: 7 });
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request-link.sync", number: 7, snapshot: { state: "open" } },
+        { type: "thread.pull-request.watch", number: 7, watching: true },
+      ]);
+    }),
+  );
+
   it.effect("refuses to watch a merged pull request and stops an existing watch", () =>
     Effect.gen(function* () {
       const watch = {
@@ -311,6 +347,7 @@ describe("pull request toolkit handlers", () => {
       };
       const merged = makeLink(1, { headBranch: "done" });
       const harness = yield* makeHarness({
+        hostState: "merged",
         thread: makeThread([
           { ...merged, snapshot: merged.snapshot && { ...merged.snapshot, state: "merged" } },
           makeLink(2, { headBranch: "idle" }),
