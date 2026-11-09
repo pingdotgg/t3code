@@ -1187,6 +1187,71 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("restores an empty subfolder checkpoint when git clean removes the folder itself", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveRunner = yield* ProcessRunner.ProcessRunner;
+    let cleanOutput = "Removing ./\n";
+    // Like git on Windows: clean removes './' and exits 0, so a dry run still reports it.
+    const windowsProcess = yield* VcsProcess.make.pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) => {
+          const output = (stdout: string) => ({
+            code: ChildProcessSpawner.ExitCode(0),
+            stdout,
+            stderr: "",
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          });
+          if (input.args.includes("clean") && input.args.includes("-dn")) {
+            return Effect.succeed(output("Would remove ./\n"));
+          }
+          if (input.args.includes("clean") && input.args.includes("-fd") && input.cwd) {
+            if (cleanOutput !== "Removing ./\n") return Effect.succeed(output(cleanOutput));
+            return fileSystem
+              .remove(input.cwd, { recursive: true })
+              .pipe(Effect.orDie, Effect.as(output(cleanOutput)));
+          }
+          return liveRunner.run(input);
+        },
+      }),
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const windowsDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, windowsProcess),
+    );
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-empty-checkpoint-win-" });
+    yield* runGit(root, ["init"]);
+    yield* runGit(root, ["config", "user.email", "test@test.com"]);
+    yield* runGit(root, ["config", "user.name", "Test"]);
+    yield* runGit(root, ["commit", "--allow-empty", "-m", "initial"]);
+    const cwd = path.join(root, "nested");
+    yield* fileSystem.makeDirectory(cwd, { recursive: true });
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/empty");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    assert.isTrue(
+      yield* windowsDriver.checkpoints.restoreCheckpoint({
+        cwd,
+        checkpointRef,
+        fallbackToHead: false,
+      }),
+    );
+    assert.isTrue(yield* fileSystem.exists(cwd));
+
+    // After real removals, a dry run's './' can still cover files that were exposed late.
+    cleanOutput = "Removing d/.gitignore\n";
+    const incomplete = yield* windowsDriver.checkpoints
+      .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
+      .pipe(Effect.flip);
+    assert.strictEqual(incomplete._tag, "VcsProcessExitError");
+  }).pipe(Effect.scoped, Effect.provide(layerGitCaptureContract)),
+);
+
 it.effect("restores a checkpoint before the first commit without staging its files", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

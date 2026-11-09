@@ -1374,13 +1374,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       // Removing a new .gitignore exposes the files it hid; clean again until nothing is left.
       for (
         let pass = 1;
-        pass < 4 && cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout);
+        pass < 4 && cleaned.exitCode === 0 && /^Removing (?!\.\/$)/m.test(cleaned.stdout);
         pass++
       ) {
         yield* recreateWorkspace;
         cleaned = yield* clean;
       }
-      if (cleaned.exitCode === 0 && /^Removing /m.test(cleaned.stdout)) {
+      if (cleaned.exitCode === 0 && /^Removing (?!\.\/$)/m.test(cleaned.stdout)) {
         yield* recreateWorkspace;
         const remaining = yield* execute({
           operation,
