@@ -605,14 +605,19 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+
+      # checkout's persist-credentials: false walks unmapped gitlinks in .repos and fails.
+      - name: Remove checkout credentials
+        run: |
+          rm -- "$RUNNER_TEMP"/git-credentials-*.config
+          ! git config --name-only --get-regexp '^http\..*\.extraheader$' > /dev/null
 
       - name: Setup Vite+
         uses: ./.github/actions/setup-ci-deps
