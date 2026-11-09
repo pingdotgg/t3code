@@ -351,6 +351,50 @@ it.effect("refuses source grants that target their own source or unrelated resou
   }).pipe(Effect.scoped),
 );
 
+it.effect("a source connect queued behind a child stop re-checks the profile's limits", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const manager = yield* f.manager;
+    const source = ManagedCloudSandboxResourceId.make("queue-source");
+    yield* manager.provision({
+      operationId: source,
+      profile: SandboxProfileId.make("fixture"),
+      sandbox: { name: "source", size: "small", autoStopMinutes: 15 },
+    });
+    const token = Hex.encode(f.values.get(`cloud-source-${source}`)!);
+    const child = ManagedCloudSandboxResourceId.make("queue-child");
+    f.records.set(child, {
+      ...f.records.get(source)!,
+      resourceId: child,
+      parentResourceId: source,
+    });
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    f.setBeforeRequest((url) =>
+      url.includes("/stop")
+        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+        : Effect.void,
+    );
+    const stopping = yield* manager
+      .execute(child, { _tag: "stop" })
+      .pipe(Effect.forkChild({ startImmediately: true }));
+    yield* Deferred.await(entered);
+    // Runs until it waits on the child's lock, which the stop holds.
+    const connecting = yield* manager
+      .executeSource(source, token, { _tag: "connect", resourceId: child })
+      .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+    // The source alone now fills the profile, so resuming the child would exceed it.
+    f.setMaxConcurrent(1);
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(stopping);
+    expect(yield* Fiber.join(connecting)).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "concurrency" },
+    });
+    expect(f.records.get(child)).toMatchObject({ power: "stopped" });
+  }).pipe(Effect.scoped),
+);
+
 it.effect(
   "stops a newly allocated sandbox when transport setup fails and retains the record for cleanup",
   () =>
