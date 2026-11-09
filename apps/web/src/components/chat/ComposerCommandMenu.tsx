@@ -35,6 +35,8 @@ import {
 } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { useNowMinute } from "../../hooks/useNowMinute";
+import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
@@ -92,6 +94,7 @@ export type ComposerCommandItem = {
       id: string;
       type: "thread";
       thread: ScopedThreadRef;
+      updatedAt?: string | undefined;
       label: string;
       description: string;
     }
@@ -489,7 +492,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </span>
       </span>
 
-      {props.item.metadata ? (
+      {props.item.type === "thread" && props.item.updatedAt ? (
+        <ComposerThreadAge updatedAt={props.item.updatedAt} />
+      ) : props.item.metadata ? (
         <span className="shrink-0 text-meta text-dim-foreground">{props.item.metadata}</span>
       ) : null}
       {pullRequestPresentation ? (
@@ -512,6 +517,15 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     </CommandItem>
   );
 });
+
+function ComposerThreadAge({ updatedAt }: { updatedAt: string }) {
+  const nowMinute = useNowMinute();
+  return (
+    <span className="shrink-0 text-meta text-dim-foreground">
+      {formatRelativeTimeLabel(updatedAt, Date.parse(`${nowMinute}:00.000Z`))}
+    </span>
+  );
+}
 
 export function composerSuggestionOptionId(listId: string, itemId: string): string {
   // JSON escapes lone UTF-16 surrogates before URI encoding without losing identity.
