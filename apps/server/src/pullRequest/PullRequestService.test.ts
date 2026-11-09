@@ -2584,6 +2584,36 @@ it.effect("reads GitLab projects together as deep as one project's own first pag
 );
 
 it.effect(
+  "keeps single-project reads at the service-wide cap when a batched read leaves them out",
+  () =>
+    Effect.gen(function* () {
+      let inFlight = 0;
+      let peak = 0;
+      const provider = fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+        listChangeRequestsInRepositories: () => Effect.succeed([]),
+        listChangeRequests: () =>
+          Effect.gen(function* () {
+            inFlight += 1;
+            peak = Math.max(peak, inFlight);
+            yield* Effect.sleep("1 second");
+            inFlight -= 1;
+            return { items: [], truncated: false, continues: false };
+          }),
+      });
+      const service = yield* makeService({
+        projects: Array.from({ length: 180 }, (_, index) => gitLabProject(index, `acme/p${index}`)),
+        providers: [provider],
+      });
+
+      const listing = yield* service.list({ state: "open" }).pipe(Effect.forkChild());
+      yield* TestClock.adjust("1 minute");
+      yield* Fiber.join(listing);
+
+      expect(peak).toBeLessThanOrEqual(12);
+    }),
+);
+
+it.effect(
   "keeps listing freshness tied to read start when filtered reads finish out of order",
   () =>
     Effect.gen(function* () {

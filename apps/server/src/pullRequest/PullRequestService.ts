@@ -12,6 +12,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -1398,7 +1399,10 @@ export const make = Effect.gen(function* () {
       };
     };
 
-    const readSlice = (
+    // Single-project reads are reached from several batched paths at once; one cap keeps their
+    // total at what reading every project on its own allowed.
+    const singleReads = yield* Semaphore.make(REPOSITORY_CONCURRENCY);
+    const readSliceOnce = (
       project: SupportedProject,
       cursor: ListCursor | undefined,
     ): Effect.Effect<RepositoryBatch> => {
@@ -1453,6 +1457,9 @@ export const make = Effect.gen(function* () {
           );
       }
     };
+
+    const readSlice = (project: SupportedProject, cursor: ListCursor | undefined) =>
+      singleReads.withPermits(1)(readSliceOnce(project, cursor));
 
     // Filters a host cannot apply thin out the slices it hands over, so a repository keeps
     // reading until it has a page's worth or runs out. The reads are bounded: a filter that
