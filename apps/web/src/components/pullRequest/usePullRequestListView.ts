@@ -1,5 +1,8 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import {
+  mergePullRequestFilters,
+  parsePullRequestQuery,
+} from "@t3tools/client-runtime/pull-request-query";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -196,9 +199,9 @@ export function usePullRequestQueryFilters(search: PullRequestsSearch, typedQuer
     ...(search.excludedLabels ? { excludedLabels: search.excludedLabels } : {}),
   };
   const menuFiltered = Object.keys(menuFilters).length > 0;
-  const filters = { ...menuFilters, ...sentParsed.filters };
+  const filters = mergePullRequestFilters(menuFilters, sentParsed.filters);
   const hasFilters = Object.keys(filters).length > 0;
-  const localFilters = { ...menuFilters, ...typedParsed.filters };
+  const localFilters = mergePullRequestFilters(menuFilters, typedParsed.filters);
   const hasLocalFilters = Object.keys(localFilters).length > 0;
   return {
     sentQuery,

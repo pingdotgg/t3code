@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { applyPullRequestDraftFilterChange, parsePullRequestQuery } from "./pullRequestQuery.ts";
+import {
+  applyPullRequestDraftFilterChange,
+  mergePullRequestFilters,
+  parsePullRequestQuery,
+} from "./pullRequestQuery.ts";
 
 describe("reading qualifiers out of a typed query", () => {
   it("keeps quoted values whole and separates negation", () => {
@@ -147,5 +151,20 @@ describe("changing the draft menu after typing a qualifier", () => {
         { draft: "hide", checks: "passing" },
       ),
     ).toEqual({ query: "draft:false fix", filters: { draft: "only", checks: "passing" } });
+  });
+});
+
+describe("combining menu filters with a typed query", () => {
+  it("keeps the menu's exclusions alongside typed ones, while typed picks override", () => {
+    expect(
+      mergePullRequestFilters(
+        { author: "alice", excludedAuthors: ["carol"], excludedLabels: ["bug"] },
+        parsePullRequestQuery("author:bob -author:Carol -author:dave -label:wip").filters,
+      ),
+    ).toEqual({
+      author: "bob",
+      excludedAuthors: ["carol", "dave"],
+      excludedLabels: ["bug", "wip"],
+    });
   });
 });

@@ -2,7 +2,10 @@ import {
   pullRequestFilterProjects,
   pullRequestRepositoryKey,
 } from "@t3tools/client-runtime/pull-request-project-filter";
-import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+import {
+  mergePullRequestFilters,
+  parsePullRequestQuery,
+} from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
   resolvePullRequestAuthorFilter,
@@ -320,7 +323,7 @@ export function pullRequestListInput(
   return {
     state: controls.state,
     involvement: controls.involvement,
-    filters: { ...controls.filters, ...parsed.filters },
+    filters: mergePullRequestFilters(controls.filters, parsed.filters),
     limit: PR_LIST_PAGE_SIZE,
     ...(controls.projectId ? { projectId: ProjectId.make(controls.projectId) } : {}),
     ...(visible.length < environmentProjects.length
@@ -425,7 +428,7 @@ export function filterPullRequestList<
   const normalize = (value: string) => value.toLowerCase();
   const parsed = parsePullRequestQuery(query);
   const words = parsed.text.toLowerCase().split(/\s+/).filter(Boolean);
-  const filters = { ...controls.filters, ...parsed.filters };
+  const filters = mergePullRequestFilters(controls.filters, parsed.filters);
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
     if (controls.projectId && entry.projectId !== controls.projectId) return false;

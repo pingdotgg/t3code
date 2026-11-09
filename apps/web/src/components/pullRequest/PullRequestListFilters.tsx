@@ -684,9 +684,14 @@ function PullRequestProjectChoices({
     if (next && chosenKey !== undefined) {
       onChange({ value: ALL_PROJECTS_VALUE, excludedRepositories: [chosenKey] });
     }
-    const first = byRepository.get(excludedRepositories[0] ?? "");
-    if (!next && first !== undefined) {
-      onChange({ value: pullRequestProjectKey(first), excludedRepositories: [] });
+    if (!next && excludedRepositories.length > 0) {
+      const first = excludedRepositories
+        .map((key) => byRepository.get(key))
+        .find((project) => project !== undefined);
+      onChange({
+        value: first === undefined ? ALL_PROJECTS_VALUE : pullRequestProjectKey(first),
+        excludedRepositories: [],
+      });
     }
   };
   return (

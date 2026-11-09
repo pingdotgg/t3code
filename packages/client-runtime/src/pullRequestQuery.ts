@@ -122,6 +122,33 @@ export function parsePullRequestQuery(raw: string): {
   };
 }
 
+function unionNames(left: ReadonlyArray<string> = [], right: ReadonlyArray<string> = []) {
+  const seen = new Set<string>();
+  return [...left, ...right]
+    .filter((name) => {
+      const key = name.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_QUALIFIER_VALUES);
+}
+
+/** Typed qualifiers override the menu's picks, but exclusions from both apply together. */
+export function mergePullRequestFilters(
+  menu: PullRequestListFilters,
+  typed: PullRequestListFilters,
+): PullRequestListFilters {
+  const excludedLabels = unionNames(menu.excludedLabels, typed.excludedLabels);
+  const excludedAuthors = unionNames(menu.excludedAuthors, typed.excludedAuthors);
+  return {
+    ...menu,
+    ...typed,
+    ...(excludedLabels.length === 0 ? {} : { excludedLabels }),
+    ...(excludedAuthors.length === 0 ? {} : { excludedAuthors }),
+  };
+}
+
 /**
  * The Draft menu shows a typed `draft:` qualifier, so picking another value has to take the
  * qualifier out of the query: left in, it would keep outranking whatever the menu stores.
