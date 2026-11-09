@@ -97,14 +97,14 @@ same user turn. Ambiguous legacy or response-only context stays in the imported
 conversation so T3 Code does not remove user text. It reads one conversation at
 a time and skips files larger than 4 GiB. It also skips a conversation when the
 message text and metadata it keeps need more than 32 MiB of memory. Tool output
-does not count toward that limit. It ignores malformed records and skips
-unreadable or unparseable conversations.
+does not count toward that limit. It skips a conversation with more than 100,000
+records every time, so opening the page again does not import it. It ignores
+malformed records and skips unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 4 GiB per project,
-with up to 100,000 input records. To continue a large batch, open the Welcome page again
-and pick the project in **Review all**.
-Completed conversations are not imported again. You can continue without the
-remaining history.
+Each import attempt reads up to 100 conversation files and 4 GiB per project. To
+continue a large batch, open the Welcome page again and pick the project in
+**Review all**. Completed conversations are not imported again. You can continue
+without the remaining history.
 
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the
