@@ -1,0 +1,24 @@
+{
+	admin localhost:2019
+	# certbot owns the wildcard certificate (DNS-01 through Cloudflare).
+	auto_https disable_certs
+	log default {
+		output stderr
+		format filter {
+			wrap json
+			# Paths, queries, and headers can carry environment credentials and webhook tokens.
+			fields {
+				request>uri delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+*.gw.t3coderelay.com {
+	tls /etc/caddy/certs/fullchain.pem /etc/caddy/certs/privkey.pem
+	reverse_proxy unix//run/t3-connect-gateway.sock {
+		flush_interval -1
+	}
+}

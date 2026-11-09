@@ -32,6 +32,7 @@ func TestRoutingAndUnlink(t *testing.T) {
 		return valid, nil
 	})
 	defer g.close()
+	go g.runAdmissions(ctx)
 	edge := httptest.NewTLSServer(g)
 	defer edge.Close()
 	// Use the certificate's real loopback IP for TLS while presenting the staging ingress names.

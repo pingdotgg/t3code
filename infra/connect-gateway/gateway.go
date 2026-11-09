@@ -24,7 +24,20 @@ const (
 	refreshInterval = 30 * time.Second
 	checkTimeout    = 10 * time.Second
 	admitTimeout    = 5 * time.Second
+	relayCalls      = 8
+	// After a restart every host reconnects at once. They wait here and are checked in batches.
+	admitQueue = 4096
 )
+
+type admission struct {
+	hash   string
+	result chan admitted
+}
+
+type admitted struct {
+	host string
+	err  error
+}
 
 type route struct {
 	hash, hostname string
@@ -42,9 +55,9 @@ type gateway struct {
 	mu                sync.Mutex
 	routes            map[string]*route
 	// A hostname fences older admissions. A token hash fences only handshakes with that revoked grant.
-	fences  map[string]time.Time
-	shut    bool
-	pending chan struct{}
+	fences map[string]time.Time
+	shut   bool
+	admit  chan admission
 }
 
 func newGateway(connector string, authorize authorizeFunc) *gateway {
@@ -54,7 +67,7 @@ func newGateway(connector string, authorize authorizeFunc) *gateway {
 		authorize: authorize,
 		routes:    make(map[string]*route),
 		fences:    make(map[string]time.Time),
-		pending:   make(chan struct{}, 64),
+		admit:     make(chan admission, admitQueue),
 	}
 }
 
@@ -107,23 +120,28 @@ func (g *gateway) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "connector authorization required", http.StatusUnauthorized)
 		return
 	}
+	started := time.Now()
+	hash := hashToken(token)
+	result := make(chan admitted, 1)
 	select {
-	case g.pending <- struct{}{}:
+	case g.admit <- admission{hash: hash, result: result}:
 	default:
 		http.Error(w, "busy", http.StatusTooManyRequests)
 		return
 	}
-	started := time.Now()
-	hash := hashToken(token)
-	ctx, cancel := context.WithTimeout(r.Context(), admitTimeout)
-	grants, err := g.authorize(ctx, []string{hash})
+	wait, cancel := context.WithTimeout(r.Context(), admitTimeout)
+	var grant admitted
+	select {
+	case grant = <-result:
+	case <-wait.Done():
+		grant.err = wait.Err()
+	}
 	cancel()
-	<-g.pending
-	if err != nil {
+	if grant.err != nil {
 		http.Error(w, "authorization unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	host := grants[hash]
+	host := grant.host
 	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{protocol}})
 	if err != nil {
 		return
@@ -265,7 +283,7 @@ func (g *gateway) refresh(ctx context.Context) {
 	}
 	g.mu.Unlock()
 	var workers sync.WaitGroup
-	slots := make(chan struct{}, 8)
+	slots := make(chan struct{}, relayCalls)
 	for batch := range slices.Chunk(current, batchSize) {
 		slots <- struct{}{}
 		workers.Go(func() {
@@ -315,6 +333,56 @@ func (g *gateway) applyRenewal(checked *route, started time.Time, allowed bool) 
 	current.deadline = started.Add(lease)
 	current.timer.Reset(time.Until(current.deadline))
 	g.mu.Unlock()
+}
+
+// runAdmissions checks new connectors with the relay. Connectors that arrive while every relay call
+// is busy go out together in the next call, up to a full batch.
+func (g *gateway) runAdmissions(ctx context.Context) {
+	slots := make(chan struct{}, relayCalls)
+	for {
+		var first admission
+		select {
+		case first = <-g.admit:
+		case <-ctx.Done():
+			return
+		}
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return
+		}
+		batch := []admission{first}
+	fill:
+		for len(batch) < batchSize {
+			select {
+			case next := <-g.admit:
+				batch = append(batch, next)
+			default:
+				break fill
+			}
+		}
+		go func() {
+			defer func() { <-slots }()
+			g.admitBatch(ctx, batch)
+		}()
+	}
+}
+
+func (g *gateway) admitBatch(ctx context.Context, batch []admission) {
+	seen := make(map[string]bool, len(batch))
+	hashes := make([]string, 0, len(batch))
+	for _, a := range batch {
+		if !seen[a.hash] {
+			seen[a.hash] = true
+			hashes = append(hashes, a.hash)
+		}
+	}
+	check, cancel := context.WithTimeout(ctx, admitTimeout)
+	grants, err := g.authorize(check, hashes)
+	cancel()
+	for _, a := range batch {
+		a.result <- admitted{host: grants[a.hash], err: err}
+	}
 }
 
 func (g *gateway) runRefresh(ctx context.Context) {

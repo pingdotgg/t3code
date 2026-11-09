@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -39,19 +40,12 @@ func run(ctx context.Context, args []string) error {
 	if len(secret) < 32 {
 		return errors.New("T3_CONNECT_RELAY_SECRET must have at least 32 characters")
 	}
-	addr := os.Getenv("T3_CONNECT_LISTEN")
-	if addr == "" {
-		addr = "127.0.0.1:7443"
-	}
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil || !net.ParseIP(host).IsLoopback() {
-		return errors.New("T3_CONNECT_LISTEN must be a loopback IP and port behind a TLS ingress")
-	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := listen(os.Getenv("T3_CONNECT_LISTEN"))
 	if err != nil {
 		return err
 	}
 	g := newGateway(public.Host, relayAuthorizer(http.DefaultClient, relay.String(), secret))
+	go g.runAdmissions(ctx)
 	go g.runRefresh(ctx)
 	server := &http.Server{
 		Handler:           g,
@@ -72,4 +66,22 @@ func run(ctx context.Context, args []string) error {
 		return nil
 	}
 	return err
+}
+
+// listen takes the socket systemd passes in, or a loopback address. Production uses a Unix socket:
+// the ingress opens one connection per host, and loopback TCP runs out of ports at about 55,000.
+func listen(addr string) (net.Listener, error) {
+	if os.Getenv("LISTEN_PID") == strconv.Itoa(os.Getpid()) && os.Getenv("LISTEN_FDS") == "1" {
+		file := os.NewFile(3, "systemd socket")
+		defer file.Close()
+		return net.FileListener(file)
+	}
+	if addr == "" {
+		addr = "127.0.0.1:7443"
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || !net.ParseIP(host).IsLoopback() {
+		return nil, errors.New("T3_CONNECT_LISTEN must be a loopback IP and port behind a TLS ingress")
+	}
+	return net.Listen("tcp", addr)
 }

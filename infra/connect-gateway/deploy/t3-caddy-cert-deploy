@@ -1,0 +1,7 @@
+#!/bin/sh
+# certbot deploy hook: gives Caddy a readable copy of the renewed wildcard certificate.
+set -eu
+install -d -m 0750 -o root -g caddy /etc/caddy/certs
+install -m 0640 -o root -g caddy "$RENEWED_LINEAGE/fullchain.pem" /etc/caddy/certs/fullchain.pem
+install -m 0640 -o root -g caddy "$RENEWED_LINEAGE/privkey.pem" /etc/caddy/certs/privkey.pem
+systemctl reload caddy

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -116,6 +118,58 @@ func TestSlowRelayKeepsHealthyRoutes(t *testing.T) {
 		synctest.Wait()
 		if n := dropped.Load(); n != 0 {
 			t.Fatalf("a slow relay dropped %d healthy routes", n)
+		}
+	})
+}
+
+func TestReconnectStormIsAdmittedInBatches(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var mu sync.Mutex
+		var calls [][]string
+		g := newGateway("connector.beta.example", func(_ context.Context, hashes []string) (map[string]string, error) {
+			mu.Lock()
+			calls = append(calls, hashes)
+			mu.Unlock()
+			grants := make(map[string]string, len(hashes))
+			for _, hash := range hashes {
+				grants[hash] = hash + ".beta.example"
+			}
+			return grants, nil
+		})
+		defer g.close()
+		// Every host of a restarted gateway is waiting before the first relay call; one connects twice.
+		var hashes []string
+		for i := range 600 {
+			hashes = append(hashes, fmt.Sprintf("h%d", i))
+		}
+		hashes = append(hashes, "h599")
+		results := make([]chan admitted, len(hashes))
+		for i, hash := range hashes {
+			results[i] = make(chan admitted, 1)
+			g.admit <- admission{hash: hash, result: results[i]}
+		}
+		ctx, stop := context.WithCancel(t.Context())
+		defer stop()
+		go g.runAdmissions(ctx)
+		synctest.Wait()
+		for i, result := range results {
+			select {
+			case got := <-result:
+				if got.err != nil || got.host != hashes[i]+".beta.example" {
+					t.Fatalf("admission %d: %+v", i, got)
+				}
+			default:
+				t.Fatalf("admission %d got no answer", i)
+			}
+		}
+		sizes := make([]int, len(calls))
+		for i, call := range calls {
+			sizes[i] = len(call)
+		}
+		// Batches run in parallel, so they finish in any order.
+		slices.Sort(sizes)
+		if !slices.Equal(sizes, []int{100, batchSize, batchSize}) {
+			t.Fatalf("relay calls carried %v hashes", sizes)
 		}
 	})
 }

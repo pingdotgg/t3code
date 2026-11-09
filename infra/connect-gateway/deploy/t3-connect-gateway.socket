@@ -1,0 +1,13 @@
+[Unit]
+Description=T3 Connect gateway socket
+Documentation=https://github.com/pingdotgg/t3code/tree/main/infra/connect-gateway
+
+[Socket]
+# Only Caddy can connect. New connections wait here while the gateway restarts.
+ListenStream=/run/t3-connect-gateway.sock
+SocketUser=root
+SocketGroup=caddy
+SocketMode=0660
+
+[Install]
+WantedBy=sockets.target
