@@ -375,6 +375,32 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("republishes a completed parent for its waiting child after a relink", () =>
+    Effect.gen(function* () {
+      const parent = shell({ status: "completed" });
+      const child = waitingChild();
+      const { relay, secrets, publications } = yield* makeTestRelay({
+        catchUpThreads: [parent, child],
+        readShell: (id) => Effect.succeed(id === child.id ? child : parent),
+      });
+      yield* relay.start();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(publications.length, 1);
+      assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+
+      yield* secrets.set(
+        RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
+        new TextEncoder().encode("credential-2"),
+      );
+      yield* relay.requestCatchUp();
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.phase, "waiting_for_approval");
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a child's alert time when the parent's own request comes and goes", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(

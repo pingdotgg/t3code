@@ -729,7 +729,7 @@ export const make = Effect.gen(function* () {
   ) {
     const requestId = waitingApprovalId(threadShell);
     const previous = subagentRequests.get(threadId);
-    if (previous?.requestId === requestId) return;
+    // An unchanged wait still republishes its parent: a relink catch-up reaches it only here.
     if (threadShell === null || requestId === undefined) {
       if (previous === undefined) return;
       subagentRequests.delete(threadId);
