@@ -19,6 +19,7 @@ const makeFakePi = (
   reply: string,
   setModelError?: string,
   turnEvents: ReadonlyArray<Record<string, unknown>> = [],
+  models: ReadonlyArray<Record<string, unknown>> = [],
 ) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
@@ -41,6 +42,8 @@ const makeFakePi = (
             yield* emit({ type: "agent_settled" });
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
+          } else if (record["type"] === "get_available_models") {
+            yield* emit({ ...response, success: true, data: { models } });
           } else if (record["type"] === "set_model" && setModelError !== undefined) {
             yield* emit({ ...response, success: false, error: setModelError });
           } else {
@@ -121,6 +124,83 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
     assert.include(error.detail, "Model not found: demo/demo-model");
     assert.include(error.detail, "--no-extensions");
     assert.isUndefined(pi.received.find((record) => record["type"] === "prompt"));
+  }),
+);
+
+const selectModel = (model: string, models: ReadonlyArray<Record<string, unknown>>) =>
+  Effect.gen(function* () {
+    const pi = yield* makeFakePi(
+      JSON.stringify({ subject: "Update README", body: "" }),
+      undefined,
+      [],
+      models,
+    );
+    const textGeneration = yield* makePiTextGeneration(
+      { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
+      {},
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, pi.spawner));
+    const error = yield* textGeneration
+      .generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "main",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("pi"), model),
+      })
+      .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => undefined }));
+    const setModel = pi.received.find((record) => record["type"] === "set_model");
+    return {
+      error,
+      sent: setModel && { provider: setModel["provider"], modelId: setModel["modelId"] },
+    };
+  });
+
+it.effect.each([
+  {
+    name: "a provider ID with slashes",
+    model: "llama-server=http://192.168.0.2:8080/gemma-4-12b-it-qat-q4_0",
+    models: [{ provider: "llama-server=http://192.168.0.2:8080", id: "gemma-4-12b-it-qat-q4_0" }],
+    sent: { provider: "llama-server=http://192.168.0.2:8080", modelId: "gemma-4-12b-it-qat-q4_0" },
+  },
+  {
+    name: "slashes in both provider and model ID",
+    model: "demo=http://127.0.0.1:9/org/demo-model",
+    models: [
+      { provider: "openrouter", id: "openrouter/auto" },
+      { provider: "demo=http://127.0.0.1:9", id: "org/demo-model" },
+    ],
+    sent: { provider: "demo=http://127.0.0.1:9", modelId: "org/demo-model" },
+  },
+  {
+    name: "a model ID with a slash",
+    model: "openrouter/openrouter/auto",
+    models: [{ provider: "openrouter", id: "openrouter/auto" }],
+    sent: { provider: "openrouter", modelId: "openrouter/auto" },
+  },
+  {
+    name: "a custom model Pi does not list, split at the first slash",
+    model: "custom/org/model",
+    models: [],
+    sent: { provider: "custom", modelId: "org/model" },
+  },
+])("sends Pi the provider and model ID it listed for $name", ({ model, models, sent }) =>
+  Effect.gen(function* () {
+    const result = yield* selectModel(model, models);
+
+    assert.isUndefined(result.error);
+    assert.deepEqual(result.sent, sent);
+  }),
+);
+
+it.effect("refuses a model slug that matches two listed Pi models", () =>
+  Effect.gen(function* () {
+    const { error, sent } = yield* selectModel("a/b/c", [
+      { provider: "a", id: "b/c" },
+      { provider: "a/b", id: "c" },
+    ]);
+
+    assert.include(error?.detail, "Pi lists more than one model as 'a/b/c'");
+    assert.isUndefined(sent);
   }),
 );
 

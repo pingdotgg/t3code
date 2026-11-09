@@ -58,11 +58,48 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
+function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
 }
+
+/**
+ * Selects a T3 model slug (`provider/id`) in Pi and returns Pi's `set_model` data. Either part
+ * may contain `/`, so the provider and ID come from the model Pi lists under that slug; a slug
+ * Pi does not list (a custom or stale model) is split at its first `/`.
+ */
+export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
+  request: (record: PiRpcRecord) => Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError>,
+  slug: string,
+) {
+  const available = yield* request({ type: "get_available_models" }).pipe(
+    Effect.orElseSucceed(() => undefined),
+  );
+  const listed = piRecordField(available, "models");
+  const matches = (Array.isArray(listed) ? listed : []).flatMap((model) => {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    return provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug
+      ? [{ provider, modelId }]
+      : [];
+  });
+  const providers = [...new Set(matches.map((match) => match.provider))];
+  if (providers.length > 1) {
+    return yield* new PiRpcError({
+      operation: "set_model",
+      detail: `Pi lists more than one model as '${slug}' (providers ${providers.map((provider) => `'${provider}'`).join(", ")})`,
+    });
+  }
+  const identity = matches[0] ?? parsePiModelSlug(slug);
+  if (identity === null) {
+    return yield* new PiRpcError({
+      operation: "set_model",
+      detail: `Pi model '${slug}' must use provider/model format`,
+    });
+  }
+  return yield* request({ type: "set_model", ...identity });
+});
 
 export interface PiRpcSpawnOptions {
   readonly command: string;

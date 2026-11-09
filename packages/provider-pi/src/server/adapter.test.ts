@@ -2386,6 +2386,30 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("selects a model whose Pi provider ID contains a slash", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueModels([
+        { provider: "llama-server=http://192.168.0.2:8080", id: "gemma-4-12b-it-qat-q4_0" },
+      ]);
+      const { runtime } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+
+      yield* startTurn(
+        runtime,
+        providerThread,
+        "llama-server=http://192.168.0.2:8080/gemma-4-12b-it-qat-q4_0",
+      );
+      const modelRequest = yield* fake.takeRequest("set_model");
+      assert.equal(modelRequest["provider"], "llama-server=http://192.168.0.2:8080");
+      assert.equal(modelRequest["modelId"], "gemma-4-12b-it-qat-q4_0");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true, "previous"] as const)(
     "resets applied thinking when returning to Pi default (failed first restore: %s)",
     (failFirstRestore) =>

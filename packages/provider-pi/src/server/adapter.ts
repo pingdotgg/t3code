@@ -59,7 +59,7 @@ import {
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   makePiRpcConnection,
-  parsePiModelSlug,
+  setPiModel,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
   piRecordString as recordString,
@@ -2573,17 +2573,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             appliedThinking = baselineThinking;
           }
         } else if (modelSelection.model !== appliedModel) {
-          const parsed = parsePiModelSlug(modelSelection.model);
-          if (parsed === null) {
-            return yield* protocolError(
-              `Pi model '${modelSelection.model}' must use provider/model format`,
-            );
-          }
-          const selectedModel = yield* request({
-            type: "set_model",
-            provider: parsed.provider,
-            modelId: parsed.modelId,
-          });
+          const selectedModel = yield* setPiModel(request, modelSelection.model);
           // Pi resets thinking to the target model's configured default on set_model.
           appliedThinking = null;
           contextWindow = rememberModelContextWindow(selectedModel);
