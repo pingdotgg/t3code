@@ -18,9 +18,12 @@ import {
   TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -38,6 +41,7 @@ import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1209,6 +1213,141 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
     assert.isTrue(Exit.isFailure(walked));
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted"]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "a delegated task whose stop is held past the worker deadline does not starve its siblings or admit the replacement turn",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const threadLocks = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const parentThreadId = ThreadId.make("thread:stop-held-sibling");
+      yield* createWatchingThread(parentThreadId, 13);
+      yield* send(parentThreadId, "work", "start_immediately");
+      const heldChildThreadId = yield* delegate(parentThreadId, "held child");
+      // The walk visits tasks by start time, so the held child comes first.
+      yield* TestClock.adjust("1 second");
+      const freeChildThreadId = yield* delegate(parentThreadId, "free child");
+      const freeGrandchildThreadId = yield* delegate(freeChildThreadId, "free grandchild");
+      const stopCommandId = CommandId.make("stop-held-sibling");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: stopCommandId,
+        threadId: parentThreadId,
+      });
+      yield* send(parentThreadId, "replacement", "start_immediately");
+      const replacementRunId = (yield* orchestrator.getThreadProjection(parentThreadId)).runs.at(
+        -1,
+      )!.id;
+
+      // Something else holds the held child's thread, so its stop dispatch waits.
+      const held = yield* Deferred.make<void>();
+      const releaseHeld = yield* Deferred.make<void>();
+      yield* threadLocks
+        .withLock(
+          heldChildThreadId,
+          Deferred.succeed(held, undefined).pipe(Effect.andThen(Deferred.await(releaseHeld))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(held);
+
+      const replacementStarted = yield* Deferred.make<ReadonlyArray<string>>();
+      const layerExecutor = Layer.succeed(
+        EffectWorker.OrchestrationEffectExecutorV2,
+        EffectWorker.OrchestrationEffectExecutorV2.of({
+          execute: (effect) => {
+            switch (effect.request.type) {
+              // What the production executor runs for this effect.
+              case "delegated-tasks.stop":
+                return threads
+                  .stopDelegatedTasks({
+                    threadId: effect.threadId,
+                    commandId: effect.commandId,
+                    reason: effect.request.reason,
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new EffectWorker.OrchestrationEffectExecutionError({
+                          effectId: effect.id,
+                          effectType: effect.request.type,
+                          cause,
+                        }),
+                    ),
+                  );
+              case "provider-turn.start":
+                return effect.request.runId === replacementRunId
+                  ? orchestrator.getThreadProjection(heldChildThreadId).pipe(
+                      Effect.flatMap(({ runs }) =>
+                        Deferred.succeed(
+                          replacementStarted,
+                          runs.map((run) => run.status),
+                        ),
+                      ),
+                      Effect.orDie,
+                      Effect.asVoid,
+                    )
+                  : Effect.void;
+              default:
+                return Effect.void;
+            }
+          },
+        }),
+      );
+      const layerWorker = EffectWorker.layerWithOptions({
+        workerId: "stop-held-sibling-worker",
+      }).pipe(
+        Layer.provide(
+          Layer.merge(Layer.succeed(EffectOutbox.EffectOutboxV2, outbox), layerExecutor),
+        ),
+      );
+      const stopEffect = outbox
+        .listByCommandId(stopCommandId)
+        .pipe(
+          Effect.map((effects) =>
+            effects.find((effect) => effect.request.type === "delegated-tasks.stop")!,
+          ),
+        );
+
+      yield* Effect.gen(function* () {
+        // Started from a clock wake so the walk runs until it suspends before the deadline fires.
+        yield* Effect.sleep("1 millis").pipe(
+          Effect.andThen(EffectWorker.runDaemonWithOptions({ concurrency: 4 })),
+          Effect.forkScoped,
+        );
+        // Three attempts hit the deadline while the child stays held, as in the reported incident.
+        yield* TestClock.adjust("95 seconds");
+        const timedOut = yield* stopEffect;
+        assert.equal(timedOut.status, "running");
+        assert.equal(timedOut.attemptCount, 4);
+        assert.isFalse(yield* Deferred.isDone(replacementStarted));
+        assert.deepEqual((yield* threadState(freeChildThreadId)).runs, ["interrupted"]);
+        assert.deepEqual((yield* threadState(freeGrandchildThreadId)).runs, ["interrupted"]);
+        assert.notDeepEqual((yield* threadState(heldChildThreadId)).runs, ["interrupted"]);
+
+        yield* Deferred.succeed(releaseHeld, undefined);
+        const awaitedStart = yield* Deferred.await(replacementStarted).pipe(
+          Effect.timeoutOption("1 minute"),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 minute");
+        const heldChildAtReplacementStart = yield* Fiber.join(awaitedStart);
+        assert.deepEqual(heldChildAtReplacementStart, Option.some(["interrupted"]));
+        const settled = yield* stopEffect;
+        assert.equal(settled.status, "succeeded");
+        assert.equal(settled.attemptCount, 4);
+      }).pipe(Effect.provide(layerWorker), Effect.scoped);
+    }).pipe(
+      Effect.provide(
+        layerTest.pipe(
+          // Memoized, so this is the lock the orchestrator dispatches under.
+          Layer.provideMerge(ThreadCommandExecutor.layer),
+          Layer.provideMerge(TestClock.layer()),
+        ),
+      ),
+    ),
 );
 
 it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is refused", () =>
