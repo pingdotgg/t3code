@@ -201,7 +201,7 @@ export function ComposerEditor({
           start: token.start,
           end: token.end,
           accent: contextChipAccent(
-            (model && modelChipIcon(model).accent) || presentation.accent,
+            model ? modelChipIcon(model).accent : presentation.accent,
             theme,
             chipTextColor,
           ),

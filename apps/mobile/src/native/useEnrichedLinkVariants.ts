@@ -81,7 +81,7 @@ function presentation(
       label: model.label,
       icon: icon.source,
       chip: {
-        accent: icon.accent ?? contextChipPresentation("model").accent,
+        accent: icon.accent,
         tintsIcon: icon.tintsIcon,
       },
     };

@@ -86,7 +86,7 @@ for (const name of lucideIcons) {
 await renderIcon("skill", skillSvg);
 
 // Provider logos, so a model chip can show what the model menu shows. Native chips take images,
-// not SVG. Logos that swap between black and white per theme are tinted with the chip's accent;
+// not SVG. Logos that swap between black and white per theme take the text color, like the chip;
 // colored logos keep their colors and lend the chip their main color as its accent.
 const mobileProviderIcon = NodeFS.readFileSync(
   NodePath.join(appDirectory, "src/components/ProviderIcon.tsx"),
