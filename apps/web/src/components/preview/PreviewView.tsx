@@ -313,7 +313,8 @@ export function PreviewView({
     if (!isServerTab && url && resolveServerOwnedUrl(threadRef.environmentId, url) !== url) {
       try {
         const refreshed = await resolveExternalServerUrl(threadRef.environmentId, url);
-        if (await navigateToResolvedUrl(refreshed))
+        // The server can hand back the same forward, which must stay open for the new page.
+        if ((await navigateToResolvedUrl(refreshed)) && refreshed !== url)
           await releaseExternalServerUrl(threadRef.environmentId, url);
       } catch (error) {
         toastManager.add({

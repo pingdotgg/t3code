@@ -228,6 +228,25 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("clears a failed key check when the wizard goes back", async () => {
+    using _bridge = setup();
+    await using _screen = await render(<Owner />);
+    mocks.testSandboxProfile.mockResolvedValue(
+      AsyncResult.failure(Cause.fail(new Error("Invalid Boat API key."))),
+    );
+
+    await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+    await userEvent.click(sandboxCard());
+    await userEvent.click(page.getByRole("button", { name: "Next" }));
+    await userEvent.type(page.getByPlaceholder("boat_k3Xz9f…"), "boat_bad_key");
+    await userEvent.click(page.getByRole("button", { name: "Next" }));
+    await expect.element(page.getByText("Invalid Boat API key.")).toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: "Back" }));
+    await expect.element(sandboxCard()).toBeInTheDocument();
+    await expect.element(page.getByText("Invalid Boat API key.")).not.toBeInTheDocument();
+  });
+
   it("reuses a stored key and its saved defaults without re-saving the key", async () => {
     using _bridge = setup();
     await using _screen = await render(<Owner />);

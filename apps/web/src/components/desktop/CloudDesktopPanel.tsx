@@ -1,3 +1,4 @@
+import { cloudSandboxFailureMessage } from "@t3tools/client-runtime/state/cloudSandbox";
 import { randomUUID } from "../../lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomValue } from "@effect/atom-react";
@@ -8,7 +9,6 @@ import {
   type ManagedCloudSandboxControlOperation,
   type SandboxRecording,
 } from "@t3tools/contracts";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { Button } from "../ui/button";
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
@@ -47,7 +47,8 @@ export function CloudDesktopPanel({ environmentId }: { readonly environmentId: E
       environmentId: context.controllerEnvironmentId,
       input: { resourceId: context.resourceId, operation },
     });
-    if (result._tag === "Failure") setError(String(squashAtomCommandFailure(result)));
+    if (result._tag === "Failure")
+      setError(cloudSandboxFailureMessage(result, "The cloud sandbox command failed."));
     else {
       if (result.value._tag === "recording") setRecording(result.value.recording);
       statusQuery.refresh();
@@ -212,7 +213,9 @@ export function CloudDesktopPanel({ environmentId }: { readonly environmentId: E
                     recordingId: ManagedCloudSandboxResourceId.make(recording.recordingId),
                   }).then((result) => {
                     if (result._tag === "Failure") {
-                      setError(String(squashAtomCommandFailure(result)));
+                      setError(
+                        cloudSandboxFailureMessage(result, "Could not download the recording."),
+                      );
                       return;
                     }
                     const url = URL.createObjectURL(

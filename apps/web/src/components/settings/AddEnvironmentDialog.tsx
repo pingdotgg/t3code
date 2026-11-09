@@ -182,6 +182,12 @@ export function AddEnvironmentDialog({
 
   const wizardContext = { hasStoredProviderKey: cloudSetup.storedKeyAvailable };
 
+  // Step failures also go to the parent, so moving between steps clears both.
+  const clearErrors = () => {
+    setStepError(null);
+    onErrorChange(null);
+  };
+
   const handleTypeChange = (nextType: EnvironmentType, cloudDriver?: CloudSandboxDriverKind) => {
     setDraft((prev) => ({
       ...prev,
@@ -199,7 +205,7 @@ export function AddEnvironmentDialog({
           }
         : {}),
     }));
-    setStepError(null);
+    clearErrors();
   };
 
   const handleNext = async () => {
@@ -227,12 +233,12 @@ export function AddEnvironmentDialog({
       setStepError(result.error);
       return;
     }
-    setStepError(null);
+    clearErrors();
     setWizardStep(result.step);
   };
 
   const handleBack = () => {
-    setStepError(null);
+    clearErrors();
     setWizardStep((step) => Math.max(0, step - 1));
   };
 

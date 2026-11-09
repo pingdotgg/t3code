@@ -93,13 +93,14 @@ export const cloudSandboxRecordingAtom = Atom.family((environmentId: Environment
     .atom(recoverEnvironmentSandboxRecording(environmentId))
     .pipe(Atom.setIdleTTL(0)),
 );
-const cloudSandboxReadyAtom = Atom.family((environmentId: EnvironmentId) =>
+// Keyed by identity rather than the polled status object, so each poll does not reopen the viewer.
+const cloudSandboxReadyKeyAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.map(cloudSandboxStatusAtom(environmentId), (result) => {
     const status = AsyncResult.getOrElse(result, () => null);
-    return status !== null && status.sandbox.state === "ready"
-      ? status.capabilities.desktopStreaming
-        ? status
-        : null
+    return status !== null &&
+      status.sandbox.state === "ready" &&
+      status.capabilities.desktopStreaming
+      ? `${status.controllerEnvironmentId}:${status.resourceId}`
       : null;
   }),
 );
@@ -107,9 +108,9 @@ export const cloudSandboxDesktopAtom = Atom.family((environmentId: EnvironmentId
   Atom.family((viewMode: "desktop" | "browser") =>
     connectionAtomRuntime
       .atom((get) => {
-        const ready = get(cloudSandboxReadyAtom(environmentId));
+        const readyKey = get(cloudSandboxReadyKeyAtom(environmentId));
         return Effect.gen(function* () {
-          if (ready === null) return { desktopUrl: null };
+          if (readyKey === null) return { desktopUrl: null };
           const desktop = yield* executeEnvironmentSandboxControl(environmentId, {
             _tag: "desktop",
             viewMode,
