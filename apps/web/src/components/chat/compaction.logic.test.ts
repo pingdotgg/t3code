@@ -2,12 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { hasDismissedResumeCompaction } from "@t3tools/client-runtime/state/context-window";
-import {
-  contextWindowSegments,
-  hasAvailableCompactionProvider,
-  resolveContextWindowModelDisplayName,
-  shouldReserveContextWindowMeter,
-} from "./ContextWindowMeter.logic";
+import { contextWindowSegments, hasAvailableCompactionProvider } from "./compaction.logic";
 
 describe("contextWindowSegments", () => {
   const usage = {
@@ -159,30 +154,6 @@ describe("hasAvailableCompactionProvider", () => {
   });
 });
 
-describe("resolveContextWindowModelDisplayName", () => {
-  it("uses the selected model from the exact provider instance", () => {
-    const primaryInstanceId = ProviderInstanceId.make("codex");
-    const selectedInstanceId = ProviderInstanceId.make("codex-work");
-    const modelOptionsByInstance = new Map([
-      [
-        primaryInstanceId,
-        [{ slug: "gpt-5.6-sol", name: "Primary profile model", shortName: "Primary" }],
-      ],
-      [selectedInstanceId, [{ slug: "gpt-5.6-sol", name: "GPT-5.6 Sol", shortName: "5.6 Sol" }]],
-    ]);
-
-    expect(
-      resolveContextWindowModelDisplayName(
-        {
-          instanceId: selectedInstanceId,
-          model: "gpt-5.6-sol",
-        },
-        modelOptionsByInstance,
-      ),
-    ).toBe("GPT-5.6 Sol");
-  });
-});
-
 describe("hasDismissedResumeCompaction", () => {
   it("recognizes the native resume dialog's permanent dismissal", () => {
     expect(
@@ -213,27 +184,5 @@ describe("hasDismissedResumeCompaction", () => {
         },
       ]),
     ).toBe(false);
-  });
-});
-
-describe("shouldReserveContextWindowMeter", () => {
-  const loadingStartedThread = {
-    meterEnabled: true,
-    detailLoading: true,
-    threadStarted: true,
-    providerReportsContextWindow: true,
-  };
-
-  it("holds the meter's slot while a started thread's detail loads", () => {
-    expect(shouldReserveContextWindowMeter(loadingStartedThread)).toBe(true);
-  });
-
-  it("reserves while the thread's provider is not in the catalog yet", () => {
-    expect(
-      shouldReserveContextWindowMeter({
-        ...loadingStartedThread,
-        providerReportsContextWindow: null,
-      }),
-    ).toBe(true);
   });
 });

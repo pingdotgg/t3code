@@ -330,9 +330,7 @@ export function SourceControlWritingSettingsSection() {
                               provider: reviewGuideInstanceEntry.driverKind,
                               models: reviewGuideInstanceEntry.models,
                               modelOptions: reviewGuideSelection.options ?? [],
-                              planModeEnabled:
-                                settings.planModeEnabled ||
-                                selectsPlanAgent(reviewGuideSelection.options),
+                              includePlanAgent: selectsPlanAgent(reviewGuideSelection.options),
                               onModelOptionsChange: (options) =>
                                 updateSettings({
                                   reviewGuideModelSelection: createModelSelection(
@@ -513,8 +511,7 @@ export function SourceControlWritingSettingsSection() {
                             provider: writerInstanceEntry.driverKind,
                             models: writerInstanceEntry.models,
                             modelOptions: activeSelection.options ?? [],
-                            planModeEnabled:
-                              settings.planModeEnabled || selectsPlanAgent(activeSelection.options),
+                            includePlanAgent: selectsPlanAgent(activeSelection.options),
                             onModelOptionsChange: (options) =>
                               updateSettings({
                                 sourceControlWriterModelSelection: createModelSelection(

@@ -124,6 +124,7 @@ import IconTool from "@tabler/icons-react-native/IconTool";
 import IconTrash from "@tabler/icons-react-native/IconTrash";
 import IconTypography from "@tabler/icons-react-native/IconTypography";
 import IconDownload from "@tabler/icons-react-native/IconDownload";
+import IconSitemap from "@tabler/icons-react-native/IconSitemap";
 import IconUpload from "@tabler/icons-react-native/IconUpload";
 import IconUserCircle from "@tabler/icons-react-native/IconUserCircle";
 import IconUserCheck from "@tabler/icons-react-native/IconUserCheck";
@@ -250,6 +251,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "qrcode.viewfinder": IconQrcode,
   "questionmark.bubble": IconMessageCircleQuestion,
   "point.3.connected.trianglepath.dotted": IconNetwork,
+  flowchart: IconSitemap,
   "point.topleft.down.curvedto.point.bottomright.up": IconGitMerge,
   safari: IconExternalLink,
   "server.rack": IconServer,
