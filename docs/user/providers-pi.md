@@ -41,7 +41,7 @@ overriding it. Other models keep their Pi defaults when no level is selected. Th
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
 preserve the native conversation through the selected turn in the destination workspace.
 Switching providers uses portable conversation context. Extension
-dialogs appear in the T3 Code composer, and the composer context meter follows Pi's own usage
+dialogs appear in the T3 Code composer, and the thread details context window follows Pi's own usage
 reporting while a response streams and after it settles.
 
 Pi skills appear in the composer's `$` menu. This includes user skills and project skills that Pi
@@ -86,6 +86,6 @@ threads.
   environment, including `PI_CODING_AGENT_DIR` if set. Trust the folder or its parent with `/trust`,
   then start a new thread using that same worktree. Launch arguments with `--no-approve` keep
   project files off without the notice.
-- The context meter is off by default; see [commands and skills](./composer.md#commands-and-skills)
-  to enable it on web and desktop. It appears once Pi reports usage for the thread. Some model
-  providers only report usage when a response completes, so the meter can wait for the first reply.
+- To see context usage on web and desktop, turn on **Context window** in **Settings → Appearance →
+  Thread details**. It appears once Pi reports usage for the thread. Some model providers only
+  report usage when a response completes, so it can wait for the first reply.
