@@ -81,6 +81,24 @@ describe("contextWindowSegments", () => {
       ["Reasoning", 100],
     ]);
   });
+
+  it("keeps carried categories and their message growth equal to the running total", () => {
+    const segments = contextWindowSegments({
+      ...usage,
+      usedTokens: 1_250,
+      breakdown: [
+        { kind: "system_prompt", tokens: 300 },
+        { kind: "messages", tokens: 950 },
+      ],
+    });
+    expect(segments.map(({ label, tokens }) => [label, tokens])).toEqual([
+      ["Messages", 950],
+      ["System prompt", 300],
+    ]);
+    expect(segments.reduce((sum, segment) => sum + segment.tokens, 0)).toBe(1_250);
+    expect(breakdown({ ...usage, breakdown: [] })).toEqual(breakdown(usage));
+    expect(breakdown({ ...usage, breakdown: null })).toEqual(breakdown(usage));
+  });
 });
 
 function claudeProvider(input: {
