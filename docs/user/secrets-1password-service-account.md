@@ -38,8 +38,8 @@ env -i PATH="$PATH" HOME="$(mktemp -d)" OP_SERVICE_ACCOUNT_TOKEN="$OP_SERVICE_AC
 ```
 
 If it prints `Secret read`, the token can read the secret. This checks your shell, not the server's own
-environment, so to confirm the server can read it, use the reference in a setting and select **Refresh** in
-**Settings → Providers**. A secret it cannot read shows an error naming the secret provider.
+environment. To confirm the server can read it, use the reference in a setting and then use the feature
+that needs it. If the server cannot read the secret, that feature shows an error naming the secret provider.
 
 ## Things to know
 

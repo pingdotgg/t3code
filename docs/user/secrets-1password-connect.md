@@ -40,8 +40,8 @@ The health response names the 1Password Connect API. Any other page means the ad
 else, such as a reverse proxy that answers for every hostname.
 
 This checks the Connect variables in your shell, not the server's own environment. To confirm the server
-can read the secret, use the reference in a setting and select **Refresh** in **Settings → Providers**. A
-secret it cannot read shows an error naming the secret provider.
+can read the secret, use the reference in a setting and then use the feature that needs it. If the server
+cannot read the secret, that feature shows an error naming the secret provider.
 
 ## Things to know
 
