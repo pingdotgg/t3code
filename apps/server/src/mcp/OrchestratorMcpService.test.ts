@@ -20,6 +20,7 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RuntimeRequestId,
   RunId,
   ThreadId,
   type OrchestrationV2ServerCommand,
@@ -3583,6 +3584,22 @@ describe("OrchestratorMcpService thread list", () => {
       );
     }).pipe(Effect.provide(service)),
   );
+
+  it("marks a thread with a pending approval as waiting_for_approval", () => {
+    const pendingApproval = {
+      ...liveThreadShell(ThreadId.make("thread:approval")),
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request:approval"),
+        kind: "permission" as const,
+        createdAt: DateTime.makeUnsafe("2026-11-09T10:00:00.000Z"),
+        blocking: true,
+      },
+    };
+    assert.equal(
+      OrchestratorMcpService.threadStatusFromShell(pendingApproval),
+      "waiting_for_approval",
+    );
+  });
 });
 
 describe("OrchestratorMcpService thread stop", () => {

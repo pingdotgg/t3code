@@ -796,6 +796,13 @@ function threadPullRequests(
   }));
 }
 
+export function threadStatusFromShell(shell: OrchestrationV2ThreadShell) {
+  const status = shell.activityRunStatus ?? shell.status;
+  return isApprovalRequestKind(shell.pendingRuntimeRequest?.kind)
+    ? ("waiting_for_approval" as const)
+    : status;
+}
+
 function listItemFromShell(
   scope: McpInvocationScope,
   shell: OrchestrationV2ThreadShell,
@@ -808,7 +815,7 @@ function listItemFromShell(
     link: threadLinkFor(scope, shell.id, shell.title),
     createdBy: shell.createdBy,
     creationSource: shell.creationSource,
-    status: shell.activityRunStatus ?? shell.status,
+    status: threadStatusFromShell(shell),
     latestRunId: shell.latestRunId,
     providerInstanceId: shell.modelSelection.instanceId,
     model: shell.modelSelection.model,
@@ -835,6 +842,9 @@ function threadDetail(
 ): OrchestratorMcpThreadDetail {
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
+  const waitingForApproval = projection.runtimeRequests.some(
+    (request) => request.status === "pending" && isApprovalRequestKind(request.kind),
+  );
   return {
     threadId: projection.thread.id,
     projectId: projection.thread.projectId,
@@ -842,7 +852,9 @@ function threadDetail(
     link: threadLinkFor(scope, projection.thread.id, projection.thread.title),
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
-    status: active?.status ?? latest?.status ?? "idle",
+    status: waitingForApproval
+      ? "waiting_for_approval"
+      : (active?.status ?? latest?.status ?? "idle"),
     latestRunId: latest?.id ?? null,
     activeRunId: active?.id ?? null,
     providerInstanceId: projection.thread.modelSelection.instanceId,
@@ -3036,9 +3048,7 @@ const make = Effect.gen(function* () {
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
       const filtered = projectThreads
-        .filter(
-          (thread) => statuses === null || statuses.has(thread.activityRunStatus ?? thread.status),
-        )
+        .filter((thread) => statuses === null || statuses.has(threadStatusFromShell(thread)))
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,
@@ -3237,7 +3247,16 @@ const make = Effect.gen(function* () {
           ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
         })
         .pipe(Effect.mapError(threadManagementFailure));
-      const status = result.run === null ? "idle" : runOutcome(result.run);
+      const runtimeRequests = yield* threadManagement
+        .getThreadRecords(input.threadId, ["runtimeRequests"])
+        .pipe(Effect.mapError(threadManagementFailure));
+      const status = runtimeRequests.runtimeRequests.some(
+        (request) => request.status === "pending" && isApprovalRequestKind(request.kind),
+      )
+        ? ("waiting_for_approval" as const)
+        : result.run === null
+          ? ("idle" as const)
+          : runOutcome(result.run);
       const taskId = result.run?.delegatedTaskId;
       const ownedTask =
         result.timedOut &&
@@ -3253,11 +3272,7 @@ const make = Effect.gen(function* () {
             task.completionDelivery?.state !== "disposed",
         );
       // A child waiting on a question or approval needs an answer, not a wake.
-      const childRequests = ownedTask
-        ? (yield* threadManagement
-            .getThreadRecords(input.threadId, ["runtimeRequests"])
-            .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
-        : [];
+      const childRequests = ownedTask ? runtimeRequests.runtimeRequests : [];
       const wakesCaller =
         ownedTask && !childRequests.some((request) => request.status === "pending");
       return {

@@ -313,6 +313,7 @@ export type OrchestratorMcpCreateThreadsResult = typeof OrchestratorMcpCreateThr
 
 export const OrchestratorMcpThreadStatus = Schema.Union([
   Schema.Literal("idle"),
+  Schema.Literal("waiting_for_approval"),
   OrchestrationV2RunStatus,
 ]);
 export type OrchestratorMcpThreadStatus = typeof OrchestratorMcpThreadStatus.Type;
