@@ -113,7 +113,7 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer(request());
-        yield* requests.awaitSettled(threadId, 1);
+        yield* requests.awaitSettle(0);
         assert.equal(yield* Queue.size(dispatched), 0);
       }).pipe(
         Effect.provide(

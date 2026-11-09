@@ -40,17 +40,19 @@ export class ProviderContinuationRequests extends Context.Reference<{
   readonly take: Effect.Effect<ProviderContinuationRequest>;
   /** The taker calls this once per request when its dispatch has finished, either way. */
   readonly settle: (threadId: ThreadId) => Effect.Effect<void>;
-  /** How many requests for the thread are offered and not yet settled. */
-  readonly pending: (threadId: ThreadId) => Effect.Effect<number>;
-  /** Waits until fewer than `below` requests for the thread are pending. */
-  readonly awaitSettled: (threadId: ThreadId, below: number) => Effect.Effect<void>;
+  /** The thread's offered, unsettled requests, and how many requests have settled in all. */
+  readonly progress: (
+    threadId: ThreadId,
+  ) => Effect.Effect<{ readonly pending: number; readonly settles: number }>;
+  /** Waits until more than `settles` requests have settled in all. */
+  readonly awaitSettle: (settles: number) => Effect.Effect<void>;
 }>("@t3tools/provider-core/server/ProviderContinuationRequests", {
   defaultValue: () => ({
     offer: () => Effect.void,
     take: Effect.never,
     settle: () => Effect.void,
-    pending: () => Effect.succeed(0),
-    awaitSettled: () => Effect.void,
+    progress: () => Effect.succeed({ pending: 0, settles: 0 }),
+    awaitSettle: () => Effect.void,
   }),
 }) {}
 
@@ -58,14 +60,18 @@ export const layer = Layer.effect(
   ProviderContinuationRequests,
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
-    const pending = yield* SubscriptionRef.make<ReadonlyMap<ThreadId, number>>(new Map());
+    // Settles only grow, so an offer arriving meanwhile cannot hide one from a waiter.
+    const state = yield* SubscriptionRef.make<{
+      readonly pending: ReadonlyMap<ThreadId, number>;
+      readonly settles: number;
+    }>({ pending: new Map(), settles: 0 });
     const adjustPending = (threadId: ThreadId, delta: 1 | -1) =>
-      SubscriptionRef.update(pending, (current) => {
-        const count = (current.get(threadId) ?? 0) + delta;
-        const updated = new Map(current);
-        if (count > 0) updated.set(threadId, count);
-        else updated.delete(threadId);
-        return updated;
+      SubscriptionRef.update(state, (current) => {
+        const count = (current.pending.get(threadId) ?? 0) + delta;
+        const pending = new Map(current.pending);
+        if (count > 0) pending.set(threadId, count);
+        else pending.delete(threadId);
+        return { pending, settles: current.settles + (delta < 0 ? 1 : 0) };
       });
     return {
       offer: Effect.fn("ProviderContinuationRequests.offer")(
@@ -80,15 +86,15 @@ export const layer = Layer.effect(
       settle: Effect.fn("ProviderContinuationRequests.settle")(function* (threadId: ThreadId) {
         yield* adjustPending(threadId, -1);
       }),
-      pending: Effect.fn("ProviderContinuationRequests.pending")(function* (threadId: ThreadId) {
-        return (yield* SubscriptionRef.get(pending)).get(threadId) ?? 0;
+      progress: Effect.fn("ProviderContinuationRequests.progress")(function* (threadId: ThreadId) {
+        const current = yield* SubscriptionRef.get(state);
+        return { pending: current.pending.get(threadId) ?? 0, settles: current.settles };
       }),
-      awaitSettled: Effect.fn("ProviderContinuationRequests.awaitSettled")(function* (
-        threadId: ThreadId,
-        below: number,
+      awaitSettle: Effect.fn("ProviderContinuationRequests.awaitSettle")(function* (
+        settles: number,
       ) {
-        yield* SubscriptionRef.changes(pending).pipe(
-          Stream.filter((current) => (current.get(threadId) ?? 0) < below),
+        yield* SubscriptionRef.changes(state).pipe(
+          Stream.filter((current) => current.settles > settles),
           Stream.take(1),
           Stream.runDrain,
         );

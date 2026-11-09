@@ -105,12 +105,12 @@ const awaitPendingWakeRun = Effect.fn("McpToolAccess.awaitPendingWakeRun")(funct
   // Recheck after each settle: other continuations for the thread may queue behind a slow one.
   const waitForRun = Effect.gen(function* () {
     while (true) {
-      const pending = yield* continuations.pending(threadId);
+      const { pending, settles } = yield* continuations.progress(threadId);
       if (pending === 0) return;
       // A run commits before its continuation settles, so a run missing here has not settled yet.
       const shell = yield* threads.getThreadShell(threadId).pipe(Effect.orElseSucceed(() => null));
       if (shell === null || shell.activeRunId !== null) return;
-      yield* continuations.awaitSettled(threadId, pending);
+      yield* continuations.awaitSettle(settles);
     }
   });
   yield* waitForRun.pipe(Effect.timeoutOption("60 seconds"));
