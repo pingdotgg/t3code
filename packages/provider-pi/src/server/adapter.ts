@@ -2227,17 +2227,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             if (event["success"] === true) {
               // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
-              // An input handler that consumes a plain prompt makes it command-only too.
-              const commandOnly =
-                responseTurn?.promptMayBeCommandOnly === true ||
-                recordString(recordField(event, "data"), "disposition") === "handled";
-              if (
-                pendingPrompt?.kind === "turn_start" &&
-                responseTurn !== null &&
-                ((commandOnly && !responseTurn.sawAgentActivity) ||
-                  (responseTurn.adoptedWake && (responseTurn.settleWhenIdle || commandOnly)))
-              ) {
-                yield* scheduleSettleProbe(responseTurn, responseTurn.adoptedWake);
+              if (pendingPrompt?.kind === "turn_start" && responseTurn !== null) {
+                // An input handler that consumes a plain prompt makes it command-only too.
+                const commandOnly =
+                  responseTurn.promptMayBeCommandOnly ||
+                  recordString(recordField(event, "data"), "disposition") === "handled";
+                if (
+                  (commandOnly && !responseTurn.sawAgentActivity) ||
+                  (responseTurn.adoptedWake && (responseTurn.settleWhenIdle || commandOnly))
+                ) {
+                  yield* scheduleSettleProbe(responseTurn, responseTurn.adoptedWake);
+                }
               }
               return;
             }

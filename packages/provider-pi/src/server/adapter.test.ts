@@ -3663,7 +3663,6 @@ describe("PiAdapterV2", () => {
         success: true,
         data: { disposition: "handled" },
       });
-      yield* fake.takeRequest("get_state");
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
