@@ -1488,7 +1488,7 @@ export function PullRequestDetailPanel({
               ) : null}
               <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-sm/pr-header:hidden"
                   aria-label={`${detail.changedFiles.toLocaleString()} changed ${detail.changedFiles === 1 ? "file" : "files"}`}
                 >
                   <FileDiffIcon aria-hidden className="size-3 self-center" />
