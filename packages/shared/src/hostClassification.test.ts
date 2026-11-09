@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isPublicFaviconHost } from "./hostClassification.ts";
+import { acceptsLinkCredentials, isPublicFaviconHost } from "./hostClassification.ts";
 
 describe("isPublicFaviconHost", () => {
   it("treats public hosts as public", () => {
@@ -107,5 +107,27 @@ describe("isPublicFaviconHost", () => {
   it("rejects malformed IPv4 text as a public host", () => {
     expect(isPublicFaviconHost("10.0.0.999")).toBe(true);
     expect(isPublicFaviconHost("10.0.0")).toBe(true);
+  });
+});
+
+describe("acceptsLinkCredentials", () => {
+  it("accepts https anywhere, and plain http only on loopback or the tailnet", () => {
+    for (const [url, accepted] of [
+      ["https://vps.example.com", true],
+      ["https://192.168.1.20:3773", true],
+      ["http://box.tail1234.ts.net:3773", true],
+      ["http://[fd7a:115c:a1e0::1]:3773", true],
+      ["http://localhost:3773", true],
+      ["http://127.0.0.1:3773", true],
+      ["http://[::1]:3773", true],
+      ["http://10.69.0.115:3773", false],
+      ["http://192.168.1.20:3773", false],
+      // A shared 100.64.0.0/10 address alone does not prove the tailnet.
+      ["http://100.101.102.103:3773", false],
+      ["http://vps.example.com", false],
+      ["ftp://vps.example.com", false],
+    ] as const) {
+      expect(acceptsLinkCredentials(new URL(url)), url).toBe(accepted);
+    }
   });
 });

@@ -6,7 +6,9 @@ import {
   linkRequestDefaultAccess,
   linkRequestDisplay,
   linkRequestFailureMessage,
+  linkRequestInitialAddress,
   linkRequestInitialMachine,
+  linkRequestMachineUrls,
   type LinkRequestItem,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -191,7 +193,7 @@ function resolveTarget(
     kind: "machine",
     environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
     label: machine?.label ?? linkRequestTargetName(item),
-    urls: [...new Set([...(machine?.urls ?? []), ...(item.url === undefined ? [] : [item.url])])],
+    urls: linkRequestMachineUrls(item, machine),
     linked: machine?.linked ?? false,
   };
 }
@@ -212,7 +214,7 @@ function LinkRequestDialog(props: {
   const machines = rankMachinesByHint(listed, item.hint);
   // Null until the user picks; until then the hint's best match is picked.
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  const [address, setAddress] = useState(() => linkRequestInitialAddress(item));
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [step, setStep] = useState<LinkStep>("machine");
@@ -253,7 +255,7 @@ function LinkRequestDialog(props: {
 
   const reset = () => {
     setChoice(null);
-    setAddress(item.url ?? "");
+    setAddress(linkRequestInitialAddress(item));
     setAccess(linkRequestDefaultAccess(item));
     setPairingCode("");
     setStep("machine");

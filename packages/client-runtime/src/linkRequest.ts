@@ -8,10 +8,11 @@ import {
   resolveEnvironmentMachineKind,
   type ServerConfig,
 } from "@t3tools/contracts";
+import { acceptsLinkCredentials, isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 
 import type { EnvironmentPresentation } from "./connection/presentation.ts";
-import { connectionRoutes, routeHttpBaseUrl } from "./connection/routes.ts";
+import { connectionRouteKind, connectionRoutes, routeHttpBaseUrl } from "./connection/routes.ts";
 import type { RelayDiscoveredEnvironment } from "./relay/discovery.ts";
 
 export type LinkRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "link_request" }>;
@@ -67,11 +68,27 @@ export interface LinkableMachine {
   /**
    * Where the client knows it answers, most preferred first: the addresses it
    * reports, then its saved routes, then its T3 Connect address. The server
-   * keeps only those that answer as this machine. Empty for a machine reached
-   * only over SSH, whose forward lives in this client.
+   * keeps only those that answer as this machine. Empty when none would be
+   * sent the link's credentials, as for a machine reached only over SSH.
    */
   readonly urls: ReadonlyArray<string>;
 }
+
+/**
+ * Whether the linking environment would send a link's credentials to `url`.
+ * Its loopback is its own: an address the client knows there counts only when
+ * `sharesLoopback`, the client and that environment being on one machine.
+ */
+const receivesLinkCredentials = (url: string, sharesLoopback: boolean): boolean => {
+  try {
+    const parsed = new URL(url);
+    return (
+      acceptsLinkCredentials(parsed) && (sharesLoopback || !isLocalLoopbackHost(parsed.hostname))
+    );
+  } catch {
+    return false;
+  }
+};
 
 /**
  * The catalog's machines other than the thread's own, in catalog order, then those only T3
@@ -89,6 +106,14 @@ export function linkableMachines(input: {
 }): ReadonlyArray<LinkableMachine> {
   const linkedIds = new Set(
     input.links.flatMap((link) => (link.status === "expired" ? [] : [link.environmentId])),
+  );
+  // A forwarded port also looks like loopback; the server then finds no such machine there.
+  const sharesLoopback = input.environments.some(
+    (environment) =>
+      environment.environmentId === input.threadEnvironmentId &&
+      connectionRoutes(environment.entry).some(
+        (route) => connectionRouteKind(route) === "loopback",
+      ),
   );
   const saved = input.environments
     .filter((environment) => environment.environmentId !== input.threadEnvironmentId)
@@ -114,7 +139,7 @@ export function linkableMachines(input: {
             ...routes,
             ...(connect === undefined ? [] : [connect.httpBaseUrl]),
           ]),
-        ],
+        ].filter((url) => receivesLinkCredentials(url, sharesLoopback)),
       };
     });
   const savedIds = new Set<string>(saved.map((machine) => machine.environmentId));
@@ -140,6 +165,24 @@ export function linkableMachines(input: {
     });
   return [...saved, ...connectOnly];
 }
+
+/**
+ * The addresses a card links a picked machine through: the client's, then the
+ * one the agent gave, when credentials would be sent to it. The agent runs in
+ * the linking environment, so its loopback address is that environment's.
+ */
+export function linkRequestMachineUrls(
+  item: Pick<LinkRequestItem, "url">,
+  machine: Pick<LinkableMachine, "urls"> | undefined,
+): ReadonlyArray<string> {
+  const asked = item.url !== undefined && receivesLinkCredentials(item.url, true) ? [item.url] : [];
+  return [...new Set([...(machine?.urls ?? []), ...asked])];
+}
+
+/** What a card's address field opens with. A named machine asks only once the agent's address is out. */
+export const linkRequestInitialAddress = (
+  item: Pick<LinkRequestItem, "environmentId" | "url">,
+): string => (item.environmentId === undefined ? (item.url ?? "") : "");
 
 const words = (text: string) =>
   ` ${text

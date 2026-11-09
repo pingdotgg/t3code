@@ -6,7 +6,9 @@ import {
   linkRequestDefaultAccess,
   linkRequestDisplay,
   linkRequestFailureMessage,
+  linkRequestInitialAddress,
   linkRequestInitialMachine,
+  linkRequestMachineUrls,
   type LinkRequestItem,
   linkRequestTargetName,
   rankMachinesByHint,
@@ -220,7 +222,7 @@ function resolveTarget(
     kind: "machine",
     environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
     label: machine?.label ?? linkRequestTargetName(item),
-    urls: [...new Set([...(machine?.urls ?? []), ...(item.url === undefined ? [] : [item.url])])],
+    urls: linkRequestMachineUrls(item, machine),
     linked: machine?.linked ?? false,
   };
 }
@@ -236,7 +238,7 @@ function LinkRequestSheet(props: {
   const listed = useLinkableMachines(props.environmentId, true);
   const machines = useMemo(() => rankMachinesByHint(listed, item.hint), [listed, item.hint]);
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  const [address, setAddress] = useState(() => linkRequestInitialAddress(item));
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [busy, setBusy] = useState(false);

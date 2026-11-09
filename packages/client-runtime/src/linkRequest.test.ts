@@ -13,7 +13,9 @@ import {
   linkRequestAnswerInput,
   linkRequestDisplay,
   linkRequestFailureMessage,
+  linkRequestInitialAddress,
   linkRequestInitialMachine,
+  linkRequestMachineUrls,
   rankMachinesByHint,
 } from "./linkRequest.ts";
 
@@ -245,7 +247,7 @@ describe("linkableMachines", () => {
   it("also offers the Connect address of a machine saved by direct address, last", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const vps = presentation("environment-vps", "VPS", {
-      saved: ["http://192.168.1.20:3773"],
+      saved: ["https://vps.example.com"],
       reported: ["https://vps.ts.net"],
     });
     const [listed] = linkableMachines({
@@ -256,8 +258,50 @@ describe("linkableMachines", () => {
     });
     expect(listed?.urls).toEqual([
       "https://vps.ts.net",
-      "http://192.168.1.20:3773",
+      "https://vps.example.com",
       "https://environment-vps.t3.example",
+    ]);
+  });
+
+  it("offers no address the linking environment would refuse to send credentials to", () => {
+    const here = presentation("environment-here", "Here", { saved: ["https://here.example.com"] });
+    const pod = presentation("environment-pod", "Pod", { reported: ["http://10.69.0.115:3773/"] });
+    const vps = presentation("environment-vps", "VPS", {
+      saved: [
+        "http://192.168.1.20:3773",
+        "http://localhost:3774",
+        "https://localhost:4443",
+        "https://127.0.0.1:4443",
+        "https://[::1]:4443",
+        "not an address",
+      ],
+      reported: ["http://100.101.102.103:3773/", "http://vps.tail1234.ts.net:3773/"],
+    });
+    const urlsFrom = (thread: typeof here) =>
+      linkableMachines({
+        environments: [thread, pod, vps],
+        threadEnvironmentId: thread.environmentId,
+        links: [],
+        connect: new Map(),
+      }).map((machine) => [machine.label, machine.urls]);
+    expect(urlsFrom(here)).toEqual([
+      ["Pod", []],
+      ["VPS", ["http://vps.tail1234.ts.net:3773/"]],
+    ]);
+    // Loopback reaches the machine only when the linking environment is on this device too.
+    const local = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
+    expect(urlsFrom(local)).toEqual([
+      ["Pod", []],
+      [
+        "VPS",
+        [
+          "http://vps.tail1234.ts.net:3773/",
+          "http://localhost:3774",
+          "https://localhost:4443",
+          "https://127.0.0.1:4443",
+          "https://[::1]:4443",
+        ],
+      ],
     ]);
   });
 
@@ -312,6 +356,32 @@ describe("linkableMachines", () => {
       urls: ["https://environment-mini.t3.example"],
     });
     expect(listed[2]).toMatchObject({ machine: "server", linked: true });
+  });
+});
+
+describe("linkRequestMachineUrls", () => {
+  const machine = { urls: ["https://vps.ts.net"] };
+
+  it("adds the agent's address only when credentials would be sent to it", () => {
+    expect(linkRequestMachineUrls({ url: "https://vps.example.com" }, machine)).toEqual([
+      "https://vps.ts.net",
+      "https://vps.example.com",
+    ]);
+    expect(linkRequestMachineUrls({ url: "https://vps.ts.net" }, machine)).toEqual(machine.urls);
+    // The agent's loopback is the linking environment's own.
+    expect(linkRequestMachineUrls({ url: "http://localhost:3774" }, undefined)).toEqual([
+      "http://localhost:3774",
+    ]);
+    expect(linkRequestMachineUrls({ url: "http://10.69.0.115:3773" }, undefined)).toEqual([]);
+    expect(linkRequestMachineUrls({}, undefined)).toEqual([]);
+  });
+
+  it("opens a named machine's address field empty, and an address request on the address asked for", () => {
+    const url = "http://10.69.0.115:3773";
+    expect(linkRequestInitialAddress({ url })).toBe(url);
+    expect(
+      linkRequestInitialAddress({ url, environmentId: EnvironmentId.make("environment-vps") }),
+    ).toBe("");
   });
 });
 
