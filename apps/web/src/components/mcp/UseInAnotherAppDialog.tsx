@@ -328,6 +328,8 @@ function useGate(environment: EnvironmentPresentation) {
     gate,
     connecting: connecting && gate.kind !== "open",
     check: runReachabilityCheck,
+    // A disconnected machine cannot be checked; its list entry says when it is back.
+    refreshList: () => void refreshDiscovery(),
     turnOn,
     operationError: controller.operationError,
     tunnelLimit: controller.tunnelLimit,
@@ -338,7 +340,7 @@ type Gate = ReturnType<typeof useGate>;
 
 function GateScreen({
   environment,
-  gate: { gate, connecting, check, turnOn, operationError, tunnelLimit },
+  gate: { gate, connecting, check, refreshList, turnOn, operationError, tunnelLimit },
 }: {
   readonly environment: EnvironmentPresentation;
   readonly gate: Gate;
@@ -381,7 +383,11 @@ function GateScreen({
       );
     case "disconnected":
       return gate.offline ? (
-        <GateMessage title={`${name}'s T3 Connect is offline`}>{checkAgain}</GateMessage>
+        <GateMessage title={`${name}'s T3 Connect is offline`}>
+          <Button variant="outline" onClick={refreshList}>
+            Check again
+          </Button>
+        </GateMessage>
       ) : (
         <GateMessage title={`Connect to ${name} first.`} />
       );
