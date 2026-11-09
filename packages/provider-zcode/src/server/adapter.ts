@@ -64,7 +64,7 @@ import {
 import {
   resolveZcodeCatalogFiles,
   zcodeAccountConfigPush,
-  zcodeCommand,
+  resolveZcodeLaunchCommand,
   zcodeModelSelectionFromSlug,
   zcodeRuntimeEnvironment,
   zcodeSpawnArgs,
@@ -418,8 +418,13 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         options.environment,
       );
       const env = zcodeRuntimeEnvironment(options.environment, catalogFiles);
+      const launchCommand = yield* resolveZcodeLaunchCommand(
+        options.settings,
+        options.environment,
+        fileSystem,
+      );
       const scopedLaunch = yield* agentScope.wrap({
-        command: zcodeCommand(options.settings),
+        command: launchCommand,
         args: zcodeSpawnArgs(options.settings.launchArgs),
         name: "zcode",
         threadId: input.threadId,

@@ -285,6 +285,42 @@ export function zcodeSpawnArgs(launchArgs: string): ReadonlyArray<string> {
   return ["app-server", "--stdio", ...launchArgs.split(/\s+/).filter((arg) => arg.length > 0)];
 }
 
-export function zcodeCommand(settings: { readonly binaryPath: string }): string {
-  return settings.binaryPath.trim().length > 0 ? settings.binaryPath : DEFAULT_ZCODE_BINARY;
-}
+/**
+ * Desktop installs ship the CLI as `~/.zcode/server/bin/zcode` and often leave it off the
+ * server process's PATH, so a missing `zcode` falls back to that shim before failing.
+ * PATH is probed manually: resolveSpawnCommand is a no-op on POSIX and defers to exec.
+ */
+export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCommand")(function* (
+  settings: { readonly binaryPath: string },
+  environment: NodeJS.ProcessEnv,
+  fileSystem: FileSystem.FileSystem,
+) {
+  const explicit = settings.binaryPath.trim();
+  if (explicit.length > 0) return explicit;
+  const onPath = yield* zcodeOnPath(environment, fileSystem);
+  if (onPath) return DEFAULT_ZCODE_BINARY;
+  const home = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME;
+  if (home === undefined || home === "") return DEFAULT_ZCODE_BINARY;
+  const desktopShim = `${home}/.zcode/server/bin/zcode`;
+  const shimExists = yield* fileSystem.exists(desktopShim).pipe(Effect.orElseSucceed(() => false));
+  return shimExists ? desktopShim : DEFAULT_ZCODE_BINARY;
+});
+
+const zcodeOnPath = Effect.fn("ZcodeRuntime.zcodeOnPath")(function* (
+  environment: NodeJS.ProcessEnv,
+  fileSystem: FileSystem.FileSystem,
+) {
+  const pathValue = environment.PATH ?? "";
+  const platform = yield* HostProcess.Platform;
+  const suffixes = platform === "win32" ? ["zcode.exe", "zcode.cmd"] : ["zcode"];
+  for (const dir of pathValue.split(":")) {
+    if (dir === "") continue;
+    for (const suffix of suffixes) {
+      const found = yield* fileSystem
+        .exists(`${dir}/${suffix}`)
+        .pipe(Effect.orElseSucceed(() => false));
+      if (found) return true;
+    }
+  }
+  return false;
+});

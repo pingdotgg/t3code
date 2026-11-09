@@ -7,10 +7,10 @@ import * as FileSystem from "effect/FileSystem";
 import {
   resolveZcodeCatalogFiles,
   readZcodeAppVersion,
+  resolveZcodeLaunchCommand,
   zcodeAccountConfigPush,
   zcodeBuiltinCatalogPath,
   zcodeBundledCatalogPath,
-  zcodeCommand,
   zcodeDataRoot,
   zcodeModelSelectionFromSlug,
   zcodePersonalProviderConfigPath,
@@ -124,11 +124,47 @@ describe("zcodeSpawnArgs", () => {
       "file",
     ]);
   });
+});
 
-  it("keeps an explicit binaryPath, defaulting to zcode on PATH", () => {
-    assert.equal(zcodeCommand({ binaryPath: "/opt/bin/zcode" }), "/opt/bin/zcode");
-    assert.equal(zcodeCommand({ binaryPath: "  " }), "zcode");
-  });
+describe("resolveZcodeLaunchCommand", () => {
+  it.effect("explicit binaryPath wins over every fallback", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "/opt/bin/zcode" },
+        { HOME: "/home/dev" },
+        fileSystem,
+      );
+      assert.equal(command, "/opt/bin/zcode");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("falls back to the desktop shim when zcode is off PATH", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const home = yield* fileSystem.makeTempDirectory();
+      yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
+      yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode`, "#!/bin/sh\n");
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "" },
+        { HOME: home, PATH: "/nonexistent" },
+        fileSystem,
+      );
+      assert.equal(command, `${home}/.zcode/server/bin/zcode`);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps the plain binary name when no fallback exists", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const command = yield* resolveZcodeLaunchCommand(
+        { binaryPath: "" },
+        { HOME: "/nonexistent-home", PATH: "/nonexistent" },
+        fileSystem,
+      );
+      assert.equal(command, "zcode");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("zcodeRuntimeEnvironment", () => {

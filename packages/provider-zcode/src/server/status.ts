@@ -1,5 +1,6 @@
 import { type CustomModelSetting, type ServerProviderModel } from "@t3tools/contracts";
 import type { ZcodeSettings } from "../settings.ts";
+import { resolveZcodeLaunchCommand } from "./zcodeRuntime.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as DateTime from "effect/DateTime";
@@ -65,8 +66,9 @@ function zcodeModelsFromSettings(
 const runZcodeDoctor = Effect.fn("ZcodeProviderStatus.runDoctor")(function* (
   zcodeSettings: ZcodeSettings,
   environment: NodeJS.ProcessEnv,
+  fileSystem: FileSystem.FileSystem,
 ) {
-  const command = zcodeSettings.binaryPath || "zcode";
+  const command = yield* resolveZcodeLaunchCommand(zcodeSettings, environment, fileSystem);
   const spawnCommand = yield* resolveSpawnCommand(command, ["doctor", "--json"], {
     env: environment,
   });
@@ -157,6 +159,7 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
 > {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  const fileSystem = yield* FileSystem.FileSystem;
   const fallbackModels = zcodeModelsFromSettings(zcodeSettings.customModels);
 
   if (!zcodeSettings.enabled) {
@@ -175,7 +178,7 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
     });
   }
 
-  const versionResult = yield* runZcodeDoctor(zcodeSettings, environment).pipe(
+  const versionResult = yield* runZcodeDoctor(zcodeSettings, environment, fileSystem).pipe(
     Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
     Effect.result,
   );
@@ -269,7 +272,6 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
     });
   }
 
-  const fileSystem = yield* FileSystem.FileSystem;
   const authStatus = yield* readZcodeAuthStatus(
     fileSystem,
     resolveZcodeCredentialsPath(environment),
