@@ -55,7 +55,6 @@ import {
 import { Menu } from "../../components/ui/Menu";
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
-import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { webhookAddress } from "@t3tools/client-runtime/webhook-address";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -713,6 +712,20 @@ function TaskForm({
     config?.environment.capabilities.cronSchedules === true || draft.task?.schedule.type === "cron";
   const cronError =
     draft.schedule.mode === "cron" ? scheduledTaskCronError(draft.schedule.cronExpression) : null;
+  const scheduleModes = [
+    { value: "fixed_time" as const, label: "At a time" },
+    // Older servers reject one-time schedules on save.
+    ...(offersOnce || draft.schedule.mode === "once"
+      ? [{ value: "once" as const, label: "Once" }]
+      : []),
+    { value: "interval" as const, label: "Interval" },
+    ...(offersCron || draft.schedule.mode === "cron"
+      ? [{ value: "cron" as const, label: "Cron" }]
+      : []),
+    ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
+      ? [{ value: "webhook" as const, label: "On webhook" }]
+      : []),
+  ];
   const offersThreadModes = config?.environment.capabilities.scheduledTaskThreadModes === true;
   const save = async () => {
     if (
@@ -1045,45 +1058,38 @@ function TaskForm({
         </SettingsSection>
 
         <SettingsSection title="Schedule">
-          <View className="px-4 py-3">
-            <SegmentedControl
-              variant="card"
-              options={[
-                { value: "fixed_time", label: "At a time" },
-                // Older servers reject one-time schedules on save.
-                ...(offersOnce || draft.schedule.mode === "once"
-                  ? [{ value: "once" as const, label: "Once" }]
-                  : []),
-                { value: "interval", label: "Interval" },
-                ...(offersCron || draft.schedule.mode === "cron"
-                  ? [{ value: "cron" as const, label: "Cron" }]
-                  : []),
-                ...(webhookDenial === undefined || draft.schedule.mode === "webhook"
-                  ? [{ value: "webhook" as const, label: "On webhook" }]
-                  : []),
-              ]}
-              selected={draft.schedule.mode}
-              onSelect={(mode) => {
-                setTimePickerOpen(false);
-                setRunAtPicker(null);
-                setDraft({
-                  ...draft,
-                  prompt:
-                    mode === "webhook" && !draft.prompt.trim()
-                      ? DEFAULT_WEBHOOK_PROMPT
-                      : draft.prompt,
-                  schedule: {
-                    ...draft.schedule,
-                    mode,
-                    runAt:
-                      mode === "once" && !draft.schedule.runAt
-                        ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
-                        : draft.schedule.runAt,
-                  },
-                });
-              }}
-            />
-          </View>
+          <SelectRow
+            label="Type"
+            value={
+              scheduleModes.find((option) => option.value === draft.schedule.mode)?.label ?? ""
+            }
+            actions={scheduleModes.map((option) => ({
+              id: option.value,
+              title: option.label,
+              state: option.value === draft.schedule.mode ? "on" : undefined,
+            }))}
+            onSelect={(id) => {
+              const mode = scheduleModes.find((option) => option.value === id)?.value;
+              if (mode === undefined) return;
+              setTimePickerOpen(false);
+              setRunAtPicker(null);
+              setDraft({
+                ...draft,
+                prompt:
+                  mode === "webhook" && !draft.prompt.trim()
+                    ? DEFAULT_WEBHOOK_PROMPT
+                    : draft.prompt,
+                schedule: {
+                  ...draft.schedule,
+                  mode,
+                  runAt:
+                    mode === "once" && !draft.schedule.runAt
+                      ? new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000).toISOString()
+                      : draft.schedule.runAt,
+                },
+              });
+            }}
+          />
           {draft.schedule.mode === "fixed_time" ? (
             <>
               <Pressable
