@@ -66,7 +66,7 @@ brew install --cask t3-code
 Download the `.deb` from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), then:
 
 ```bash
-sudo apt install ./T3-Code-*.deb
+sudo apt install ./Xen-Code-*.deb
 ```
 
 #### Arch Linux (AUR)

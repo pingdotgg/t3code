@@ -8,7 +8,7 @@ The three Icon Composer projects are the source of truth for full application ic
 
 Each project uses `text.svg` for the T3 mark and `background.svg` when the background is a vector layer. Additional layers use semantic names that describe their role and placement.
 
-The production PNG and ICO exports in `prod/` are the XS CODE icon, generated directly from its 1024×1024 source. `prod/app-icon.icon` still holds the upstream mark, so `vp run icons:export` and `vp run icons:check` will overwrite or flag them until that project is redrawn.
+The production PNG and ICO exports in `prod/` are the Xen Code icon, generated directly from its 1024×1024 source. `prod/app-icon.icon` still holds the upstream mark, so `vp run icons:export` and `vp run icons:check` will overwrite or flag them until that project is redrawn.
 
 Run `vp run icons:export` from the repository root to regenerate the tracked iOS, Linux, Windows, and web assets. The development web exports are also copied to `apps/web/public` for the browser favicon, web app manifest icons, and splash screen. Run `vp run icons:check` to verify that the generated assets and public copies match their sources without changing files.
 

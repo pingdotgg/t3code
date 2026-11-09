@@ -200,9 +200,9 @@ describe("DesktopAppIdentity", () => {
 
         const runtimeName = calls.setName[0];
         assert.isDefined(runtimeName);
-        assert.equal(runtimeName, `XS CODE ${stage}`);
+        assert.equal(runtimeName, `Xen Code ${stage}`);
         assert.match(runtimeName.replaceAll(" ", ""), /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/);
-        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "XS CODE");
+        assert.equal(calls.setAboutPanelOptions[0]?.applicationName, "Xen Code");
       }),
       { calls, environment },
     );

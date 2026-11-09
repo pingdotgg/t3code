@@ -1,7 +1,8 @@
 const CLIENT_ID = "2c365bd5560d448da8e4802b5ba43ecf";
 const REDIRECT_URI = "http://127.0.0.1:8898/callback";
 const SCOPES = "user-read-currently-playing user-read-playback-state user-modify-playback-state";
-const STORAGE_KEY = "xscode:spotify-token";
+const STORAGE_KEY = "xencode:spotify-token";
+const LEGACY_STORAGE_KEY = "xscode:spotify-token";
 
 interface SpotifyToken {
   readonly accessToken: string;
@@ -21,7 +22,13 @@ let token: SpotifyToken | null = readStoredToken();
 
 function readStoredToken(): SpotifyToken | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw === null && legacy !== null) {
+      raw = legacy;
+      localStorage.setItem(STORAGE_KEY, legacy);
+    }
+    if (legacy !== null) localStorage.removeItem(LEGACY_STORAGE_KEY);
     return raw ? (JSON.parse(raw) as SpotifyToken) : null;
   } catch {
     return null;
@@ -62,7 +69,11 @@ async function requestToken(body: Record<string, string>) {
     headers: { "content-type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ client_id: CLIENT_ID, ...body }),
   });
-  if (!response.ok) throw new Error(`Spotify sign-in failed (${response.status}).`);
+  if (!response.ok) {
+    throw Object.assign(new Error(`Spotify sign-in failed (${response.status}).`), {
+      rejected: response.status === 400,
+    });
+  }
   const json = (await response.json()) as {
     access_token: string;
     refresh_token?: string;
@@ -107,25 +118,35 @@ export async function connectSpotify() {
 
 export const disconnectSpotify = () => setToken(null);
 
-async function accessToken() {
-  if (!token) throw new Error("Spotify is not connected.");
-  if (token.expiresAt - 60_000 < Date.now()) {
-    try {
-      await requestToken({ grant_type: "refresh_token", refresh_token: token.refreshToken });
-    } catch (error) {
-      setToken(null);
+let refreshing: Promise<void> | null = null;
+
+// Spotify rotates refresh tokens, so concurrent refreshes would race each other into invalid_grant.
+function refreshToken(current: SpotifyToken) {
+  refreshing ??= requestToken({ grant_type: "refresh_token", refresh_token: current.refreshToken })
+    .catch((error: unknown) => {
+      if ((error as { rejected?: boolean }).rejected && token === current) setToken(null);
       throw error;
-    }
-  }
+    })
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+async function accessToken(forceRefresh = false) {
+  if (!token) throw new Error("Spotify is not connected.");
+  if (forceRefresh || token.expiresAt - 60_000 < Date.now()) await refreshToken(token);
   return token!.accessToken;
 }
 
 async function spotifyApi(path: string, method = "GET"): Promise<unknown> {
-  const response = await fetch(`https://api.spotify.com/v1${path}`, {
-    method,
-    headers: { authorization: `Bearer ${await accessToken()}` },
-  });
-  if (response.status === 401) setToken(null);
+  const send = async (forceRefresh: boolean) =>
+    fetch(`https://api.spotify.com/v1${path}`, {
+      method,
+      headers: { authorization: `Bearer ${await accessToken(forceRefresh)}` },
+    });
+  let response = await send(false);
+  if (response.status === 401) response = await send(true);
   if (response.status === 403) throw new Error("Playback control needs Spotify Premium.");
   if (!response.ok) throw new Error(`Spotify request failed (${response.status}).`);
   return response.status === 204 ? null : response.json().catch(() => null);

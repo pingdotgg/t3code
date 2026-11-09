@@ -72,13 +72,17 @@ export function SpotifyMiniPlayer() {
   }
 
   const control = (action: "play" | "pause" | "next" | "previous") => {
-    if (nowPlaying && (action === "play" || action === "pause")) {
-      setNowPlaying({ ...nowPlaying, isPlaying: action === "play" });
+    const previous = nowPlaying;
+    if (previous && (action === "play" || action === "pause")) {
+      setNowPlaying({ ...previous, isPlaying: action === "play" });
     }
     spotifyControl(action)
       .then(() => getSpotifyNowPlaying())
       .then(setNowPlaying)
-      .catch((error: unknown) => reportError("Spotify", error));
+      .catch((error: unknown) => {
+        setNowPlaying(previous);
+        reportError("Spotify", error);
+      });
   };
 
   return (
@@ -91,8 +95,9 @@ export function SpotifyMiniPlayer() {
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-sidebar-foreground">
-          {nowPlaying?.title ?? "Nothing playing"}
+        <p className="flex items-center gap-1.5 text-xs font-medium text-sidebar-foreground">
+          {nowPlaying?.isPlaying ? <PlayingBars /> : null}
+          <span className="truncate">{nowPlaying?.title ?? "Nothing playing"}</span>
         </p>
         <p className="truncate text-xs text-sidebar-muted-foreground">
           {nowPlaying?.artist ?? "Spotify"}
@@ -141,6 +146,20 @@ export function SpotifyMiniPlayer() {
         </Button>
       </span>
     </div>
+  );
+}
+
+function PlayingBars() {
+  return (
+    <span aria-hidden className="flex h-2.5 shrink-0 items-end gap-px">
+      {["-600ms", "-300ms", "0ms"].map((delay) => (
+        <span
+          key={delay}
+          style={{ animationDelay: delay }}
+          className="h-full w-0.5 origin-bottom scale-y-60 rounded-full bg-spotify motion-safe:animate-equalizer"
+        />
+      ))}
+    </span>
   );
 }
 

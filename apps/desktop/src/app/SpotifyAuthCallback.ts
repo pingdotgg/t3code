@@ -20,7 +20,7 @@ export function spotifyAuthorizationRequest(value: string) {
 }
 
 const PAGE =
-  '<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>XS CODE</title><body style="font-family:system-ui;display:grid;place-items:center;min-height:90vh"><main><h1>Spotify connected</h1><p>You can close this tab and return to XS CODE.</p></main></body>';
+  '<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="light dark"><title>Xen Code</title><body style="font-family:system-ui;display:grid;place-items:center;min-height:90vh"><main><h1>Spotify connected</h1><p>You can close this tab and return to Xen Code.</p></main></body>';
 
 /** Opens Spotify sign-in in the browser and resolves with the redirect URL it lands on. */
 export async function receiveSpotifyAuthCallback(
