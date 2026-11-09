@@ -321,6 +321,8 @@ describe("terminal output stream", () => {
       yield* publisher.publish(output("a"));
       assert.deepEqual(yield* pull, [output("a")]);
 
+      // A wall-clock correction must not extend the elapsed-time window.
+      yield* TestClock.setTime(0);
       yield* publisher.publish(output("b"));
       const burst = yield* pull.pipe(Effect.forkChild({ startImmediately: true }));
       yield* TestClock.adjust("1 millis");
@@ -329,6 +331,7 @@ describe("terminal output stream", () => {
       yield* publisher.publish(output("c"));
       yield* publisher.publish(output("d"));
       yield* TestClock.adjust("1 millis");
+      assert.isDefined(burst.pollUnsafe());
       assert.deepEqual(yield* Fiber.join(burst), [output("b"), output("c"), output("d")]);
     }).pipe(Effect.scoped),
   );

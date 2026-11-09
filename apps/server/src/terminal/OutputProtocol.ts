@@ -180,7 +180,7 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
                   release();
                   overflowed = true;
                 }
-                // A pull holding pending output already has a deadline timer.
+                // The current or next pull handles the pending output deadline.
                 if (wasEmpty || overflowed || urgent()) ready.openUnsafe();
               }),
             (stop) => {
@@ -226,7 +226,7 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
           }
           ready.closeUnsafe();
           if (head === pending.length) return ready.await.pipe(Effect.andThen(pull));
-          const now = clock.currentTimeNanosUnsafe();
+          const now = clock.monotonicTimeNanosUnsafe();
           if (now >= deadline || urgent()) {
             deadline = now + OUTPUT_WINDOW_NANOS;
             return Effect.succeed(takeBatch());
