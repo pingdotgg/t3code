@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/client-runtime/state/shell";
 import {
   AuthTerminalOperateScope,
+  AuthTerminalReadScope,
   DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type ProjectScript,
@@ -24,10 +25,12 @@ import { toastManager } from "../components/ui/toast";
 import { randomUUID } from "../lib/utils";
 import {
   isProjectScriptRunActive,
+  PROJECT_SCRIPT_BEGIN_ENV,
   PROJECT_SCRIPT_SENTINEL_ENV,
   PROJECT_SCRIPT_SENTINEL_PREFIX,
   projectActionsThreadId,
   projectLastActivityTimestamp,
+  projectScriptBeginMarker,
   resolveProjectAnchorThread,
   sortProjectScriptMenuEntries,
   sortProjectScriptRuns,
@@ -55,6 +58,7 @@ function commandFailureMessage(result: Parameters<typeof squashAtomCommandFailur
 export function useProjectScriptRunActions() {
   const projects = useProjects();
   const operateScopes = useEnvironmentsWithScope(projects, AuthTerminalOperateScope);
+  const readScopes = useEnvironmentsWithScope(projects, AuthTerminalReadScope);
   const openTerminal = useAtomCommand(terminalEnvironment.open, "project action open");
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "project action write");
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "project action close");
@@ -70,6 +74,7 @@ export function useProjectScriptRunActions() {
   const runsList = sortProjectScriptRuns(Object.values(runs));
   const selectedRun = selectedRunId === null ? null : (runs[selectedRunId] ?? null);
   const canOperate = (environmentId: EnvironmentId) => operateScopes.has(environmentId);
+  const canRead = (environmentId: EnvironmentId) => readScopes.has(environmentId);
   const projectForRun = (run: ProjectScriptRun) =>
     projects.find(
       (project) => project.environmentId === run.environmentId && project.id === run.projectId,
@@ -80,11 +85,11 @@ export function useProjectScriptRunActions() {
     script: ProjectScript,
     anchorThread: EnvironmentThreadShell | null,
   ) => {
-    if (!canOperate(project.environmentId)) {
+    if (!canOperate(project.environmentId) || !canRead(project.environmentId)) {
       toastManager.add({
         type: "error",
         title: "Cannot run project actions",
-        description: "This connection cannot run terminal commands.",
+        description: "This connection needs terminal read and operate permissions.",
       });
       return;
     }
@@ -131,7 +136,11 @@ export function useProjectScriptRunActions() {
         env: projectScriptRuntimeEnv({
           project: { cwd: project.workspaceRoot },
           worktreePath,
-          extraEnv: { [PROJECT_SCRIPT_SENTINEL_ENV]: sentinel, COLORTERM: "" },
+          extraEnv: {
+            [PROJECT_SCRIPT_BEGIN_ENV]: projectScriptBeginMarker(sentinel),
+            [PROJECT_SCRIPT_SENTINEL_ENV]: sentinel,
+            COLORTERM: "",
+          },
         }),
       },
     });

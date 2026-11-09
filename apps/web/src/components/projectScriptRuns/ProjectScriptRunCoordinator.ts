@@ -9,6 +9,7 @@ import {
   isProjectScriptRunActive,
   isProjectScriptWrapperLine,
   PROJECT_SCRIPT_OUTPUT_TAIL_LINES,
+  projectScriptBeginMarker,
   projectScriptSentinelPattern,
   stripProjectScriptOutput,
   type ProjectScriptRun,
@@ -55,9 +56,11 @@ function watchProjectScriptRun(
     input: { threadId: run.threadId, terminalId: run.terminalId },
   });
   const sentinelPattern = projectScriptSentinelPattern(run.sentinel);
+  const beginMarker = projectScriptBeginMarker(run.sentinel);
   let cursor = INITIAL_TERMINAL_OUTPUT_CURSOR;
   let lineBuffer = "";
   let tail: string[] = [];
+  let sawBegin = false;
   let sawLive = false;
   let stopped = false;
   let unsubscribe: (() => void) | null = null;
@@ -101,6 +104,10 @@ function watchProjectScriptRun(
           exitCode === 0 ? null : (tail.at(-1) ?? `Exited with code ${exitCode ?? "unknown"}.`),
       });
       return true;
+    }
+    if (!sawBegin) {
+      if (rawLine.includes(beginMarker)) sawBegin = true;
+      return false;
     }
     const cleaned = stripProjectScriptOutput(rawLine).trimEnd();
     if (cleaned.length === 0 || isProjectScriptWrapperLine(cleaned)) return false;

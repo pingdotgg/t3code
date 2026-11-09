@@ -7,8 +7,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   isProjectScriptWrapperLine,
+  projectScriptBeginMarker,
   projectScriptOutputTail,
   projectScriptSentinelPattern,
+  projectScriptVisibleOutput,
   resolveProjectAnchorThread,
   sortProjectScriptMenuEntries,
   sortProjectScriptRuns,
@@ -84,7 +86,7 @@ describe("project script runs", () => {
     const wrapped = wrapProjectScriptCommand("pnpm test");
 
     expect(wrapped).toBe(
-      'sh -c \'pnpm test\r__t3_status=$?\rprintf "\\n%s%s\\n" "$__T3_SCRIPT_SENTINEL" "$__t3_status"\'',
+      'sh -c \'printf "\\n%s\\n" "$__T3_SCRIPT_BEGIN"\r(\rpnpm test\r)\r__t3_status=$?\rprintf "\\n%s%s\\n" "$__T3_SCRIPT_SENTINEL" "$__t3_status"\'',
     );
   });
 
@@ -113,8 +115,29 @@ describe("project script runs", () => {
 
   it("recognizes the echoed wrapper lines", () => {
     expect(isProjectScriptWrapperLine(" sh -c 'pnpm test'")).toBe(true);
+    expect(isProjectScriptWrapperLine("[~/project] sh -c 'pnpm test'")).toBe(true);
+    expect(isProjectScriptWrapperLine("quote> __t3_status=$?")).toBe(true);
     expect(isProjectScriptWrapperLine('printf "$__T3_SCRIPT_SENTINEL"')).toBe(true);
     expect(isProjectScriptWrapperLine("pnpm test failed")).toBe(false);
+  });
+
+  it("shows output after the begin marker without the wrapper or end sentinel", () => {
+    const sentinel = "__T3_SCRIPT_DONE__token:";
+    const text = [
+      '[~/project] sh -c \'printf "\\n%s\\n" "$__T3_SCRIPT_BEGIN"',
+      "quote> (",
+      "quote> pnpm test",
+      "quote> )",
+      "quote> __t3_status=$?",
+      projectScriptBeginMarker(sentinel),
+      "first line",
+      "second line",
+      `${sentinel}0`,
+      "[~/project]",
+    ].join("\r\n");
+
+    expect(projectScriptVisibleOutput(text, sentinel)).toBe("first line\nsecond line");
+    expect(projectScriptVisibleOutput("plain output", sentinel)).toBe("plain output");
   });
 
   it("picks the most recently active thread and ignores archived threads", () => {

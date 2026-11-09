@@ -50,6 +50,7 @@ export interface ProjectScriptMenuEntry {
 }
 
 export const PROJECT_SCRIPT_SENTINEL_ENV = "__T3_SCRIPT_SENTINEL";
+export const PROJECT_SCRIPT_BEGIN_ENV = "__T3_SCRIPT_BEGIN";
 export const PROJECT_SCRIPT_SENTINEL_PREFIX = "__T3_SCRIPT_DONE__";
 export const PROJECT_SCRIPT_OUTPUT_TAIL_LINES = 200;
 
@@ -112,18 +113,25 @@ function shellSingleQuote(value: string): string {
 }
 
 /**
- * Runs the command in a child POSIX shell and prints an exit-code sentinel that the
- * run coordinator parses from the terminal stream. The token travels in the
- * environment, so the echoed command line never contains it.
+ * Runs the command in a child POSIX shell and prints a begin marker and an exit-code
+ * sentinel that the run coordinator parses from the terminal stream. The tokens travel
+ * in the environment, so the echoed command line never contains them.
  */
 export function wrapProjectScriptCommand(command: string): string {
   const body = command.replace(/\r?\n/g, "\r");
   const script = [
+    `printf "\\n%s\\n" "$${PROJECT_SCRIPT_BEGIN_ENV}"`,
+    "(",
     body,
+    ")",
     "__t3_status=$?",
     `printf "\\n%s%s\\n" "$${PROJECT_SCRIPT_SENTINEL_ENV}" "$__t3_status"`,
   ].join("\r");
   return `sh -c ${shellSingleQuote(script)}`;
+}
+
+export function projectScriptBeginMarker(sentinel: string): string {
+  return `${sentinel}BEGIN`;
 }
 
 export function projectScriptSentinelPattern(sentinel: string): RegExp {
@@ -150,7 +158,26 @@ export function projectScriptOutputTail(
 /** Lines the shell echoes back for the typed wrapper, which are not command output. */
 export function isProjectScriptWrapperLine(line: string): boolean {
   const trimmed = line.trimStart();
-  return trimmed.startsWith("sh -c ") || trimmed.includes(`$${PROJECT_SCRIPT_SENTINEL_ENV}`);
+  return (
+    trimmed.includes("sh -c '") ||
+    trimmed.includes("__t3_status") ||
+    trimmed.includes(`$${PROJECT_SCRIPT_SENTINEL_ENV}`)
+  );
+}
+
+/** Terminal text after the begin marker, without the echoed wrapper or the end sentinel. */
+export function projectScriptVisibleOutput(text: string, sentinel: string): string {
+  const marker = projectScriptBeginMarker(sentinel);
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex === -1) return text;
+  const afterMarker = text.slice(markerIndex + marker.length).replace(/^(?:\r\n|\r|\n)/, "");
+  const endIndex = afterMarker.search(projectScriptSentinelPattern(sentinel));
+  const body = endIndex === -1 ? afterMarker : afterMarker.slice(0, endIndex);
+  return body
+    .split(/\r\n|\r|\n/)
+    .filter((line) => !isProjectScriptWrapperLine(line))
+    .join("\n")
+    .trimEnd();
 }
 
 function projectThreadActivityTimestamp(thread: EnvironmentThreadShell): number {
