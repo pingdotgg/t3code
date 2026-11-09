@@ -17,6 +17,7 @@ import {
   cycleLayoutColumnWidth,
   decodePersistedLayoutState,
   findLayoutTabByContent,
+  ghostLoneLayoutChats,
   isLayoutTabInFocusedGroup,
   keepLayoutTab,
   focusAdjacentLayoutTab,
@@ -34,6 +35,7 @@ import {
   moveLayoutWorkspace,
   renameLayoutWorkspace,
   showLayoutChatInNewWorkspace,
+  openLayoutKeptTab,
   openLayoutTab,
   placeLayoutContent,
   placeLayoutTabs,
@@ -187,8 +189,9 @@ export function selectIntendedLayout(): LayoutState {
 // v2: column widths are shares of the window; v1 widths do not carry over.
 const LAYOUT_STORAGE_KEY = "t3code:layout-state:v2";
 // Version 2: side panes and terminals are surface tabs. Older layouts decode
-// their companions into them (decodePersistedLayoutState).
-const LAYOUT_STORAGE_VERSION = 2;
+// their companions into them (decodePersistedLayoutState). Version 3: plain opens make ghost tabs.
+const LAYOUT_STORAGE_VERSION = 3;
+let savedBeforeGhostTabs = false;
 
 // Focus moves, scroll settles and hints all write the store; the layout is
 // serialized once they go quiet instead of on every one of them.
@@ -306,6 +309,8 @@ interface LayoutStoreState {
    */
   focusChat: (target: ThreadRouteTarget) => void;
   openTab: (content: LayoutTabContent, options?: LayoutOpenOptions) => void;
+  /** Open content as a kept tab after the tab a plain open targets (see openLayoutKeptTab). */
+  openKeptTab: (content: LayoutTabContent) => void;
   replaceTabContent: (tabId: string, content: LayoutTabContent) => void;
   /** Make a ghost tab an ordinary one (see `LayoutTab.ghostOf`). */
   keepTab: (tabId: string) => void;
@@ -485,6 +490,7 @@ export const useLayoutStore = create<LayoutStoreState>()(
               : state,
           ),
         openTab: (content, options) => apply((layout) => openLayoutTab(layout, content, options)),
+        openKeptTab: (content) => apply((layout) => openLayoutKeptTab(layout, content)),
         replaceTabContent: (tabId, content) =>
           apply((layout) => replaceLayoutTabContent(layout, tabId, content)),
         keepTab: (tabId) => apply((layout) => keepLayoutTab(layout, tabId)),
@@ -537,20 +543,26 @@ export const useLayoutStore = create<LayoutStoreState>()(
         companionShares: state.companionShares,
       }),
       // The layout decodes itself, whatever version saved it.
-      migrate: (persisted) => persisted as LayoutPersistedState,
-      merge: (persisted, current) => ({
-        ...current,
-        companionShares: decodeCompanionShares(
-          persisted && typeof persisted === "object" && "companionShares" in persisted
-            ? persisted.companionShares
-            : null,
-        ),
-        layout: decodePersistedLayoutState(
+      migrate: (persisted, version) => {
+        savedBeforeGhostTabs = version < 3;
+        return persisted as LayoutPersistedState;
+      },
+      merge: (persisted, current) => {
+        const layout = decodePersistedLayoutState(
           persisted && typeof persisted === "object" && "layout" in persisted
             ? persisted.layout
             : null,
-        ),
-      }),
+        );
+        return {
+          ...current,
+          companionShares: decodeCompanionShares(
+            persisted && typeof persisted === "object" && "companionShares" in persisted
+              ? persisted.companionShares
+              : null,
+          ),
+          layout: savedBeforeGhostTabs ? ghostLoneLayoutChats(layout) : layout,
+        };
+      },
     },
   ),
 );
@@ -571,13 +583,13 @@ function decodeCompanionShares(value: unknown): Partial<Record<LayoutCompanionKi
  * the launcher tab it was started from. The request only lives until the action settles; an action that ends up not
  * navigating (the draft was already on screen) leaves no stale request.
  */
-export async function runInNewLayoutTab(
-  action: () => Promise<unknown>,
+export async function runInNewLayoutTab<T>(
+  action: () => Promise<T>,
   request: LayoutNewTabRequest = "active-pane",
-): Promise<void> {
+): Promise<T> {
   const ticket = useLayoutStore.getState().requestNewTab(request);
   try {
-    await action();
+    return await action();
   } finally {
     // Let the route render that consumes the request land first.
     setTimeout(() => useLayoutStore.getState().clearNewTabRequest(ticket), 0);
