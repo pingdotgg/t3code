@@ -30,6 +30,8 @@ export function materializeReplayTranscriptRuntimeInstructions(
   // A prompt's success records delivery only if no compaction completed after it was sent.
   const compactionCounts = new Map<unknown, number>();
   const completedCompactionIds = new Set<string>();
+  // A turn that completes with a compaction still open projects it as completed.
+  const openCompactions = new Map<unknown, Set<unknown>>();
   const markCompacted = (sessionId: unknown, compactionId?: unknown) => {
     if (typeof compactionId === "string") {
       const key = `${String(sessionId)}\u0000${compactionId}`;
@@ -61,6 +63,11 @@ export function materializeReplayTranscriptRuntimeInstructions(
             stopReason !== "cancelled" &&
             stopReason !== "refusal" &&
             stopReason !== "error";
+          const open = openCompactions.get(pendingPrompt.sessionId);
+          if (delivered && open !== undefined && open.size > 0) {
+            openCompactions.delete(pendingPrompt.sessionId);
+            markCompacted(pendingPrompt.sessionId);
+          }
           if (delivered && pendingPrompt.compact) {
             markCompacted(pendingPrompt.sessionId);
           } else if (
@@ -90,10 +97,16 @@ export function materializeReplayTranscriptRuntimeInstructions(
         if (
           isRecord(update) &&
           update.sessionUpdate === "compaction_update" &&
-          update.status === "completed" &&
           isRecord(frame?.params)
         ) {
-          markCompacted(frame.params.sessionId, update.compactionId);
+          const sessionId = frame.params.sessionId;
+          const open = openCompactions.get(sessionId) ?? new Set<unknown>();
+          if (update.status === "in_progress") {
+            openCompactions.set(sessionId, open.add(update.compactionId));
+          } else {
+            open.delete(update.compactionId);
+          }
+          if (update.status === "completed") markCompacted(sessionId, update.compactionId);
         }
         return entry;
       }
@@ -118,6 +131,7 @@ export function materializeReplayTranscriptRuntimeInstructions(
         // A closed or restarted session comes back in a new runtime, which resends the instructions.
         instructedSessionIds.clear();
         completedCompactionIds.clear();
+        openCompactions.clear();
         pendingPrompt = undefined;
         pendingKiroCompact = undefined;
         return entry;

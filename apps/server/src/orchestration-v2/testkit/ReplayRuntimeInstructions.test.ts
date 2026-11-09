@@ -162,4 +162,18 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
     ]);
     expect(notes).toEqual([true, true]);
   });
+
+  it("resends after a turn that completes with a compaction still open, and after its real end", () => {
+    const notes = promptsWithNotes([
+      prompt("first"),
+      update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "in_progress" }),
+      promptAnswer,
+      prompt("second"),
+      promptAnswer,
+      update({ sessionUpdate: "compaction_update", compactionId: "c1", status: "completed" }),
+      prompt("third"),
+      promptAnswer,
+    ]);
+    expect(notes).toEqual([true, true, true]);
+  });
 });
