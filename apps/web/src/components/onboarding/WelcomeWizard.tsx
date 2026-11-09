@@ -686,12 +686,16 @@ function PairingForm({
             </Button>
           </div>
           <CollapsiblePanel>
-            <p className="pt-3 text-sm text-muted-foreground">On the computer with your code:</p>
+            <p className="pt-3 text-sm text-muted-foreground">
+              <Trans>On the computer with your code:</Trans>
+            </p>
             <InstallT3Commands command="t3 pair" className="mt-2" />
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
-              <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
-              <code className="font-mono">t3 pair --tailscale</code> instead.
+              <Trans>
+                Start T3 Code or run <code className="font-mono">t3 serve</code> there before{" "}
+                <code className="font-mono">t3 pair</code>. On a tailnet, run{" "}
+                <code className="font-mono">t3 pair --tailscale</code> instead.
+              </Trans>
             </p>
           </CollapsiblePanel>
         </Collapsible>
@@ -1866,18 +1870,23 @@ function CliPathSetup() {
       <p className="text-sm text-muted-foreground">
         {setup.added ? (
           <>
-            Added to {setup.file}. Open a new terminal to use <code className="font-mono">t3</code>.
+            <Trans>
+              Added to {setup.file}. Open a new terminal to use{" "}
+              <code className="font-mono">t3</code>.
+            </Trans>
           </>
         ) : (
           <>
-            Use <code className="font-mono">t3</code> from any terminal. Adds one line to{" "}
-            {setup.file}.
+            <Trans>
+              Use <code className="font-mono">t3</code> from any terminal. Adds one line to{" "}
+              {setup.file}.
+            </Trans>
           </>
         )}
       </p>
       {setup.added ? null : (
         <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
-          Add to PATH
+          <Trans>Add to PATH</Trans>
         </Button>
       )}
     </div>

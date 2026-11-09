@@ -276,7 +276,7 @@ export function ReviewThreadCard({
             onClick={() => onAddToChat({ ...thread, comments })}
           >
             <MessageSquarePlusIcon className="size-3" />
-            Add to chat
+            <Trans>Add to chat</Trans>
           </Button>
         ) : null}
         {canResolve ? (
@@ -319,7 +319,7 @@ export function ReviewThreadCard({
                     cwd={workspaceRoot}
                     environmentId={environmentId}
                     completionScope={completionScope}
-                    label="Edit comment"
+                    label={t({ message: "Edit comment" })}
                     saving={savingEdit}
                     onSave={(body) => void saveEdit(comment.id, body)}
                     onCancel={() => setEditingId(null)}
@@ -376,8 +376,8 @@ export function ReviewThreadCard({
                       size="sm"
                       completionScope={completionScope}
                       value={reply}
-                      placeholder="Reply"
-                      aria-label="Reply to this conversation"
+                      placeholder={t({ message: "Reply" })}
+                      aria-label={t({ message: "Reply to this conversation" })}
                       onValueChange={setReply}
                       onKeyDown={submitKeys({
                         value: reply,
@@ -391,7 +391,7 @@ export function ReviewThreadCard({
                     <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
                       <TextFieldSpeechControls speech={speech} disabled={pending} />
                       <Button size="xs" variant="ghost" onClick={() => setReplying(false)}>
-                        Cancel
+                        <Trans>Cancel</Trans>
                       </Button>
                       <Button
                         size="xs"
@@ -402,7 +402,7 @@ export function ReviewThreadCard({
                         }
                         onClick={() => speech.submitAfterDictation((text) => void send(text))}
                       >
-                        Reply
+                        <Trans>Reply</Trans>
                       </Button>
                     </div>
                   </div>

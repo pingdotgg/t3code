@@ -26,8 +26,20 @@ import { useRef, useState } from "react";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 
 const ARCHIVE_ACTIONS = [
-  { action: "unarchive", label: "Unarchive", Icon: ArchiveX },
-  { action: "delete", label: "Delete", Icon: Trash2Icon },
+  {
+    action: "unarchive",
+    get label() {
+      return t({ message: "Unarchive" });
+    },
+    Icon: ArchiveX,
+  },
+  {
+    action: "delete",
+    get label() {
+      return t({ message: "Delete" });
+    },
+    Icon: Trash2Icon,
+  },
 ] as const;
 type ArchiveAction = (typeof ARCHIVE_ACTIONS)[number]["action"];
 
@@ -144,7 +156,7 @@ export function ArchivedThreadsPanel() {
       stackedThreadToast({
         type: "error",
         title,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        description: error instanceof Error ? error.message : t({ message: "An error occurred." }),
       }),
     );
   };
@@ -167,7 +179,12 @@ export function ArchivedThreadsPanel() {
       pending.delete(key);
       setPendingKeys(new Set(pending));
     });
-    reportFailure(result._tag === "Failure" ? result : result.value, `Failed to ${action} thread`);
+    reportFailure(
+      result._tag === "Failure" ? result : result.value,
+      action === "unarchive"
+        ? t({ message: "Failed to unarchive thread" })
+        : t({ message: "Failed to delete thread" }),
+    );
   };
 
   const handleContextMenu = async (thread: ArchivedThread, position: { x: number; y: number }) => {
@@ -185,7 +202,7 @@ export function ArchivedThreadsPanel() {
       if (clicked === "unarchive" || clicked === "delete")
         await handleThreadAction(clicked, thread);
     });
-    reportFailure(result, "Archived thread action failed");
+    reportFailure(result, t({ message: "Archived thread action failed" }));
   };
 
   return (
@@ -240,8 +257,9 @@ export function ArchivedThreadsPanel() {
                   description={
                     <span className={hasMultipleEnvironments ? "block truncate" : undefined}>
                       {hasMultipleEnvironments ? `${thread.environmentLabel} · ` : null}
-                      Archived <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
-                      {" \u00b7 Created "}
+                      <Trans>Archived </Trans>
+                      <RelativeTime timestamp={thread.archivedAt ?? thread.createdAt} />
+                      {<Trans> · Created </Trans>}
                       <RelativeTime timestamp={thread.createdAt} />
                     </span>
                   }

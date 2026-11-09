@@ -113,21 +113,51 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
     return t({ message: "Keybindings" });
   },
   "/settings/snap-shot": "SnapShots",
-  "/settings/providers": "Providers",
-  "/settings/threads": "Threads",
-  "/settings/browser": "Browser",
-  "/settings/devices": "Devices",
-  "/settings/scheduled-tasks": "Scheduled tasks",
-  "/settings/source-control": "Source control",
-  "/settings/worktrees": "Worktrees",
-  "/settings/connections": "Environments",
-  "/settings/access": "Sharing & access",
-  "/settings/secrets": "Secrets",
-  "/settings/maintenance": "Maintenance",
-  "/settings/labs": "Labs",
-  "/settings/about": "About",
-  "/settings/voice": "Voice",
-  "/settings/archived": "Archive",
+  get "/settings/providers"() {
+    return t({ message: "Providers" });
+  },
+  get "/settings/threads"() {
+    return t({ message: "Threads" });
+  },
+  get "/settings/browser"() {
+    return t({ message: "Browser" });
+  },
+  get "/settings/devices"() {
+    return t({ message: "Devices" });
+  },
+  get "/settings/scheduled-tasks"() {
+    return t({ message: "Scheduled tasks" });
+  },
+  get "/settings/source-control"() {
+    return t({ message: "Source control" });
+  },
+  get "/settings/worktrees"() {
+    return t({ message: "Worktrees" });
+  },
+  get "/settings/connections"() {
+    return t({ message: "Environments" });
+  },
+  get "/settings/access"() {
+    return t({ message: "Sharing & access" });
+  },
+  get "/settings/secrets"() {
+    return t({ message: "Secrets" });
+  },
+  get "/settings/maintenance"() {
+    return t({ message: "Maintenance" });
+  },
+  get "/settings/labs"() {
+    return t({ message: "Labs" });
+  },
+  get "/settings/about"() {
+    return t({ message: "About" });
+  },
+  get "/settings/voice"() {
+    return t({ message: "Voice" });
+  },
+  get "/settings/archived"() {
+    return t({ message: "Archive" });
+  },
 };
 
 /** Sidebar order. A group without a heading is set apart by space alone. */
@@ -647,7 +677,11 @@ export const SETTINGS_SEARCH_ITEMS = [
       return t({ message: "Boring sidebar (group by project)" });
     },
     to: "/settings/labs",
-    searchTerms: ["beta folders project tree classic sidebar"],
+    searchTerms: [
+      "Boring sidebar (group by project)",
+      "Labs",
+      "beta folders project tree classic sidebar",
+    ],
   },
   {
     id: "boring-sidebar-multiline",
@@ -657,13 +691,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/labs",
     // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
     targetId: "boring-sidebar",
-    searchTerms: ["beta boring sidebar folder rows multiline branch pull request details"],
+    searchTerms: [
+      "Two-line folder rows",
+      "Labs",
+      "beta boring sidebar folder rows multiline branch pull request details",
+    ],
   },
   {
     id: "tool-call-visibility",
-    title: "Tool calls in chat",
+    get title() {
+      return t({ message: "Tool calls in chat" });
+    },
     to: "/settings/chat",
     searchTerms: [
+      "Tool calls in chat",
+      "Chat",
       "hide tool calls commands edits searches work log activity quiet chat zen final answers only",
     ],
   },
@@ -695,10 +737,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "prompt-suggestions-beta",
-    title: "Suggest next prompt",
+    get title() {
+      return t({ message: "Suggest next prompt" });
+    },
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
+    searchTerms: [
+      "Suggest next prompt",
+      "Labs",
+      "beta tab autocomplete predict next message claude codex ghost text",
+    ],
   },
   {
     id: "simlock-hosts",
@@ -715,109 +763,175 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "worktree-fast-checkout",
-    title: "Fast worktree checkout",
+    get title() {
+      return t({ message: "Fast worktree checkout" });
+    },
     to: "/settings/labs",
     scope: "environment",
     fastWorktreeCheckoutOnly: true,
-    searchTerms: ["beta fast worktree checkout clone apfs copy-on-write cache macos speed"],
+    searchTerms: [
+      "Fast worktree checkout",
+      "Labs",
+      "beta fast worktree checkout clone apfs copy-on-write cache macos speed",
+    ],
   },
   {
     id: "voice-transcription-destination",
-    title: "Transcribe with",
+    get title() {
+      return t({ message: "Transcribe with" });
+    },
     to: "/settings/voice",
     searchTerms: [
+      "Transcribe with",
+      "Voice",
       "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
     ],
   },
   {
     id: "voice-microphone",
-    title: "Microphone",
+    get title() {
+      return t({ message: "Microphone" });
+    },
     to: "/settings/voice",
-    searchTerms: ["mic input audio device"],
+    searchTerms: ["Microphone", "Voice", "mic input audio device"],
   },
   {
     id: "dictation-shortcut-mode",
-    title: "Dictation shortcut",
+    get title() {
+      return t({ message: "Dictation shortcut" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
+    searchTerms: ["Dictation shortcut", "Voice", "speech voice keyboard hotkey hold toggle auto"],
   },
   {
     id: "speech-language",
-    title: "Transcription language",
+    get title() {
+      return t({ message: "Transcription language" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech voice translate english auto detect"],
+    searchTerms: ["Transcription language", "Voice", "speech voice translate english auto detect"],
   },
   {
     id: "speech-dictionary",
-    title: "Dictionary",
+    get title() {
+      return t({ message: "Dictionary" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech voice transcription vocabulary names glossary alias"],
+    searchTerms: [
+      "Dictionary",
+      "Voice",
+      "speech voice transcription vocabulary names glossary alias",
+    ],
   },
   {
     id: "speech-project-dictionary",
-    title: "Project dictionary",
+    get title() {
+      return t({ message: "Project dictionary" });
+    },
     to: "/settings/voice",
     scope: "project-defaults",
     searchTerms: [
+      "Project dictionary",
+      "Voice",
       "speech voice transcription vocabulary shared dictionary team environment glossary",
     ],
   },
   {
     id: "speech-post-processing-model",
-    title: "Cleanup model",
+    get title() {
+      return t({ message: "Cleanup model" });
+    },
     to: "/settings/voice",
     scope: "environment",
-    searchTerms: ["speech voice transcript cleanup provider model post-processing"],
+    searchTerms: [
+      "Cleanup model",
+      "Voice",
+      "speech voice transcript cleanup provider model post-processing",
+    ],
   },
   {
     id: "speech-correction-word",
-    title: "Correction cue",
+    get title() {
+      return t({ message: "Correction cue" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech voice cleanup sorry scratch that fix mistake"],
+    searchTerms: ["Correction cue", "Voice", "speech voice cleanup sorry scratch that fix mistake"],
   },
   {
     id: "speech-silence-filtering",
-    title: "Silence filtering",
+    get title() {
+      return t({ message: "Silence filtering" });
+    },
     to: "/settings/voice",
-    searchTerms: ["voice speech vad silero pauses noise"],
+    searchTerms: ["Silence filtering", "Voice", "voice speech vad silero pauses noise"],
   },
   {
     id: "remove-filler-words",
-    title: "Remove filler words",
+    get title() {
+      return t({ message: "Remove filler words" });
+    },
     to: "/settings/voice",
-    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
+    searchTerms: [
+      "Remove filler words",
+      "Voice",
+      "voice speech transcription hesitation um uh cleanup",
+    ],
   },
   {
     id: "speech-post-processing",
-    title: "Clean up transcripts",
+    get title() {
+      return t({ message: "Clean up transcripts" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech transcription polish clean provider prompt post-processing"],
+    searchTerms: [
+      "Clean up transcripts",
+      "Voice",
+      "speech transcription polish clean provider prompt post-processing",
+    ],
   },
   {
     id: "speech-models",
-    title: "Transcription models",
+    get title() {
+      return t({ message: "Transcription models" });
+    },
     to: "/settings/voice",
     searchTerms: [
+      "Transcription models",
+      "Voice",
       "speech voice stt download whisper parakeet canary moonshine accuracy speed benchmark languages",
     ],
   },
   {
     id: "speech-hardware",
-    title: "Transcription hardware and model unloading",
+    get title() {
+      return t({ message: "Transcription hardware and model unloading" });
+    },
     to: "/settings/voice",
-    searchTerms: ["speech voice stt advanced gpu cpu acceleration memory unload idle"],
+    searchTerms: [
+      "Transcription hardware and model unloading",
+      "Voice",
+      "speech voice stt advanced gpu cpu acceleration memory unload idle",
+    ],
   },
   {
     id: "microphone-test",
-    title: "Test microphone",
+    get title() {
+      return t({ message: "Test microphone" });
+    },
     to: "/settings/voice",
-    searchTerms: ["test mic audio playback loopback record input level"],
+    searchTerms: [
+      "Test microphone",
+      "Voice",
+      "test mic audio playback loopback record input level",
+    ],
   },
   {
     id: "transcription-test",
-    title: "Test model",
+    get title() {
+      return t({ message: "Test model" });
+    },
     to: "/settings/voice",
-    searchTerms: ["test voice speech model transcription recognition"],
+    searchTerms: ["Test model", "Voice", "test voice speech model transcription recognition"],
   },
   {
     id: "auto-settle-inactive-threads",
@@ -1378,9 +1492,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "text-generators",
-    title: "Text generators",
+    get title() {
+      return t({ message: "Text generators" });
+    },
     to: "/settings/providers",
     searchTerms: [
+      "Text generators",
+      "Providers",
       "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
     ],
     providerSettingsOnly: true,

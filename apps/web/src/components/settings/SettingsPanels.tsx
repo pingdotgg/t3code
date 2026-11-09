@@ -1225,7 +1225,7 @@ export function ChatSettingsPanel() {
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
           description={
-            t({ message: "Queue follow-ups while the agent runs or steer the current run. " }) +
+            "Queue follow-ups while the agent runs or steer the current run. " +
             (settings.sendShortcut === "mod-enter-multiline"
               ? t`Press ${modifierLabel} + Enter for single-line prompts or ${modifierLabel} + Shift + Enter for multiline prompts to do the opposite for one message.`
               : settings.sendShortcut === "mod-enter"
@@ -1279,7 +1279,7 @@ export function ChatSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection id="activity" title="Activity">
+      <SettingsSection id="activity" title={t({ message: "Activity" })}>
         <ToolCallVisibilityRow />
       </SettingsSection>
     </SettingsPageContainer>
@@ -1287,10 +1287,18 @@ export function ChatSettingsPanel() {
 }
 
 const TOOL_CALL_VISIBILITY_LABELS: Record<ToolCallVisibility, string> = {
-  showAll: "Show all",
-  hideSuccessful: "Hide successful",
-  hideAll: "Hide all",
-  zen: "Zen",
+  get showAll() {
+    return t({ message: "Show all" });
+  },
+  get hideSuccessful() {
+    return t({ message: "Hide successful" });
+  },
+  get hideAll() {
+    return t({ message: "Hide all" });
+  },
+  get zen() {
+    return t({ message: "Zen" });
+  },
 };
 
 const isToolCallVisibility = Schema.is(ToolCallVisibility);
@@ -1301,11 +1309,14 @@ function ToolCallVisibilityRow() {
   return (
     <SettingsRow
       {...searchableSetting("tool-call-visibility")}
-      description="Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show."
+      description={t({
+        message:
+          "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
+      })}
       resetAction={
         settings.toolCallVisibility !== DEFAULT_UNIFIED_SETTINGS.toolCallVisibility ? (
           <SettingResetButton
-            label="tool calls in chat"
+            label={t({ message: "tool calls in chat" })}
             onClick={() =>
               updateSettings({ toolCallVisibility: DEFAULT_UNIFIED_SETTINGS.toolCallVisibility })
             }
@@ -1319,7 +1330,11 @@ function ToolCallVisibilityRow() {
             if (isToolCallVisibility(value)) updateSettings({ toolCallVisibility: value });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Tool calls in chat">
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-40"
+            aria-label={t({ message: "Tool calls in chat" })}
+          >
             <SelectValue>{TOOL_CALL_VISIBILITY_LABELS[settings.toolCallVisibility]}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1917,7 +1932,10 @@ export function ThreadsSettingsPanel() {
           serverScoped
           settingKeys={["textGenerationModelSelection"]}
           {...searchableSetting("text-generation-model")}
-          description="For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here."
+          description={t({
+            message:
+              "For thread titles and other generated text. Source control has its own setting. Text generators from Providers also appear here.",
+          })}
           resetAction={
             hasServerTargets && isTextGenerationModelDirty ? (
               <SettingResetButton

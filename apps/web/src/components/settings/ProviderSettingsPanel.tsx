@@ -1138,7 +1138,7 @@ export function EnvironmentProviderSettings({
         />
       ) : null}
 
-      <SettingsSection title="Advanced">
+      <SettingsSection title={t({ message: "Advanced" })}>
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={

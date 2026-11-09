@@ -1,5 +1,5 @@
-import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
@@ -100,7 +100,7 @@ export function PullRequestLinkPreview({
       : resolvePullRequestState({ state: card.state, isDraft: card.isDraft ?? false });
   const authorLabel =
     card?.author === null
-      ? "ghost"
+      ? t({ message: "ghost" })
       : card?.author?.name && card.author.name !== card.author.login
         ? `${card.author.name} (@${card.author.login})`
         : (card?.author?.login ?? null);
@@ -149,7 +149,8 @@ export function PullRequestLinkPreview({
                       <>
                         <span aria-hidden>·</span>
                         <span className="shrink-0">
-                          opened <RelativeTime timestamp={preview.createdAt} />
+                          <Trans>opened </Trans>
+                          <RelativeTime timestamp={preview.createdAt} />
                         </span>
                       </>
                     )}

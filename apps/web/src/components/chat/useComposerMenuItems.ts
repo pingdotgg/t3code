@@ -266,7 +266,7 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "clear",
                 label: "/clear",
-                description: "Start a fresh session; earlier messages stay visible",
+                description: t({ message: "Start a fresh session; earlier messages stay visible" }),
               },
             ] as const)
           : []),
@@ -283,7 +283,7 @@ export function useComposerMenuItems({
         type: "provider-slash-command" as const,
         provider: selectedProvider,
         command,
-        label: t`/${command.name}`,
+        label: `/${command.name}`,
         description:
           command.description ?? command.input?.hint ?? t({ message: "Run provider command" }),
       }));
@@ -378,11 +378,11 @@ export function useComposerMenuItems({
           state: pullRequest.state,
           isDraft: pullRequest.isDraft,
         },
-        label: t`#${pullRequest.number}`,
+        label: `#${pullRequest.number}`,
         description:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
             ? pullRequest.title
-            : t`${pullRequest.repository} · ${pullRequest.title}`,
+            : `${pullRequest.repository} · ${pullRequest.title}`,
       }));
     }
     return [];

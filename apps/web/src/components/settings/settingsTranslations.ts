@@ -23,6 +23,7 @@ export function getSettingsSectionLabels(): Readonly<Record<SettingsPath, string
     "/settings/secrets": t({ message: "Secrets" }),
     "/settings/maintenance": t({ message: "Maintenance" }),
     "/settings/labs": t({ message: "Labs" }),
+    "/settings/voice": t({ message: "Voice" }),
     "/settings/about": t({ message: "About" }),
     "/settings/archived": t({ message: "Archive" }),
   };

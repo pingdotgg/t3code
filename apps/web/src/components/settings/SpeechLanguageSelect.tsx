@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentSpeechStatus } from "@t3tools/contracts";
 import { effectiveSpeechLanguage } from "@t3tools/shared/speech";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
@@ -28,7 +30,7 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
   const label = unavailable
     ? `${effectiveLabel} (${unavailable})`
     : preference === "auto" && resolved !== "auto"
-      ? `Auto (${effectiveLabel})`
+      ? t`Auto (${effectiveLabel})`
       : effectiveLabel;
   return (
     <Select
@@ -38,11 +40,17 @@ export function SpeechLanguageSelect({ model }: { readonly model: ModelLanguages
         if (value) void updateClientSettings({ speechLanguage: value });
       }}
     >
-      <SelectTrigger size="sm" aria-label="Transcription language" className="max-w-64">
+      <SelectTrigger
+        size="sm"
+        aria-label={t({ message: "Transcription language" })}
+        className="max-w-64"
+      >
         <SelectValue>{label}</SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        <SelectItem value="auto">Auto</SelectItem>
+        <SelectItem value="auto">
+          <Trans>Auto</Trans>
+        </SelectItem>
         {unavailable ? (
           <SelectItem value={preference} disabled>
             {unavailable}

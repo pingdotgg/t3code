@@ -260,15 +260,15 @@ export function QueuedRunsControl({
               ).trim();
           const isEditing = item.runId !== null && item.runId === props.editingRunId;
           const workflowCanSendNowText =
-            canSend && !isEditing
+            canSendRun(item.freshContext) && !isEditing
               ? workflow?.canSendNow
-                ? "Start a turn with this message"
+                ? t({ message: "Start a turn with this message" })
                 : workflow?.promoteSkipsCompaction
-                  ? "Skip compaction and send this message"
-                  : "Send into the current turn"
+                  ? t({ message: "Skip compaction and send this message" })
+                  : t({ message: "Send into the current turn" })
               : undefined;
           const itemServerIndex0PropsSteerShortcutLabelText =
-            canSend && !isEditing
+            canSendRun(item.freshContext) && !isEditing
               ? item.serverIndex === 0 && props.steerShortcutLabel
                 ? ` (${props.steerShortcutLabel})`
                 : ""

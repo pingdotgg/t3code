@@ -244,7 +244,7 @@ export function T3ConnectUserProfilePage() {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not deregister server",
+        title: t({ message: "Could not deregister server" }),
         description: relayFailureReason(cause) ?? message,
         ...(traceId
           ? {

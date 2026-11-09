@@ -1,3 +1,4 @@
+import { t } from "@palamedes/core/macro";
 import type {
   EnvironmentId,
   ProjectId,
@@ -100,12 +101,12 @@ function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCand
       ? resolvePullRequestState({ state: candidate.state, isDraft: false })
       : candidate.state === "open"
         ? {
-            label: "Open issue",
+            label: t({ message: "Open issue" }),
             Icon: CircleDotIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.open.toneClassName,
           }
         : {
-            label: "Closed issue",
+            label: t({ message: "Closed issue" }),
             Icon: CircleCheckIcon,
             toneClassName: PULL_REQUEST_STATE_PRESENTATION.merged.toneClassName,
           };
@@ -143,13 +144,17 @@ function CompletionRow({ completion }: { completion: PullRequestCompletion }) {
 
 const EMPTY_STATE = {
   mention: {
-    label: "Mention a user",
+    get label() {
+      return t({ message: "Mention a user" });
+    },
     pending: "Searching users...",
     failed: "Couldn't search users on the host",
     none: "No matching users",
   },
   reference: {
-    label: "Reference an issue or change request",
+    get label() {
+      return t({ message: "Reference an issue or change request" });
+    },
     pending: "Searching...",
     failed: "Couldn't search the host",
     none: "No matching issues or change requests",

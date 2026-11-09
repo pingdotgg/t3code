@@ -416,7 +416,9 @@ function SnoozePresetFields(props: {
         />
       ) : (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">at</span>
+          <span className="text-xs text-muted-foreground">
+            <Trans>at</Trans>
+          </span>
           <Input
             nativeInput
             size="sm"

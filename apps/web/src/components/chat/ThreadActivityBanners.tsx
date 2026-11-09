@@ -42,7 +42,7 @@ export function extensionStatusBannerItem(
     id: "pi-extension-status",
     variant: "default",
     icon: <span>▸</span>,
-    title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
+    title: <output>Pi · {statuses.map((status) => status.text).join(" · ")}</output>,
   };
 }
 
@@ -102,7 +102,7 @@ export function goalNowItem(input: {
     title:
       presentation.usage === null
         ? presentation.title
-        : t`${presentation.title} · ${presentation.usage}`,
+        : `${presentation.title} · ${presentation.usage}`,
     description: presentation.objective,
     // Clear stops goal work; Resume would stop unrelated work, so it waits.
     actions: (

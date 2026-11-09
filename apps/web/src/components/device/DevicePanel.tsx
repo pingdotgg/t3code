@@ -277,7 +277,7 @@ export function DevicePanel(props: {
               name={pendingDevice?.name ?? t({ message: "Devices" })}
               description={
                 pendingDevice
-                  ? t`${stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · ${pendingDevice.version}`
+                  ? `${stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · ${pendingDevice.version}`
                   : ""
               }
               stage="opening"
@@ -428,7 +428,7 @@ function DeviceNotice(props: { readonly onDismiss: () => void; readonly children
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label="Dismiss device error"
+        aria-label={t({ message: "Dismiss device error" })}
         onClick={props.onDismiss}
       >
         <X />
@@ -450,6 +450,7 @@ function DeviceDiscoveryWarning(props: {
   // A dismissal hides one occurrence; a cause that returns later shows again.
   if (dismissedCause !== null && dismissedCause !== cause) setDismissedCause(null);
   if (dismissedCause === cause) return null;
+  const platformName = props.incompletePlatforms[0] === "ios" ? "iOS" : "Android";
   const platforms = props.incompletePlatforms.map((platform) =>
     platform === "ios" ? "iOS" : "Android",
   );
@@ -461,9 +462,15 @@ function DeviceDiscoveryWarning(props: {
       <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
         <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
         <span className="min-w-0">
-          {platforms.length > 0
-            ? `${platforms.join(" and ")} ${platforms.length > 1 ? "lists" : "list"} on ${props.label} may be incomplete.`
-            : `Device discovery on ${props.label} reported a warning.`}
+          {platforms.length > 1 ? (
+            <Trans>iOS and Android lists on {props.label} may be incomplete.</Trans>
+          ) : platforms.length === 1 ? (
+            <Trans>
+              {platformName} list on {props.label} may be incomplete.
+            </Trans>
+          ) : (
+            <Trans>Device discovery on {props.label} reported a warning.</Trans>
+          )}
         </span>
       </span>
       <span className="ml-auto flex shrink-0 items-center gap-0.5">
@@ -478,7 +485,7 @@ function DeviceDiscoveryWarning(props: {
               void props.onRetry().finally(() => setRetrying(false));
             }}
           >
-            {retrying ? "Retrying…" : "Retry"}
+            {retrying ? <Trans>Retrying…</Trans> : <Trans>Retry</Trans>}
           </Button>
         ) : null}
         <Popover open={open} onOpenChange={setOpen}>
@@ -486,7 +493,7 @@ function DeviceDiscoveryWarning(props: {
             aria-label={`Details for ${props.label}`}
             render={<Button size="micro" variant="ghost" />}
           >
-            Details
+            <Trans>Details</Trans>
           </PopoverTrigger>
           <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
             <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">

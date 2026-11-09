@@ -1,4 +1,3 @@
-import { t } from "@palamedes/core/macro";
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 
 const FALLBACK_TRIAGE_COMMAND = "npx t3 triage";
@@ -298,7 +297,7 @@ export function showBootError(error: unknown) {
   const copyCommand = element("button", {
     className: "boot-error-icon",
     type: "button",
-    title: t({ message: "Copy command" }),
+    title: "Copy command",
     innerHTML: COPY_ICON,
   });
   copyCommand.setAttribute("aria-label", "Copy command");

@@ -86,7 +86,7 @@ export function AssistantCitationCommentEditor({
       <textarea
         ref={textareaRef}
         readOnly={speech.freezesEditor}
-        aria-label="Comment on selected text"
+        aria-label={t({ message: "Comment on selected text" })}
         aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
         aria-invalid={commentTooLong || undefined}
         placeholder={t({ message: "Add an optional comment..." })}

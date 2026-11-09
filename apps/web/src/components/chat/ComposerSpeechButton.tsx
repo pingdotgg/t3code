@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans } from "@palamedes/react/macro";
 import type { VoiceInputState } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -98,9 +100,11 @@ function RecordingStatus(props: { level: number; recordingLimitSeconds?: number 
       <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-primary" />
       <span className="shrink-0 text-secondary-label text-xs tabular-nums">
         {formatElapsed(elapsedSeconds)}
-        {props.recordingLimitSeconds !== undefined
-          ? ` / ${formatElapsed(props.recordingLimitSeconds)}`
-          : ""}
+        {props.recordingLimitSeconds !== undefined ? (
+          <> / {formatElapsed(props.recordingLimitSeconds)}</>
+        ) : (
+          ""
+        )}
       </span>
     </>
   );
@@ -147,7 +151,10 @@ function ComposerSpeechCancelButton(props: {
   onCancel(): void;
 }) {
   if (props.state.phase === "idle") return null;
-  const label = props.state.phase === "error" ? "Dismiss voice input error" : "Cancel voice input";
+  const label =
+    props.state.phase === "error"
+      ? t({ message: "Dismiss voice input error" })
+      : t({ message: "Cancel voice input" });
 
   return (
     <Tooltip>
@@ -168,7 +175,7 @@ function ComposerSpeechCancelButton(props: {
       />
       <TooltipPopup side="top">
         {label}
-        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        {props.shortcutLabel ? <Trans> ({props.shortcutLabel})</Trans> : ""}
       </TooltipPopup>
     </Tooltip>
   );
@@ -210,7 +217,7 @@ export function ComposerSpeechButton(props: {
       />
       <TooltipPopup side="top">
         {label}
-        {props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
+        {props.shortcutLabel ? <Trans> ({props.shortcutLabel})</Trans> : ""}
       </TooltipPopup>
     </Tooltip>
   );
@@ -245,8 +252,8 @@ export function ComposerSpeechRecordingPill(props: {
   if (!presentation.showsConfirm) return null;
 
   const label = presentation.confirmEnabled
-    ? "Finish voice input"
-    : (presentation.status ?? "Voice input is busy");
+    ? t({ message: "Finish voice input" })
+    : (presentation.status ?? t({ message: "Voice input is busy" }));
 
   return (
     <VoiceInputPill>
@@ -270,7 +277,7 @@ export function ComposerSpeechRecordingPill(props: {
           onClick={props.onSkipPostProcessing}
           className="shrink-0"
         >
-          Skip
+          <Trans>Skip</Trans>
         </Button>
       ) : (
         <Tooltip>
@@ -291,9 +298,11 @@ export function ComposerSpeechRecordingPill(props: {
           />
           <TooltipPopup side="top">
             {label}
-            {presentation.confirmEnabled && props.finishShortcutLabel
-              ? ` (${props.finishShortcutLabel})`
-              : ""}
+            {presentation.confirmEnabled && props.finishShortcutLabel ? (
+              <Trans> ({props.finishShortcutLabel})</Trans>
+            ) : (
+              ""
+            )}
           </TooltipPopup>
         </Tooltip>
       )}

@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import type { EnvironmentSpeechModel } from "@t3tools/contracts";
 import { CheckIcon } from "lucide-react";
 
@@ -97,24 +98,26 @@ export function ModelBenchmarks({
             {languageLabel(code)}:{" "}
             {score ? (
               <>
-                <strong className="font-medium text-foreground">{score.grade}</strong> (
-                {score.errorPercent}% error)
+                <Trans>
+                  <strong className="font-medium text-foreground">{score.grade}</strong> (
+                  {score.errorPercent}% error)
+                </Trans>
               </>
             ) : (
-              "not benchmarked"
+              <Trans>not benchmarked</Trans>
             )}
           </span>
         );
       })}
       {data ? (
         <span>
-          Speed:{" "}
           {data.secondsPer30s === null ? (
-            "not benchmarked"
+            <Trans>Speed: not benchmarked</Trans>
           ) : (
-            <>
-              <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong> / 30 s
-            </>
+            <Trans>
+              Speed: <strong className="font-medium text-foreground">{data.secondsPer30s} s</strong>{" "}
+              / 30 s
+            </Trans>
           )}
         </span>
       ) : null}

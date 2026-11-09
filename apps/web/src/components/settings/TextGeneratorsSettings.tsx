@@ -1,3 +1,5 @@
+import { t } from "@palamedes/core/macro";
+import { Trans, Plural } from "@palamedes/react/macro";
 import {
   type EnvironmentId,
   isSecretReference,
@@ -89,6 +91,7 @@ export function TextGeneratorsSettings({
   >;
   const removingConfig = removing === null ? undefined : settings.textGenerators[removing];
 
+  const removingConfigText = removingConfig ? textGeneratorDisplayName(removingConfig) : "";
   return (
     <>
       <SettingsSection
@@ -97,15 +100,18 @@ export function TextGeneratorsSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setEditing("new")}>
               <PlusIcon className="size-3" aria-hidden />
-              Add generator
+              <Trans>Add generator</Trans>
             </Button>
           ) : null
         }
       >
         {generators.length === 0 ? (
           <SettingsRow
-            title="No text generators yet"
-            description="Add a model API to write thread titles, commit messages, and other short text without starting a coding agent."
+            title={t({ message: "No text generators yet" })}
+            description={t({
+              message:
+                "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
+            })}
           />
         ) : null}
         {generators.map(([id, config]) => {
@@ -126,7 +132,7 @@ export function TextGeneratorsSettings({
               description={
                 // Indented past the icon so it lines up with the name.
                 <span className="block truncate ps-7.5">
-                  {config.enabled ? "" : "Off · "}
+                  {config.enabled ? "" : <Trans>Off · </Trans>}
                   {config.baseUrl.replace(/^https?:\/\//, "")}
                 </span>
               }
@@ -146,15 +152,17 @@ export function TextGeneratorsSettings({
                         <MoreVertical />
                       </MenuTrigger>
                       <MenuPopup align="end">
-                        <MenuItem onClick={() => setEditing({ id, config })}>Edit</MenuItem>
+                        <MenuItem onClick={() => setEditing({ id, config })}>
+                          <Trans>Edit</Trans>
+                        </MenuItem>
                         <MenuItem
                           disabled={!config.enabled}
                           onClick={() => setViewing({ id, config })}
                         >
-                          Show models
+                          <Trans>Show models</Trans>
                         </MenuItem>
                         <MenuItem variant="destructive" onClick={() => setRemoving(id)}>
-                          Remove
+                          <Trans>Remove</Trans>
                         </MenuItem>
                       </MenuPopup>
                     </Menu>
@@ -203,15 +211,19 @@ export function TextGeneratorsSettings({
         <AlertDialogPopup>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Remove {removingConfig ? textGeneratorDisplayName(removingConfig) : ""}?
+              <Trans>Remove {removingConfigText}?</Trans>
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This deletes the API key stored on {environmentLabel}. Anything set to use this
-              generator falls back to the text generation model.
+              <Trans>
+                This deletes the API key stored on {environmentLabel}. Anything set to use this
+                generator falls back to the text generation model.
+              </Trans>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <AlertDialogClose render={<Button variant="outline" />}>
+              <Trans>Cancel</Trans>
+            </AlertDialogClose>
             <Button
               variant="destructive"
               onClick={() => {
@@ -219,7 +231,7 @@ export function TextGeneratorsSettings({
                 setRemoving(null);
               }}
             >
-              Remove
+              <Trans>Remove</Trans>
             </Button>
           </AlertDialogFooter>
         </AlertDialogPopup>
@@ -232,12 +244,24 @@ const STEPS = ["Connect", "Use it"] as const;
 
 /** Text tasks a generator can write, in the order the settings pages show them. */
 const TASKS = [
-  { key: "textGenerationModelSelection", label: "Thread titles and other generated text" },
+  {
+    key: "textGenerationModelSelection",
+    get label() {
+      return t({ message: "Thread titles and other generated text" });
+    },
+  },
   {
     key: "sourceControlWriterModelSelection",
-    label: "Commit messages, pull requests, and branch names",
+    get label() {
+      return t({ message: "Commit messages, pull requests, and branch names" });
+    },
   },
-  { key: "speechPostProcessingModelSelection", label: "Voice transcript cleanup" },
+  {
+    key: "speechPostProcessingModelSelection",
+    get label() {
+      return t({ message: "Voice transcript cleanup" });
+    },
+  },
 ] as const;
 
 /**
@@ -316,6 +340,7 @@ function TextGeneratorWizard({
     setStep(1);
   };
 
+  const textGeneratorDisplayNameText = existing ? textGeneratorDisplayName(existing) : "";
   return (
     <Dialog
       open
@@ -325,8 +350,15 @@ function TextGeneratorWizard({
     >
       <WizardPopup>
         <WizardHeader
-          title={existing ? `Edit ${textGeneratorDisplayName(existing)}` : "Add a text generator"}
-          description="Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment."
+          title={
+            existing
+              ? t`Edit ${textGeneratorDisplayNameText}`
+              : t({ message: "Add a text generator" })
+          }
+          description={t({
+            message:
+              "Writes thread titles, commit messages, and other short text without starting a coding agent. Your API key is stored on this environment.",
+          })}
         >
           <WizardSteps
             steps={STEPS}
@@ -347,10 +379,12 @@ function TextGeneratorWizard({
               <fieldset disabled={checking} className="contents">
                 {existing === null ? (
                   <div className="grid gap-1.5">
-                    <span className="text-sm font-medium">Service</span>
+                    <span className="text-sm font-medium">
+                      <Trans>Service</Trans>
+                    </span>
                     <div
                       role="radiogroup"
-                      aria-label="Service"
+                      aria-label={t({ message: "Service" })}
                       className="grid grid-cols-2 gap-2 sm:grid-cols-4"
                     >
                       {TEXT_GENERATOR_PRESETS.map((candidate) => {
@@ -381,7 +415,7 @@ function TextGeneratorWizard({
                                 badgeContent="none"
                               />
                             )}
-                            {candidate.id === "custom" ? "Custom" : candidate.label}
+                            {candidate.id === "custom" ? <Trans>Custom</Trans> : candidate.label}
                           </button>
                         );
                       })}
@@ -390,7 +424,9 @@ function TextGeneratorWizard({
                 ) : null}
                 {showBaseUrl ? (
                   <div className="grid gap-1.5">
-                    <Label htmlFor="text-generator-url">Base URL</Label>
+                    <Label htmlFor="text-generator-url">
+                      <Trans>Base URL</Trans>
+                    </Label>
                     <Input
                       id="text-generator-url"
                       placeholder="http://localhost:11434/v1"
@@ -406,11 +442,11 @@ function TextGeneratorWizard({
                 ) : null}
                 <div className="grid gap-1.5">
                   <Label htmlFor="text-generator-key">
-                    {keyRequired ? "API key" : "API key (optional)"}
+                    {keyRequired ? <Trans>API key</Trans> : <Trans>API key (optional)</Trans>}
                   </Label>
                   <SecretSourceInput
                     id="text-generator-key"
-                    aria-label="API key"
+                    aria-label={t({ message: "API key" })}
                     value={keyDraft}
                     configured={storedKey !== ""}
                     sources={secretSources}
@@ -424,14 +460,16 @@ function TextGeneratorWizard({
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="text-generator-label">Name (optional)</Label>
+                  <Label htmlFor="text-generator-label">
+                    <Trans>Name (optional)</Trans>
+                  </Label>
                   <Input
                     id="text-generator-label"
                     placeholder={
                       existing !== null
                         ? textGeneratorDisplayName(existing)
                         : preset.id === "custom"
-                          ? "e.g. My local model"
+                          ? t({ message: "e.g. My local model" })
                           : preset.label
                     }
                     value={label}
@@ -448,8 +486,11 @@ function TextGeneratorWizard({
           ) : (
             <div className="grid gap-4">
               <p className="text-sm text-muted-foreground">
-                {name} is connected and lists {modelCount} {modelCount === 1 ? "model" : "models"}.
-                Switch any of these to it, or keep what they use now.
+                <Plural
+                  value={modelCount}
+                  one={`${name} is connected and lists # model. Switch any of these to it, or keep what they use now.`}
+                  other={`${name} is connected and lists # models. Switch any of these to it, or keep what they use now.`}
+                />
               </p>
               {/* One grid for all rows, so pickers and Test buttons line up in columns. */}
               <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-2 gap-y-4">
@@ -470,7 +511,7 @@ function TextGeneratorWizard({
           leading={
             step > 0 ? (
               <Button variant="ghost" onClick={() => setStep(0)}>
-                Back
+                <Trans>Back</Trans>
               </Button>
             ) : null
           }
@@ -478,17 +519,23 @@ function TextGeneratorWizard({
           {step === 0 ? (
             <>
               <Button variant="outline" onClick={onClose}>
-                Cancel
+                <Trans>Cancel</Trans>
               </Button>
               <Button onClick={() => void connect()} disabled={!canConnect || checking}>
                 {checking ? <Spinner /> : null}
-                {checking ? "Connecting" : existing ? "Save and continue" : "Connect"}
+                {checking ? (
+                  <Trans>Connecting</Trans>
+                ) : existing ? (
+                  <Trans>Save and continue</Trans>
+                ) : (
+                  <Trans>Connect</Trans>
+                )}
               </Button>
             </>
           ) : (
             // Connect's button unmounts here; without this, focus lands on the step list.
             <Button autoFocus onClick={onClose}>
-              Done
+              <Trans>Done</Trans>
             </Button>
           )}
         </WizardFooter>
@@ -550,10 +597,12 @@ function TextGenerationTaskPicker({
           </span>
         ) : shown ? (
           <span role="status" className="text-xs text-muted-foreground">
-            {selection.model} answered. It works.
+            <Trans>{selection.model} answered. It works.</Trans>
           </span>
         ) : own === null ? (
-          <span className="text-xs text-muted-foreground">Follows the text generation model</span>
+          <span className="text-xs text-muted-foreground">
+            <Trans>Follows the text generation model</Trans>
+          </span>
         ) : null}
       </div>
       <div className="justify-self-end">
@@ -586,7 +635,9 @@ function TextGenerationTaskPicker({
           >
             {/* Keeps the label's width while testing, so the row never reflows. */}
             <span className="relative">
-              <span className={testing ? "invisible" : undefined}>Test</span>
+              <span className={testing ? "invisible" : undefined}>
+                <Trans>Test</Trans>
+              </span>
               {testing ? (
                 <span className="absolute inset-0 flex items-center justify-center">
                   <Spinner />
@@ -623,8 +674,8 @@ function TextGeneratorModelList({
       {models.length > 8 ? (
         <Input
           type="search"
-          placeholder="Search models"
-          aria-label="Search models"
+          placeholder={t({ message: "Search models" })}
+          aria-label={t({ message: "Search models" })}
           autoFocus
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -632,9 +683,11 @@ function TextGeneratorModelList({
       ) : null}
       <div className="max-h-80 overflow-y-auto rounded-lg border divide-y divide-border/60">
         {shown.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-muted-foreground">No models match.</p>
+          <p className="px-3 py-2 text-sm text-muted-foreground">
+            <Trans>No models match.</Trans>
+          </p>
         ) : (
-          <ul role={onSelect ? "listbox" : "list"} aria-label="Models">
+          <ul role={onSelect ? "listbox" : "list"} aria-label={t({ message: "Models" })}>
             {shown.map((model) => {
               const isSelected = model.id === selected;
               const label = (
@@ -697,7 +750,7 @@ function TextGeneratorModelsDialog({
     if ("error" in outcome) {
       toastManager.add({
         type: "error",
-        title: `Couldn't load ${name} models`,
+        title: t`Couldn't load ${name} models`,
         description: outcome.error,
       });
     }
@@ -713,13 +766,23 @@ function TextGeneratorModelsDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{name} models</DialogTitle>
+          <DialogTitle>
+            <Trans>{name} models</Trans>
+          </DialogTitle>
           <DialogDescription>
-            {models === null
-              ? error
-                ? "The model list couldn't load."
-                : "Loading the model list."
-              : `${models.length} ${models.length === 1 ? "model" : "models"} available. Pick one in a text generation model picker.`}
+            {models === null ? (
+              error ? (
+                <Trans>The model list couldn't load.</Trans>
+              ) : (
+                <Trans>Loading the model list.</Trans>
+              )
+            ) : (
+              <Plural
+                value={models.length}
+                one="# model available. Pick one in a text generation model picker."
+                other="# models available. Pick one in a text generation model picker."
+              />
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -741,9 +804,11 @@ function TextGeneratorModelsDialog({
             onClick={() => void refresh()}
           >
             <RefreshIcon refreshing={refreshing} />
-            Refresh
+            <Trans>Refresh</Trans>
           </Button>
-          <Button onClick={onClose}>Done</Button>
+          <Button onClick={onClose}>
+            <Trans>Done</Trans>
+          </Button>
         </DialogFooter>
       </DialogPopup>
     </Dialog>

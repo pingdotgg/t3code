@@ -3494,18 +3494,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           : t({ message: "Send a message to decline and redirect the agent" })
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
-                            ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
+                            ? t({ message: "Choose an option above" })
+                            : t({
+                                message:
+                                  "Type your own answer, or leave this blank to use the selected option",
+                              })
                           : projectSelectionRequired
-                            ? "Choose a project above to start a thread"
+                            ? t({ message: "Choose a project above to start a thread" })
                             : showProviderUnavailable
-                              ? "Enable a provider in Settings to send a message"
+                              ? t({ message: "Enable a provider in Settings to send a message" })
                               : (offeredPromptSuggestion ?? DEFAULT_COMPOSER_PLACEHOLDER)
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
                         <span className="ml-2 inline-flex align-[1px]">
-                          <Kbd variant="outline">⇥ Tab</Kbd>
+                          <Kbd variant="outline">
+                            <Trans>⇥ Tab</Trans>
+                          </Kbd>
                         </span>
                       ) : undefined
                     }
@@ -3552,7 +3557,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
             {speechInput.preview ? (
               <div
-                aria-label="Live transcription"
+                aria-label={t({ message: "Live transcription" })}
                 className="mx-3 mb-3 max-h-32 overflow-y-auto rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap sm:mx-4"
               >
                 <span>{speechInput.preview.committed}</span>

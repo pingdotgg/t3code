@@ -932,7 +932,7 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? knownTitle ?? "this thread";
+      const title = resolved?.thread.title ?? knownTitle ?? t({ message: "this thread" });
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
           [

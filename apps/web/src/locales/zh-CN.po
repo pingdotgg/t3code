@@ -27,10 +27,6 @@ msgstr " · 成本占比 {formatPercentText}"
 msgid " · {inlineStatusDetail}"
 msgstr " · {inlineStatusDetail}"
 
-#: apps/web/src/components/usage/UsagePage.tsx#CursorEnableRow
-msgid " · {label}"
-msgstr " · {label}"
-
 #: apps/web/src/components/files/LargeTextViewer.tsx
 msgid " · {metaCountText} columns"
 msgstr " · {metaCountText} 列"
@@ -56,6 +52,10 @@ msgstr " · {shortcutLabel}"
 msgid " · {stepLabelText}"
 msgstr " · {stepLabelText}"
 
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+msgid " · Created"
+msgstr " · 创建于"
+
 #: apps/web/src/components/files/OpenXmlOfficeViewer.tsx
 msgid " · Fit to width"
 msgstr " · 适应宽度"
@@ -80,7 +80,7 @@ msgstr " · 在托管平台打开评论"
 msgid " · Open profile"
 msgstr " · 打开配置文件"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid " · Required"
 msgstr " · 必填"
 
@@ -132,10 +132,16 @@ msgstr "将从此账户移除“{label}”。"
 msgid "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 msgstr "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "({finishShortcutLabel})"
+msgstr "({finishShortcutLabel})"
+
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "({length} of {length_1})"
 msgstr "（{length} / {length_1}）"
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechButton
 #: apps/web/src/components/sidebar/SidebarChrome.tsx#HistoryNavigationButton
 msgid "({shortcutLabel})"
 msgstr "({shortcutLabel})"
@@ -258,6 +264,10 @@ msgid ""
 msgstr ""
 "{closed, plural, one {已关闭 {closed} 个拉取请求} other {已关闭 "
 "{closed} 个拉取请求}}"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{cloudProviderLabel} <0>via {transcriptionHostLabel}</0>"
+msgstr "<0>通过 {transcriptionHostLabel}</0> 使用 {cloudProviderLabel}"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 msgid ""
@@ -529,10 +539,6 @@ msgstr "{guestName}（访客）"
 msgid "{guestName} is a guest"
 msgstr "{guestName} 是访客"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-msgid "{hasMultipleEnvironmentsText}Archived<0/>"
-msgstr "{hasMultipleEnvironmentsText}已归档<0/>"
-
 #: apps/web/src/components/pullRequest/PullRequestStackLayerContent.tsx#PullRequestStackLayerContent
 msgid "{headBranch} ·"
 msgstr "{headBranch} ·"
@@ -569,10 +575,6 @@ msgid ""
 msgstr ""
 "{hiddenTestFileCount, plural, one {已隐藏 {hiddenTestFileCount} "
 "个测试文件} other {已隐藏 {hiddenTestFileCount} 个测试文件}}"
-
-#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
-msgid "{hostGatewayUrlReplaceText} · {simlockLeaseLimitsText}"
-msgstr "{hostGatewayUrlReplaceText} · {simlockLeaseLimitsText}"
 
 #: apps/web/src/components/pullRequest/PullRequestStackMenu.tsx#run
 msgid "{hostLabel} merged the stack or added it to its merge queue."
@@ -626,6 +628,11 @@ msgstr "已添加 {label}"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#connectSavedBackendSshTarget
 msgid "{label} can now be reached over SSH {alias}."
 msgstr "现在可通过 SSH 别名 {alias} 访问 {label}。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"{label} can’t transcribe audio locally. Choose a different destination."
+msgstr "{label} 无法在本地转录音频。请选择其他目标。"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 msgid "{label} copied"
@@ -776,6 +783,16 @@ msgstr ""
 msgid "{length, plural, one {{themeLabel} updated} other {# themes updated}}"
 msgstr ""
 "{length, plural, one {已更新 {themeLabel}} other {已更新 # 个主题}}"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid ""
+"{length, plural, one {# model available. Pick one in a text generation model "
+"picker.} other {# models available. Pick one in a text generation model "
+"picker.}}"
+msgstr ""
+"{length, plural, one {有 # "
+"个可用模型。请在文本生成模型选择器中选择。} other {有 # "
+"个可用模型。请在文本生成模型选择器中选择。}}"
 
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
 msgid "{length, plural, one {# model} other {# models}}"
@@ -943,6 +960,10 @@ msgstr "下载大小 {MathCeilText} MB。"
 msgid "{MathRoundText}%"
 msgstr "{MathRoundText}%"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "{MathRoundText}% downloaded"
+msgstr "已下载 {MathRoundText}%"
+
 #: apps/web/src/components/chat/ZoomableImage.tsx#ZoomableImage
 msgid "{MathRoundText}% zoom"
 msgstr "缩放 {MathRoundText}%"
@@ -962,6 +983,30 @@ msgstr "{messageText}失败"
 #: apps/web/src/components/settings/ChatGptWelcomeCoordinator.tsx#ChatGptWelcomeCoordinator
 msgid "{messageText} on {messageText2}"
 msgstr "{messageText}，位于 {messageText2}"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
+msgid "{model} answered. It works."
+msgstr "{model} 已回复，运行正常。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{model} detects the language automatically."
+msgstr "{model} 会自动检测语言。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{model} uses one fixed language."
+msgstr "{model} 使用一种固定语言。"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid ""
+"{modelCount, plural, one {{name} is connected and lists # model. Switch any of"
+" these to it, or keep what they use now.} other {{name} is connected and lists"
+" # models. Switch any of these to it, or keep what they use now.}}"
+msgstr ""
+"{modelCount, plural, one {{name} 已连接，提供 # "
+"个模型。可将下列任一任务切换到它，也可保留当前选择。"
+"} other {{name} 已连接，提供 # "
+"个模型。可将下列任一任务切换到它，也可保留当前选择。"
+"}}"
 
 #: apps/web/src/components/chat/ProviderSubagentBar.tsx#ProviderSubagentBar
 msgid "{modelDescription} subagent: {announcement}"
@@ -1004,7 +1049,6 @@ msgstr "{name}（{itemCountToLocaleStringText} 行）"
 msgid "{name} ({tableCountToLocaleStringText} rows)"
 msgstr "{name}（{tableCountToLocaleStringText} 行）"
 
-#: apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx#PullRequestLinkPreview
 #: apps/web/src/components/pullRequest/PullRequestListRow.tsx#PullRequestRowAuthor
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#PullRequestActorLabel
 msgid "{name} (@{login})"
@@ -1016,6 +1060,10 @@ msgid ""
 msgstr ""
 "{name} 正在运行，暂时无法读取其 "
 "Cookie。请先退出，然后继续。"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "{name} models"
+msgstr "{name} 模型"
 
 #: apps/web/src/components/composerContextPresentation.tsx#FileContextChip
 msgid "{name} was not saved with this draft. Attach it again to send it."
@@ -1133,6 +1181,14 @@ msgstr ""
 msgid "{pendingLabel}."
 msgstr "{pendingLabel}。"
 
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
+msgid "{platformName} list on {label} may be incomplete."
+msgstr "{label} 上的 {platformName} 列表可能不完整。"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "{progress}% downloaded"
+msgstr "已下载 {progress}%"
+
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "{projectSelector} to start"
 msgstr "选择{projectSelector}以开始"
@@ -1192,6 +1248,10 @@ msgstr "已达到 {providerName} 的速率限制"
 msgid "{providerName} update command copied"
 msgstr "已复制 {providerName} 更新命令"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{providerName} via {label}"
+msgstr "通过 {label} 使用 {providerName}"
+
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "{publisher} · {DOWNLOADFORMATFormatText} downloads"
 msgstr "{publisher} · {DOWNLOADFORMATFormatText} 次下载"
@@ -1215,10 +1275,6 @@ msgstr "剩余 {remaining}%{timeLeftNullText}"
 #: apps/web/src/components/usage/UsageLimits.tsx#LimitWindows
 msgid "{remainingPercentText}% left"
 msgstr "剩余 {remainingPercentText}%"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "{repository} · {title}"
-msgstr "{repository} · {title}"
 
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistrySearchStep
 msgid ""
@@ -1321,10 +1377,6 @@ msgstr ""
 "{startedCount, plural, one {已在后台启动 {startedCount} 个会话} other"
 " {已在后台启动 {startedCount} 个会话}}"
 
-#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
-msgid "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
-msgstr "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
-
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseCount
 msgid "{StringText} notices"
 msgstr "{StringText} 项声明"
@@ -1386,10 +1438,6 @@ msgstr "此时应剩余 {timeLeft}%"
 msgid "{title} · {environmentLabel}"
 msgstr "{title} · {environmentLabel}"
 
-#: apps/web/src/components/chat/ThreadActivityBanners.tsx#goalNowItem
-msgid "{title} · {usage}"
-msgstr "{title} · {usage}"
-
 #: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#LifecycleEvent
 msgid "{title} closed"
 msgstr "{title}已关闭"
@@ -1439,10 +1487,6 @@ msgstr ""
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#SidebarUpdateControl
 msgid "{tooltip}: {detail}"
 msgstr "{tooltip}：{detail}"
-
-#: apps/web/src/components/ThreadStatusIndicators.tsx#prStatusIndicator
-msgid "{tooltipLead}: {title}"
-msgstr "{tooltipLead}：{title}"
 
 #: apps/web/src/components/LegacyThreadMigrationToast.ts#startLegacyThreadMigrationToast
 msgid ""
@@ -1518,10 +1562,6 @@ msgstr ""
 "个工作流等待批准} other {{workflowApprovalRequired} "
 "个工作流等待批准}}"
 
-#: apps/web/src/components/chat/useComposerMenuItems.ts#providerSlashCommandItems
-msgid "/{name}"
-msgstr "/{name}"
-
 #: apps/web/src/components/chat/ComposerCommandMenu.tsx#ComposerCommandMenuItem
 msgid "/skill:"
 msgstr "/skill:"
@@ -1529,10 +1569,6 @@ msgstr "/skill:"
 #: apps/web/src/components/chat/useComposerMenuItems.ts#skillItems
 msgid "/skill:{name}"
 msgstr "/skill:{name}"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "#{number}"
-msgstr "#{number}"
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "#{number} · {headBranch} to {baseBranch}"
@@ -1587,6 +1623,10 @@ msgstr "<0/>等待批准 · 代码将于 {expiryTimeText} 过期"
 msgid "<0>{fileName}</0> from {host} was downloaded instead."
 msgstr "已改为下载来自 {host} 的 <0>{fileName}</0>。"
 
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "<0>{grade}</0> ({errorPercent}% error)"
+msgstr "<0>{grade}</0>（错误率 {errorPercent}%）"
+
 #: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#GuideExcerpt
 msgid "<0>{path}</0> lines {start}-{end} are not in the loaded diff."
 msgstr "<0>{path}</0> 的第 {start}-{end} 行不在已加载的差异中。"
@@ -1598,6 +1638,10 @@ msgstr "<0><1/></0>数据采集健康状况"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "<0><1/></0>Host state"
 msgstr "<0><1/></0>主机状态"
+
+#: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
+msgid "<0>What should we build in</0> <1>{children}</1><2>?</2>"
+msgstr "<0>我们应该在</0> <1>{children}</1><2> 中构建什么？</2>"
 
 #: apps/web/src/components/files/LargeTextViewer.tsx
 #: apps/web/src/components/files/NotebookPreview.tsx
@@ -1663,6 +1707,10 @@ msgstr "为编辑器提供的社区配色主题。"
 #: apps/web/src/components/pullRequest/guide/GuideStop.tsx
 msgid "A contract to check"
 msgstr "待检查的接口约定"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "A good default pick for the languages it covers."
+msgstr "对于其支持的语言，这是一个不错的默认选择。"
 
 #: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
 msgid ""
@@ -1875,6 +1923,7 @@ msgid "active host power interval"
 msgstr "主机活动时的电源检查间隔"
 
 #: apps/web/src/components/chat/TimelineWorkGroupRows.tsx#WorkGroupSection
+#: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Activity"
 msgstr "活动"
 
@@ -1886,6 +1935,7 @@ msgstr "图片实际大小"
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#CloudEnvironmentConnectRows
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
 msgid "Add"
 msgstr "添加"
 
@@ -1922,6 +1972,15 @@ msgstr ""
 "为拉取请求添加“指南”标签页，由智能体解释更改并指出"
 "需要审查的决策。"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid ""
+"Add a model API to write thread titles, commit messages, and other short text "
+"without starting a coding agent."
+msgstr ""
+"添加模型 "
+"API，无需启动编程智能体即可编写会话标题、提交消息和其"
+"他短文本。"
+
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "Add a project"
 msgstr "添加项目"
@@ -1957,6 +2016,10 @@ msgstr "添加回应"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#AddEnvironmentDialog
 msgid "Add a route to {label}"
 msgstr "为 {label} 添加连接路由"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Add a text generator"
+msgstr "添加文本生成器"
 
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportDialog
 msgid "Add a theme"
@@ -2033,13 +2096,13 @@ msgstr "添加环境"
 msgid "Add existing project"
 msgstr "添加现有项目"
 
-#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
-msgid "Add feedback to refine the plan, or leave this blank to implement it"
-msgstr "添加反馈以完善计划，或留空以开始实现"
-
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookFiltersField
 msgid "Add filter"
 msgstr "添加筛选条件"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Add generator"
+msgstr "添加生成器"
 
 #: apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx#AddUsageLimitSourceDialog
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
@@ -2166,6 +2229,9 @@ msgstr "添加到另一台机器"
 
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#terminalSelectionMenuItems
 #: apps/web/src/components/files/FileBrowserPanel.tsx#showEntryContextMenu
+#: apps/web/src/components/pullRequest/PullRequestReviewAnnotation.tsx#ReviewThreadCard
+#: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#AddToChatButton
+#: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#AddToChatButton
 msgid "Add to chat"
 msgstr "添加到聊天"
 
@@ -2174,13 +2240,26 @@ msgstr "添加到聊天"
 msgid "Add to favorites"
 msgstr "添加到收藏"
 
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid "Add to PATH"
+msgstr "添加到 PATH"
+
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 msgid "Add variable"
 msgstr "添加变量"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Add words or phrases, separated by commas or line breaks"
+msgstr "添加词语或短语，用逗号或换行分隔"
+
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
 msgid "Added"
 msgstr "已添加"
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+msgid "Added to {file}. Open a new terminal to use <0>t3</0>."
+msgstr "已添加到 {file}。请打开新终端以使用 <0>t3</0>。"
 
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 msgid "Added to {targetName} for {destinationEnvironmentName}.{skipped0Text}"
@@ -2189,6 +2268,7 @@ msgstr ""
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#startAsk
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#startHandoff
+#: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#addCommentToChat
 msgid "Added to the composer"
 msgstr "已添加到输入框"
 
@@ -2234,6 +2314,26 @@ msgstr "调整界面中颜色和边框的对比度。"
 msgid "Advanced"
 msgstr "高级"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 1 hour"
+msgstr "1 小时后"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 10 minutes"
+msgstr "10 分钟后"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 15 minutes"
+msgstr "15 分钟后"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 2 minutes"
+msgstr "2 分钟后"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 5 minutes"
+msgstr "5 分钟后"
+
 #: apps/web/src/components/chat/ThreadLineageWorkflowRow.tsx#ThreadLineageWorkflowRow
 msgid "agent"
 msgstr "智能体"
@@ -2278,7 +2378,7 @@ msgstr "智能体设备访问权限"
 msgid "Agent not responding to Stop"
 msgstr "智能体未响应“停止”"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Agent providers"
 msgstr "智能体提供商"
 
@@ -2287,6 +2387,7 @@ msgid "Agent session will restart"
 msgstr "智能体会话将重启"
 
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockTokenField
 msgid "Agent token"
 msgstr "智能体令牌"
 
@@ -2340,6 +2441,10 @@ msgstr "超出进度：消耗速度快于用量窗口流逝速度"
 msgid "Alert text"
 msgstr "提醒文本"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Alias"
+msgstr "别名"
+
 #: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 #: apps/web/src/components/pullRequest/PullRequestsColumn.tsx#PullRequestsColumn
@@ -2374,6 +2479,14 @@ msgstr "所有提交"
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "All environments"
 msgstr "所有环境"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "All languages"
+msgstr "所有语言"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "All models"
+msgstr "所有模型"
 
 #: apps/web/src/components/Sidebar.tsx#useSidebarLookups
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestFiltersMenu
@@ -2537,10 +2650,6 @@ msgstr ""
 msgid "An error occurred while copying."
 msgstr "复制时发生错误。"
 
-#: apps/web/src/components/chat/useProposedPlanSend.ts#useImplementPlanInNewThread
-msgid "An error occurred while creating the new thread."
-msgstr "创建新会话时发生错误。"
-
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#handleSaveToWorkspace
 msgid "An error occurred while saving."
 msgstr "保存时发生错误。"
@@ -2592,8 +2701,8 @@ msgstr "保存时发生错误。"
 #: apps/web/src/components/promptLinks/copyPromptLink.ts#copyPromptLink
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#copyPullRequestFromShortcut
 #: apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts#useThreadLinkedPullRequest
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#reportFailure
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
 #: apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx#ProjectFaviconPickerDialog
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#CheckoutGroupingSelect
 #: apps/web/src/components/settings/useProjectScriptSettings.ts#reportScriptFailure
@@ -2664,6 +2773,10 @@ msgstr "标注已附加到草稿"
 msgid "Another address…"
 msgstr "其他地址…"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Another recording active"
+msgstr "另一个录音正在进行"
+
 #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
 msgid ""
 "Another t3 at {shadowedBy} runs first in a new terminal. Remove it to use T3 "
@@ -2718,9 +2831,27 @@ msgstr "任何人"
 msgid "Anyone on the web"
 msgstr "互联网上的任何人"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Anyone with dictation access to {label} can bill this key."
+msgstr ""
+"任何拥有 {label} 听写权限的人都可以使用此密钥产生费用。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Anyone with dictation access to {label} can use this API key."
+msgstr "任何拥有 {label} 听写权限的人都可以使用此 API 密钥。"
+
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 msgid "API estimate excludes {formatPercentText} unpriced records."
 msgstr "API 估算不包含 {formatPercentText} 的未定价记录。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "API key"
+msgstr "API 密钥"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "API key (optional)"
+msgstr "API 密钥（可选）"
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 msgid "API keys, base URLs, and other per-instance CLI settings."
@@ -2885,11 +3016,15 @@ msgstr "归档条目"
 msgid "Archive thread"
 msgstr "归档会话"
 
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+msgid "Archived"
+msgstr "已归档"
+
 #: apps/web/src/components/CommandPalette.logic.ts#buildLinkedThreadActionItems
 msgid "Archived thread"
 msgstr "已归档会话"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleContextMenu
 msgid "Archived thread action failed"
 msgstr "已归档会话的操作失败"
 
@@ -2938,9 +3073,17 @@ msgstr "询问此站点"
 msgid "Ask agent"
 msgstr "询问智能体"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Ask an administrator on {label} to add an API key."
+msgstr "请联系 {label} 上的管理员添加 API 密钥。"
+
 #: apps/web/src/components/pullRequest/guide/GuideStop.tsx#GuideStop
 msgid "Ask an agent:"
 msgstr "询问智能体："
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Ask an environment admin to download"
+msgstr "请联系环境管理员下载"
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
 msgid "Ask before commands and file changes."
@@ -3076,8 +3219,14 @@ msgid "authors"
 msgstr "作者"
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
 msgid "Auto"
 msgstr "自动"
+
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+msgid "Auto ({effectiveLabel})"
+msgstr "自动（{effectiveLabel}）"
 
 #: apps/web/src/components/BranchToolbar.tsx#RunContextSelector
 #: apps/web/src/components/BranchToolbarEnvironmentSelector.tsx#BranchToolbarEnvironmentSelector
@@ -3088,6 +3237,10 @@ msgstr "自动均衡"
 #: apps/web/src/components/chat/useDraftEnvironmentRouting.ts#useDraftEnvironmentRouting
 msgid "Auto balance unavailable"
 msgstr "自动均衡不可用"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Auto uses the environment’s GPU when it has one."
+msgstr "自动模式会在环境有 GPU 时使用它。"
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
 msgid "Auto-accept edits"
@@ -3134,6 +3287,10 @@ msgstr "自动显示悬浮预览"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Auto-show floating preview"
 msgstr "自动显示悬浮预览"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Auto: press to toggle, hold to record"
+msgstr "自动：按下切换，按住录音"
 
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
@@ -3201,6 +3358,7 @@ msgid "Automations"
 msgstr "自动化"
 
 #: apps/web/src/components/device/DeviceHostAvailability.tsx#DeviceHostAvailability
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#PlatformIcon
 msgid "available"
 msgstr "可用"
 
@@ -3208,6 +3366,10 @@ msgstr "可用"
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
 msgid "Available"
 msgstr "可用"
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#PlatformIcon
+msgid "available on some"
+msgstr "部分可用"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#HealthSource
 msgid "Available when this page runs inside the desktop app."
@@ -3254,6 +3416,7 @@ msgstr "等待审查"
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportBody
 #: apps/web/src/components/sidebar/SidebarChrome.tsx#SidebarUtilityMenu
 msgid "Back"
@@ -3347,6 +3510,10 @@ msgstr "基准"
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "Base branch"
 msgstr "基准分支"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Base URL"
+msgstr "基础 URL"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "base64"
@@ -3520,6 +3687,10 @@ msgstr "已恢复"
 msgid "Browse a folder on disk"
 msgstr "浏览磁盘上的文件夹"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Browse models by language"
+msgstr "按语言浏览模型"
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelEmptyState
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTabs
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -3599,11 +3770,14 @@ msgstr ""
 msgid "Browsing"
 msgstr "正在浏览"
 
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
 #: apps/web/src/components/projectScriptEditor.tsx
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 msgid "Build"
 msgstr "构建"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Built-in"
+msgstr "内置"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "bun test"
@@ -3645,6 +3819,14 @@ msgstr "日历"
 msgid "Camera"
 msgstr "摄像头"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid ""
+"Can write English text from speech in another language. Turn on Translate to "
+"English to use it."
+msgstr ""
+"可将其他语言的语音转写为英文。启用“翻译为英语”即可"
+"使用。"
+
 #: apps/web/src/components/settings/SourceControlAccountSettings.tsx#SourceControlAccountSettings
 msgid "can't be used: {entryErrorText}"
 msgstr "无法使用：{entryErrorText}"
@@ -3685,7 +3867,7 @@ msgstr ""
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx#RelayClientInstallDialog
 #: apps/web/src/components/desktop/SshPasswordPromptDialog.tsx#ActiveSshPasswordPrompt
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceSetup
-#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#DiffCommentAnnotation
+#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#renderDraft
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorDialog
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 #: apps/web/src/components/pullRequest/LinkPullRequestDialog.tsx#LinkPullRequestDialog
@@ -3701,10 +3883,12 @@ msgstr ""
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#FullDiskAccessStep
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ConfigureStep
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexSetupSection
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 #: apps/web/src/components/settings/CustomModelEditor.tsx#CustomModelEditor
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
 #: apps/web/src/components/settings/DeviceHostEditor.tsx#DeviceHostEditorForm
 #: apps/web/src/components/settings/EasDeviceHostEditor.tsx#EasDeviceHostEditor
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
@@ -3720,6 +3904,8 @@ msgstr ""
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 #: apps/web/src/components/settings/SourceControlAppSignInSettings.tsx#SourceControlAppSignInSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx#ThemeEditorPanel
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportBody
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
@@ -3747,6 +3933,10 @@ msgstr "取消标注（Esc）"
 msgid "Cancel auto-resume"
 msgstr "取消自动恢复"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Cancel download"
+msgstr "取消下载"
+
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
 msgid "Cancel editing queued message"
 msgstr "取消编辑排队消息"
@@ -3759,6 +3949,10 @@ msgstr "取消检查应用颜色"
 msgid "Cancel installation"
 msgstr "取消安装"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Cancel microphone test"
+msgstr "取消麦克风测试"
+
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingCancelIcon
 msgid "Cancel new keybinding"
 msgstr "取消新建快捷键"
@@ -3766,6 +3960,10 @@ msgstr "取消新建快捷键"
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Cancel sign-in"
 msgstr "取消登录"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+msgid "Cancel voice input"
+msgstr "取消语音输入"
 
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 msgid "Cancelled"
@@ -3976,7 +4174,6 @@ msgstr "字符"
 msgid "Chart"
 msgstr "图表"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
 #: apps/web/src/components/settings/settingsSearch.ts
 #: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
 msgid "Chat"
@@ -4193,6 +4390,10 @@ msgstr "正在检查文件访问权限…"
 msgid "Checking file access…"
 msgstr "正在检查文件访问权限…"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Checking for an API key…"
+msgstr "正在检查 API 密钥…"
+
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#SidebarUpdateControl
 msgid "Checking for updates…"
 msgstr "正在检查更新…"
@@ -4355,6 +4556,10 @@ msgstr "选择其他文件…"
 msgid "Choose a machine to continue"
 msgstr "选择机器以继续"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Choose a model or language"
+msgstr "选择模型或语言"
+
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "Choose a project"
 msgstr "选择项目"
@@ -4399,6 +4604,13 @@ msgstr "选择智能体"
 msgid "Choose an agent to start coding. You can add more later."
 msgstr "选择智能体以开始编程。你可以稍后添加更多。"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Choose an environment above to see the languages its transcription model "
+"supports."
+msgstr ""
+"请先在上方选择环境，以查看其转录模型支持的语言。"
+
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Choose an icon, emoji, or monogram."
 msgstr "选择图标、表情符号或字母标记。"
@@ -4406,6 +4618,10 @@ msgstr "选择图标、表情符号或字母标记。"
 #: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
 msgid "Choose an option above"
 msgstr "选择上方的选项"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Choose another model or language"
+msgstr "选择其他模型或语言"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#DiffColorsSettingsRow
 msgid "Choose colors for additions and deletions, including change counts."
@@ -4532,6 +4748,10 @@ msgstr "按下所需按键，如出现权限提示，请批准。"
 msgid "Choose your shortcut"
 msgstr "选择快捷键"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Chosen environment (unavailable)"
+msgstr "所选环境（不可用）"
+
 #: apps/web/src/components/chat/AssistantSelectionToolbar.tsx#AssistantSelectionToolbar
 msgid "Cite"
 msgstr "引用"
@@ -4544,8 +4764,14 @@ msgstr "在输入框中引用所选内容"
 msgid "Claude Code"
 msgstr "Claude Code"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Clean up transcripts"
+msgstr "整理转录文本"
+
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupSection
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Cleanup"
 msgstr "清理"
 
@@ -4556,6 +4782,19 @@ msgstr "{label} 上的清理失败"
 #: apps/web/src/components/settings/StorageSettings.tsx#summaries
 msgid "Cleanup hasn't run yet."
 msgstr "尚未执行清理。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Cleanup instructions"
+msgstr "整理说明"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Cleanup model"
+msgstr "整理模型"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#setModel
+msgid "Cleanup model not saved"
+msgstr "整理模型未保存"
 
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#goalNowItem
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
@@ -4900,6 +5139,10 @@ msgstr "关闭悬浮预览"
 msgid "Close immediately, or drag across rows to close several"
 msgstr "立即关闭，或跨行拖动以关闭多项"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Close model test"
+msgstr "关闭模型测试"
+
 #: apps/web/src/components/RightPanelTabs.tsx#handleTabContextMenu
 msgid "Close others"
 msgstr "关闭其他"
@@ -4961,6 +5204,10 @@ msgstr "已关闭"
 msgid "Closed {closed} of {length} pull requests"
 msgstr "已关闭 {closed} / {length} 个拉取请求"
 
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx#ReferenceStateIcon
+msgid "Closed issue"
+msgstr "已关闭的议题"
+
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#PullRequestCommentForm
 msgid "Closing..."
 msgstr "正在关闭…"
@@ -4972,6 +5219,10 @@ msgstr "云端"
 #: apps/web/src/cloud/managedAuth.tsx
 msgid "cloud account cleanup"
 msgstr "清理云端账户"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Cloud via {label}"
+msgstr "通过 {label} 使用云端"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Cloud VM"
@@ -5196,7 +5447,6 @@ msgstr "评论不可用"
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/GitActionsControl.logic.ts#buildMenuItems
 #: apps/web/src/components/GitActionsControl.logic.ts#resolveQuickAction
-#: apps/web/src/components/GitActionsControl.tsx#GitQuickActionIcon
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit"
 msgstr "提交"
@@ -5220,6 +5470,10 @@ msgstr "提交并推送到默认引用？"
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit message (optional)"
 msgstr "提交说明（可选）"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Commit messages, pull requests, and branch names"
+msgstr "提交消息、拉取请求和分支名称"
 
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit on new branch"
@@ -5248,10 +5502,6 @@ msgstr "紧凑"
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Compact and send"
 msgstr "压缩并发送"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Compact context"
-msgstr "压缩上下文"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#ScopedCompactIdleThreadsRow
 msgid "compact idle threads"
@@ -5337,11 +5587,11 @@ msgstr "配置后台活动"
 msgid "Configure manually"
 msgstr "手动配置"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Configure non-secret routing. Headers are write-only."
 msgstr "配置非敏感路由信息。请求头只能写入，无法读取。"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Configured"
 msgstr "已配置"
 
@@ -5419,12 +5669,17 @@ msgstr "与 {messageText2} 冲突。"
 
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 msgid "Connect"
 msgstr "连接"
 
 #: apps/web/src/components/CommandPalette.tsx#addProjectEntryGroups
 msgid "Connect an environment"
 msgstr "连接环境"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid "Connect an environment first."
+msgstr "请先连接一个环境。"
 
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingsSettingsPanel
 msgid "Connect an environment to change keybindings."
@@ -5498,6 +5753,10 @@ msgstr "连接设备"
 msgid "Connect on {environmentLabel} to load models."
 msgstr "在 {environmentLabel} 上连接以加载模型。"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Connect to {label} with dictation access to continue."
+msgstr "请以听写权限连接到 {label} 以继续。"
+
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
 msgid "Connect to an environment to clear profile data"
 msgstr "连接环境以清除配置文件数据"
@@ -5541,6 +5800,7 @@ msgid "Connected or already available locally on each selected environment."
 msgstr "已连接到每个所选环境，或已在各环境的本地可用。"
 
 #: apps/web/src/components/Sidebar.logic.ts#resolveThreadStatusPill
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 msgid "Connecting"
 msgstr "正在连接"
 
@@ -5625,27 +5885,6 @@ msgstr "等待上下文移交"
 #: apps/web/src/components/chat/threadDetailsItems.ts
 msgid "Context window"
 msgstr "上下文窗口"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context Window"
-msgstr "上下文窗口"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window {formatContextWindowTokensText} tokens used"
-msgstr "上下文窗口已使用 {formatContextWindowTokensText} 个 token"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window {usedPercentage} used"
-msgstr "上下文窗口已使用 {usedPercentage}"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Context window indicator (legacy)"
-msgstr "上下文窗口指示器（旧版）"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window usage"
-msgstr "上下文窗口用量"
 
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#ThreadDetailsContext
 msgid "Context: {used}% used"
@@ -5822,7 +6061,6 @@ msgstr "仅复制代码"
 #: apps/web/src/components/CommandBlock.tsx#CommandBlock
 #: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
-#: apps/web/src/lib/bootError.ts#showBootError
 msgid "Copy command"
 msgstr "复制命令"
 
@@ -5973,7 +6211,6 @@ msgstr "复制会话"
 msgid "Copy to clipboard"
 msgstr "复制到剪贴板"
 
-#: apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx#handleDeregister
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#connectEnvironment
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#TraceIdCell
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
@@ -5997,11 +6234,15 @@ msgstr "复制版本"
 msgid "Copying image…"
 msgstr "正在复制图片…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Correction cue"
+msgstr "更正提示词"
+
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 msgid "cost"
 msgstr "成本"
 
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
 #: apps/web/src/components/usage/UsageModelDialog.tsx#stats
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 #: apps/web/src/components/usage/usageShortcuts.ts
@@ -6026,6 +6267,10 @@ msgstr "无法添加后端"
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#handleSave
 msgid "Could not add provider instance"
 msgstr "无法添加提供商实例"
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
+msgid "Could not add t3 to PATH"
+msgstr "无法将 t3 添加到 PATH"
 
 #: apps/web/src/components/CommandPalette.tsx#handleOpenProjectFromFileManager
 msgid "Could not add WSL project"
@@ -6227,7 +6472,7 @@ msgstr "无法完成设置"
 msgid "Could not force stop the agent"
 msgstr "无法强制停止智能体"
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
 msgid "Could not install t3"
 msgstr "无法安装 t3"
 
@@ -6238,6 +6483,10 @@ msgstr "无法安装更新"
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#changeLink
 msgid "Could not link the {term}"
 msgstr "无法链接{term}"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#refreshMicrophones
+msgid "Could not list microphones. You can still use the system default."
+msgstr "无法列出麦克风。你仍可使用系统默认麦克风。"
 
 #: apps/web/src/components/pullRequest/PullRequestActivityUnavailableState.tsx#PullRequestActivityUnavailableState
 msgid "Could not load {term} activity"
@@ -6288,6 +6537,10 @@ msgstr "无法加载引用的回复"
 #: apps/web/src/components/settings/StorageSettings.tsx#summaries
 msgid "Could not load the last run."
 msgstr "无法加载上次运行。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#refresh
+msgid "Could not load transcription models"
+msgstr "无法加载转录模型"
 
 #: apps/web/src/components/chat/ThreadRelationshipsControl.tsx#merge
 msgid "Could not merge back"
@@ -6352,6 +6605,10 @@ msgstr "无法打开链接的提示词"
 msgid "Could not open this address"
 msgstr "无法打开此地址"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Could not play this recording. Try recording again."
+msgstr "无法播放此录音。请尝试重新录制。"
+
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#submit
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#performCommentAction
 msgid "Could not post the comment"
@@ -6386,6 +6643,10 @@ msgstr "无法读取设置状态。请重新连接后重试。"
 msgid "Could not rebase the stack"
 msgstr "无法变基提交栈"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "Could not reclaim space on {label}"
+msgstr "无法在 {label} 上释放空间"
+
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#handleReconnectActiveEnvironment
 msgid "Could not reconnect environment"
 msgstr "无法重新连接环境"
@@ -6398,7 +6659,7 @@ msgstr "无法移除 {displayWorktreePathText}。{message}"
 msgid "Could not remove backend"
 msgstr "无法移除后端"
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
 msgid "Could not remove t3"
 msgstr "无法移除 t3"
 
@@ -6514,10 +6775,6 @@ msgstr "无法启动 {model}"
 msgid "Could not start a review guide"
 msgstr "无法启动审查指南"
 
-#: apps/web/src/components/chat/useProposedPlanSend.ts#useImplementPlanInNewThread
-msgid "Could not start implementation thread"
-msgstr "无法启动实现会话"
-
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Could not start thread"
 msgstr "无法启动会话"
@@ -6578,6 +6835,10 @@ msgstr "无法更新 {failedMapEnvironmentEnvironmentLabelJoinText}。"
 msgid "Could not update {PROVIDERDISPLAYNAMESCandidateDriverText}"
 msgstr "无法更新 {PROVIDERDISPLAYNAMESCandidateDriverText}"
 
+#: apps/web/src/components/preview/PreviewAnnotationSpeech.tsx#publish
+msgid "Could not update annotation voice input"
+msgstr "无法更新批注的语音输入"
+
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#runEverything
 msgid "Could not update everything"
 msgstr "无法全部更新"
@@ -6631,6 +6892,10 @@ msgstr ""
 msgid "Couldn't get the path of \"{name}\""
 msgstr "无法获取“{name}”的路径"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#refresh
+msgid "Couldn't load {name} models"
+msgstr "无法加载 {name} 的模型"
+
 #: apps/web/src/components/chat/CommandOutputPanel.tsx#CommandOutputPanel
 #: apps/web/src/components/chat/V2ItemInspector.tsx#ToolOutput
 msgid "Couldn't load output: {error}"
@@ -6664,9 +6929,17 @@ msgstr "无法在托管平台搜索标签"
 msgid "Couldn't set up the extension"
 msgstr "无法设置扩展"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t finish recording"
+msgstr "无法完成录音"
+
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#BlockedStep
 msgid "Couldn’t import from {name}"
 msgstr "无法从 {name} 导入"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t prepare dictation"
+msgstr "无法准备听写"
 
 #: apps/web/src/components/settings/ThemeSettings.tsx#notifyThemeRemovalFailure
 msgid "Couldn’t remove theme"
@@ -6683,6 +6956,10 @@ msgstr "无法保存主题选择"
 #: apps/web/src/routes/_chat.index.tsx#DraftStartError
 msgid "Couldn’t start a new thread"
 msgstr "无法开始新会话"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t start recording"
+msgstr "无法开始录音"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#AttributionTable
 msgid "Count"
@@ -6852,10 +7129,6 @@ msgstr "已创建会话"
 msgid "Created thread{itemTitleText}"
 msgstr "已创建会话{itemTitleText}"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-msgid "Created<0/>"
-msgstr "创建于<0/>"
-
 #: apps/web/src/components/CommandPaletteAddProject.tsx#NewProjectSummary
 msgid "Creates {pathPreview}"
 msgstr "将创建 {pathPreview}"
@@ -6895,6 +7168,7 @@ msgstr "Ctrl+Q"
 msgid "Ctrl+Shift+V"
 msgstr "Ctrl+Shift+V"
 
+#: apps/web/src/components/CommandPaletteProjectItems.tsx#ProjectLocationDescription
 #: apps/web/src/components/CommandPaletteThemeItems.tsx#useCommandPaletteThemeItems
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#ProcessResourceHistoryTable
 msgid "Current"
@@ -6921,19 +7195,20 @@ msgstr "当前应用版本。"
 msgid "Cursor account"
 msgstr "Cursor 账户"
 
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Cursor account usage"
-msgstr "Cursor 账户用量"
-
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelRow
 msgid "custom"
 msgstr "自定义"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Custom"
 msgstr "自定义"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Custom cleanup instructions"
+msgstr "自定义整理说明"
 
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Custom emoji"
@@ -6982,6 +7257,10 @@ msgstr "自定义版本控制写作指令"
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Custom…"
 msgstr "自定义…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Customize in Voice settings"
+msgstr "在语音设置中自定义"
 
 #: apps/web/src/components/chat/MessagesTimeline.tsx#AttemptFoldTimelineRow
 msgid "Cut off by a steer"
@@ -7168,10 +7447,6 @@ msgstr "默认合并方式"
 msgid "Default merge method"
 msgstr "默认合并方式"
 
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
-msgid "Default mode. Click to enter plan mode"
-msgstr "默认模式。点击进入计划模式"
-
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 msgid "default model"
 msgstr "默认模型"
@@ -7231,8 +7506,8 @@ msgid "Defaults to the hub's host name"
 msgstr "默认使用中心的主机名"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskRow
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Delete"
@@ -7350,13 +7625,17 @@ msgstr ""
 msgid "Deletes untracked and ignored files, including .env."
 msgstr "删除未跟踪和被忽略的文件，包括 .env。"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Deleting"
 msgstr "正在删除"
 
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Deleting branch..."
 msgstr "正在删除分支…"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Deleting the thread also deletes this task."
+msgstr "删除会话也会删除此任务。"
 
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupSection
 msgid "Deleting…"
@@ -7421,6 +7700,10 @@ msgstr "仅桌面版"
 msgid "Destination"
 msgstr "目标"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Destination thread"
+msgstr "目标会话"
+
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Detach Magic Keyboard"
 msgstr "断开妙控键盘"
@@ -7434,9 +7717,11 @@ msgstr ""
 "HEAD：请创建并检出分支，以启用推送和{singular}操作。"
 
 #: apps/web/src/components/chat/WorktreeSetupCard.tsx#WorktreeSetupCard
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#ChecksBody
 #: apps/web/src/components/settings/ConnectionDiagnosisDetails.tsx#ConnectionDiagnosisSummary
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourceRow
 msgid "Details"
 msgstr "详情"
 
@@ -7461,8 +7746,8 @@ msgid "Device controls"
 msgstr "设备控制"
 
 #: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
-msgid "Device discovery warning · {label}"
-msgstr "设备发现警告 · {label}"
+msgid "Device discovery on {label} reported a warning."
+msgstr "{label} 上的设备发现报告了一条警告。"
 
 #: apps/web/src/components/RightPanelTabs.tsx#DeviceTabTooltip
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
@@ -7482,6 +7767,10 @@ msgstr "设备中心"
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceHubSetupStatus
 msgid "Device hub is ready."
 msgstr "设备中心已就绪。"
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
+msgid "Device list may be incomplete"
+msgstr "设备列表可能不完整"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#update
 msgid "Device settings not saved on all environments"
@@ -7547,6 +7836,24 @@ msgstr "已复制诊断信息"
 msgid "Dialog response"
 msgstr "对话框响应"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Dictation shortcut"
+msgstr "听写快捷键"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Dictation shortcut mode"
+msgstr "听写快捷键模式"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "dictionary"
+msgstr "词典"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Dictionary"
+msgstr "词典"
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelEmptyState
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTabs
 msgid "Diff"
@@ -7605,7 +7912,7 @@ msgstr "直连"
 msgid "Directories"
 msgstr "目录"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AdvertisedEndpointListRow
 msgid "Disable"
 msgstr "禁用"
@@ -7654,7 +7961,7 @@ msgid "Disable WSL backend?"
 msgstr "禁用 WSL 后端？"
 
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentCard
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Disabled"
@@ -7721,10 +8028,6 @@ msgstr "关闭提示"
 msgid "Dismiss device error"
 msgstr "关闭设备错误提示"
 
-#: apps/web/src/components/device/DevicePanel.tsx#DeviceNotice
-msgid "Dismiss device warning"
-msgstr "关闭设备警告"
-
 #: apps/web/src/components/chat/ThreadErrorBanner.tsx#ThreadErrorBanner
 msgid "Dismiss error"
 msgstr "关闭错误提示"
@@ -7749,6 +8052,11 @@ msgstr "关闭问题而不回答"
 #: apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx#SidebarProviderUpdatePill
 msgid "Dismiss until provider status changes"
 msgstr "在提供商状态更改前不再显示"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Dismiss voice input error"
+msgstr "关闭语音输入错误"
 
 #: apps/web/src/components/chat/ComposerBannerStack.tsx#NoticeCard
 msgid "Dismiss warning"
@@ -7809,9 +8117,12 @@ msgstr "完成"
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivityAdvancedDialog
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
 #: apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx#ProviderWizardAuthenticationStep
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 msgid "Done"
 msgstr "完成"
@@ -7821,6 +8132,7 @@ msgid "Double press"
 msgstr "连按两次"
 
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewFileNotShown
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
 msgid "Download"
 msgstr "下载"
 
@@ -7841,9 +8153,22 @@ msgstr "下载为 Markdown"
 msgid "Download failed."
 msgstr "下载失败。"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Download model"
+msgstr "下载模型"
+
 #: apps/web/src/components/media/MediaActions.tsx#showMenu
 msgid "Download started"
 msgstr "下载已开始"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Download the {modelSizeMb} MB model to {transcriptionEnvironment}. Microphone "
+"audio is sent there for transcription, as chosen in Voice settings."
+msgstr ""
+"将 {modelSizeMb} MB 的模型下载到 "
+"{transcriptionEnvironment}。麦克风音频将按语音设置中的选择发"
+"送到该处进行转录。"
 
 #: apps/web/src/components/media/OpenMediaLink.tsx#OpenMediaLink
 msgid "Download video"
@@ -7852,6 +8177,10 @@ msgstr "下载视频"
 #: apps/web/src/browser/ServerBrowserSurface.tsx#offerDownload
 msgid "Downloaded {fileName}"
 msgstr "已下载 {fileName}"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Downloaded only"
+msgstr "仅已下载"
 
 #: apps/web/src/components/sidebar/updateEverything.logic.ts
 msgid "downloading"
@@ -7887,6 +8216,7 @@ msgid "Downloading relay client"
 msgstr "正在下载中继客户端"
 
 #: apps/web/src/components/ServerUpdateAction.tsx
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 msgid "Downloading…"
 msgstr "正在下载…"
 
@@ -7907,6 +8237,14 @@ msgstr "草稿附件无法保存到本地，切换页面后可能丢失。"
 #: apps/web/src/components/chat/ComposerAttachmentStrip.tsx#ComposerAttachmentMediaRow
 msgid "Draft attachment may not persist"
 msgstr "草稿附件可能无法持久保存"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Draft changed"
+msgstr "草稿已更改"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Draft unavailable"
+msgstr "草稿不可用"
 
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 msgid "Drafts only"
@@ -7960,6 +8298,10 @@ msgstr "例如 dsh"
 msgid "e.g. Living room iPad"
 msgstr "例如 客厅 iPad"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "e.g. My local model"
+msgstr "例如：我的本地模型"
+
 #: apps/web/src/components/settings/AddCodexAccountDialog.tsx#AddCodexAccountDialog
 msgid "e.g. Personal or Work"
 msgstr "例如 个人或工作"
@@ -7995,18 +8337,6 @@ msgstr ""
 "'{{body.path}}'、'{{headers.name}}'、'{{query.name}}'、'{{body}}' 或 "
 "'{{request}}'；只有其中指定的内容会传递给智能体。"
 
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
-msgid ""
-"Each run continues this conversation, in its workspace and with its current "
-"model."
-msgstr ""
-"每次运行都会在此讨论的工作区中，使用当前模型继续此讨"
-"论。"
-
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
-msgid "Each run starts a new thread with the workspace and model below."
-msgstr "每次运行都会使用下方工作区和模型启动新会话。"
-
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
 msgid ""
 "Each selected environment's server leases devices from your Simlock gateway "
@@ -8040,12 +8370,17 @@ msgstr "Ecosia"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#rowActions
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskRow
 #: apps/web/src/components/settings/SecretsSettings.tsx#EnvironmentSecretProviders
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
 msgid "Edit"
 msgstr "编辑"
 
 #: apps/web/src/components/settings/SecretProviderDialog.tsx#SecretProviderDialog
 msgid "Edit {label}"
 msgstr "编辑 {label}"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Edit {textGeneratorDisplayNameText}"
+msgstr "编辑 {textGeneratorDisplayNameText}"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Edit Action"
@@ -8199,10 +8534,6 @@ msgstr "启用 Antigravity"
 msgid "Enable auto-merge"
 msgstr "启用自动合并"
 
-#: apps/web/src/components/usage/UsagePage.tsx#CursorEnableButton
-msgid "enable Cursor account usage"
-msgstr "启用 Cursor 账户用量"
-
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceSetup
 msgid "Enable device hub"
 msgstr "启用设备中心"
@@ -8330,6 +8661,10 @@ msgstr ""
 "输入官方注册表 "
 "ID，以及本地可执行文件或身份验证覆盖配置。"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Enter API key"
+msgstr "输入 API 密钥"
+
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Enter code <0>{userCode}</0> in your browser."
 msgstr "在浏览器中输入代码 <0>{userCode}</0>。"
@@ -8360,6 +8695,16 @@ msgstr ""
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Enter your credentials below."
 msgstr "在下方输入凭据。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "entries"
+msgstr "条目"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "entry"
+msgstr "条目"
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#AccessSettings
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
@@ -8467,6 +8812,11 @@ msgstr "每个间隔"
 #: apps/web/src/components/pullRequest/PullRequestStackMenu.tsx#PullRequestStackMenu
 msgid "Every layer being merged must be open and ready for review."
 msgstr "要合并的每一层都必须处于打开且可供审查的状态。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Everyone using {name} for dictation on {label} will lose access."
+msgstr ""
+"在 {label} 上使用 {name} 听写的所有人都将失去访问权限。"
 
 #: apps/web/src/components/settings/TypographySettings.tsx#InterfaceFontRow
 msgid "Everything outside code blocks and the terminal."
@@ -8690,7 +9040,7 @@ msgid "Failed to create pairing URL."
 msgstr "创建配对 URL 失败。"
 
 #: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleThreadAction
 msgid "Failed to delete thread"
 msgstr "删除会话失败"
 
@@ -8808,8 +9158,7 @@ msgstr "开启后端失败。"
 msgid "Failed to un-settle thread"
 msgstr "取消归档会话失败"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleThreadAction
 msgid "Failed to unarchive thread"
 msgstr "取消归档会话失败"
 
@@ -8868,6 +9217,11 @@ msgstr "快速模式"
 #: apps/web/src/components/chat/TraitsSpeed.tsx#TraitsSpeedIcon
 msgid "Fast mode on"
 msgstr "快速模式已开启"
+
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#FastWorktreeCheckoutRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Fast worktree checkout"
+msgstr "快速检出工作树"
 
 #: apps/web/src/components/chat/ModelPickerSidebar.tsx#ModelPickerSidebar
 msgid "Favorites"
@@ -9034,6 +9388,10 @@ msgstr "完成审查"
 msgid "Finish signing in in your browser."
 msgstr "在浏览器中完成登录。"
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "Finish voice input"
+msgstr "完成语音输入"
+
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 msgid "Finishing sign-in..."
 msgstr "正在完成登录…"
@@ -9061,6 +9419,15 @@ msgstr "修正上方表达式以继续使用可视化编辑。"
 #: apps/web/src/components/chat/ThreadDetailsPrRow.tsx#ThreadDetailsPrRow
 msgid "Fix the failing checks in a new thread"
 msgstr "在新会话中修复失败的检查"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Fixes punctuation, numbers, and spoken corrections with the cleanup model on "
+"the draft’s environment. Sends the transcript and nearby draft text, never "
+"audio."
+msgstr ""
+"使用草稿所在环境的整理模型修正标点、数字和口头更正。"
+"仅发送转录文本和附近的草稿文本，绝不发送音频。"
 
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 msgid "Flash captured window"
@@ -9162,6 +9529,10 @@ msgstr "后续消息行为"
 msgid "Follow-ups"
 msgstr "后续消息"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
+msgid "Follows the text generation model"
+msgstr "使用文本生成模型"
+
 #: apps/web/src/components/settings/TypographySettings.tsx#FontSmoothingRow
 msgid "font smoothing"
 msgstr "字体平滑"
@@ -9180,6 +9551,14 @@ msgid ""
 "For example, t3 or t3/ produces t3/add-search. Leave empty for no prefix."
 msgstr ""
 "例如，t3 或 t3/ 会生成 t3/add-search。留空表示不加前缀。"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
+msgid ""
+"For thread titles and other generated text. Source control has its own "
+"setting. Text generators from Providers also appear here."
+msgstr ""
+"用于会话标题和其他生成文本。版本控制有单独的设置。“"
+"提供商”中的文本生成器也会显示在这里。"
 
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#runStopNowItem
 msgid "Force stop"
@@ -9491,6 +9870,10 @@ msgstr "从 {previousProviderNamesJoinText} 移交"
 msgid "Hard reload"
 msgstr "强制刷新"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Hardware"
+msgstr "硬件"
+
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#resolvePullRequestConflict
 msgid "Has conflicts"
 msgstr "存在冲突"
@@ -9556,6 +9939,10 @@ msgstr "隐藏 {label} 用量"
 msgid "Hide account"
 msgstr "隐藏账户"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Hide all"
+msgstr "全部隐藏"
+
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 #: apps/web/src/components/ui/toast.tsx#ToastExpandableSection
 #: apps/web/src/components/ui/toast.tsx#ToastDescriptionAndExpandable
@@ -9583,10 +9970,24 @@ msgstr "隐藏文件树"
 msgid "Hide routes"
 msgstr "隐藏路由"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Hide successful"
+msgstr "隐藏成功项"
+
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "Hide test files"
 msgstr "隐藏测试文件"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+msgid ""
+"Hide the commands, edits, and searches agents run. Hide successful keeps "
+"failures. Zen shows only final answers. Approvals, questions, and errors "
+"always show."
+msgstr ""
+"隐藏智能体执行的命令、编辑和搜索。“隐藏成功项”会保"
+"留失败项。禅模式仅显示最终回答。审批、问题和错误始终"
+"显示。"
 
 #: apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx#ComposerPendingUserInputCard
 msgid "Hide the question and its options"
@@ -9649,6 +10050,10 @@ msgstr "此环境离线时保留 Webhook 请求"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Hold webhooks while offline"
 msgstr "离线时保留 Webhook"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Hold: record while held"
+msgstr "按住：按住期间录音"
 
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Home"
@@ -9719,6 +10124,10 @@ msgid ""
 msgstr ""
 "新工作树如何填充 Git 子模块。项目及其 t3.json "
 "可以覆盖此设置。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "How the dictation shortcut starts and stops recording."
+msgstr "听写快捷键如何开始和停止录音。"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutSettingsPanel
 msgid ""
@@ -9831,20 +10240,12 @@ msgstr "图片不可用"
 msgid "Image unavailable. The file may have been moved or deleted."
 msgstr "图片不可用。文件可能已被移动或删除。"
 
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implement"
-msgstr "实现"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implement in a new thread"
-msgstr "在新会话中实现"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implementation actions"
-msgstr "实现操作"
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Immediately"
+msgstr "立即"
 
 #: apps/web/src/components/ProjectScriptsControl.tsx
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ConfigureStep
 msgid "Import"
 msgstr "导入"
@@ -9879,7 +10280,7 @@ msgstr "导入项目"
 msgid "Important"
 msgstr "重要"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Imported"
 msgstr "已导入"
 
@@ -9887,7 +10288,7 @@ msgstr "已导入"
 msgid "Imported {cookieResultCountText}"
 msgstr "已导入 {cookieResultCountText}"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Importing"
 msgstr "正在导入"
 
@@ -9916,14 +10317,6 @@ msgstr "在每个项目中匹配最近的变更描述和变更请求标题。"
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
 msgid "In messages"
 msgstr "消息内"
-
-#: apps/web/src/components/settings/LabsSettingsPanel.tsx#BoringSidebarMultilineRow
-msgid ""
-"In the boring sidebar, show folder threads on two lines: the title, then the "
-"branch, pull request, and agent."
-msgstr ""
-"在简洁侧边栏中，将文件夹内的会话显示为两行：第一行是"
-"标题，第二行是分支、拉取请求和智能体。"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailActions.tsx#PullRequestCheckoutMenu
 msgid "In this repository"
@@ -10027,6 +10420,7 @@ msgid "Inline equation"
 msgstr "行内公式"
 
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 #: apps/web/src/components/usage/usageBreakdown.ts#costTypeSegments
 #: apps/web/src/components/usage/usageBreakdown.ts#tokenTypeSegments
@@ -10145,6 +10539,18 @@ msgstr "安装更新，然后退出登录并重新登录。"
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 msgid "Installed"
 msgstr "已安装"
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid ""
+"Installed at {installedPath} and added to PATH in {file}. Open a new terminal "
+"to use it."
+msgstr ""
+"已安装到 {installedPath}，并在 {file} 中添加到 "
+"PATH。请打开新终端以使用。"
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid "Installed at {installedPath}, which is not on your PATH yet."
+msgstr "已安装到 {installedPath}，但该路径尚未加入 PATH。"
 
 #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
 msgid ""
@@ -10298,6 +10704,14 @@ msgstr "参与关系"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx
 msgid "iOS"
 msgstr "iOS"
+
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
+msgid "iOS and Android lists on {label} may be incomplete."
+msgstr "{label} 上的 iOS 和 Android 列表可能不完整。"
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
+msgid "iOS list may be incomplete"
+msgstr "iOS 列表可能不完整"
 
 #: apps/web/src/components/settings/MobileAppSettingsRow.tsx
 msgid "iPhone and iPad"
@@ -10576,7 +10990,16 @@ msgid "Landscape right"
 msgstr "向右横屏"
 
 #: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Language"
+msgstr "语言"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Language unsupported"
+msgstr "不支持此语言"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Languages"
 msgstr "语言"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
@@ -10651,6 +11074,10 @@ msgstr "租用、控制和流式传输设备。"
 msgid "Leave a comment"
 msgstr "发表评论"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Leave blank to keep the saved key."
+msgstr "留空以保留已保存的密钥。"
+
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Leave empty to auto-generate"
 msgstr "留空以自动生成"
@@ -10673,10 +11100,6 @@ msgstr "剩余"
 msgid "Left"
 msgstr "左侧"
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Legacy"
-msgstr "旧版"
-
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutSettingsPanel
 msgid "Legal"
 msgstr "法律信息"
@@ -10688,12 +11111,12 @@ msgstr "降低频率"
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#LinkedEnvironmentsRow
 msgid ""
 "Let agents here work on your other machines, and theirs here. Turn it on for "
-"each machine, then link them in <0>Connections</0>. While it is off, nothing "
-"new starts over a link; tasks already running finish."
+"each machine, then link them in <0>Connections</0>. While off, nothing new "
+"starts over a link; running tasks finish."
 msgstr ""
-"允许此处的智能体在其他机器上工作，也允许其他机器的智"
-"能体在此工作。在每台机器上启用，然后在<0>连接</0>中链"
-"接。关闭时，不再通过链接启动新任务；已运行的任务会继"
+"允许这里的智能体在其他机器上工作，也允许其他机器的智"
+"能体在这里工作。在每台机器上启用后，在<0>连接</0>中关"
+"联。关闭后，不再通过关联启动新任务；运行中的任务会继"
 "续完成。"
 
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#FullDiskAccessStep
@@ -10953,11 +11376,11 @@ msgstr "代码检查"
 msgid "Liquid Glass"
 msgstr "液态玻璃"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "List providers"
 msgstr "列出提供商"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "List sessions"
 msgstr "列出会话"
 
@@ -10973,6 +11396,10 @@ msgstr ""
 "服务器、提供商、终端、桌面进程和监视器自身的实时原生"
 "计数器。"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Live preview"
+msgstr "实时预览"
+
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Live process tree"
 msgstr "实时进程树"
@@ -10980,6 +11407,10 @@ msgstr "实时进程树"
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Live Processes"
 msgstr "实时进程"
+
+#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
+msgid "Live transcription"
+msgstr "实时转录"
 
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Load balancing"
@@ -11005,7 +11436,7 @@ msgstr ""
 "加载较早轮次，然后点击引用重试。已保存的引用内容不会"
 "改变。"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Load more"
 msgstr "加载更多"
 
@@ -11023,7 +11454,7 @@ msgid "Load more pull requests"
 msgstr "加载更多拉取请求"
 
 #: apps/web/src/components/Sidebar.tsx
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
 #: apps/web/src/components/ui/spinner.tsx#Spinner
 msgid "Loading"
@@ -11202,6 +11633,10 @@ msgstr "正在加载调用跨度名称…"
 msgid "Loading the diff..."
 msgstr "正在加载差异…"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "Loading the model list."
+msgstr "正在加载模型列表。"
+
 #: apps/web/src/components/files/LargeTextViewer.tsx
 msgid "Loading the rest of the file…"
 msgstr "正在加载文件的其余内容…"
@@ -11217,6 +11652,11 @@ msgstr "正在加载时间线"
 #: apps/web/src/components/DiffPanel.tsx
 msgid "Loading tool call diff..."
 msgstr "正在加载工具调用差异…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Loading transcription models…"
+msgstr "正在加载转录模型…"
 
 #: apps/web/src/components/DiffPanel.tsx
 msgid "Loading uncommitted changes..."
@@ -11300,7 +11740,7 @@ msgstr "锁定宽高比"
 msgid "Lock viewport aspect ratio"
 msgstr "锁定视口宽高比"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Log out"
 msgstr "退出登录"
 
@@ -11308,7 +11748,7 @@ msgstr "退出登录"
 msgid "Logged out of ACP agent"
 msgstr "已退出 ACP 智能体"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Logging out"
 msgstr "正在退出登录"
 
@@ -11397,6 +11837,10 @@ msgstr ""
 "数据。请在两台机器上均启用。读取和操作可能使用比资源"
 "所属机器更广的权限。此设置仅适用于当前设备。"
 
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "macOS, Linux"
+msgstr "macOS、Linux"
+
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid ""
 "Maintainers can push to this branch. If your fork has workflows, this can also"
@@ -11416,9 +11860,25 @@ msgid ""
 "Make this environment available to your other devices through T3 Connect."
 msgstr "通过 T3 Connect 将此环境提供给你的其他设备。"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Manage {company} key"
+msgstr "管理 {company} 密钥"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Manage key"
+msgstr "管理密钥"
+
 #: apps/web/src/components/settings/SourceControlAppSignInSettings.tsx#SourceControlAppSignInSettings
 msgid "Manage on GitHub"
 msgstr "在 GitHub 上管理"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Manage OpenRouter"
+msgstr "管理 OpenRouter"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Manage OpenRouter dictation"
+msgstr "管理 OpenRouter 听写"
 
 #: apps/web/src/components/chat/ThreadAutomationsPanel.tsx#ThreadAutomationsPanel
 msgid "Manage scheduled tasks"
@@ -11555,6 +12015,10 @@ msgstr "中"
 msgid "Memory"
 msgstr "内存"
 
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx
+msgid "Mention a user"
+msgstr "提及用户"
+
 #: apps/web/src/components/files/FileBrowserPanel.tsx#showEntryContextMenu
 msgid "Mention copied"
 msgstr "已复制提及"
@@ -11677,9 +12141,28 @@ msgstr "消息视图"
 msgid "Metrics"
 msgstr "指标"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/device/DeviceToolsPanel.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
 msgid "Microphone"
 msgstr "麦克风"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone access needed"
+msgstr "需要麦克风权限"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone disconnected"
+msgstr "麦克风已断开"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Microphone input level"
+msgstr "麦克风输入电平"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone processing failed"
+msgstr "麦克风处理失败"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Mini PC"
@@ -11705,6 +12188,10 @@ msgstr "分钟"
 #: apps/web/src/components/CustomSnoozeDialog.tsx#CustomSnoozeDialog
 msgid "Minutes"
 msgstr "分钟"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Misspelling"
+msgstr "错误拼写"
 
 #: apps/web/src/components/settings/BranchNamingSettings.tsx#BranchNamingSettings
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
@@ -11748,10 +12235,8 @@ msgstr "接收环境通知的移动设备。"
 msgid "Mocks"
 msgstr "模拟数据"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
-msgid "Mode"
-msgstr "模式"
-
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
@@ -11769,6 +12254,14 @@ msgid ""
 msgstr ""
 "用于版本控制文本及分支或书签名称的模型。禁用时使用此"
 "环境配置的文本生成模型。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid ""
+"Model for transcript cleanup, such as a cheaper or faster one. When disabled, "
+"use the text generation model configured for this environment."
+msgstr ""
+"用于整理转录文本的模型，例如成本更低或速度更快的模型"
+"。禁用时，使用此环境配置的文本生成模型。"
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Model ID"
@@ -11790,17 +12283,8 @@ msgstr "模型偏好未保存"
 msgid "Model prices"
 msgstr "模型价格"
 
-#: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
-msgid ""
-"Model that reads a pull request to write its review guide. It reads the change"
-" itself over many steps, so a stronger model helps. Off uses the source "
-"control writer model."
-msgstr ""
-"读取拉取请求并撰写审查指南的模型。它会分多个步骤阅读"
-"更改本身，因此更强的模型更有帮助。关闭时使用版本控制"
-"写入模型。"
-
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
 msgid "Models"
 msgstr "模型"
 
@@ -11919,6 +12403,14 @@ msgstr "Muse Code"
 msgid "Music"
 msgstr "音乐"
 
+#: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
+msgid ""
+"Must be a coding agent: it reads the pull request over many steps. Off uses "
+"the writer model, or Codex or Claude if that model is a text generator."
+msgstr ""
+"必须是编程智能体：它会分多步读取拉取请求。关闭时使用"
+"撰写模型；若该模型是文本生成器，则使用 Codex 或 Claude。"
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTab
 msgid "Mute {title}"
 msgstr "将 {title} 静音"
@@ -11944,6 +12436,20 @@ msgstr "弱化文本"
 msgid "Name"
 msgstr "名称"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Name (optional)"
+msgstr "名称（可选）"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Names and terms transcription should spell your way, saved on this device. Add"
+" an alias when it keeps hearing a term wrong. The name of the project you "
+"dictate in is also sent as a hint."
+msgstr ""
+"保存在此设备上的名称和术语，用于让转录按你的要求拼写"
+"。如果某个术语反复被误听，可添加别名。听写所在项目的"
+"名称也会作为提示发送。"
+
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 msgid "Narrow your search to find more pull requests."
 msgstr "缩小搜索范围以查找更多拉取请求。"
@@ -11965,7 +12471,7 @@ msgstr ""
 msgid "Native process monitor"
 msgstr "原生进程监视器"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Native sessions"
 msgstr "原生会话"
 
@@ -12014,6 +12520,10 @@ msgstr "网络开放信息不可用。"
 msgid "Neutral"
 msgstr "中性"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Never"
+msgstr "从不"
+
 #: apps/web/src/components/chat/ModelListRow.tsx#ModelListRow
 msgid "New"
 msgstr "新建"
@@ -12048,6 +12558,10 @@ msgstr "新项目"
 msgid "New projects"
 msgstr "新项目"
 
+#: apps/web/src/components/chat/V2LifecycleRow.tsx#FreshSessionRow
+msgid "New session"
+msgstr "新会话"
+
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTasksSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "New task"
@@ -12070,6 +12584,11 @@ msgstr "新建会话"
 #: apps/web/src/components/sidebar/SidebarThreadHeader.tsx#SidebarThreadHeader
 msgid "New thread ({newThreadShortcutLabel})"
 msgstr "新会话（{newThreadShortcutLabel}）"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "New thread each run"
+msgstr "每次运行创建新会话"
 
 #: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
 msgid "New thread in {activeProjectName}"
@@ -12416,6 +12935,10 @@ msgstr "没有匹配的标签。"
 msgid "No labels found"
 msgstr "未找到标签"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "No languages match."
+msgstr "没有匹配的语言。"
+
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#OpenSourceLicensesPanel
 msgid "No licenses match that search."
 msgstr "没有许可证匹配搜索条件。"
@@ -12474,6 +12997,8 @@ msgid "No mobile clients"
 msgstr "无移动客户端"
 
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
 msgid "No models match."
 msgstr "无匹配模型。"
 
@@ -12620,6 +13145,10 @@ msgstr "此环境中未找到模拟器。"
 msgid "No spans found."
 msgstr "未找到调用跨度。"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "No speech detected"
+msgstr "未检测到语音"
+
 #: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
 msgid "No SSH route to {environmentLabel}"
 msgstr "没有通往 {environmentLabel} 的 SSH 路由"
@@ -12647,12 +13176,21 @@ msgstr "此会话尚无终端会话。"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
 msgid "No text generation providers available."
 msgstr "无可用的文本生成提供商。"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "No text generators yet"
+msgstr "尚无文本生成器"
 
 #: apps/web/src/components/Sidebar.tsx
 msgid "No threads found"
 msgstr "未找到会话"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "No threads found."
+msgstr "未找到会话。"
 
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
 msgid "No token saved; the server uses {tokenEnvVar} or the {cliName} login."
@@ -12662,6 +13200,10 @@ msgstr ""
 #: apps/web/src/components/chat/NativeChildWorkDialog.tsx#NativeChild
 msgid "No transcript yet."
 msgstr "尚无记录。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid "No transcription model matches."
+msgstr "没有匹配的转录模型。"
 
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "No warnings or errors found."
@@ -12711,6 +13253,10 @@ msgstr "不可用"
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
 msgid "Not available on this server: {installHint}"
 msgstr "此服务器不可用：{installHint}"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "not benchmarked"
+msgstr "未进行基准测试"
 
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
 msgid "Not checked"
@@ -12790,6 +13336,10 @@ msgstr "尚未检测到内容"
 msgid "Nothing matches “{queryLength48Text}”"
 msgstr "没有内容匹配“{queryLength48Text}”"
 
+#: apps/web/src/components/settings/SecretsSettings.tsx#SecretProviderUses
+msgid "Nothing reads from {label}. The secrets themselves are untouched."
+msgstr "没有任何配置从 {label} 读取。机密值本身不会改变。"
+
 #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
 msgid "Nothing stashed yet.{stashShortcutLabelText}"
 msgstr "尚无暂存内容。{stashShortcutLabelText}"
@@ -12838,28 +13388,21 @@ msgstr "章鱼"
 #: apps/web/src/components/settings/StorageSettings.tsx#RetentionControl
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 #: apps/web/src/threadNotifications.ts
 msgid "Off"
 msgstr "关闭"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Off ·"
+msgstr "关闭 ·"
 
 #: apps/web/src/components/cloud/cloudEnvironmentConnectionPresentation.ts#presentSavedCloudEnvironmentConnection
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#AccessSettings
 #: apps/web/src/components/settings/SettingsScopeSentence.tsx#ScopeOptionLabel
 msgid "Offline"
 msgstr "离线"
-
-#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
-msgid ""
-"Old history is cleaned up automatically, but these databases still hold the "
-"freed space. Run the command on each machine to return it to disk; it pauses "
-"and restarts the background service. Quit the desktop app first if it hosts "
-"the environment."
-msgstr ""
-"旧历史会自动清理，但这些数据库仍保留已释放的空间。在"
-"每台机器上运行命令，可将空间返还给磁盘；该操作会暂停"
-"并重启后台服务。如果环境由桌面应用托管，请先退出桌面"
-"应用。"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
@@ -12899,9 +13442,20 @@ msgstr "在 {label} 上"
 msgid "on {label} · {threadRelationshipStatusLabelText}"
 msgstr "在 {label} 上 · {threadRelationshipStatusLabelText}"
 
-#: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
-msgid "On a tailnet, run <0>npx t3 pair --tailscale</0> instead."
-msgstr "在 tailnet 中，请改为运行 <0>npx t3 pair --tailscale</0>。"
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#FastWorktreeCheckoutRow
+msgid ""
+"On a Mac, clone new worktrees from a checkout cached in the T3 home folder "
+"instead of writing every file. Uses Git’s normal checkout when it can’t. "
+"Turning it off deletes the cache."
+msgstr ""
+"在 Mac 上，从 T3 "
+"主目录中缓存的检出副本克隆新工作树，而不是逐个写入文"
+"件。无法使用时会采用正常的 Git "
+"检出。关闭后会删除缓存。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "On an environment"
+msgstr "在环境上"
 
 #: apps/web/src/components/ThreadContextChip.tsx#ThreadContextChip
 msgid ""
@@ -12924,12 +13478,8 @@ msgid "on settle"
 msgstr "标记完成时"
 
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
-msgid ""
-"On the computer with your code, start T3 Code or run <0>npx t3 serve</0>, then"
-" run:"
-msgstr ""
-"在存放代码的计算机上启动 T3 Code，或运行 <0>npx t3 "
-"serve</0>，然后运行："
+msgid "On the computer with your code:"
+msgstr "在存有代码的计算机上："
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "On webhook"
@@ -12950,6 +13500,14 @@ msgstr "请稍候，此环境正在验证智能体请求。"
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "One or two letters or numbers."
 msgstr "一到两个字母或数字。"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+msgid "One thread, continuing the conversation"
+msgstr "同一会话，继续对话"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+msgid "One thread, fresh session each run"
+msgstr "同一会话，每次运行使用新上下文"
 
 #: apps/web/src/components/chat/LinkRequestCard.tsx#PendingLinkRequest
 msgid "Only a session that manages access here can answer this."
@@ -13002,6 +13560,10 @@ msgstr "归档内仅可打开 UTF-8 文本和图片。"
 msgid "Open"
 msgstr "打开"
 
+#: apps/web/src/components/chat/SecretRequestCard.tsx#PendingSecretRequestForm
+msgid "Open {host}"
+msgstr "打开 {host}"
+
 #: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
 msgid "Open {path} in Code"
 msgstr "在 Code 中打开 {path}"
@@ -13051,7 +13613,7 @@ msgstr "打开应用"
 msgid "Open approval"
 msgstr "打开审批"
 
-#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestMarkdown
+#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestBodySegmentView
 msgid "Open attachment on {hostMediaDefinitionLabelText}"
 msgstr "在 {hostMediaDefinitionLabelText} 中打开附件"
 
@@ -13204,6 +13766,10 @@ msgstr ""
 #: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
 msgid "Open in…"
 msgstr "打开方式…"
+
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx#ReferenceStateIcon
+msgid "Open issue"
+msgstr "未关闭的议题"
 
 #: apps/web/src/components/promptLinks/NewThreadLinkView.tsx#NewThreadLinkView
 msgid "Open it again"
@@ -13386,12 +13952,17 @@ msgstr "运行此操作时，在应用内预览中打开此 URL。"
 #: apps/web/src/components/ThreadNotificationCoordinator.tsx#present
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedMessage
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserTimelineRow
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskThreadLink
 msgid "Open thread"
 msgstr "打开会话"
 
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Open usage"
 msgstr "打开用量"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Open voice settings"
+msgstr "打开语音设置"
 
 #: apps/web/src/fileContextMenu.ts#buildFileContextMenuItems
 msgid "Open with"
@@ -13404,6 +13975,10 @@ msgstr "打开 WSL 文件夹"
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseManifestError
 msgid "Open-source notices are unavailable"
 msgstr "开源声明不可用"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "OpenAI handles silence automatically."
+msgstr "OpenAI 会自动处理静音。"
 
 #: apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx#PullRequestLinkPreview
 msgid "opened"
@@ -13422,6 +13997,10 @@ msgid "Opening it in the environment’s browser, which reaches its network"
 msgstr ""
 "正在环境的浏览器中打开，该浏览器可访问环境所在网络"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Opening microphone…"
+msgstr "正在打开麦克风…"
+
 #: apps/web/src/components/promptLinks/NewThreadLinkView.tsx#NewThreadLinkView
 msgid "Opening the link..."
 msgstr "正在打开链接…"
@@ -13434,6 +14013,18 @@ msgstr "正在打开…"
 #: apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx#T3ConnectTunnelUsage
 msgid "Opening…"
 msgstr "正在打开…"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid "OpenRouter model"
+msgstr "OpenRouter 模型"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid ""
+"OpenRouter no longer lists {current}. Dictation stays off until you choose "
+"another model."
+msgstr ""
+"OpenRouter 已不再列出 "
+"{current}。选择其他模型前，听写将保持关闭。"
 
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Opens a thread that knows which {singular} you mean."
@@ -13855,6 +14446,10 @@ msgstr "客户端低电量时暂停"
 msgid "Pause on host low power"
 msgstr "主机低电量时暂停"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Pause recording"
+msgstr "暂停录音"
+
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx
 msgid "Pause when host is locked"
 msgstr "主机锁定时暂停"
@@ -13957,6 +14552,16 @@ msgstr "选择日期和时间。"
 msgid "Pick a thread to continue"
 msgstr "选择会话以继续"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid ""
+"Pick languages to see models that support all of them. Accuracy is word or "
+"character error rate: lower is better. Speed is the time to transcribe 30 "
+"seconds of audio on Handy’s benchmark GPU."
+msgstr ""
+"选择语言，以查看支持所有所选语言的模型。准确度指词错"
+"误率或字符错误率，越低越好。速度指在 Handy 的基准测试 "
+"GPU 上转录 30 秒音频所需的时间。"
+
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
 msgid "Pick where to host it, then point us at a repo to push to."
 msgstr "选择托管位置，然后指定要推送到的仓库。"
@@ -14009,8 +14614,6 @@ msgstr "置顶项目会优先显示在项目选择器中。"
 msgid "Plain text"
 msgstr "纯文本"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#ProposedPlanCard
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
@@ -14020,19 +14623,6 @@ msgstr "计划"
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#ProposedPlanCard
 msgid "Plan actions"
 msgstr "计划操作"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Plan mode (legacy)"
-msgstr "计划模式（旧版）"
-
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
-msgid "Plan mode. Click to return to normal build mode"
-msgstr "计划模式。点击返回正常构建模式"
-
-#: apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx#ComposerPlanFollowUpBanner
-msgid "Plan ready"
-msgstr "计划已就绪"
 
 #: apps/web/src/components/Sidebar.logic.ts#resolveThreadStatusPill
 msgid "Plan Ready"
@@ -14053,6 +14643,10 @@ msgstr "播放 {label}"
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 msgid "Play Click"
 msgstr "播放点击音"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Play recording"
+msgstr "播放录音"
 
 #: apps/web/src/components/media/MediaVideoPlayer.tsx#MediaVideoPlayer
 msgid "Play video"
@@ -14459,11 +15053,20 @@ msgstr "项目已创建"
 msgid "Project defaults and overrides"
 msgstr "项目默认值和覆盖设置"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "project dictionary"
+msgstr "项目词典"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Project dictionary"
+msgstr "项目词典"
+
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Project for ACP providers"
 msgstr "ACP 提供商项目"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Project for ACP sessions"
 msgstr "ACP 会话项目"
 
@@ -14680,15 +15283,6 @@ msgstr ""
 "上的提供商变量可以按名称从此来源读取值。启动提供商时"
 "，值会通过该服务器上的 op CLI 读取。"
 
-#: apps/web/src/components/settings/SecretsSettings.tsx#RemoveSecretProviderButton
-msgid ""
-"Provider variables that read from {label} stop resolving until a provider with"
-" the same name is added again. The secrets themselves are untouched."
-msgstr ""
-"从 {label} "
-"读取的提供商变量会停止解析，直到重新添加同名提供商。"
-"密钥本身不会改变。"
-
 #: apps/web/src/components/chat/ModelPickerSidebar.tsx#ModelPickerSidebar
 #: apps/web/src/components/settings/settingsSearch.ts
 #: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
@@ -14780,7 +15374,7 @@ msgid "Pull request URL or #42"
 msgstr "拉取请求 URL 或 #42"
 
 #: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestHostVideo
-#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestMarkdown
+#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestBodySegmentView
 msgid "Pull request video"
 msgstr "拉取请求视频"
 
@@ -14837,7 +15431,6 @@ msgstr "紫色"
 
 #: apps/web/src/components/GitActionsControl.logic.ts#buildMenuItems
 #: apps/web/src/components/GitActionsControl.logic.ts#resolveQuickAction
-#: apps/web/src/components/GitActionsControl.tsx#GitQuickActionIcon
 msgid "Push"
 msgstr "推送"
 
@@ -14876,10 +15469,6 @@ msgstr "需要考虑的问题"
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Queue"
 msgstr "排队"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
-msgid "Queue follow-ups while the agent runs or steer the current run. "
-msgstr "智能体运行时，将后续消息排队，或引导当前运行。 "
 
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Queue message"
@@ -14985,15 +15574,6 @@ msgstr "读取吞吐量"
 msgid "Read Total"
 msgstr "总读取量"
 
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-msgid ""
-"Read your existing Cursor CLI login from macOS Keychain to show account "
-"history and monthly limits. macOS may ask you to allow access."
-msgstr ""
-"从 macOS 钥匙串读取现有 Cursor CLI "
-"登录信息，以显示账户历史和每月限额。macOS "
-"可能会请求你授权访问。"
-
 #: apps/web/src/components/files/FilePreviewPanel.tsx
 msgid "Read-only connection. Unsaved edits are kept until write access returns."
 msgstr "只读连接。写入权限恢复前会保留未保存的编辑。"
@@ -15043,6 +15623,10 @@ msgstr "可供审查"
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentCard
 msgid "Ready to code."
 msgstr "已准备好编程。"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Ready to dictate"
+msgstr "可以开始听写"
 
 #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
 msgid "Ready to update to {targetVersion}"
@@ -15108,9 +15692,29 @@ msgstr "最近使用"
 msgid "Recents"
 msgstr "最近"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Reclaim"
+msgstr "回收"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Reclaim {amount} on {label}?"
+msgstr "回收 {label} 上的 {amount} 空间？"
+
 #: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
 msgid "Reclaim freed database space"
 msgstr "回收数据库已释放的空间"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "Reclaiming {amount} on {label}"
+msgstr "正在回收 {label} 上的 {amount} 空间"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Recommended"
+msgstr "推荐"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Recommended for {recommendedLanguage}"
+msgstr "推荐用于{recommendedLanguage}"
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
@@ -15172,6 +15776,11 @@ msgstr "正在重新连接环境。连接后请重试。"
 msgid "Reconnecting…"
 msgstr "正在重新连接…"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Record again"
+msgstr "重新录音"
+
 #: apps/web/src/components/settings/useSnapShotShortcutRecorder.tsx#useSnapShotShortcutRecorder
 msgid "Record snapshot shortcut, currently {formatSnapShotShortcutLabelText}"
 msgstr "录制快照快捷键，当前为 {formatSnapShotShortcutLabelText}"
@@ -15184,6 +15793,14 @@ msgstr "更改后的记录内容"
 msgid "Recorded content before"
 msgstr "更改前的记录内容"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Recording interrupted"
+msgstr "录音已中断"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Recording playback position"
+msgstr "录音播放位置"
+
 #: apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx#MiniPlayerShell
 msgid "Recording preview"
 msgstr "正在录制预览"
@@ -15192,6 +15809,10 @@ msgstr "正在录制预览"
 #: apps/web/src/components/preview/PreviewView.tsx#handleCapture
 msgid "Recording saved"
 msgstr "录制已保存"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Recording time"
+msgstr "录音时长"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserSettingsPanel
 msgid "Recordings"
@@ -15233,9 +15854,9 @@ msgstr "请减少剪贴板内容，或将较小的片段保存为文件。"
 msgid "Reduce Transparency"
 msgstr "降低透明度"
 
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Refine"
-msgstr "细化"
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx
+msgid "Reference an issue or change request"
+msgstr "引用议题或变更请求"
 
 #: apps/web/src/components/chat/NativeChildWorkDialog.tsx#NativeChildWorkContent
 #: apps/web/src/components/chat/ProviderStatusBanner.tsx#ProviderStatusBanner
@@ -15243,9 +15864,10 @@ msgstr "细化"
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
 msgid "Refresh"
 msgstr "刷新"
 
@@ -15268,6 +15890,11 @@ msgstr "刷新文件"
 #: apps/web/src/components/usage/UsagePage.tsx#UsagePage
 msgid "Refresh limits"
 msgstr "刷新限制"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Refresh microphones"
+msgstr "刷新麦克风"
 
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Refresh process diagnostics"
@@ -15420,6 +16047,10 @@ msgstr "中继客户端安装进度"
 msgid "Release control"
 msgstr "释放控制权"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Release the model’s memory on the environment after it sits idle."
+msgstr "模型闲置一段时间后，释放其在环境中占用的内存。"
+
 #: apps/web/src/components/onboarding/FirstRunGate.tsx#FirstRunRecovery
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 msgid "Reload"
@@ -15476,6 +16107,7 @@ msgstr "仅远程"
 #: apps/web/src/components/settings/SecretsSettings.tsx#RemoveSecretProviderButton
 #: apps/web/src/components/settings/SourceControlHostSettings.tsx#SourceControlHostSettings
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove"
 msgstr "移除"
@@ -15500,6 +16132,10 @@ msgstr "从此设备移除 {label}？"
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove {label}?"
 msgstr "移除 {label}？"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Remove {removingConfigText}?"
+msgstr "移除 {removingConfigText}？"
 
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -15529,6 +16165,10 @@ msgstr "移除检出条目"
 msgid "Remove choice"
 msgstr "移除选项"
 
+#: apps/web/src/components/settings/ChatGptAccountPicker.tsx#ChatGptAccountPicker
+msgid "Remove connection"
+msgstr "移除连接"
+
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelRow
 msgid "Remove custom model"
 msgstr "移除自定义模型"
@@ -15536,6 +16176,15 @@ msgstr "移除自定义模型"
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Remove downloaded runtime"
 msgstr "移除已下载运行时"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Remove filler words"
+msgstr "移除语气词"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Remove filler words like “um” and “uh” from transcripts."
+msgstr "从转录文本中移除“嗯”“呃”等语气词。"
 
 #: apps/web/src/components/files/AttachmentFilePreview.tsx#AttachmentFilePreview
 msgid "Remove from draft"
@@ -15561,6 +16210,14 @@ msgstr "从此设备移除…"
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove hub"
 msgstr "移除中心"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove key"
+msgstr "移除密钥"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove key…"
+msgstr "移除密钥…"
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Remove new model"
@@ -15621,6 +16278,10 @@ msgstr "移除快捷键…"
 #: apps/web/src/components/chat/useComposerAttachmentIntake.ts#foldPastedText
 msgid "Remove some text or an attachment, then paste again."
 msgstr "移除部分文本或附件后重新粘贴。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove the {company} key?"
+msgstr "移除 {company} 密钥？"
 
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Remove the attachments and context, then send it again."
@@ -15716,6 +16377,10 @@ msgstr "重新打开"
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Reopen {singular}"
 msgstr "重新打开{singular}"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Replace API key"
+msgstr "替换 API 密钥"
 
 #: apps/web/src/components/DevReplayHost.tsx#DevReplayHost
 msgid "Replay a recorded turn"
@@ -15889,13 +16554,13 @@ msgstr "重置缩放"
 msgid "Resets"
 msgstr "重置"
 
-#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
-msgid "Resets {formatUpcomingTimestampText}"
-msgstr "将于 {formatUpcomingTimestampText} 重置"
-
 #: apps/web/src/components/usage/UsageLimits.tsx#WindowBar
 msgid "Resets {resetsAt}{resetsInText}"
 msgstr "将于 {resetsAt} 重置{resetsInText}"
+
+#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
+msgid "Resets {resetTime}"
+msgstr "重置时间：{resetTime}"
 
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#LimitRow
 msgid "Resets in {formatDurationText} · {formatUpcomingTimestampText}"
@@ -16012,6 +16677,10 @@ msgstr "重启并禁用"
 msgid "Restart and enable"
 msgstr "重启并启用"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Restart and reclaim"
+msgstr "重启并回收"
+
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "Restart in {seconds}s"
 msgstr "将在 {seconds} 秒后重启"
@@ -16035,6 +16704,7 @@ msgstr "正在重启"
 #: apps/web/src/components/ServerUpdateAction.tsx
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AdvertisedEndpointListRow
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
 #: apps/web/src/components/settings/LocalEnvironmentSetting.tsx#LocalEnvironmentSetting
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "Restarting…"
@@ -16048,6 +16718,10 @@ msgstr "重启次数"
 msgid "restarts last"
 msgstr "重启时间最早"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Restarts T3 Code there. It is offline for about {minutes} min."
+msgstr "重新启动该处的 T3 Code。它将离线约 {minutes} 分钟。"
+
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Restore 3D view"
 msgstr "恢复 3D 视图"
@@ -16055,12 +16729,6 @@ msgstr "恢复 3D 视图"
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#branchMismatchBannerItem
 msgid "Restore branch"
 msgstr "恢复分支"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
-msgstr ""
-"恢复 Build/Plan、/plan、/default 和 "
-"Shift+Tab。关闭时使用构建模式。"
 
 #: apps/web/src/routes/_chat.settings.tsx#RestoreDeviceDefaultsButton
 msgid "Restore device defaults"
@@ -16103,7 +16771,7 @@ msgstr "恢复 {title}"
 msgid "Resume after usage limits"
 msgstr "用量限制重置后恢复"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Resume agent-owned conversations as T3 threads."
 msgstr "将智能体拥有的讨论恢复为 T3 会话。"
 
@@ -16116,6 +16784,10 @@ msgstr "重置时恢复"
 msgid "Resume thread"
 msgstr "恢复会话"
 
+#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
+msgid "Resumes {resetTime}"
+msgstr "恢复时间：{resetTime}"
+
 #: apps/web/src/components/ProjectCloneToastCoordinator.tsx#EnvironmentCloneToasts
 #: apps/web/src/components/chat/MermaidDiagram.tsx#DiagramError
 #: apps/web/src/components/chat/ThreadFindBar.tsx#ThreadFindBar
@@ -16125,6 +16797,7 @@ msgstr "恢复会话"
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
 #: apps/web/src/components/device/DeviceHostUpdates.tsx#DeviceHostUpdates
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/onboarding/FirstRunGate.tsx#FirstRunRecovery
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentInstallTerminal
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ImportStep
@@ -16152,6 +16825,10 @@ msgstr "重试失败的保存"
 msgid "Retry installation"
 msgstr "重试安装"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Retry loading API key"
+msgstr "重试加载 API 密钥"
+
 #: apps/web/src/components/diffs/DiffFileStatus.tsx#DiffFileStatus
 msgid "Retry loading diff"
 msgstr "重试加载差异"
@@ -16159,6 +16836,11 @@ msgstr "重试加载差异"
 #: apps/web/src/components/files/FileBreadcrumbs.tsx#BreadcrumbMenuContent
 msgid "Retry loading folder"
 msgstr "重试加载文件夹"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Retry loading models"
+msgstr "重试加载模型"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Retry monitor"
@@ -16189,6 +16871,10 @@ msgstr "重试刷新提交栈"
 msgid "Retry to bring in the repository."
 msgstr "重试以导入仓库。"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Retry transcription"
+msgstr "重试转录"
+
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
 msgid "Retry update"
@@ -16211,6 +16897,7 @@ msgid "Retrying provider ({progress})"
 msgstr "正在重试提供商（{progress}）"
 
 #: apps/web/src/components/device/DeviceHostUpdates.tsx#DeviceHostUpdates
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/media/MediaVideoPlayer.tsx#MediaVideoPlayer
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#renderWslRow
 msgid "Retrying…"
@@ -16688,7 +17375,8 @@ msgstr "星期六"
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 #: apps/web/src/components/pullRequest/PullRequestMarkdownEditor.tsx#PullRequestMarkdownEditor
 #: apps/web/src/components/pullRequest/PullRequestTitleEditor.tsx#PullRequestTitleEditor
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/CustomModelEditor.tsx#CustomModelEditor
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingKeyControl
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingSettingsRow
@@ -16713,6 +17401,14 @@ msgstr "保存 {label} 令牌"
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Save action"
 msgstr "保存操作"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Save and continue"
+msgstr "保存并继续"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Save and enable"
+msgstr "保存并启用"
 
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
 msgid "Save and finish"
@@ -16746,6 +17442,10 @@ msgstr ""
 #: apps/web/src/components/files/AttachmentFilePreview.tsx#AttachmentFilePreview
 msgid "Save it to open in an app that supports this format."
 msgstr "保存文件，以便在支持此格式的应用中打开。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Save key"
+msgstr "保存密钥"
 
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 msgid "Save plan to workspace"
@@ -16790,9 +17490,29 @@ msgstr "已保存"
 msgid "Saved for {savedHostsJoinText}."
 msgstr "已为 {savedHostsJoinText} 保存。"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid ""
+"Saved on the environment and used in every project there, along with each "
+"person’s own dictionary. Pick a project above to limit these words to one "
+"project."
+msgstr ""
+"保存在环境中，并与每个人的个人词典一起用于该环境中的"
+"所有项目。在上方选择项目可将这些词语限制为仅在该项目"
+"中使用。"
+
 #: apps/web/src/components/files/NotebookPreview.tsx
 msgid "Saved outputs only. Code is never executed."
 msgstr "仅包含已保存的输出，绝不会执行代码。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid ""
+"Saved with {label} on its environment. Everyone who dictates in this project "
+"gets these spellings, along with their own dictionary. Project spellings win "
+"when the two overlap."
+msgstr ""
+"随 {label} "
+"保存在其环境中。在此项目中听写的所有人都会使用这些拼"
+"写以及自己的词典。发生冲突时，项目拼写优先。"
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "Saved, but the shortcut needs attention. Check Advanced for help."
@@ -16800,7 +17520,7 @@ msgstr ""
 "已保存，但快捷键需要处理。请在“高级”中查看帮助。"
 
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingKeyControl
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingSettingsRow
 msgid "Saving"
@@ -16831,6 +17551,14 @@ msgstr "正在保存…"
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Saving…"
 msgstr "正在保存…"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid ""
+"Say a sentence in the language above. Cleanup is skipped, so you see exactly "
+"what the model heard. The transcript stays on this page."
+msgstr ""
+"请用上方选择的语言说一句话。此处会跳过整理，以便你看"
+"到模型实际识别的内容。转录文本仅保留在此页面。"
 
 #: apps/web/src/components/settings/SourceControlSettings.tsx#EmptySourceControlDiscovery
 msgid "Scan"
@@ -16943,6 +17671,10 @@ msgstr "搜索智能体…"
 msgid "Search all Lucide icons"
 msgstr "搜索所有 Lucide 图标"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Search all threads..."
+msgstr "搜索所有会话..."
+
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestAuthorChoices
 msgid "Search authors"
 msgstr "搜索作者"
@@ -16994,6 +17726,7 @@ msgid "Search labels"
 msgstr "搜索标签"
 
 #: apps/web/src/components/chat/ComposerCodeBlockLanguagePicker.tsx#ComposerCodeBlockLanguagePicker
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
 msgid "Search languages"
 msgstr "搜索语言"
 
@@ -17008,6 +17741,11 @@ msgstr "搜索 Lucide 图标"
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Search matches"
 msgstr "搜索匹配项"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Search models"
+msgstr "搜索模型"
 
 #: apps/web/src/components/chat/ModelPickerContent.tsx#ModelPickerContent
 msgid "Search models..."
@@ -17024,6 +17762,10 @@ msgstr "搜索开源许可证"
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
 msgid "Search or enter URL"
 msgstr "搜索或输入 URL"
+
+#: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx#PullRequestReviewerPicker
+msgid "Search people with access"
+msgstr "搜索有访问权限的人"
 
 #: apps/web/src/components/CommandPalette.tsx#CommandPaletteDialog
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
@@ -17075,6 +17817,7 @@ msgstr "搜索设置"
 msgid "Search themes..."
 msgstr "搜索主题…"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
 #: apps/web/src/components/sidebar/SidebarThreadHeader.tsx#SidebarThreadHeader
 msgid "Search threads"
 msgstr "搜索会话"
@@ -17082,6 +17825,11 @@ msgstr "搜索会话"
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#ThreadPicker
 msgid "Search threads or projects..."
 msgstr "搜索会话或项目…"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Search transcription models"
+msgstr "搜索转录模型"
 
 #: apps/web/src/session-logic.ts#projectedWorkEntry
 msgid "Searched files"
@@ -17229,9 +17977,21 @@ msgstr "选择要移除的变体。重新导入扩展即可恢复。"
 msgid "Select where to clone"
 msgstr "选择克隆位置"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Selected"
+msgstr "已选择"
+
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
 msgid "Selected by T3 Code."
 msgstr "由 T3 Code 选择。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Selected microphone (unavailable)"
+msgstr "所选麦克风（不可用）"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Selected microphone (Unavailable)"
+msgstr "所选麦克风（不可用）"
 
 #: apps/web/src/components/chat/AssistantSelectionToolbar.tsx#AssistantSelectionToolbar
 msgid "Selection is too long to cite"
@@ -17284,6 +18044,10 @@ msgstr "准备就绪后重新发送。"
 msgid "Send feedback to decline this request"
 msgstr "发送反馈以拒绝此请求"
 
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Send into the current turn"
+msgstr "发送到当前轮次"
+
 #: apps/web/src/components/chat/ThreadErrorBanner.tsx#copyAdminRequest
 msgid "Send it to your workspace admin."
 msgstr "将其发送给工作区管理员。"
@@ -17328,10 +18092,6 @@ msgstr "正在发送附件"
 #: apps/web/src/components/chat/useComposerSend.ts#notifyDirectAnnotationAttached
 msgid "Sending is unavailable right now. Finish the current action, then send."
 msgstr "当前无法发送。请完成当前操作后再发送。"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Sending..."
-msgstr "正在发送…"
 
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserTimelineRow
 msgid "Sending…"
@@ -17386,6 +18146,10 @@ msgstr "服务器设置更新"
 #: apps/web/src/components/chat/threadDetailsItems.ts
 msgid "Servers"
 msgstr "服务器"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Service"
+msgstr "服务"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Session"
@@ -17464,6 +18228,10 @@ msgstr "设置 T3 Connect"
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid "Set up Tailscale HTTPS?"
 msgstr "设置 Tailscale HTTPS？"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Set up voice input"
+msgstr "设置语音输入"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#DiffsSettingsPanel
 msgid "Set whether the diff panel ignores whitespace-only edits by default."
@@ -17585,22 +18353,22 @@ msgstr "共享"
 
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#GuestLinksRow
 msgid ""
-"Share a thread with a guest who watches it live in their browser and sends "
+"Share a thread with a guest who watches it live in a browser and sends "
 "messages you approve. Needs T3 Connect: sign in and link this machine in "
-"<0>Sharing & access</0>. While it is off, every guest link stops working."
+"<0>Sharing & access</0>. Turning it off stops every guest link."
 msgstr ""
-"将会话共享给访客，使其能在浏览器中实时观看，并发送需"
-"你批准的消息。需要 T3 "
-"Connect：请登录，并在<0>共享与访问</0>中链接此机器。关闭"
-"时，所有访客链接都会停止工作。"
+"与访客共享会话，让其在浏览器中实时查看，并发送由你审"
+"批的消息。需要 T3 "
+"Connect：登录后在<0>共享与访问</0>中关联此机器。关闭后，"
+"所有访客链接都会停止工作。"
 
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#GuestLinksRowWithSignIn
 msgid ""
-"Share a thread with a guest who watches it live in their browser and sends "
+"Share a thread with a guest who watches it live in a browser and sends "
 "messages you approve. Sign in to T3 Connect to use guest links."
 msgstr ""
-"将会话共享给访客，使其能在浏览器中实时观看，并发送需"
-"你批准的消息。登录 T3 Connect 即可使用访客链接。"
+"与访客共享会话，让其在浏览器中实时查看，并发送由你审"
+"批的消息。登录 T3 Connect 即可使用访客链接。"
 
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 #: apps/web/src/components/chat/GuestShareControls.tsx#GuestShareDialog
@@ -17615,6 +18383,14 @@ msgstr "共享后台策略"
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
 msgid "Shared Codex config, sessions, and state."
 msgstr "共享的 Codex 配置、会话和状态。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "shared dictionary"
+msgstr "共享词典"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "Shared dictionary"
+msgstr "共享词典"
 
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivityAdvancedDialog
 msgid "Shared policy"
@@ -17711,6 +18487,18 @@ msgstr "显示 3D 手机"
 msgid "Show a gentle cue on the captured window."
 msgstr "在捕获的窗口上显示柔和提示。"
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#PromptSuggestionsRow
+msgid ""
+"Show a predicted next message in the empty composer after a Claude or Codex "
+"turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex "
+"0.165+. Claude threads update on restart."
+msgstr ""
+"在 Claude 或 Codex "
+"轮次结束后，在空白编辑框中显示下一条消息的预测建议。"
+"按 Tab "
+"使用。每条建议都会通过你的订阅发起一次额外的缓存请求"
+"。需要 Codex 0.165+。Claude 会话在重启时更新。"
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#GeneralSettingsPanel
 msgid ""
 "Show a toast when another thread finishes, fails, or needs input or approval "
@@ -17728,6 +18516,7 @@ msgid "Show account"
 msgstr "显示账户"
 
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#ChecksBody
+#: apps/web/src/components/settings/SettingsPanels.tsx
 msgid "Show all"
 msgstr "显示全部"
 
@@ -17806,6 +18595,14 @@ msgstr "显示文件树"
 msgid "Show finished paragraphs"
 msgstr "显示已完成段落"
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#BoringSidebarMultilineRow
+msgid ""
+"Show folder threads on two lines: the title, then the branch, pull request, "
+"and agent."
+msgstr ""
+"将文件夹会话显示为两行：第一行是标题，第二行是分支、"
+"拉取请求和智能体。"
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Show formatted Markdown as you type."
 msgstr "输入时显示格式化的 Markdown。"
@@ -17851,6 +18648,10 @@ msgstr "显示链接"
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Show linked pull requests"
 msgstr "显示已链接拉取请求"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Show models"
+msgstr "显示模型"
 
 #: apps/web/src/components/chat/ModelPickerContent.tsx#ModelPickerContent
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
@@ -18006,9 +18807,9 @@ msgstr "显示在提供商列表和模型选择器中。"
 msgid "Shown in the provider list."
 msgstr "显示在提供商列表中。"
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Shows context window usage as a circular indicator in the composer."
-msgstr "在输入框中以圆形指示器显示上下文窗口用量。"
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Shows words in your draft as you speak, before the recording finishes."
+msgstr "在说话时即在草稿中显示文字，无需等待录音结束。"
 
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#TerminalSidebarGroup
 msgid "Side by side"
@@ -18154,6 +18955,20 @@ msgstr "已登录的 GitHub 账户"
 msgid "Signing in..."
 msgstr "正在登录…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Silence filtering"
+msgstr "静音过滤"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Silero (1.2 MB), used for silence filtering and pause detection, downloads "
+"alongside the speech model. An installed copy is reused."
+msgstr ""
+"Silero（1.2 "
+"MB）用于静音过滤和停顿检测，会随语音模型一起下载。已"
+"安装的副本将被复用。"
+
 #: apps/web/src/components/settings/simlockDeviceHostsSettings.logic.ts#newSimlockDeviceHost
 msgid "Simlock"
 msgstr "Simlock"
@@ -18199,8 +19014,13 @@ msgid "skills in slash menu"
 msgstr "斜杠菜单中的技能"
 
 #: apps/web/src/components/BranchToolbar.logic.ts
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
 msgid "Skip"
 msgstr "跳过"
+
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Skip compaction and send this message"
+msgstr "跳过压缩并发送此消息"
 
 #: apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx#ProviderWizardAuthenticationStep
 msgid "Skip for now"
@@ -18209,6 +19029,22 @@ msgstr "暂时跳过"
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "Skip requests older than"
 msgstr "跳过早于以下时长的请求"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Skip silence and other non-speech audio before transcription, keeping a short "
+"buffer so words aren’t cut off."
+msgstr ""
+"转录前跳过静音及其他非语音音频，同时保留短缓冲，避免"
+"截断词语。"
+
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid ""
+"Skip the install if you already have <0>t3</0>. If <1>t3</1> is not found "
+"after installing, add the folder the installer names to your PATH."
+msgstr ""
+"如果已有 <0>t3</0>，可跳过安装。安装后若找不到 "
+"<1>t3</1>，请将安装程序提示的文件夹添加到 PATH。"
 
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
@@ -18256,10 +19092,6 @@ msgstr "显示的最小值"
 #: apps/web/src/components/desktop/SnapShotCoordinator.tsx#handleSnapShotEvent
 msgid "Snapshot failed"
 msgstr "快照失败"
-
-#: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
-msgid "Snapshot sound: "
-msgstr "快照声音： "
 
 #: apps/web/src/components/desktop/SnapShotCoordinator.tsx#operation
 msgid "Snapshot taken, but no project is available"
@@ -18364,15 +19196,23 @@ msgstr ""
 msgid "Some workspace entries are not shown."
 msgstr "部分工作区条目未显示。"
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#run
 #: apps/web/src/routes/__root.tsx#RootRouteErrorView
 msgid "Something went wrong."
 msgstr "出现问题。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "sorry"
+msgstr "抱歉"
 
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Sort"
 msgstr "排序"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Sort by"
+msgstr "排序方式"
 
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 msgid "Sort pull requests"
@@ -18448,13 +19288,37 @@ msgstr "持续时间为 {formatDurationText} 或更长的调用跨度。"
 msgid "Sparkles"
 msgstr "闪光"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Speak and transcribe in multiple languages or translate into English, and get "
+"names and technical terms right with the dictionary in Voice settings."
+msgstr ""
+"使用多种语言说话和转录，或翻译为英语；通过语音设置中"
+"的词典准确识别人名和技术术语。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Speak any language and get English text."
+msgstr "使用任意语言说话，获得英文文本。"
+
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Speaker notes"
 msgstr "演讲者备注"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Speech model download progress"
+msgstr "语音模型下载进度"
+
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 msgid "Speed"
 msgstr "速度"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "Speed: <0>{secondsPer30s} s</0> / 30 s"
+msgstr "速度：<0>{secondsPer30s} 秒</0> / 30 秒"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "Speed: not benchmarked"
+msgstr "速度：未进行基准测试"
 
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 #: apps/web/src/components/settings/SettingsPanels.tsx
@@ -18596,6 +19460,10 @@ msgstr "开始"
 msgid "Start a Codex thread first"
 msgstr "请先开始 Codex 会话"
 
+#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
+msgid "Start a fresh session; earlier messages stay visible"
+msgstr "开始新会话；之前的消息仍保持可见"
+
 #: apps/web/src/components/ChatView.logic.ts#getStartedThreadModelChangeBlockReason
 msgid "Start a new chat to switch providers"
 msgstr "新建聊天以切换提供商"
@@ -18603,6 +19471,14 @@ msgstr "新建聊天以切换提供商"
 #: apps/web/src/components/CommandPalette.tsx#buildAddProjectSourceGroups
 msgid "Start a new Git repository from a name"
 msgstr "输入名称以新建 Git 仓库"
+
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Start a turn with this message"
+msgstr "使用此消息开始新轮次"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Start dictating"
+msgstr "开始听写"
 
 #: apps/web/src/components/BranchPicker.tsx#BranchPicker
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -18612,6 +19488,14 @@ msgstr "从远程开始"
 #: apps/web/src/components/settings/WorktreesSettings.tsx#StartFromRemoteRow
 msgid "Start new worktrees from remote by default"
 msgstr "新工作树默认从远程开始"
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
+msgid ""
+"Start T3 Code or run <0>t3 serve</0> there before <1>t3 pair</1>. On a "
+"tailnet, run <2>t3 pair --tailscale</2> instead."
+msgstr ""
+"先在该计算机上启动 T3 Code 或运行 <0>t3 serve</0>，再运行 "
+"<1>t3 pair</1>。在 tailnet 中请改用 <2>t3 pair --tailscale</2>。"
 
 #: apps/web/src/components/CommandPalette.tsx#handleOpenProjectFromFileManager
 msgid "Start the matching WSL backend, then choose the folder again."
@@ -18647,6 +19531,10 @@ msgid ""
 msgstr ""
 "由 {activeThreadLinkOrigin} 上的智能体通过已链接环境启动。"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Started by the first run"
+msgstr "由首次运行启动"
+
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Started in background"
 msgstr "已在后台启动"
@@ -18674,6 +19562,10 @@ msgstr "正在启动设备中心…"
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 msgid "Starting device…"
 msgstr "正在启动设备…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Starting download…"
+msgstr "正在开始下载…"
 
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Starting sign-in…"
@@ -18799,6 +19691,7 @@ msgid "stop guest share"
 msgstr "停止访客共享"
 
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
 msgid "Stop recording"
 msgstr "停止录制"
 
@@ -18821,6 +19714,10 @@ msgid ""
 msgstr ""
 "停止 {serverLabel} 上的 t3，然后使用相同的子命令和选项，以"
 " `{command}` 重新启动。这不会更新已安装的 t3 命令。"
+
+#: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
+msgid "Stop this action when the thread settles"
+msgstr "会话活动结束后停止此操作"
 
 #: apps/web/src/components/pullRequest/ThreadPullRequestsPanel.tsx#LinkRowImpl
 msgid "Stop watching"
@@ -18887,6 +19784,11 @@ msgstr "子模块"
 msgid "Subtle surface"
 msgstr "柔和表面"
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#PromptSuggestionsRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Suggest next prompt"
+msgstr "建议下一条提示词"
+
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
 msgid "Suggestions"
 msgstr "建议"
@@ -18952,14 +19854,6 @@ msgstr "开启"
 #: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
 msgid "Switch response model for this thread"
 msgstr "切换此会话的回复模型"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "Switch this thread back to normal build mode"
-msgstr "将此会话切回正常构建模式"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "Switch this thread into plan mode"
-msgstr "将此会话切换为计划模式"
 
 #: apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx#UpdateTrackSwitchDialog
 #: apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx#SwitchPlan
@@ -19028,13 +19922,23 @@ msgstr ""
 "会话完成、失败，或需要输入或批准时发出系统提醒。T3 "
 "Code 打开时在此设备上生效。"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/settings/SettingsPanels.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "System default"
 msgstr "系统默认"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#GeneralSettingsPanel
 msgid "System default follows your browser or OS clock preference."
 msgstr "系统默认遵循浏览器或操作系统的时钟偏好。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"System default follows your operating system. Record a ten-second test and "
+"play it back here. Test audio stays on this device and is never transcribed."
+msgstr ""
+"系统默认选项遵循操作系统设置。在此录制十秒测试音频并"
+"播放。测试音频仅保留在此设备上，绝不会被转录。"
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "T3 Code also reads any files included by this file."
@@ -19097,6 +20001,19 @@ msgid ""
 "Connect."
 msgstr ""
 "T3 Code 需要中继客户端，才能通过 T3 Connect 提供此环境。"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid ""
+"T3 Code on {label} stops, rebuilds its database, and starts again. It is "
+"offline for about {minutes} min. Running agents stop when it restarts."
+msgstr ""
+"{label} 上的 T3 Code "
+"会停止、重建数据库并重新启动。它将离线约 {minutes} "
+"分钟。重启时，运行中的智能体会停止。"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "T3 Code there restarts and is back in about {minutes} min."
+msgstr "该处的 T3 Code 将重启，并在约 {minutes} 分钟后恢复。"
 
 #: apps/web/src/connection/clientMetadata.ts#clientPresentationMetadata
 msgid "T3 Code Web"
@@ -19364,6 +20281,7 @@ msgstr "终止"
 #: apps/web/src/components/projectScriptEditor.tsx
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
 msgid "Test"
 msgstr "测试"
 
@@ -19383,6 +20301,20 @@ msgstr "测试捕获并继续"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
 msgid "Test connection"
 msgstr "测试连接"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Test microphone"
+msgstr "测试麦克风"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Test model"
+msgstr "测试模型"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Test transcript"
+msgstr "测试转录文本"
 
 #: apps/web/src/projectIconOptions.ts
 msgid "Test tube"
@@ -19424,6 +20356,10 @@ msgstr "文本生成模型"
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 msgid "Text generation model not saved"
 msgstr "文本生成模型未保存"
+
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Text generators"
+msgstr "文本生成器"
 
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
 msgid "Text size"
@@ -19484,6 +20420,10 @@ msgstr ""
 "的日志和源代码，并在应用修复或发布任何内容前征求确认"
 "。"
 
+#: apps/web/src/components/chat/ComposerFreshSession.tsx#freshSessionBannerItem
+msgid "The agent won't see earlier messages in this thread."
+msgstr "智能体不会看到此会话中之前的消息。"
+
 #: apps/web/src/components/preview/PreviewView.tsx#handlePickElement
 msgid "The annotation was kept without the screenshot."
 msgstr "标注已保留，但未包含屏幕截图。"
@@ -19539,6 +20479,10 @@ msgstr "引用的回复不可用"
 #: apps/web/src/components/ProjectCloneToastCoordinator.tsx#EnvironmentCloneToasts
 msgid "The clone failed."
 msgstr "克隆失败。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "The cloud provider can detect your language automatically."
+msgstr "云端提供商可以自动检测你的语言。"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserAppearanceSetting
 msgid ""
@@ -19669,6 +20613,10 @@ msgstr "未打开快捷键绑定文件。"
 msgid "The labels could not be read."
 msgstr "无法读取标签。"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "The last attempt failed: {reclaimFailure}"
+msgstr "上次尝试失败：{reclaimFailure}"
+
 #: apps/web/src/components/usage/UsageLimits.tsx#WindowBar
 msgid "The line is where even spending would be."
 msgstr "该线表示均匀消耗时的水平。"
@@ -19697,6 +20645,10 @@ msgstr "已移除托管隧道。智能体活动发布仍保持开启。"
 #: apps/web/src/components/media/MediaActions.tsx#showMenu
 msgid "The media action failed."
 msgstr "媒体操作失败。"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "The model list couldn't load."
+msgstr "无法加载模型列表。"
 
 #: apps/web/src/components/auth/ConnectAgentSurface.tsx#ConnectAgentSurface
 msgid ""
@@ -19823,6 +20775,14 @@ msgstr "所选环境"
 msgid "The selected environment is not connected."
 msgstr "所选环境未连接。"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"The selected microphone is unavailable. Choose another or use the system "
+"default."
+msgstr ""
+"所选麦克风不可用。请选择其他麦克风或使用系统默认麦克"
+"风。"
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 msgid "The selected targets use different streaming modes."
 msgstr "所选目标使用不同的流式输出模式。"
@@ -19876,6 +20836,16 @@ msgstr "无法保存标题"
 msgid "The URL appears after you save."
 msgstr "保存后将显示 URL。"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"The word or phrase you say to flag a correction, like “sorry” or "
+"“scratch that”. Cleanup applies the correction only where one is meant, "
+"and hears the cue as a hint."
+msgstr ""
+"用于标记更正的词语或短语，例如“抱歉”或“取消刚才的"
+"话”。整理仅在确实要更正的位置应用更正，并将提示词作"
+"为线索。"
+
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid ""
 "The WSL backend will stop. Threads and projects opened against WSL stay safe "
@@ -19907,6 +20877,10 @@ msgstr "主题名称"
 msgid "Themes"
 msgstr "主题"
 
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "Then"
+msgstr "然后"
+
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 msgid "There were no cookies to import for {destinationEnvironmentName}."
 msgstr "没有可为 {destinationEnvironmentName} 导入的 Cookie。"
@@ -19930,6 +20904,14 @@ msgid ""
 msgstr ""
 "这些权限适用于当前使用的连接路径。其他路径可能有不同"
 "权限。"
+
+#: apps/web/src/components/settings/SecretsSettings.tsx#SecretProviderUses
+msgid ""
+"These read from {label} and will be unset. The secrets themselves are "
+"untouched."
+msgstr ""
+"以下配置从 {label} "
+"读取，将被取消设置。机密值本身不会改变。"
 
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "These ticks are kept here, not on the host"
@@ -20021,6 +21003,10 @@ msgstr ""
 msgid ""
 "This checkout is no longer available in the selected project and environment."
 msgstr "所选项目和环境中的此检出目录已不可用。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "This choice applies only to this device. Choose Off to stop sharing."
+msgstr "此选择仅适用于此设备。选择“关闭”可停止共享。"
 
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AuthorizedClientsHeaderAction
 msgid "This client can create or revoke access for other devices."
@@ -20140,6 +21126,15 @@ msgstr "此计数仅涵盖部分更改"
 msgid "This database has no readable tables."
 msgstr "此数据库没有可读取的表。"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid ""
+"This deletes the API key stored on {environmentLabel}. Anything set to use "
+"this generator falls back to the text generation model."
+msgstr ""
+"这会删除保存在 {environmentLabel} 上的 API "
+"密钥。所有配置为使用此生成器的功能都会回退到文本生成"
+"模型。"
+
 #: apps/web/src/components/CommandPalette.tsx#buildEnvironmentItem
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#ConnectedClientListRow
 msgid "This device"
@@ -20169,6 +21164,10 @@ msgstr "此草稿不再指向可用的项目。"
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
 msgid "This driver has no required configuration. You can add the instance now."
 msgstr "此驱动程序无需必填配置。现在即可添加实例。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "This environment can’t transcribe audio: {reason}."
+msgstr "此环境无法转录音频：{reason}。"
 
 #: apps/web/src/components/chat/LinkRequestCard.tsx#LinkRequestDialog
 msgid ""
@@ -20415,14 +21414,6 @@ msgstr ""
 "此仓库的标签多于此处列出的标签。请在主机上应用其余标"
 "签。"
 
-#: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx#PullRequestReviewerPicker
-msgid ""
-"This repository has more people with access than are listed here. Ask for the "
-"rest on the host."
-msgstr ""
-"此仓库有访问权限的人员多于此处列出的人员。请在主机上"
-"向其余人员发出请求。"
-
 #: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx#PullRequestLabelPicker
 msgid "This repository has no labels."
 msgstr "此仓库没有标签。"
@@ -20547,6 +21538,7 @@ msgstr ""
 
 #: apps/web/src/components/ChatMarkdown.tsx
 #: apps/web/src/components/Sidebar.tsx#moveThreadContextDrag
+#: apps/web/src/components/chat/MarkdownThreadLink.tsx#MarkdownThreadLink
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupResults
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 #: apps/web/src/lib/threadContextAttachment.ts#threadContextAttachment
@@ -20610,10 +21602,6 @@ msgstr "会话 ID"
 msgid "Thread ID copied"
 msgstr "会话 ID 已复制"
 
-#: apps/web/src/components/ThreadContextChip.tsx#ThreadContextChip
-msgid "Thread no longer available"
-msgstr "会话已不可用"
-
 #: apps/web/src/components/settings/NotificationSettings.tsx#NotificationSettings
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Thread notifications"
@@ -20649,6 +21637,10 @@ msgstr "会话标题指令"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Thread title instructions"
 msgstr "会话标题指令"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Thread titles and other generated text"
+msgstr "会话标题和其他生成文本"
 
 #: apps/web/src/components/AppSidebarLayout.tsx#AppSidebarLayout
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
@@ -20795,6 +21787,10 @@ msgstr "显示或隐藏会话详情面板"
 msgid "Toggle thread details{threadPanelShortcutLabelText}"
 msgstr "显示或隐藏会话详情{threadPanelShortcutLabelText}"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Toggle: press to start, press again to stop"
+msgstr "切换：按下开始，再次按下停止"
+
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
 msgid "Token"
 msgstr "令牌"
@@ -20836,6 +21832,15 @@ msgstr "工具调用失败"
 msgid "Tool calls"
 msgstr "工具调用"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+msgid "tool calls in chat"
+msgstr "聊天中的工具调用"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Tool calls in chat"
+msgstr "聊天中的工具调用"
+
 #: apps/web/src/components/chat/V2ItemInspector.tsx#ToolOutputImages
 msgid "Tool output image"
 msgstr "工具输出图片"
@@ -20871,10 +21876,6 @@ msgstr ""
 "当前服务器进程所有存活子进程的 CPU "
 "用量总和。不包括桌面外壳和其他父进程。"
 
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Total processed"
-msgstr "处理总量"
-
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid ""
 "Total resident memory across live child processes of the current server "
@@ -20908,6 +21909,61 @@ msgstr "跟踪 ID 已复制"
 msgid "Traces"
 msgstr "跟踪"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Transcribe speech on {transcriptionEnvironment} and use voice input across "
+"environments."
+msgstr ""
+"在 {transcriptionEnvironment} "
+"上转录语音，并跨环境使用语音输入。"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcribe with"
+msgstr "转录方式"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Transcription"
+msgstr "转录"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Transcription failed"
+msgstr "转录失败"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Transcription hardware"
+msgstr "转录硬件"
+
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription hardware and model unloading"
+msgstr "转录硬件和模型卸载"
+
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription language"
+msgstr "转录语言"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription models"
+msgstr "转录模型"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Transcription options"
+msgstr "转录选项"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Transcription still busy"
+msgstr "转录仍在处理中"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Translate"
+msgstr "翻译"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Translate to English"
+msgstr "翻译为英语"
+
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Triage an issue"
 msgstr "排查问题"
@@ -20923,6 +21979,7 @@ msgstr "请扩大搜索范围。"
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/clerk/MobileClientsUserProfilePage.tsx#MobileClientsUserProfilePage
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#CloudEnvironmentConnectRows
 #: apps/web/src/components/files/fileSurfaceChrome.tsx#FileSurfaceFailure
@@ -21274,8 +22331,7 @@ msgstr "无法更新弹出的预览"
 msgid "Unable to update the thread pull request"
 msgstr "无法更新会话关联的拉取请求"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
 msgid "Unarchive"
 msgstr "取消归档"
@@ -21297,6 +22353,10 @@ msgstr "不可用"
 #: apps/web/src/components/usage/usagePriceTable.ts#usagePriceCell
 msgid "Unavailable"
 msgstr "不可用"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "unavailable environment"
+msgstr "不可用的环境"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 #: apps/web/src/components/settings/SettingsScopeSentence.tsx#EnvironmentScopeMenu
@@ -21393,6 +22453,10 @@ msgstr "从会话取消关联"
 msgid "Unlinking…"
 msgstr "正在取消关联…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Unload model"
+msgstr "卸载模型"
+
 #: apps/web/src/browser/BrowserDeviceToolbar.tsx#BrowserDeviceToolbar
 msgid "Unlock aspect ratio"
 msgstr "解锁宽高比"
@@ -21473,8 +22537,8 @@ msgid "Untitled commit"
 msgstr "无标题提交"
 
 #: apps/web/src/components/CommandPalette.logic.ts#buildLinkedThreadActionItems
-#: apps/web/src/components/chat/MarkdownThreadLink.tsx#MarkdownThreadLink
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#ThreadPicker
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
 msgid "Untitled thread"
 msgstr "无标题会话"
 
@@ -21482,6 +22546,7 @@ msgstr "无标题会话"
 msgid "Up to {MAX_SNOOZE_PRESETS} options"
 msgstr "最多 {MAX_SNOOZE_PRESETS} 个选项"
 
+#: apps/web/src/components/settings/IntegrationsSettings.tsx#versionActions
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update"
@@ -21490,6 +22555,10 @@ msgstr "更新"
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update “{messageText}”?"
 msgstr "是否更新“{messageText}”？"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Update {label} to use OpenRouter dictation."
+msgstr "请更新 {label} 以使用 OpenRouter 听写。"
 
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update {name}"
@@ -21529,10 +22598,6 @@ msgstr "更新命令已复制"
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#handleAction
 msgid "Update confirmation failed."
 msgstr "更新确认失败。"
-
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-msgid "update Cursor account usage"
-msgstr "更新 Cursor 账号用量"
 
 #: apps/web/src/components/sidebar/updateEverythingRun.tsx#startDesktopUpdateLaunchNotice
 msgid "Update did not apply"
@@ -21622,10 +22687,6 @@ msgstr "请更新此环境以管理 Antigravity。"
 msgid "Update to {clientVersion}"
 msgstr "更新至 {clientVersion}"
 
-#: apps/web/src/components/settings/IntegrationsSettings.tsx#versionActions
-msgid "Update to v{requiredVersion}"
-msgstr "更新至 v{requiredVersion}"
-
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Update track"
@@ -21699,6 +22760,10 @@ msgstr "正在更新拉取请求"
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Updating queued message"
 msgstr "正在更新排队消息"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Updating the key keeps dictation enabled."
+msgstr "更新密钥不会关闭听写。"
 
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Updating..."
@@ -21793,6 +22858,10 @@ msgstr "用量数据提供商"
 msgid "USD / million tokens"
 msgstr "美元 / 百万 token"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Use"
+msgstr "使用"
+
 #: apps/web/src/components/chat/ComposerUsageLimits.tsx#modelFallbackBannerItem
 msgid "Use {defaultModelName}"
 msgstr "使用 {defaultModelName}"
@@ -21809,6 +22878,14 @@ msgstr "使用 {mode} 模式"
 msgid "Use {mode} variant, currently {label}"
 msgstr "使用 {mode} 变体，当前为{label}"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Use {name}"
+msgstr "使用 {name}"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Use {name} for dictation?"
+msgstr "使用 {name} 听写？"
+
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#apply
 msgid "Use {shortcut} from another app."
 msgstr "在其他应用中使用 {shortcut}。"
@@ -21816,6 +22893,10 @@ msgstr "在其他应用中使用 {shortcut}。"
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserSearchEngineSetting
 msgid "Use %s where the search terms go."
 msgstr "用 %s 表示搜索词的位置。"
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+msgid "Use <0>t3</0> from any terminal. Adds one line to {file}."
+msgstr "在任意终端使用 <0>t3</0>。向 {file} 添加一行。"
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Use a {singular} URL, checkout command, 123, or #123."
@@ -21829,6 +22910,10 @@ msgstr "使用其他账号"
 #: apps/web/src/components/usage/UsageLimits.tsx#ResetCreditDialog
 msgid "Use a reset credit?"
 msgstr "是否使用一次重置额度？"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid "Use a separate cleanup model"
+msgstr "使用单独的整理模型"
 
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
 msgid "Use a separate review guide model"
@@ -21915,6 +23000,10 @@ msgstr "使用 julius/，后接问题 ID 和简短描述。"
 msgid "Use local SSH config, agent, and tunnels for the backend."
 msgstr "为后端使用本地 SSH 配置、代理和隧道。"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Use model"
+msgstr "使用模型"
+
 #: apps/web/src/components/search/ProjectContentSearchDialog.tsx#OpenContentSearchDialog
 msgid "Use regular expression"
 msgstr "使用正则表达式"
@@ -21939,6 +23028,10 @@ msgstr "在命令面板中使用“拍摄快照”选择窗口。"
 #: apps/web/src/components/ChatMarkdown.tsx#CodexArtifactTemplateCard
 msgid "Use template"
 msgstr "使用模板"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Use the built-in instructions or write your own."
+msgstr "使用内置说明，或编写自己的说明。"
 
 #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibraryCard
 msgid "Use the first variants for light and dark"
@@ -22001,14 +23094,6 @@ msgstr ""
 msgid "Used for new threads when the default model's provider is out of usage."
 msgstr "当默认模型的提供商用量耗尽时，用于新会话。"
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
-msgid ""
-"Used for thread titles and other generated text on connected devices with this"
-" provider. Source control can override it."
-msgstr ""
-"用于连接到此提供商的设备上的会话标题和其他生成文本。"
-"版本控制可覆盖此设置。"
-
 #: apps/web/src/components/chat/TimelineMinimap.tsx#TimelineMinimap
 msgid "User message"
 msgstr "用户消息"
@@ -22024,6 +23109,12 @@ msgstr "用户名"
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
 msgid "Uses custom intervals. Shared policy: {messageText}."
 msgstr "使用自定义间隔。共享策略：{messageText}。"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid ""
+"Uses the API key saved on {label}. This choice applies only to this device."
+msgstr ""
+"使用保存在 {label} 上的 API 密钥。此选择仅适用于此设备。"
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Uses the custom binary path below. Installation keeps that path."
@@ -22092,7 +23183,7 @@ msgstr "正在验证配对链接并准备你的会话。"
 msgid "value"
 msgstr "值"
 
-#: apps/web/src/components/settings/SecretSourceInput.tsx#SecretSourceInput
+#: apps/web/src/components/settings/SecretSourceInput.tsx#SecretSourceSelect
 msgid "Value"
 msgstr "值"
 
@@ -22116,6 +23207,11 @@ msgstr ""
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 msgid "Verifying download"
 msgstr "正在验证下载"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Verifying download…"
+msgstr "正在验证下载…"
 
 #: apps/web/src/components/settings/AboutVersionTitle.tsx#AboutVersionTitle
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
@@ -22256,6 +23352,28 @@ msgstr "紫罗兰色"
 msgid "Visibility"
 msgstr "可见性"
 
+#: apps/web/src/components/settings/settingsSearch.ts
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Voice"
+msgstr "语音"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#voiceErrorLabel
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Voice input failed"
+msgstr "语音输入失败"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "Voice input is busy"
+msgstr "语音输入正忙"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Voice input unavailable"
+msgstr "语音输入不可用"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Voice transcript cleanup"
+msgstr "语音转录文本整理"
+
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
 msgid "VoiceOver"
 msgstr "VoiceOver"
@@ -22322,6 +23440,10 @@ msgstr "等待安装程序"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#LastSampleLabel
 msgid "Waiting for sample"
 msgstr "等待采样"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Waiting for the environment to connect"
+msgstr "正在等待环境连接"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ProcessTable
 msgid "Waiting for the native process monitor."
@@ -22425,10 +23547,6 @@ msgstr "允许执行的操作"
 msgid "What should the agent do each time this runs?"
 msgstr "每次运行此任务时，智能体应该做什么？"
 
-#: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
-msgid "What should we build in <0>{children}</0>?"
-msgstr "我们应该在 <0>{children}</0> 中构建什么？"
-
 #: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "What should we work on?"
@@ -22502,6 +23620,10 @@ msgstr "宽"
 #: apps/web/src/components/pullRequest/PullRequestListEmptyState.tsx#PullRequestListEmptyState
 msgid "Widen the state, involvement or project filter to see more."
 msgstr "放宽状态、参与情况或项目筛选条件以查看更多。"
+
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "Windows (PowerShell)"
+msgstr "Windows（PowerShell）"
 
 #: apps/web/src/components/CommandPalette.tsx#handleAddProjectForEnvironment
 #: apps/web/src/components/CommandPalette.tsx#submitAddProjectCloneFlow
@@ -22695,13 +23817,21 @@ msgstr "写入吞吐量"
 msgid "Write Total"
 msgstr "写入总量"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Write-only headers JSON, e.g. {example}"
 msgstr "只写请求头 JSON，例如 {example}"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ProcessTable
 msgid "Write/s"
 msgstr "写入/秒"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid ""
+"Writes thread titles, commit messages, and other short text without starting a"
+" coding agent. Your API key is stored on this environment."
+msgstr ""
+"无需启动编程智能体即可编写会话标题、提交消息和其他短"
+"文本。你的 API 密钥保存在此环境中。"
 
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
 msgid "Writing & review"
@@ -22874,6 +24004,10 @@ msgstr ""
 "你的新草稿保持不变。请在此输入框为空时恢复发送失败的"
 "提示词。"
 
+#: apps/web/src/components/chat/ComposerFreshSession.tsx#freshSessionBannerItem
+msgid "Your next message starts a fresh session"
+msgstr "你的下一条消息会开始新会话"
+
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Your next message starts a fresh session."
 msgstr "你的下一条消息将开始全新会话。"
@@ -22902,6 +24036,10 @@ msgstr "无法保存你的设置。请重试。"
 msgid "Your ticks could not be read"
 msgstr "无法读取你的勾选状态"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "your transcription environment"
+msgstr "你的转录环境"
+
 #: apps/web/src/components/chat/usePendingThreadRequests.ts#onSelectActivePendingUserInputOption
 msgid "Your typed text was set aside"
 msgstr "已暂时保留你输入的文本"
@@ -22913,6 +24051,10 @@ msgstr "你未保存的编辑{where}已被丢弃。"
 #: apps/web/src/components/chat/useQueuedRunEdit.ts#beginEdit
 msgid "Your unsaved edit{where} was kept in the composer."
 msgstr "你未保存的编辑{where}已保留在输入框中。"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Zen"
+msgstr "禅模式"
 
 #: apps/web/src/components/preview/PreviewMoreMenu.tsx#PreviewMoreMenu
 msgid "Zoom"
@@ -22932,10 +24074,14 @@ msgstr "放大"
 msgid "Zoom out"
 msgstr "缩小"
 
+#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
+msgid "⇥ Tab"
+msgstr "⇥ Tab"
+
 #: apps/web/src/components/chat/ThreadServersPanel.tsx#ThreadServersList
 msgid "⌘-click"
 msgstr "⌘-点击"
 
-#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#DiffCommentAnnotation
+#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#renderDraft
 msgid "⌘/Ctrl Enter to send"
 msgstr "按 ⌘/Ctrl Enter 发送"

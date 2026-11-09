@@ -580,7 +580,7 @@ export function ThreadRelationshipsPanel(props: {
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
     {
       id: "previous",
-      label: "Previous agents",
+      label: t({ message: "Previous agents" }),
       rows: [...previous, ...remotePrevious],
       expanded: false,
     },

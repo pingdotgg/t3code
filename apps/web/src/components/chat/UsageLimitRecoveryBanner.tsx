@@ -62,9 +62,12 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil
       : resetAt;
+  const resetTime = displayAt ? formatUpcomingTimestamp(displayAt, timestampFormat) : "";
   const resetDescription = displayAt
-    ? `${resumes ? "Resumes" : "Resets"} ${formatUpcomingTimestamp(displayAt, timestampFormat)}`
-    : "Reset time unavailable; retry manually";
+    ? resumes
+      ? t`Resumes ${resetTime}`
+      : t`Resets ${resetTime}`
+    : t({ message: "Reset time unavailable; retry manually" });
   if (!chatGptLimit) {
     return {
       id: `usage-limit-recovery:${runId}`,
@@ -149,14 +152,26 @@ function RecoveryActions({ runId, resetAt, recovery, snoozedUntil, onChange }: R
   return (
     <span className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
       <InlineButton touchTarget="padded" disabled={pending} onClick={() => void toggle("resume")}>
-        {pending ? "Saving..." : scheduled ? "Cancel auto-resume" : "Resume at reset"}
+        {pending ? (
+          <Trans>Saving...</Trans>
+        ) : scheduled ? (
+          <Trans>Cancel auto-resume</Trans>
+        ) : (
+          <Trans>Resume at reset</Trans>
+        )}
       </InlineButton>
       <InlineButton
         touchTarget="padded"
         disabled={pending || (!snoozed && resetPassed)}
         onClick={() => void toggle("snooze")}
       >
-        {pending ? "Saving..." : snoozed ? "Wake now" : "Snooze until reset"}
+        {pending ? (
+          <Trans>Saving...</Trans>
+        ) : snoozed ? (
+          <Trans>Wake now</Trans>
+        ) : (
+          <Trans>Snooze until reset</Trans>
+        )}
       </InlineButton>
     </span>
   );

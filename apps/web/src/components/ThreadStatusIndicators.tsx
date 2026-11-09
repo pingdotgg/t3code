@@ -430,7 +430,7 @@ export function prStatusIndicator(
     label: `${shortLabel} ${stateLabelToLowerCaseText}`,
     colorClass: state.toneClassName,
     Icon: state.Icon,
-    tooltip: t`${tooltipLead}: ${pr.title}`,
+    tooltip: `${tooltipLead}: ${pr.title}`,
     tooltipLead,
     tooltipTitle: pr.title,
     url: pr.url,

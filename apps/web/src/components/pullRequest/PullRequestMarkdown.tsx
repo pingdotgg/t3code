@@ -158,12 +158,13 @@ function PullRequestBodySegmentView({
         key={`${segment.id}:${segment.url}`}
         src={segment.url}
         originalUrl={segment.url}
-        label="Pull request video"
+        label={t({ message: "Pull request video" })}
         className="w-full"
         videoClassName="rounded-lg border border-border/60"
       />
     );
   }
+  const hostMediaDefinitionLabelText = hostMedia?.definition.label ?? new URL(segment.url).hostname;
   return (
     // Desktop converts blocked _blank navigation to openExternal.
     <a
@@ -174,7 +175,7 @@ function PullRequestBodySegmentView({
     >
       <PaperclipIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">
-        Open attachment on {hostMedia?.definition.label ?? new URL(segment.url).hostname}
+        <Trans>Open attachment on {hostMediaDefinitionLabelText}</Trans>
       </span>
       <ExternalLinkIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
     </a>

@@ -46,7 +46,7 @@ function BoringSidebarRow() {
         <Switch
           checked={settings.boringSidebarEnabled}
           onCheckedChange={(checked) => updateSettings({ boringSidebarEnabled: Boolean(checked) })}
-          aria-label="Boring sidebar (group by project)"
+          aria-label={t({ message: "Boring sidebar (group by project)" })}
         />
       }
     >
@@ -66,7 +66,10 @@ function BoringSidebarMultilineRow() {
     <SettingsRow
       {...searchableSetting("boring-sidebar-multiline")}
       className="px-0 py-2 sm:px-0"
-      description="Show folder threads on two lines: the title, then the branch, pull request, and agent."
+      description={t({
+        message:
+          "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
+      })}
       control={
         <Switch
           checked={settings.boringSidebarMultilineRows}
@@ -89,7 +92,10 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description={t({
+        message:
+          "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
+      })}
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
           <Trans>Sign in</Trans>
@@ -120,12 +126,14 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
-          Share a thread with a guest who watches it live in a browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
-          <Link to="/settings/access" className="underline underline-offset-2">
-            Sharing & access
-          </Link>
-          . Turning it off stops every guest link.
+          <Trans>
+            Share a thread with a guest who watches it live in a browser and sends messages you
+            approve. Needs T3 Connect: sign in and link this machine in{" "}
+            <Link to="/settings/access" className="underline underline-offset-2">
+              Sharing & access
+            </Link>
+            . Turning it off stops every guest link.
+          </Trans>
         </>
       }
       control={
@@ -150,12 +158,14 @@ function LinkedEnvironmentsRow() {
       settingKeys={["linkedEnvironmentsEnabled"]}
       description={
         <>
-          Let agents here work on your other machines, and theirs here. Turn it on for each machine,
-          then link them in{" "}
-          <Link to="/settings/connections" className="underline underline-offset-2">
-            Connections
-          </Link>
-          . While off, nothing new starts over a link; running tasks finish.
+          <Trans>
+            Let agents here work on your other machines, and theirs here. Turn it on for each
+            machine, then link them in{" "}
+            <Link to="/settings/connections" className="underline underline-offset-2">
+              Connections
+            </Link>
+            . While off, nothing new starts over a link; running tasks finish.
+          </Trans>
         </>
       }
       control={
@@ -180,7 +190,10 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart."
+      description={t({
+        message:
+          "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+      })}
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}
@@ -188,7 +201,7 @@ function PromptSuggestionsRow() {
           onCheckedChange={(checked) =>
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
-          aria-label="Suggest next prompt"
+          aria-label={t({ message: "Suggest next prompt" })}
         />
       }
     />
@@ -257,13 +270,16 @@ function FastWorktreeCheckoutRow() {
       serverScoped
       {...searchableSetting("worktree-fast-checkout")}
       settingKeys={["fastWorktreeCheckout"]}
-      description="On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache."
+      description={t({
+        message:
+          "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+      })}
       control={
         <ScopedSwitch
           settingKeys={["fastWorktreeCheckout"]}
           checked={settings.fastWorktreeCheckout}
           onCheckedChange={(checked) => updateSettings({ fastWorktreeCheckout: Boolean(checked) })}
-          aria-label="Fast worktree checkout"
+          aria-label={t({ message: "Fast worktree checkout" })}
         />
       }
     />

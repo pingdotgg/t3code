@@ -1,3 +1,4 @@
+import { Trans } from "@palamedes/react/macro";
 import { t } from "@palamedes/core/macro";
 import type { EnvironmentId, EnvironmentMachineKind } from "@t3tools/contracts";
 
@@ -113,7 +114,9 @@ function ProjectLocationDescription(props: {
     <span className="flex min-w-0 items-center gap-1">
       {props.current ? (
         <>
-          <span className="shrink-0">Current</span>
+          <span className="shrink-0">
+            <Trans>Current</Trans>
+          </span>
           <CommandPaletteMetaDot />
         </>
       ) : null}

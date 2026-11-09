@@ -121,8 +121,13 @@ function hostStatus(
     case "ready": {
       const incomplete = incompleteListings(status);
       if (incomplete.length === 0) return undefined;
-      const list = incomplete.length > 1 ? "Device" : incomplete[0] === "ios" ? "iOS" : "Android";
-      return { tone: "warning", label: `${list} list may be incomplete`, detail: status.detail };
+      const label =
+        incomplete.length > 1
+          ? t({ message: "Device list may be incomplete" })
+          : incomplete[0] === "ios"
+            ? t({ message: "iOS list may be incomplete" })
+            : t({ message: "Android list may be incomplete" });
+      return { tone: "warning", label, detail: status.detail };
     }
     case "installing":
     case "starting":
@@ -515,7 +520,7 @@ export function DeviceSourcesSettings(props: {
         shared: true,
         title: host.label,
         kind: "Simlock",
-        description: t`${hostGatewayUrlReplaceText} · ${simlockLeaseLimitsText}`,
+        description: `${hostGatewayUrlReplaceText} · ${simlockLeaseLimitsText}`,
         environments: active.map((member) => {
           const held = (member.settings?.simlockDeviceHosts ?? []).find(
             (candidate) => candidate.id === host.id,
@@ -709,7 +714,15 @@ function PlatformIcon(props: {
       <PopoverPopup side="top" align="end" width="sm">
         <p className="text-sm font-medium">
           {props.label}{" "}
-          {available ? partial ? "available on some" : "available" : <Trans>not available</Trans>}
+          {available ? (
+            partial ? (
+              <Trans>available on some</Trans>
+            ) : (
+              <Trans>available</Trans>
+            )
+          ) : (
+            <Trans>not available</Trans>
+          )}
         </p>
         {props.row.shared ? (
           <>
@@ -811,14 +824,16 @@ function DeviceSourceRow(props: { row: SourceRow }) {
             )}
           >
             <span className="min-w-0 break-words">
-              {several ? `${environment.label}: ` : ""}
+              {several ? <Trans>{environment.label}: </Trans> : ""}
               {environment.status.tone === "error" && !several && environment.status.detail
                 ? environment.status.detail
                 : environment.status.label}
             </span>
             {environment.status.tone === "warning" && environment.status.detail ? (
               <Popover>
-                <PopoverTrigger render={<InlineButton />}>Details</PopoverTrigger>
+                <PopoverTrigger render={<InlineButton />}>
+                  <Trans>Details</Trans>
+                </PopoverTrigger>
                 <PopoverPopup side="bottom" align="start" width="lg" padding="compact">
                   <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
                     {environment.status.detail}

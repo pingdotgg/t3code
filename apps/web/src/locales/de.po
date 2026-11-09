@@ -27,10 +27,6 @@ msgstr " · {formatPercentText} der Kosten"
 msgid " · {inlineStatusDetail}"
 msgstr " · {inlineStatusDetail}"
 
-#: apps/web/src/components/usage/UsagePage.tsx#CursorEnableRow
-msgid " · {label}"
-msgstr " · {label}"
-
 #: apps/web/src/components/files/LargeTextViewer.tsx
 msgid " · {metaCountText} columns"
 msgstr " · {metaCountText} Spalten"
@@ -56,6 +52,10 @@ msgstr " · {shortcutLabel}"
 msgid " · {stepLabelText}"
 msgstr " · {stepLabelText}"
 
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+msgid " · Created"
+msgstr " · Erstellt"
+
 #: apps/web/src/components/files/OpenXmlOfficeViewer.tsx
 msgid " · Fit to width"
 msgstr " · An Breite anpassen"
@@ -80,7 +80,7 @@ msgstr " · Kommentar auf Host öffnen"
 msgid " · Open profile"
 msgstr " · Profil öffnen"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid " · Required"
 msgstr " · Erforderlich"
 
@@ -132,10 +132,16 @@ msgstr "„{label}“ wird aus diesem Konto entfernt."
 msgid "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 msgstr "({changeFileTypeChangeMimeTypeFilterBooleanJoinText})"
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "({finishShortcutLabel})"
+msgstr "({finishShortcutLabel})"
+
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "({length} of {length_1})"
 msgstr "({length} von {length_1})"
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechButton
 #: apps/web/src/components/sidebar/SidebarChrome.tsx#HistoryNavigationButton
 msgid "({shortcutLabel})"
 msgstr "({shortcutLabel})"
@@ -259,6 +265,10 @@ msgid ""
 msgstr ""
 "{closed, plural, one {{closed} Pull Request geschlossen} other {{closed} Pull "
 "Requests geschlossen}}"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{cloudProviderLabel} <0>via {transcriptionHostLabel}</0>"
+msgstr "{cloudProviderLabel} <0>über {transcriptionHostLabel}</0>"
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 msgid ""
@@ -533,10 +543,6 @@ msgstr "{guestName} (Gast)"
 msgid "{guestName} is a guest"
 msgstr "{guestName} ist ein Gast"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-msgid "{hasMultipleEnvironmentsText}Archived<0/>"
-msgstr "{hasMultipleEnvironmentsText}Archiviert<0/>"
-
 #: apps/web/src/components/pullRequest/PullRequestStackLayerContent.tsx#PullRequestStackLayerContent
 msgid "{headBranch} ·"
 msgstr "{headBranch} ·"
@@ -574,10 +580,6 @@ msgid ""
 msgstr ""
 "{hiddenTestFileCount, plural, one {{hiddenTestFileCount} Testdatei "
 "ausgeblendet} other {{hiddenTestFileCount} Testdateien ausgeblendet}}"
-
-#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
-msgid "{hostGatewayUrlReplaceText} · {simlockLeaseLimitsText}"
-msgstr "{hostGatewayUrlReplaceText} · {simlockLeaseLimitsText}"
 
 #: apps/web/src/components/pullRequest/PullRequestStackMenu.tsx#run
 msgid "{hostLabel} merged the stack or added it to its merge queue."
@@ -633,6 +635,11 @@ msgstr "{label} hinzugefügt"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#connectSavedBackendSshTarget
 msgid "{label} can now be reached over SSH {alias}."
 msgstr "{label} ist jetzt über SSH {alias} erreichbar."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"{label} can’t transcribe audio locally. Choose a different destination."
+msgstr "{label} kann Audio nicht lokal transkribieren. Wähle ein anderes Ziel."
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 msgid "{label} copied"
@@ -787,6 +794,16 @@ msgid "{length, plural, one {{themeLabel} updated} other {# themes updated}}"
 msgstr ""
 "{length, plural, one {{themeLabel} aktualisiert} other {# Designs "
 "aktualisiert}}"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid ""
+"{length, plural, one {# model available. Pick one in a text generation model "
+"picker.} other {# models available. Pick one in a text generation model "
+"picker.}}"
+msgstr ""
+"{length, plural, one {# Modell verfügbar. Wähle es in einer Modellauswahl "
+"für Textgenerierung aus.} other {# Modelle verfügbar. Wähle eines in einer "
+"Modellauswahl für Textgenerierung aus.}}"
 
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
 msgid "{length, plural, one {# model} other {# models}}"
@@ -956,6 +973,10 @@ msgstr "{MathCeilText} MB Download."
 msgid "{MathRoundText}%"
 msgstr "{MathRoundText}%"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "{MathRoundText}% downloaded"
+msgstr "{MathRoundText}% heruntergeladen"
+
 #: apps/web/src/components/chat/ZoomableImage.tsx#ZoomableImage
 msgid "{MathRoundText}% zoom"
 msgstr "{MathRoundText} % Zoom"
@@ -975,6 +996,29 @@ msgstr "{messageText} fehlgeschlagen"
 #: apps/web/src/components/settings/ChatGptWelcomeCoordinator.tsx#ChatGptWelcomeCoordinator
 msgid "{messageText} on {messageText2}"
 msgstr "{messageText} auf {messageText2}"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
+msgid "{model} answered. It works."
+msgstr "{model} hat geantwortet. Es funktioniert."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{model} detects the language automatically."
+msgstr "{model} erkennt die Sprache automatisch."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{model} uses one fixed language."
+msgstr "{model} verwendet eine feste Sprache."
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid ""
+"{modelCount, plural, one {{name} is connected and lists # model. Switch any of"
+" these to it, or keep what they use now.} other {{name} is connected and lists"
+" # models. Switch any of these to it, or keep what they use now.}}"
+msgstr ""
+"{modelCount, plural, one {{name} ist verbunden und listet # Modell auf. Wähle"
+" es für eine dieser Aufgaben oder behalte die bisherige Auswahl bei.} other "
+"{{name} ist verbunden und listet # Modelle auf. Wähle es für eine dieser "
+"Aufgaben oder behalte die bisherige Auswahl bei.}}"
 
 #: apps/web/src/components/chat/ProviderSubagentBar.tsx#ProviderSubagentBar
 msgid "{modelDescription} subagent: {announcement}"
@@ -1017,7 +1061,6 @@ msgstr "{name} ({itemCountToLocaleStringText} Zeilen)"
 msgid "{name} ({tableCountToLocaleStringText} rows)"
 msgstr "{name} ({tableCountToLocaleStringText} Zeilen)"
 
-#: apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx#PullRequestLinkPreview
 #: apps/web/src/components/pullRequest/PullRequestListRow.tsx#PullRequestRowAuthor
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#PullRequestActorLabel
 msgid "{name} (@{login})"
@@ -1029,6 +1072,10 @@ msgid ""
 msgstr ""
 "{name} ist geöffnet, deshalb können seine Cookies noch nicht gelesen werden."
 " Beende es und fahre dann fort."
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "{name} models"
+msgstr "Modelle von {name}"
 
 #: apps/web/src/components/composerContextPresentation.tsx#FileContextChip
 msgid "{name} was not saved with this draft. Attach it again to send it."
@@ -1148,6 +1195,15 @@ msgstr ""
 msgid "{pendingLabel}."
 msgstr "{pendingLabel}."
 
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
+msgid "{platformName} list on {label} may be incomplete."
+msgstr ""
+"Die {platformName}-Liste auf {label} ist möglicherweise unvollständig."
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "{progress}% downloaded"
+msgstr "{progress}% heruntergeladen"
+
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "{projectSelector} to start"
 msgstr "Zum Starten {projectSelector}"
@@ -1207,6 +1263,10 @@ msgstr "Anfragelimit von {providerName} erreicht"
 msgid "{providerName} update command copied"
 msgstr "Aktualisierungsbefehl für {providerName} kopiert"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "{providerName} via {label}"
+msgstr "{providerName} über {label}"
+
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "{publisher} · {DOWNLOADFORMATFormatText} downloads"
 msgstr "{publisher} · {DOWNLOADFORMATFormatText} Downloads"
@@ -1230,10 +1290,6 @@ msgstr "{remaining} % übrig{timeLeftNullText}"
 #: apps/web/src/components/usage/UsageLimits.tsx#LimitWindows
 msgid "{remainingPercentText}% left"
 msgstr "{remainingPercentText} % übrig"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "{repository} · {title}"
-msgstr "{repository} · {title}"
 
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistrySearchStep
 msgid ""
@@ -1335,10 +1391,6 @@ msgstr ""
 "{startedCount, plural, one {{startedCount} Thread im Hintergrund gestartet} "
 "other {{startedCount} Threads im Hintergrund gestartet}}"
 
-#: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
-msgid "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
-msgstr "{stateHostsFindHostHostIdPendingDeviceHostIdLabelText} · {version}"
-
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseCount
 msgid "{StringText} notices"
 msgstr "{StringText} Hinweise"
@@ -1399,10 +1451,6 @@ msgstr "{timeLeft} % sollten jetzt noch übrig sein"
 msgid "{title} · {environmentLabel}"
 msgstr "{title} · {environmentLabel}"
 
-#: apps/web/src/components/chat/ThreadActivityBanners.tsx#goalNowItem
-msgid "{title} · {usage}"
-msgstr "{title} · {usage}"
-
 #: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#LifecycleEvent
 msgid "{title} closed"
 msgstr "{title} geschlossen"
@@ -1459,10 +1507,6 @@ msgstr ""
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#SidebarUpdateControl
 msgid "{tooltip}: {detail}"
 msgstr "{tooltip}: {detail}"
-
-#: apps/web/src/components/ThreadStatusIndicators.tsx#prStatusIndicator
-msgid "{tooltipLead}: {title}"
-msgstr "{tooltipLead}: {title}"
 
 #: apps/web/src/components/LegacyThreadMigrationToast.ts#startLegacyThreadMigrationToast
 msgid ""
@@ -1538,10 +1582,6 @@ msgstr ""
 "wartet auf Genehmigung} other {{workflowApprovalRequired} Workflows warten auf"
 " Genehmigung}}"
 
-#: apps/web/src/components/chat/useComposerMenuItems.ts#providerSlashCommandItems
-msgid "/{name}"
-msgstr "/{name}"
-
 #: apps/web/src/components/chat/ComposerCommandMenu.tsx#ComposerCommandMenuItem
 msgid "/skill:"
 msgstr "/skill:"
@@ -1549,10 +1589,6 @@ msgstr "/skill:"
 #: apps/web/src/components/chat/useComposerMenuItems.ts#skillItems
 msgid "/skill:{name}"
 msgstr "/skill:{name}"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "#{number}"
-msgstr "#{number}"
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "#{number} · {headBranch} to {baseBranch}"
@@ -1607,6 +1643,10 @@ msgstr "<0/>Wartet auf Genehmigung · Code läuft um {expiryTimeText} ab"
 msgid "<0>{fileName}</0> from {host} was downloaded instead."
 msgstr "<0>{fileName}</0> von {host} wurde stattdessen heruntergeladen."
 
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "<0>{grade}</0> ({errorPercent}% error)"
+msgstr "<0>{grade}</0> ({errorPercent}% Fehler)"
+
 #: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#GuideExcerpt
 msgid "<0>{path}</0> lines {start}-{end} are not in the loaded diff."
 msgstr ""
@@ -1620,6 +1660,10 @@ msgstr "<0><1/></0>Zustand der Datenerfassung"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "<0><1/></0>Host state"
 msgstr "<0><1/></0>Hostzustand"
+
+#: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
+msgid "<0>What should we build in</0> <1>{children}</1><2>?</2>"
+msgstr "<0>Was sollen wir in</0> <1>{children}</1><2> entwickeln?</2>"
 
 #: apps/web/src/components/files/LargeTextViewer.tsx
 #: apps/web/src/components/files/NotebookPreview.tsx
@@ -1686,6 +1730,10 @@ msgstr "Ein Community-Farbdesign für deinen Editor."
 #: apps/web/src/components/pullRequest/guide/GuideStop.tsx
 msgid "A contract to check"
 msgstr "Ein zu prüfender Schnittstellenvertrag"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "A good default pick for the languages it covers."
+msgstr "Eine gute Standardwahl für die unterstützten Sprachen."
 
 #: apps/web/src/components/pullRequest/PullRequestGuideTab.tsx#PullRequestGuideTab
 msgid ""
@@ -1900,6 +1948,7 @@ msgid "active host power interval"
 msgstr "Intervall bei aktivem Host"
 
 #: apps/web/src/components/chat/TimelineWorkGroupRows.tsx#WorkGroupSection
+#: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Activity"
 msgstr "Aktivität"
 
@@ -1911,6 +1960,7 @@ msgstr "Originalbildgröße"
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#CloudEnvironmentConnectRows
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
 msgid "Add"
 msgstr "Hinzufügen"
 
@@ -1948,6 +1998,14 @@ msgid ""
 msgstr ""
 "Füge Pull Requests einen Reiter „Leitfaden“ hinzu. Ein Agent erklärt die"
 " Änderungen und weist auf zu prüfende Entscheidungen hin."
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid ""
+"Add a model API to write thread titles, commit messages, and other short text "
+"without starting a coding agent."
+msgstr ""
+"Füge eine Modell-API hinzu, um Thread-Titel, Commit-Nachrichten und andere "
+"kurze Texte ohne Coding-Agent zu schreiben."
 
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "Add a project"
@@ -1987,6 +2045,10 @@ msgstr "Reaktion hinzufügen"
 #: apps/web/src/components/settings/AddEnvironmentDialog.tsx#AddEnvironmentDialog
 msgid "Add a route to {label}"
 msgstr "Route zu {label} hinzufügen"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Add a text generator"
+msgstr "Textgenerator hinzufügen"
 
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportDialog
 msgid "Add a theme"
@@ -2066,15 +2128,13 @@ msgstr "Umgebung hinzufügen"
 msgid "Add existing project"
 msgstr "Bestehendes Projekt hinzufügen"
 
-#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
-msgid "Add feedback to refine the plan, or leave this blank to implement it"
-msgstr ""
-"Gib Feedback, um den Plan zu verfeinern, oder lasse dies leer, um ihn "
-"umzusetzen"
-
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookFiltersField
 msgid "Add filter"
 msgstr "Filter hinzufügen"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Add generator"
+msgstr "Generator hinzufügen"
 
 #: apps/web/src/components/settings/AddUsageLimitSourceDialog.tsx#AddUsageLimitSourceDialog
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
@@ -2202,6 +2262,9 @@ msgstr "Zu anderem Rechner hinzufügen"
 
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#terminalSelectionMenuItems
 #: apps/web/src/components/files/FileBrowserPanel.tsx#showEntryContextMenu
+#: apps/web/src/components/pullRequest/PullRequestReviewAnnotation.tsx#ReviewThreadCard
+#: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#AddToChatButton
+#: apps/web/src/components/pullRequest/PullRequestTimelineTab.tsx#AddToChatButton
 msgid "Add to chat"
 msgstr "Zum Chat hinzufügen"
 
@@ -2210,13 +2273,29 @@ msgstr "Zum Chat hinzufügen"
 msgid "Add to favorites"
 msgstr "Zu Favoriten hinzufügen"
 
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid "Add to PATH"
+msgstr "Zu PATH hinzufügen"
+
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 msgid "Add variable"
 msgstr "Variable hinzufügen"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Add words or phrases, separated by commas or line breaks"
+msgstr ""
+"Wörter oder Ausdrücke hinzufügen, getrennt durch Kommas oder "
+"Zeilenumbrüche"
+
 #: apps/web/src/components/settings/AcpRegistrySearchStep.tsx#AcpRegistryAgentRow
 msgid "Added"
 msgstr "Hinzugefügt"
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+msgid "Added to {file}. Open a new terminal to use <0>t3</0>."
+msgstr ""
+"Zu {file} hinzugefügt. Öffne ein neues Terminal, um <0>t3</0> zu verwenden."
 
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 msgid "Added to {targetName} for {destinationEnvironmentName}.{skipped0Text}"
@@ -2225,6 +2304,7 @@ msgstr ""
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#startAsk
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#startHandoff
+#: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#addCommentToChat
 msgid "Added to the composer"
 msgstr "Zum Eingabefeld hinzugefügt"
 
@@ -2270,6 +2350,26 @@ msgstr "Passe den Kontrast von Farben und Rahmen in der Oberfläche an."
 msgid "Advanced"
 msgstr "Erweitert"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 1 hour"
+msgstr "Nach 1 Stunde"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 10 minutes"
+msgstr "Nach 10 Minuten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 15 minutes"
+msgstr "Nach 15 Minuten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 2 minutes"
+msgstr "Nach 2 Minuten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "After 5 minutes"
+msgstr "Nach 5 Minuten"
+
 #: apps/web/src/components/chat/ThreadLineageWorkflowRow.tsx#ThreadLineageWorkflowRow
 msgid "agent"
 msgstr "Agent"
@@ -2314,7 +2414,7 @@ msgstr "Gerätezugriff für Agenten"
 msgid "Agent not responding to Stop"
 msgstr "Agent reagiert nicht auf „Stoppen“"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Agent providers"
 msgstr "Agentenanbieter"
 
@@ -2323,6 +2423,7 @@ msgid "Agent session will restart"
 msgstr "Agentensitzung wird neu gestartet"
 
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
+#: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockTokenField
 msgid "Agent token"
 msgstr "Agententoken"
 
@@ -2376,6 +2477,10 @@ msgstr "Über dem Zeitplan: Verbrauch schneller als der Zeitablauf"
 msgid "Alert text"
 msgstr "Warntext"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Alias"
+msgstr "Alias"
+
 #: apps/web/src/components/AddProjectToMachineDialog.tsx#AddProjectToMachineDialog
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 #: apps/web/src/components/pullRequest/PullRequestsColumn.tsx#PullRequestsColumn
@@ -2410,6 +2515,14 @@ msgstr "Alle Commits"
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "All environments"
 msgstr "Alle Umgebungen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "All languages"
+msgstr "Alle Sprachen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "All models"
+msgstr "Alle Modelle"
 
 #: apps/web/src/components/Sidebar.tsx#useSidebarLookups
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestFiltersMenu
@@ -2582,10 +2695,6 @@ msgstr ""
 msgid "An error occurred while copying."
 msgstr "Beim Kopieren ist ein Fehler aufgetreten."
 
-#: apps/web/src/components/chat/useProposedPlanSend.ts#useImplementPlanInNewThread
-msgid "An error occurred while creating the new thread."
-msgstr "Beim Erstellen des neuen Threads ist ein Fehler aufgetreten."
-
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#handleSaveToWorkspace
 msgid "An error occurred while saving."
 msgstr "Beim Speichern ist ein Fehler aufgetreten."
@@ -2637,8 +2746,8 @@ msgstr "Beim Speichern ist ein Fehler aufgetreten."
 #: apps/web/src/components/promptLinks/copyPromptLink.ts#copyPromptLink
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#copyPullRequestFromShortcut
 #: apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts#useThreadLinkedPullRequest
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#reportFailure
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
 #: apps/web/src/components/settings/ProjectFaviconPickerDialog.tsx#ProjectFaviconPickerDialog
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#CheckoutGroupingSelect
 #: apps/web/src/components/settings/useProjectScriptSettings.ts#reportScriptFailure
@@ -2709,6 +2818,10 @@ msgstr "Anmerkung an Entwurf angehängt"
 msgid "Another address…"
 msgstr "Andere Adresse…"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Another recording active"
+msgstr "Andere Aufnahme aktiv"
+
 #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
 msgid ""
 "Another t3 at {shadowedBy} runs first in a new terminal. Remove it to use T3 "
@@ -2764,11 +2877,31 @@ msgstr "Jeder"
 msgid "Anyone on the web"
 msgstr "Jeder im Web"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Anyone with dictation access to {label} can bill this key."
+msgstr ""
+"Alle mit Diktierzugriff auf {label} können über diesen Schlüssel Kosten "
+"verursachen."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Anyone with dictation access to {label} can use this API key."
+msgstr ""
+"Alle mit Diktierzugriff auf {label} können diesen API-Schlüssel verwenden."
+
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 msgid "API estimate excludes {formatPercentText} unpriced records."
 msgstr ""
 "Die API-Schätzung berücksichtigt {formatPercentText} Datensätze ohne Preis "
 "nicht."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "API key"
+msgstr "API-Schlüssel"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "API key (optional)"
+msgstr "API-Schlüssel (optional)"
 
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderEnvironmentSection
 msgid "API keys, base URLs, and other per-instance CLI settings."
@@ -2934,11 +3067,15 @@ msgstr "Archiveinträge"
 msgid "Archive thread"
 msgstr "Thread archivieren"
 
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+msgid "Archived"
+msgstr "Archiviert"
+
 #: apps/web/src/components/CommandPalette.logic.ts#buildLinkedThreadActionItems
 msgid "Archived thread"
 msgstr "Archivierter Thread"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleContextMenu
 msgid "Archived thread action failed"
 msgstr "Aktion für archivierten Thread fehlgeschlagen"
 
@@ -2987,9 +3124,18 @@ msgstr "Zu dieser Station fragen"
 msgid "Ask agent"
 msgstr "Agenten fragen"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Ask an administrator on {label} to add an API key."
+msgstr ""
+"Bitte einen Administrator auf {label}, einen API-Schlüssel hinzuzufügen."
+
 #: apps/web/src/components/pullRequest/guide/GuideStop.tsx#GuideStop
 msgid "Ask an agent:"
 msgstr "Frage einen Agenten:"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Ask an environment admin to download"
+msgstr "Bitte einen Umgebungsadministrator um den Download"
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
 msgid "Ask before commands and file changes."
@@ -3128,8 +3274,14 @@ msgid "authors"
 msgstr "Autoren"
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
 msgid "Auto"
 msgstr "Automatisch"
+
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+msgid "Auto ({effectiveLabel})"
+msgstr "Automatisch ({effectiveLabel})"
 
 #: apps/web/src/components/BranchToolbar.tsx#RunContextSelector
 #: apps/web/src/components/BranchToolbarEnvironmentSelector.tsx#BranchToolbarEnvironmentSelector
@@ -3140,6 +3292,10 @@ msgstr "Automatischer Ausgleich"
 #: apps/web/src/components/chat/useDraftEnvironmentRouting.ts#useDraftEnvironmentRouting
 msgid "Auto balance unavailable"
 msgstr "Automatischer Ausgleich nicht verfügbar"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Auto uses the environment’s GPU when it has one."
+msgstr "Automatisch verwendet die GPU der Umgebung, sofern vorhanden."
 
 #: apps/web/src/components/chat/runtimeModeConfig.ts
 msgid "Auto-accept edits"
@@ -3186,6 +3342,10 @@ msgstr "Schwebende Vorschau automatisch anzeigen"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Auto-show floating preview"
 msgstr "Schwebende Vorschau automatisch anzeigen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Auto: press to toggle, hold to record"
+msgstr "Automatisch: Drücken zum Umschalten, halten zum Aufnehmen"
 
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
@@ -3254,6 +3414,7 @@ msgid "Automations"
 msgstr "Automatisierungen"
 
 #: apps/web/src/components/device/DeviceHostAvailability.tsx#DeviceHostAvailability
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#PlatformIcon
 msgid "available"
 msgstr "verfügbar"
 
@@ -3261,6 +3422,10 @@ msgstr "verfügbar"
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
 msgid "Available"
 msgstr "Verfügbar"
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#PlatformIcon
+msgid "available on some"
+msgstr "teilweise verfügbar"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#HealthSource
 msgid "Available when this page runs inside the desktop app."
@@ -3307,6 +3472,7 @@ msgstr "Wartet auf Review"
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportBody
 #: apps/web/src/components/sidebar/SidebarChrome.tsx#SidebarUtilityMenu
 msgid "Back"
@@ -3400,6 +3566,10 @@ msgstr "Basis"
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "Base branch"
 msgstr "Basisbranch"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Base URL"
+msgstr "Basis-URL"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "base64"
@@ -3575,6 +3745,10 @@ msgstr "Zurückgeholt"
 msgid "Browse a folder on disk"
 msgstr "Ordner auf Datenträger auswählen"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Browse models by language"
+msgstr "Modelle nach Sprache durchsuchen"
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelEmptyState
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTabs
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -3656,11 +3830,14 @@ msgstr ""
 msgid "Browsing"
 msgstr "Wird durchsucht"
 
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
 #: apps/web/src/components/projectScriptEditor.tsx
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 msgid "Build"
 msgstr "Build"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Built-in"
+msgstr "Integriert"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "bun test"
@@ -3702,6 +3879,14 @@ msgstr "Kalender"
 msgid "Camera"
 msgstr "Kamera"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid ""
+"Can write English text from speech in another language. Turn on Translate to "
+"English to use it."
+msgstr ""
+"Kann Spracheingaben in einer anderen Sprache als englischen Text ausgeben. "
+"Aktiviere dafür „Ins Englische übersetzen“."
+
 #: apps/web/src/components/settings/SourceControlAccountSettings.tsx#SourceControlAccountSettings
 msgid "can't be used: {entryErrorText}"
 msgstr "kann nicht verwendet werden: {entryErrorText}"
@@ -3742,7 +3927,7 @@ msgstr ""
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx#RelayClientInstallDialog
 #: apps/web/src/components/desktop/SshPasswordPromptDialog.tsx#ActiveSshPasswordPrompt
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceSetup
-#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#DiffCommentAnnotation
+#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#renderDraft
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorDialog
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 #: apps/web/src/components/pullRequest/LinkPullRequestDialog.tsx#LinkPullRequestDialog
@@ -3758,10 +3943,12 @@ msgstr ""
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#FullDiskAccessStep
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ConfigureStep
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexSetupSection
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 #: apps/web/src/components/settings/CustomModelEditor.tsx#CustomModelEditor
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
 #: apps/web/src/components/settings/DeviceHostEditor.tsx#DeviceHostEditorForm
 #: apps/web/src/components/settings/EasDeviceHostEditor.tsx#EasDeviceHostEditor
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
@@ -3777,6 +3964,8 @@ msgstr ""
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 #: apps/web/src/components/settings/SourceControlAppSignInSettings.tsx#SourceControlAppSignInSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx#ThemeEditorPanel
 #: apps/web/src/components/settings/ThemeImportDialog.tsx#ThemeImportBody
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
@@ -3804,6 +3993,10 @@ msgstr "Anmerkung abbrechen (Esc)"
 msgid "Cancel auto-resume"
 msgstr "Automatisches Fortsetzen abbrechen"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Cancel download"
+msgstr "Download abbrechen"
+
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
 msgid "Cancel editing queued message"
 msgstr "Bearbeitung der eingereihten Nachricht abbrechen"
@@ -3816,6 +4009,10 @@ msgstr "Untersuchen der App-Farben abbrechen"
 msgid "Cancel installation"
 msgstr "Installation abbrechen"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Cancel microphone test"
+msgstr "Mikrofontest abbrechen"
+
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingCancelIcon
 msgid "Cancel new keybinding"
 msgstr "Neues Tastenkürzel abbrechen"
@@ -3823,6 +4020,10 @@ msgstr "Neues Tastenkürzel abbrechen"
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Cancel sign-in"
 msgstr "Anmeldung abbrechen"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+msgid "Cancel voice input"
+msgstr "Spracheingabe abbrechen"
 
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 msgid "Cancelled"
@@ -4035,7 +4236,6 @@ msgstr "Zeichen"
 msgid "Chart"
 msgstr "Diagramm"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
 #: apps/web/src/components/settings/settingsSearch.ts
 #: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
 msgid "Chat"
@@ -4258,6 +4458,10 @@ msgstr "Dateizugriff wird geprüft…"
 msgid "Checking file access…"
 msgstr "Dateizugriff wird geprüft…"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Checking for an API key…"
+msgstr "API-Schlüssel wird geprüft…"
+
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#SidebarUpdateControl
 msgid "Checking for updates…"
 msgstr "Nach Updates wird gesucht…"
@@ -4421,6 +4625,10 @@ msgstr "Andere Datei auswählen…"
 msgid "Choose a machine to continue"
 msgstr "Rechner auswählen, um fortzufahren"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Choose a model or language"
+msgstr "Modell oder Sprache auswählen"
+
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "Choose a project"
 msgstr "Projekt auswählen"
@@ -4469,6 +4677,14 @@ msgstr ""
 "Wähle einen Agenten, um mit dem Programmieren zu beginnen. Du kannst später "
 "weitere hinzufügen."
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Choose an environment above to see the languages its transcription model "
+"supports."
+msgstr ""
+"Wähle oben eine Umgebung aus, um die vom Transkriptionsmodell unterstützten "
+"Sprachen zu sehen."
+
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Choose an icon, emoji, or monogram."
 msgstr "Wähle ein Symbol, Emoji oder Monogramm."
@@ -4476,6 +4692,10 @@ msgstr "Wähle ein Symbol, Emoji oder Monogramm."
 #: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
 msgid "Choose an option above"
 msgstr "Oben eine Option auswählen"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Choose another model or language"
+msgstr "Anderes Modell oder andere Sprache auswählen"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#DiffColorsSettingsRow
 msgid "Choose colors for additions and deletions, including change counts."
@@ -4610,6 +4830,10 @@ msgstr "Wähle deine Tasten und bestätige bei Bedarf die Berechtigungsanfrage."
 msgid "Choose your shortcut"
 msgstr "Tastenkürzel auswählen"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Chosen environment (unavailable)"
+msgstr "Ausgewählte Umgebung (nicht verfügbar)"
+
 #: apps/web/src/components/chat/AssistantSelectionToolbar.tsx#AssistantSelectionToolbar
 msgid "Cite"
 msgstr "Zitieren"
@@ -4622,8 +4846,14 @@ msgstr "Auswahl im Eingabefeld zitieren"
 msgid "Claude Code"
 msgstr "Claude Code"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Clean up transcripts"
+msgstr "Transkripte bereinigen"
+
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupSection
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Cleanup"
 msgstr "Bereinigung"
 
@@ -4634,6 +4864,19 @@ msgstr "Bereinigung auf {label} fehlgeschlagen"
 #: apps/web/src/components/settings/StorageSettings.tsx#summaries
 msgid "Cleanup hasn't run yet."
 msgstr "Bereinigung noch nicht ausgeführt."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Cleanup instructions"
+msgstr "Anweisungen zur Bereinigung"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Cleanup model"
+msgstr "Bereinigungsmodell"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#setModel
+msgid "Cleanup model not saved"
+msgstr "Bereinigungsmodell nicht gespeichert"
 
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#goalNowItem
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
@@ -4976,6 +5219,10 @@ msgstr "Schwebende Vorschau schließen"
 msgid "Close immediately, or drag across rows to close several"
 msgstr "Sofort schließen oder über Zeilen ziehen, um mehrere zu schließen"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Close model test"
+msgstr "Modelltest schließen"
+
 #: apps/web/src/components/RightPanelTabs.tsx#handleTabContextMenu
 msgid "Close others"
 msgstr "Andere schließen"
@@ -5038,6 +5285,10 @@ msgstr "Geschlossen"
 msgid "Closed {closed} of {length} pull requests"
 msgstr "{closed} von {length} Pull Requests geschlossen"
 
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx#ReferenceStateIcon
+msgid "Closed issue"
+msgstr "Geschlossenes Issue"
+
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#PullRequestCommentForm
 msgid "Closing..."
 msgstr "Wird geschlossen…"
@@ -5049,6 +5300,10 @@ msgstr "Cloud"
 #: apps/web/src/cloud/managedAuth.tsx
 msgid "cloud account cleanup"
 msgstr "Cloud-Kontobereinigung"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Cloud via {label}"
+msgstr "Cloud über {label}"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Cloud VM"
@@ -5276,7 +5531,6 @@ msgstr "Kommentare nicht verfügbar"
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/GitActionsControl.logic.ts#buildMenuItems
 #: apps/web/src/components/GitActionsControl.logic.ts#resolveQuickAction
-#: apps/web/src/components/GitActionsControl.tsx#GitQuickActionIcon
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit"
 msgstr "Commit"
@@ -5300,6 +5554,10 @@ msgstr "Committen und zum Standard-Ref pushen?"
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit message (optional)"
 msgstr "Commit-Nachricht (optional)"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Commit messages, pull requests, and branch names"
+msgstr "Commit-Nachrichten, Pull Requests und Branchnamen"
 
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Commit on new branch"
@@ -5328,10 +5586,6 @@ msgstr "Komprimieren"
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Compact and send"
 msgstr "Komprimieren und senden"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Compact context"
-msgstr "Kontext komprimieren"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#ScopedCompactIdleThreadsRow
 msgid "compact idle threads"
@@ -5418,12 +5672,12 @@ msgstr "Hintergrundaktivität konfigurieren"
 msgid "Configure manually"
 msgstr "Manuell konfigurieren"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Configure non-secret routing. Headers are write-only."
 msgstr ""
 "Routing ohne Geheimdaten konfigurieren. Header können nur geschrieben werden."
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Configured"
 msgstr "Konfiguriert"
 
@@ -5501,12 +5755,17 @@ msgstr "Konflikte mit {messageText2}."
 
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 msgid "Connect"
 msgstr "Verbinden"
 
 #: apps/web/src/components/CommandPalette.tsx#addProjectEntryGroups
 msgid "Connect an environment"
 msgstr "Umgebung verbinden"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid "Connect an environment first."
+msgstr "Verbinde zuerst eine Umgebung."
 
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingsSettingsPanel
 msgid "Connect an environment to change keybindings."
@@ -5587,6 +5846,10 @@ msgstr "Geräte verbinden"
 msgid "Connect on {environmentLabel} to load models."
 msgstr "Verbinde dich mit {environmentLabel}, um Modelle zu laden."
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Connect to {label} with dictation access to continue."
+msgstr "Verbinde dich zum Fortfahren mit Diktierzugriff mit {label}."
+
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserProfilesSetting
 msgid "Connect to an environment to clear profile data"
 msgstr "Verbinde eine Umgebung, um Profildaten zu löschen"
@@ -5630,6 +5893,7 @@ msgid "Connected or already available locally on each selected environment."
 msgstr "Auf jeder gewählten Umgebung verbunden oder bereits lokal verfügbar."
 
 #: apps/web/src/components/Sidebar.logic.ts#resolveThreadStatusPill
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
 msgid "Connecting"
 msgstr "Verbindung wird hergestellt"
 
@@ -5714,27 +5978,6 @@ msgstr "Kontextübergabe ausstehend"
 #: apps/web/src/components/chat/threadDetailsItems.ts
 msgid "Context window"
 msgstr "Kontextfenster"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context Window"
-msgstr "Kontextfenster"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window {formatContextWindowTokensText} tokens used"
-msgstr "Kontextfenster: {formatContextWindowTokensText} Token verwendet"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window {usedPercentage} used"
-msgstr "Kontextfenster: {usedPercentage} verwendet"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Context window indicator (legacy)"
-msgstr "Kontextfensteranzeige (veraltet)"
-
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Context window usage"
-msgstr "Kontextfensternutzung"
 
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#ThreadDetailsContext
 msgid "Context: {used}% used"
@@ -5913,7 +6156,6 @@ msgstr "Nur Code kopieren"
 #: apps/web/src/components/CommandBlock.tsx#CommandBlock
 #: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
-#: apps/web/src/lib/bootError.ts#showBootError
 msgid "Copy command"
 msgstr "Befehl kopieren"
 
@@ -6064,7 +6306,6 @@ msgstr "Thread kopieren"
 msgid "Copy to clipboard"
 msgstr "In Zwischenablage kopieren"
 
-#: apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx#handleDeregister
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#connectEnvironment
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#TraceIdCell
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
@@ -6088,11 +6329,15 @@ msgstr "Version kopieren"
 msgid "Copying image…"
 msgstr "Bild wird kopiert…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Correction cue"
+msgstr "Korrektursignal"
+
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 msgid "cost"
 msgstr "Kosten"
 
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
 #: apps/web/src/components/usage/UsageModelDialog.tsx#stats
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
 #: apps/web/src/components/usage/usageShortcuts.ts
@@ -6117,6 +6362,10 @@ msgstr "Backend konnte nicht hinzugefügt werden"
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#handleSave
 msgid "Could not add provider instance"
 msgstr "Anbieterinstanz konnte nicht hinzugefügt werden"
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
+msgid "Could not add t3 to PATH"
+msgstr "t3 konnte nicht zu PATH hinzugefügt werden"
 
 #: apps/web/src/components/CommandPalette.tsx#handleOpenProjectFromFileManager
 msgid "Could not add WSL project"
@@ -6320,7 +6569,7 @@ msgstr "Einrichtung konnte nicht abgeschlossen werden"
 msgid "Could not force stop the agent"
 msgstr "Agent konnte nicht zwangsweise gestoppt werden"
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
 msgid "Could not install t3"
 msgstr "t3 konnte nicht installiert werden"
 
@@ -6331,6 +6580,12 @@ msgstr "Update konnte nicht installiert werden"
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#changeLink
 msgid "Could not link the {term}"
 msgstr "{term} konnte nicht verknüpft werden"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#refreshMicrophones
+msgid "Could not list microphones. You can still use the system default."
+msgstr ""
+"Mikrofone konnten nicht aufgelistet werden. Du kannst weiterhin den "
+"Systemstandard verwenden."
 
 #: apps/web/src/components/pullRequest/PullRequestActivityUnavailableState.tsx#PullRequestActivityUnavailableState
 msgid "Could not load {term} activity"
@@ -6383,6 +6638,10 @@ msgstr "Zitierte Antwort konnte nicht geladen werden"
 #: apps/web/src/components/settings/StorageSettings.tsx#summaries
 msgid "Could not load the last run."
 msgstr "Letzter Durchlauf konnte nicht geladen werden."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#refresh
+msgid "Could not load transcription models"
+msgstr "Transkriptionsmodelle konnten nicht geladen werden"
 
 #: apps/web/src/components/chat/ThreadRelationshipsControl.tsx#merge
 msgid "Could not merge back"
@@ -6447,6 +6706,12 @@ msgstr "Verknüpfter Prompt konnte nicht geöffnet werden"
 msgid "Could not open this address"
 msgstr "Diese Adresse konnte nicht geöffnet werden"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Could not play this recording. Try recording again."
+msgstr ""
+"Diese Aufnahme konnte nicht wiedergegeben werden. Versuche es mit einer neuen "
+"Aufnahme."
+
 #: apps/web/src/components/pullRequest/PullRequestCommentForm.tsx#submit
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#performCommentAction
 msgid "Could not post the comment"
@@ -6483,6 +6748,10 @@ msgstr ""
 msgid "Could not rebase the stack"
 msgstr "Stapel konnte nicht rebased werden"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "Could not reclaim space on {label}"
+msgstr "Speicher auf {label} konnte nicht freigegeben werden"
+
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#handleReconnectActiveEnvironment
 msgid "Could not reconnect environment"
 msgstr "Umgebung konnte nicht erneut verbunden werden"
@@ -6495,7 +6764,7 @@ msgstr "{displayWorktreePathText} konnte nicht entfernt werden. {message}"
 msgid "Could not remove backend"
 msgstr "Backend konnte nicht entfernt werden"
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx
 msgid "Could not remove t3"
 msgstr "t3 konnte nicht entfernt werden"
 
@@ -6613,10 +6882,6 @@ msgstr "{model} konnte nicht gestartet werden"
 msgid "Could not start a review guide"
 msgstr "Review-Leitfaden konnte nicht gestartet werden"
 
-#: apps/web/src/components/chat/useProposedPlanSend.ts#useImplementPlanInNewThread
-msgid "Could not start implementation thread"
-msgstr "Umsetzungsthread konnte nicht gestartet werden"
-
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Could not start thread"
 msgstr "Thread konnte nicht gestartet werden"
@@ -6680,6 +6945,10 @@ msgid "Could not update {PROVIDERDISPLAYNAMESCandidateDriverText}"
 msgstr ""
 "{PROVIDERDISPLAYNAMESCandidateDriverText} konnte nicht aktualisiert werden"
 
+#: apps/web/src/components/preview/PreviewAnnotationSpeech.tsx#publish
+msgid "Could not update annotation voice input"
+msgstr "Spracheingabe für Anmerkungen konnte nicht aktualisiert werden"
+
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#runEverything
 msgid "Could not update everything"
 msgstr "Nicht alles konnte aktualisiert werden"
@@ -6735,6 +7004,10 @@ msgstr ""
 msgid "Couldn't get the path of \"{name}\""
 msgstr "Pfad von „{name}“ konnte nicht ermittelt werden"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#refresh
+msgid "Couldn't load {name} models"
+msgstr "Modelle von {name} konnten nicht geladen werden"
+
 #: apps/web/src/components/chat/CommandOutputPanel.tsx#CommandOutputPanel
 #: apps/web/src/components/chat/V2ItemInspector.tsx#ToolOutput
 msgid "Couldn't load output: {error}"
@@ -6768,9 +7041,17 @@ msgstr "Labels konnten auf dem Host nicht gesucht werden"
 msgid "Couldn't set up the extension"
 msgstr "Erweiterung konnte nicht eingerichtet werden"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t finish recording"
+msgstr "Aufnahme konnte nicht abgeschlossen werden"
+
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#BlockedStep
 msgid "Couldn’t import from {name}"
 msgstr "Import aus {name} fehlgeschlagen"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t prepare dictation"
+msgstr "Diktat konnte nicht vorbereitet werden"
 
 #: apps/web/src/components/settings/ThemeSettings.tsx#notifyThemeRemovalFailure
 msgid "Couldn’t remove theme"
@@ -6787,6 +7068,10 @@ msgstr "Designauswahl konnte nicht gespeichert werden"
 #: apps/web/src/routes/_chat.index.tsx#DraftStartError
 msgid "Couldn’t start a new thread"
 msgstr "Neuer Thread konnte nicht gestartet werden"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Couldn’t start recording"
+msgstr "Aufnahme konnte nicht gestartet werden"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#AttributionTable
 msgid "Count"
@@ -6956,10 +7241,6 @@ msgstr "Thread erstellt"
 msgid "Created thread{itemTitleText}"
 msgstr "Thread erstellt{itemTitleText}"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
-msgid "Created<0/>"
-msgstr "Erstellt<0/>"
-
 #: apps/web/src/components/CommandPaletteAddProject.tsx#NewProjectSummary
 msgid "Creates {pathPreview}"
 msgstr "Erstellt {pathPreview}"
@@ -6999,6 +7280,7 @@ msgstr "Strg+Q"
 msgid "Ctrl+Shift+V"
 msgstr "Strg+Umschalt+V"
 
+#: apps/web/src/components/CommandPaletteProjectItems.tsx#ProjectLocationDescription
 #: apps/web/src/components/CommandPaletteThemeItems.tsx#useCommandPaletteThemeItems
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#ProcessResourceHistoryTable
 msgid "Current"
@@ -7025,19 +7307,20 @@ msgstr "Aktuelle Version der Anwendung."
 msgid "Cursor account"
 msgstr "Cursor-Konto"
 
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Cursor account usage"
-msgstr "Cursor-Kontonutzung"
-
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelRow
 msgid "custom"
 msgstr "benutzerdefiniert"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Custom"
 msgstr "Benutzerdefiniert"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Custom cleanup instructions"
+msgstr "Eigene Anweisungen zur Bereinigung"
 
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "Custom emoji"
@@ -7086,6 +7369,10 @@ msgstr "Eigene Schreibanweisungen für Versionsverwaltung"
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Custom…"
 msgstr "Benutzerdefiniert…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Customize in Voice settings"
+msgstr "In den Spracheinstellungen anpassen"
 
 #: apps/web/src/components/chat/MessagesTimeline.tsx#AttemptFoldTimelineRow
 msgid "Cut off by a steer"
@@ -7272,10 +7559,6 @@ msgstr "Standard-Merge-Methode"
 msgid "Default merge method"
 msgstr "Standard-Merge-Methode"
 
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
-msgid "Default mode. Click to enter plan mode"
-msgstr "Standardmodus. Klicken für Planmodus"
-
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 msgid "default model"
 msgstr "Standardmodell"
@@ -7338,8 +7621,8 @@ msgid "Defaults to the hub's host name"
 msgstr "Verwendet standardmäßig den Hostnamen des Hubs"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskRow
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Delete"
@@ -7460,13 +7743,17 @@ msgstr ""
 msgid "Deletes untracked and ignored files, including .env."
 msgstr "Löscht nicht erfasste und ignorierte Dateien einschließlich .env."
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Deleting"
 msgstr "Wird gelöscht"
 
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Deleting branch..."
 msgstr "Branch wird gelöscht…"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Deleting the thread also deletes this task."
+msgstr "Beim Löschen des Threads wird auch diese Aufgabe gelöscht."
 
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupSection
 msgid "Deleting…"
@@ -7531,6 +7818,10 @@ msgstr "Nur Desktop"
 msgid "Destination"
 msgstr "Ziel"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Destination thread"
+msgstr "Ziel-Thread"
+
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Detach Magic Keyboard"
 msgstr "Magic Keyboard trennen"
@@ -7544,9 +7835,11 @@ msgstr ""
 "{singular}-Aktionen zu aktivieren."
 
 #: apps/web/src/components/chat/WorktreeSetupCard.tsx#WorktreeSetupCard
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#ChecksBody
 #: apps/web/src/components/settings/ConnectionDiagnosisDetails.tsx#ConnectionDiagnosisSummary
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourceRow
 msgid "Details"
 msgstr "Details"
 
@@ -7571,8 +7864,8 @@ msgid "Device controls"
 msgstr "Gerätesteuerung"
 
 #: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
-msgid "Device discovery warning · {label}"
-msgstr "Warnung bei Geräteerkennung · {label}"
+msgid "Device discovery on {label} reported a warning."
+msgstr "Die Geräteerkennung auf {label} hat eine Warnung gemeldet."
 
 #: apps/web/src/components/RightPanelTabs.tsx#DeviceTabTooltip
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
@@ -7592,6 +7885,10 @@ msgstr "Gerätehub"
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceHubSetupStatus
 msgid "Device hub is ready."
 msgstr "Gerätehub ist bereit."
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
+msgid "Device list may be incomplete"
+msgstr "Geräteliste möglicherweise unvollständig"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#update
 msgid "Device settings not saved on all environments"
@@ -7657,6 +7954,24 @@ msgstr "Diagnosedaten kopiert"
 msgid "Dialog response"
 msgstr "Dialogantwort"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Dictation shortcut"
+msgstr "Diktier-Tastenkürzel"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Dictation shortcut mode"
+msgstr "Modus des Diktier-Tastenkürzels"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "dictionary"
+msgstr "Wörterbuch"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Dictionary"
+msgstr "Wörterbuch"
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelEmptyState
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTabs
 msgid "Diff"
@@ -7715,7 +8030,7 @@ msgstr "Direkt"
 msgid "Directories"
 msgstr "Verzeichnisse"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AdvertisedEndpointListRow
 msgid "Disable"
 msgstr "Deaktivieren"
@@ -7764,7 +8079,7 @@ msgid "Disable WSL backend?"
 msgstr "WSL-Backend deaktivieren?"
 
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentCard
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 msgid "Disabled"
@@ -7832,10 +8147,6 @@ msgstr "Ausblenden"
 msgid "Dismiss device error"
 msgstr "Gerätefehler ausblenden"
 
-#: apps/web/src/components/device/DevicePanel.tsx#DeviceNotice
-msgid "Dismiss device warning"
-msgstr "Gerätewarnung ausblenden"
-
 #: apps/web/src/components/chat/ThreadErrorBanner.tsx#ThreadErrorBanner
 msgid "Dismiss error"
 msgstr "Fehler ausblenden"
@@ -7860,6 +8171,11 @@ msgstr "Frage ohne Antwort schließen"
 #: apps/web/src/components/sidebar/SidebarProviderUpdatePill.tsx#SidebarProviderUpdatePill
 msgid "Dismiss until provider status changes"
 msgstr "Bis zur Änderung des Anbieterstatus ausblenden"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechCancelButton
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Dismiss voice input error"
+msgstr "Fehler bei Spracheingabe schließen"
 
 #: apps/web/src/components/chat/ComposerBannerStack.tsx#NoticeCard
 msgid "Dismiss warning"
@@ -7920,9 +8236,12 @@ msgstr "fertig"
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivityAdvancedDialog
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
 #: apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx#ProviderWizardAuthenticationStep
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 msgid "Done"
 msgstr "Fertig"
@@ -7932,6 +8251,7 @@ msgid "Double press"
 msgstr "Zweimal drücken"
 
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewFileNotShown
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
 msgid "Download"
 msgstr "Herunterladen"
 
@@ -7952,9 +8272,22 @@ msgstr "Als Markdown herunterladen"
 msgid "Download failed."
 msgstr "Download fehlgeschlagen."
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Download model"
+msgstr "Modell herunterladen"
+
 #: apps/web/src/components/media/MediaActions.tsx#showMenu
 msgid "Download started"
 msgstr "Download gestartet"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Download the {modelSizeMb} MB model to {transcriptionEnvironment}. Microphone "
+"audio is sent there for transcription, as chosen in Voice settings."
+msgstr ""
+"Lade das {modelSizeMb} MB große Modell auf {transcriptionEnvironment} "
+"herunter. Mikrofon-Audio wird zur Transkription dorthin gesendet, wie in den "
+"Spracheinstellungen ausgewählt."
 
 #: apps/web/src/components/media/OpenMediaLink.tsx#OpenMediaLink
 msgid "Download video"
@@ -7963,6 +8296,10 @@ msgstr "Video herunterladen"
 #: apps/web/src/browser/ServerBrowserSurface.tsx#offerDownload
 msgid "Downloaded {fileName}"
 msgstr "{fileName} heruntergeladen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Downloaded only"
+msgstr "Nur heruntergeladene"
 
 #: apps/web/src/components/sidebar/updateEverything.logic.ts
 msgid "downloading"
@@ -7999,6 +8336,7 @@ msgid "Downloading relay client"
 msgstr "Relay-Client wird heruntergeladen"
 
 #: apps/web/src/components/ServerUpdateAction.tsx
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 msgid "Downloading…"
 msgstr "Wird heruntergeladen…"
 
@@ -8021,6 +8359,14 @@ msgstr ""
 #: apps/web/src/components/chat/ComposerAttachmentStrip.tsx#ComposerAttachmentMediaRow
 msgid "Draft attachment may not persist"
 msgstr "Entwurfsanhang wird möglicherweise nicht dauerhaft gespeichert"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Draft changed"
+msgstr "Entwurf geändert"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Draft unavailable"
+msgstr "Entwurf nicht verfügbar"
 
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx
 msgid "Drafts only"
@@ -8074,6 +8420,10 @@ msgstr "z. B. dsh"
 msgid "e.g. Living room iPad"
 msgstr "z. B. Wohnzimmer-iPad"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "e.g. My local model"
+msgstr "z. B. Mein lokales Modell"
+
 #: apps/web/src/components/settings/AddCodexAccountDialog.tsx#AddCodexAccountDialog
 msgid "e.g. Personal or Work"
 msgstr "z. B. Privat oder Arbeit"
@@ -8109,20 +8459,6 @@ msgstr ""
 "'{{headers.name}}', '{{query.name}}', '{{body}}' oder '{{request}}' im Prompt;"
 " nur die dort genannten Daten erreichen den Agenten."
 
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
-msgid ""
-"Each run continues this conversation, in its workspace and with its current "
-"model."
-msgstr ""
-"Jeder Durchlauf setzt diese Unterhaltung in ihrem Arbeitsbereich mit ihrem "
-"aktuellen Modell fort."
-
-#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
-msgid "Each run starts a new thread with the workspace and model below."
-msgstr ""
-"Jeder Durchlauf startet einen neuen Thread mit dem Arbeitsbereich und Modell "
-"unten."
-
 #: apps/web/src/components/settings/SimlockDeviceHostEditor.tsx#SimlockDeviceHostEditor
 msgid ""
 "Each selected environment's server leases devices from your Simlock gateway "
@@ -8156,12 +8492,17 @@ msgstr "Ecosia"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#rowActions
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskRow
 #: apps/web/src/components/settings/SecretsSettings.tsx#EnvironmentSecretProviders
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
 msgid "Edit"
 msgstr "Bearbeiten"
 
 #: apps/web/src/components/settings/SecretProviderDialog.tsx#SecretProviderDialog
 msgid "Edit {label}"
 msgstr "{label} bearbeiten"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Edit {textGeneratorDisplayNameText}"
+msgstr "{textGeneratorDisplayNameText} bearbeiten"
 
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Edit Action"
@@ -8317,10 +8658,6 @@ msgstr "Antigravity aktivieren"
 msgid "Enable auto-merge"
 msgstr "Automatisches Zusammenführen aktivieren"
 
-#: apps/web/src/components/usage/UsagePage.tsx#CursorEnableButton
-msgid "enable Cursor account usage"
-msgstr "Cursor-Kontonutzung aktivieren"
-
 #: apps/web/src/components/device/DeviceSetup.tsx#DeviceSetup
 msgid "Enable device hub"
 msgstr "Gerätehub aktivieren"
@@ -8452,6 +8789,10 @@ msgstr ""
 "Gib eine offizielle Registry-ID und gegebenenfalls ein lokales Programm oder "
 "eine abweichende Authentifizierung ein."
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Enter API key"
+msgstr "API-Schlüssel eingeben"
+
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Enter code <0>{userCode}</0> in your browser."
 msgstr "Gib den Code <0>{userCode}</0> in deinem Browser ein."
@@ -8483,6 +8824,16 @@ msgstr ""
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Enter your credentials below."
 msgstr "Gib unten deine Zugangsdaten ein."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "entries"
+msgstr "Einträge"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "entry"
+msgstr "Eintrag"
 
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#AccessSettings
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
@@ -8592,6 +8943,11 @@ msgstr "In jedem Intervall"
 msgid "Every layer being merged must be open and ready for review."
 msgstr ""
 "Jede zusammenzuführende Ebene muss offen und bereit für ein Review sein."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Everyone using {name} for dictation on {label} will lose access."
+msgstr ""
+"Alle, die {name} für Diktate auf {label} verwenden, verlieren den Zugriff."
 
 #: apps/web/src/components/settings/TypographySettings.tsx#InterfaceFontRow
 msgid "Everything outside code blocks and the terminal."
@@ -8816,7 +9172,7 @@ msgid "Failed to create pairing URL."
 msgstr "Kopplungs-URL konnte nicht erstellt werden."
 
 #: apps/web/src/components/Sidebar.tsx#handleThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleThreadAction
 msgid "Failed to delete thread"
 msgstr "Chat konnte nicht gelöscht werden"
 
@@ -8934,8 +9290,7 @@ msgstr "Backend konnte nicht aktiviert werden."
 msgid "Failed to un-settle thread"
 msgstr "Chat konnte nicht wieder aktiviert werden"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleThreadAction
 msgid "Failed to unarchive thread"
 msgstr "Thread konnte nicht aus dem Archiv geholt werden"
 
@@ -8994,6 +9349,11 @@ msgstr "Schnellmodus"
 #: apps/web/src/components/chat/TraitsSpeed.tsx#TraitsSpeedIcon
 msgid "Fast mode on"
 msgstr "Schnellmodus aktiv"
+
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#FastWorktreeCheckoutRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Fast worktree checkout"
+msgstr "Schnelles Worktree-Auschecken"
 
 #: apps/web/src/components/chat/ModelPickerSidebar.tsx#ModelPickerSidebar
 msgid "Favorites"
@@ -9160,6 +9520,10 @@ msgstr "Review abschließen"
 msgid "Finish signing in in your browser."
 msgstr "Schließe die Anmeldung in deinem Browser ab."
 
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "Finish voice input"
+msgstr "Spracheingabe abschließen"
+
 #: apps/web/src/components/settings/CodexSetupSection.tsx#ManagedCodexSetup
 msgid "Finishing sign-in..."
 msgstr "Anmeldung wird abgeschlossen…"
@@ -9188,6 +9552,16 @@ msgstr ""
 #: apps/web/src/components/chat/ThreadDetailsPrRow.tsx#ThreadDetailsPrRow
 msgid "Fix the failing checks in a new thread"
 msgstr "Fehlgeschlagene Prüfungen in neuem Thread beheben"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Fixes punctuation, numbers, and spoken corrections with the cleanup model on "
+"the draft’s environment. Sends the transcript and nearby draft text, never "
+"audio."
+msgstr ""
+"Korrigiert Zeichensetzung, Zahlen und gesprochene Korrekturen mit dem "
+"Bereinigungsmodell der Entwurfsumgebung. Sendet das Transkript und den "
+"benachbarten Entwurfstext, niemals Audio."
 
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 msgid "Flash captured window"
@@ -9291,6 +9665,10 @@ msgstr "Folgeverhalten"
 msgid "Follow-ups"
 msgstr "Folgeaufgaben"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
+msgid "Follows the text generation model"
+msgstr "Verwendet das Textgenerierungsmodell"
+
 #: apps/web/src/components/settings/TypographySettings.tsx#FontSmoothingRow
 msgid "font smoothing"
 msgstr "Schriftglättung"
@@ -9310,6 +9688,15 @@ msgid ""
 msgstr ""
 "Zum Beispiel ergibt t3 oder t3/ den Namen t3/add-search. Für kein Präfix "
 "leer lassen."
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
+msgid ""
+"For thread titles and other generated text. Source control has its own "
+"setting. Text generators from Providers also appear here."
+msgstr ""
+"Für Thread-Titel und andere generierte Texte. Die Versionsverwaltung hat eine"
+" eigene Einstellung. Textgeneratoren aus „Anbieter“ erscheinen ebenfalls "
+"hier."
 
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#runStopNowItem
 msgid "Force stop"
@@ -9624,6 +10011,10 @@ msgstr "Übergeben von {previousProviderNamesJoinText}"
 msgid "Hard reload"
 msgstr "Ohne Cache neu laden"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Hardware"
+msgstr "Hardware"
+
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx#resolvePullRequestConflict
 msgid "Has conflicts"
 msgstr "Hat Konflikte"
@@ -9690,6 +10081,10 @@ msgstr "{label}-Nutzung ausblenden"
 msgid "Hide account"
 msgstr "Konto ausblenden"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Hide all"
+msgstr "Alle ausblenden"
+
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 #: apps/web/src/components/ui/toast.tsx#ToastExpandableSection
 #: apps/web/src/components/ui/toast.tsx#ToastDescriptionAndExpandable
@@ -9717,10 +10112,24 @@ msgstr "Dateibaum ausblenden"
 msgid "Hide routes"
 msgstr "Routen ausblenden"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Hide successful"
+msgstr "Erfolgreiche ausblenden"
+
 #: apps/web/src/components/DiffPanel.tsx
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "Hide test files"
 msgstr "Testdateien ausblenden"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+msgid ""
+"Hide the commands, edits, and searches agents run. Hide successful keeps "
+"failures. Zen shows only final answers. Approvals, questions, and errors "
+"always show."
+msgstr ""
+"Blendet Befehle, Änderungen und Suchen der Agenten aus. „Erfolgreiche "
+"ausblenden“ lässt Fehler sichtbar. „Zen“ zeigt nur Endantworten. "
+"Genehmigungen, Fragen und Fehler werden immer angezeigt."
 
 #: apps/web/src/components/chat/ComposerPendingUserInputPanel.tsx#ComposerPendingUserInputCard
 msgid "Hide the question and its options"
@@ -9787,6 +10196,10 @@ msgstr "Webhook-Anfragen aufbewahren, solange diese Umgebung offline ist"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Hold webhooks while offline"
 msgstr "Webhooks bei Offlinebetrieb aufbewahren"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Hold: record while held"
+msgstr "Halten: Aufnahme, solange gedrückt"
 
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Home"
@@ -9857,6 +10270,10 @@ msgid ""
 msgstr ""
 "Wie neue Worktrees Git-Submodule laden. Projekte und ihre t3.json können dies"
 " überschreiben."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "How the dictation shortcut starts and stops recording."
+msgstr "Wie das Diktier-Tastenkürzel die Aufnahme startet und stoppt."
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutSettingsPanel
 msgid ""
@@ -9974,20 +10391,12 @@ msgstr ""
 "Bild nicht verfügbar. Die Datei wurde möglicherweise verschoben oder "
 "gelöscht."
 
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implement"
-msgstr "Umsetzen"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implement in a new thread"
-msgstr "In neuem Thread umsetzen"
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Implementation actions"
-msgstr "Umsetzungsaktionen"
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Immediately"
+msgstr "Sofort"
 
 #: apps/web/src/components/ProjectScriptsControl.tsx
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#ConfigureStep
 msgid "Import"
 msgstr "Importieren"
@@ -10024,7 +10433,7 @@ msgstr "Deine Projekte importieren"
 msgid "Important"
 msgstr "Wichtig"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Imported"
 msgstr "Importiert"
 
@@ -10032,7 +10441,7 @@ msgstr "Importiert"
 msgid "Imported {cookieResultCountText}"
 msgstr "{cookieResultCountText} importiert"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Importing"
 msgstr "Wird importiert"
 
@@ -10063,14 +10472,6 @@ msgstr ""
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
 msgid "In messages"
 msgstr "In Nachrichten"
-
-#: apps/web/src/components/settings/LabsSettingsPanel.tsx#BoringSidebarMultilineRow
-msgid ""
-"In the boring sidebar, show folder threads on two lines: the title, then the "
-"branch, pull request, and agent."
-msgstr ""
-"Ordnerthreads in der schlichten Seitenleiste zweizeilig anzeigen: Titel, dann "
-"Branch, Pull Request und Agent."
 
 #: apps/web/src/components/pullRequest/PullRequestDetailActions.tsx#PullRequestCheckoutMenu
 msgid "In this repository"
@@ -10174,6 +10575,7 @@ msgid "Inline equation"
 msgstr "Inline-Gleichung"
 
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 #: apps/web/src/components/sidebar/SidebarThreadRow.tsx#SidebarThreadRow
 #: apps/web/src/components/usage/usageBreakdown.ts#costTypeSegments
 #: apps/web/src/components/usage/usageBreakdown.ts#tokenTypeSegments
@@ -10293,6 +10695,19 @@ msgstr "Installiere das Update und melde dich dann ab und wieder an."
 #: apps/web/src/components/device/DeviceToolVersions.tsx#DeviceToolVersions
 msgid "Installed"
 msgstr "Installiert"
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid ""
+"Installed at {installedPath} and added to PATH in {file}. Open a new terminal "
+"to use it."
+msgstr ""
+"Unter {installedPath} installiert und in {file} zu PATH hinzugefügt. Öffne "
+"ein neues Terminal, um es zu verwenden."
+
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
+msgid "Installed at {installedPath}, which is not on your PATH yet."
+msgstr ""
+"Unter {installedPath} installiert; der Pfad ist noch nicht in PATH enthalten."
 
 #: apps/web/src/components/settings/CliCommandSettingsRow.tsx#CliCommandSettingsRow
 msgid ""
@@ -10448,6 +10863,15 @@ msgstr "Beteiligung"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx
 msgid "iOS"
 msgstr "iOS"
+
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
+msgid "iOS and Android lists on {label} may be incomplete."
+msgstr ""
+"Die iOS- und Android-Listen auf {label} sind möglicherweise unvollständig."
+
+#: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
+msgid "iOS list may be incomplete"
+msgstr "iOS-Liste möglicherweise unvollständig"
 
 #: apps/web/src/components/settings/MobileAppSettingsRow.tsx
 msgid "iPhone and iPad"
@@ -10730,8 +11154,17 @@ msgid "Landscape right"
 msgstr "Querformat rechts"
 
 #: apps/web/src/components/settings/LanguageSettings.tsx#LanguageSettings
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "Language"
 msgstr "Sprache"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Language unsupported"
+msgstr "Sprache nicht unterstützt"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Languages"
+msgstr "Sprachen"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Laptop"
@@ -10805,6 +11238,10 @@ msgstr "Mietet, steuert und streamt Geräte."
 msgid "Leave a comment"
 msgstr "Kommentar hinterlassen"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Leave blank to keep the saved key."
+msgstr "Leer lassen, um den gespeicherten Schlüssel beizubehalten."
+
 #: apps/web/src/components/GitActionsControl.tsx
 msgid "Leave empty to auto-generate"
 msgstr "Für automatische Erzeugung leer lassen"
@@ -10830,10 +11267,6 @@ msgstr "links"
 msgid "Left"
 msgstr "Links"
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Legacy"
-msgstr "Veraltet"
-
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutSettingsPanel
 msgid "Legal"
 msgstr "Rechtliches"
@@ -10845,13 +11278,13 @@ msgstr "Seltener"
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#LinkedEnvironmentsRow
 msgid ""
 "Let agents here work on your other machines, and theirs here. Turn it on for "
-"each machine, then link them in <0>Connections</0>. While it is off, nothing "
-"new starts over a link; tasks already running finish."
+"each machine, then link them in <0>Connections</0>. While off, nothing new "
+"starts over a link; running tasks finish."
 msgstr ""
-"Erlaube Agenten hier, auf deinen anderen Rechnern zu arbeiten, und umgekehrt. "
-"Aktiviere dies für jeden Rechner und verknüpfe sie unter "
-"<0>Verbindungen</0>. Bei Deaktivierung startet über Links nichts Neues; "
-"laufende Aufgaben werden abgeschlossen."
+"Lass Agenten hier auf deinen anderen Rechnern arbeiten und deren Agenten hier."
+" Aktiviere dies für jeden Rechner und verknüpfe sie dann unter "
+"<0>Verbindungen</0>. Im ausgeschalteten Zustand startet nichts Neues über "
+"eine Verbindung; laufende Aufgaben werden abgeschlossen."
 
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#FullDiskAccessStep
 msgid "Let T3 Code read {name}’s cookies"
@@ -11112,11 +11545,11 @@ msgstr "Lint"
 msgid "Liquid Glass"
 msgstr "Liquid Glass"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "List providers"
 msgstr "Anbieter auflisten"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "List sessions"
 msgstr "Sitzungen auflisten"
 
@@ -11132,6 +11565,10 @@ msgstr ""
 "Aktuelle native Zähler für Server, Anbieter, Terminals, Desktop-Prozesse und"
 " den Monitor selbst."
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Live preview"
+msgstr "Live-Vorschau"
+
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Live process tree"
 msgstr "Aktueller Prozessbaum"
@@ -11139,6 +11576,10 @@ msgstr "Aktueller Prozessbaum"
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Live Processes"
 msgstr "Aktuelle Prozesse"
+
+#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
+msgid "Live transcription"
+msgstr "Live-Transkription"
 
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Load balancing"
@@ -11164,7 +11605,7 @@ msgstr ""
 "Lade frühere Durchgänge und klicke dann auf die Quellenangabe, um es erneut "
 "zu versuchen. Dein gespeichertes Zitat bleibt unverändert."
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Load more"
 msgstr "Mehr laden"
 
@@ -11182,7 +11623,7 @@ msgid "Load more pull requests"
 msgstr "Weitere Pull Requests laden"
 
 #: apps/web/src/components/Sidebar.tsx
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#hostStatus
 #: apps/web/src/components/ui/spinner.tsx#Spinner
 msgid "Loading"
@@ -11361,6 +11802,10 @@ msgstr "Span-Namen werden geladen…"
 msgid "Loading the diff..."
 msgstr "Diff wird geladen…"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "Loading the model list."
+msgstr "Modellliste wird geladen."
+
 #: apps/web/src/components/files/LargeTextViewer.tsx
 msgid "Loading the rest of the file…"
 msgstr "Rest der Datei wird geladen…"
@@ -11376,6 +11821,11 @@ msgstr "Zeitleiste wird geladen"
 #: apps/web/src/components/DiffPanel.tsx
 msgid "Loading tool call diff..."
 msgstr "Diff des Tool-Aufrufs wird geladen…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Loading transcription models…"
+msgstr "Transkriptionsmodelle werden geladen…"
 
 #: apps/web/src/components/DiffPanel.tsx
 msgid "Loading uncommitted changes..."
@@ -11459,7 +11909,7 @@ msgstr "Seitenverhältnis sperren"
 msgid "Lock viewport aspect ratio"
 msgstr "Seitenverhältnis des Anzeigebereichs sperren"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Log out"
 msgstr "Abmelden"
 
@@ -11467,7 +11917,7 @@ msgstr "Abmelden"
 msgid "Logged out of ACP agent"
 msgstr "Von ACP-Agent abgemeldet"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Logging out"
 msgstr "Wird abgemeldet"
 
@@ -11557,6 +12007,10 @@ msgstr ""
 " Lesen und Handeln können umfassendere Berechtigungen verwenden als der "
 "Rechner, dem sie gehören. Dies gilt nur für dieses Gerät."
 
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "macOS, Linux"
+msgstr "macOS, Linux"
+
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid ""
 "Maintainers can push to this branch. If your fork has workflows, this can also"
@@ -11577,9 +12031,25 @@ msgid ""
 msgstr ""
 "Mache diese Umgebung über T3 Connect für deine anderen Geräte verfügbar."
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Manage {company} key"
+msgstr "Schlüssel für {company} verwalten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Manage key"
+msgstr "Schlüssel verwalten"
+
 #: apps/web/src/components/settings/SourceControlAppSignInSettings.tsx#SourceControlAppSignInSettings
 msgid "Manage on GitHub"
 msgstr "Auf GitHub verwalten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Manage OpenRouter"
+msgstr "OpenRouter verwalten"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Manage OpenRouter dictation"
+msgstr "OpenRouter-Diktat verwalten"
 
 #: apps/web/src/components/chat/ThreadAutomationsPanel.tsx#ThreadAutomationsPanel
 msgid "Manage scheduled tasks"
@@ -11719,6 +12189,10 @@ msgstr "Mittel"
 msgid "Memory"
 msgstr "Arbeitsspeicher"
 
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx
+msgid "Mention a user"
+msgstr "Nutzer erwähnen"
+
 #: apps/web/src/components/files/FileBrowserPanel.tsx#showEntryContextMenu
 msgid "Mention copied"
 msgstr "Erwähnung kopiert"
@@ -11842,9 +12316,28 @@ msgstr "Nachrichtenfläche"
 msgid "Metrics"
 msgstr "Metriken"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/device/DeviceToolsPanel.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
 msgid "Microphone"
 msgstr "Mikrofon"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone access needed"
+msgstr "Mikrofonzugriff erforderlich"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone disconnected"
+msgstr "Mikrofon getrennt"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Microphone input level"
+msgstr "Mikrofon-Eingangspegel"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Microphone processing failed"
+msgstr "Mikrofonverarbeitung fehlgeschlagen"
 
 #: apps/web/src/components/EnvironmentMachineIcon.tsx
 msgid "Mini PC"
@@ -11870,6 +12363,10 @@ msgstr "Minuten"
 #: apps/web/src/components/CustomSnoozeDialog.tsx#CustomSnoozeDialog
 msgid "Minutes"
 msgstr "Minuten"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#DictionaryEditor
+msgid "Misspelling"
+msgstr "Fehlschreibung"
 
 #: apps/web/src/components/settings/BranchNamingSettings.tsx#BranchNamingSettings
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
@@ -11914,10 +12411,8 @@ msgstr "Mobile Geräte, die Benachrichtigungen deiner Umgebungen erhalten."
 msgid "Mocks"
 msgstr "Testattrappen"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
-msgid "Mode"
-msgstr "Modus"
-
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 #: apps/web/src/components/usage/UsagePage.tsx#UsageOverview
@@ -11936,6 +12431,15 @@ msgstr ""
 "Modell für Versionsverwaltungstexte und Branch- oder Lesezeichennamen. Bei "
 "Deaktivierung wird das für diese Umgebung konfigurierte Texterzeugungsmodell "
 "verwendet."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid ""
+"Model for transcript cleanup, such as a cheaper or faster one. When disabled, "
+"use the text generation model configured for this environment."
+msgstr ""
+"Modell zur Bereinigung von Transkripten, etwa ein günstigeres oder "
+"schnelleres. Wenn deaktiviert, wird das für diese Umgebung konfigurierte "
+"Textgenerierungsmodell verwendet."
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Model ID"
@@ -11957,18 +12461,8 @@ msgstr "Modelleinstellungen nicht gespeichert"
 msgid "Model prices"
 msgstr "Modellpreise"
 
-#: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
-msgid ""
-"Model that reads a pull request to write its review guide. It reads the change"
-" itself over many steps, so a stronger model helps. Off uses the source "
-"control writer model."
-msgstr ""
-"Modell, das einen Pull Request liest und seinen Review-Leitfaden schreibt. Es "
-"liest die Änderung selbst in vielen Schritten, daher hilft ein stärkeres "
-"Modell. Bei Deaktivierung wird das Schreibmodell für Versionsverwaltung "
-"verwendet."
-
 #: apps/web/src/components/settings/ProviderInstanceCard.tsx#ProviderInstanceCard
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
 msgid "Models"
 msgstr "Modelle"
 
@@ -12087,6 +12581,15 @@ msgstr "Muse Code"
 msgid "Music"
 msgstr "Musik"
 
+#: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
+msgid ""
+"Must be a coding agent: it reads the pull request over many steps. Off uses "
+"the writer model, or Codex or Claude if that model is a text generator."
+msgstr ""
+"Muss ein Coding-Agent sein: Er liest den Pull Request in mehreren Schritten. "
+"Im ausgeschalteten Zustand wird das Schreibmodell verwendet oder Codex bzw. "
+"Claude, falls es sich dabei um einen Textgenerator handelt."
+
 #: apps/web/src/components/RightPanelTabs.tsx#RightPanelTab
 msgid "Mute {title}"
 msgstr "{title} stummschalten"
@@ -12112,6 +12615,21 @@ msgstr "Gedämpfter Text"
 msgid "Name"
 msgstr "Name"
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Name (optional)"
+msgstr "Name (optional)"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Names and terms transcription should spell your way, saved on this device. Add"
+" an alias when it keeps hearing a term wrong. The name of the project you "
+"dictate in is also sent as a hint."
+msgstr ""
+"Namen und Begriffe, die bei der Transkription nach deinen Vorgaben geschrieben"
+" werden sollen, werden auf diesem Gerät gespeichert. Füge einen Alias hinzu,"
+" wenn ein Begriff wiederholt falsch erkannt wird. Der Name des Projekts, in "
+"dem du diktierst, wird ebenfalls als Hinweis gesendet."
+
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 msgid "Narrow your search to find more pull requests."
 msgstr "Grenze deine Suche ein, um weitere Pull Requests zu finden."
@@ -12134,7 +12652,7 @@ msgstr ""
 msgid "Native process monitor"
 msgstr "Nativer Prozessmonitor"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Native sessions"
 msgstr "Native Sitzungen"
 
@@ -12185,6 +12703,10 @@ msgstr "Informationen zur Netzwerkfreigabe nicht verfügbar."
 msgid "Neutral"
 msgstr "Neutral"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Never"
+msgstr "Nie"
+
 #: apps/web/src/components/chat/ModelListRow.tsx#ModelListRow
 msgid "New"
 msgstr "Neu"
@@ -12220,6 +12742,10 @@ msgstr "Neues Projekt"
 msgid "New projects"
 msgstr "Neue Projekte"
 
+#: apps/web/src/components/chat/V2LifecycleRow.tsx#FreshSessionRow
+msgid "New session"
+msgstr "Neue Sitzung"
+
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTasksSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "New task"
@@ -12242,6 +12768,11 @@ msgstr "Neuer Chat"
 #: apps/web/src/components/sidebar/SidebarThreadHeader.tsx#SidebarThreadHeader
 msgid "New thread ({newThreadShortcutLabel})"
 msgstr "Neuer Thread ({newThreadShortcutLabel})"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "New thread each run"
+msgstr "Bei jedem Lauf neuer Thread"
 
 #: apps/web/src/components/chat/ChatHeader.tsx#ChatHeader
 msgid "New thread in {activeProjectName}"
@@ -12597,6 +13128,10 @@ msgstr "Kein passendes Label."
 msgid "No labels found"
 msgstr "Keine Labels gefunden"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "No languages match."
+msgstr "Keine passenden Sprachen."
+
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#OpenSourceLicensesPanel
 msgid "No licenses match that search."
 msgstr "Keine Lizenzen passen zur Suche."
@@ -12655,6 +13190,8 @@ msgid "No mobile clients"
 msgstr "Keine mobilen Clients"
 
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelsSection
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
 msgid "No models match."
 msgstr "Keine passenden Modelle."
 
@@ -12802,6 +13339,10 @@ msgstr "Keine Simulatoren oder Emulatoren auf dieser Umgebung gefunden."
 msgid "No spans found."
 msgstr "Keine Spans gefunden."
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "No speech detected"
+msgstr "Keine Sprache erkannt"
+
 #: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
 msgid "No SSH route to {environmentLabel}"
 msgstr "Keine SSH-Route zu {environmentLabel}"
@@ -12829,12 +13370,21 @@ msgstr "Noch keine Terminalsitzungen für diesen Thread."
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
 msgid "No text generation providers available."
 msgstr "Keine Anbieter zur Texterzeugung verfügbar."
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "No text generators yet"
+msgstr "Noch keine Textgeneratoren"
 
 #: apps/web/src/components/Sidebar.tsx
 msgid "No threads found"
 msgstr "Keine Threads gefunden"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "No threads found."
+msgstr "Keine Threads gefunden."
 
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
 msgid "No token saved; the server uses {tokenEnvVar} or the {cliName} login."
@@ -12845,6 +13395,10 @@ msgstr ""
 #: apps/web/src/components/chat/NativeChildWorkDialog.tsx#NativeChild
 msgid "No transcript yet."
 msgstr "Noch kein Transkript."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid "No transcription model matches."
+msgstr "Kein passendes Transkriptionsmodell."
 
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "No warnings or errors found."
@@ -12894,6 +13448,10 @@ msgstr "nicht verfügbar"
 #: apps/web/src/components/settings/SourceControlSettings.tsx#itemSummary
 msgid "Not available on this server: {installHint}"
 msgstr "Auf diesem Server nicht verfügbar: {installHint}"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "not benchmarked"
+msgstr "nicht getestet"
 
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
 msgid "Not checked"
@@ -12973,6 +13531,10 @@ msgstr "Noch nichts erkannt"
 msgid "Nothing matches “{queryLength48Text}”"
 msgstr "Keine Treffer für „{queryLength48Text}“"
 
+#: apps/web/src/components/settings/SecretsSettings.tsx#SecretProviderUses
+msgid "Nothing reads from {label}. The secrets themselves are untouched."
+msgstr "Nichts liest aus {label}. Die Secrets selbst bleiben unverändert."
+
 #: apps/web/src/components/chat/ComposerStashMenu.tsx#ComposerStashMenu
 msgid "Nothing stashed yet.{stashShortcutLabelText}"
 msgstr "Noch nichts zwischengespeichert.{stashShortcutLabelText}"
@@ -13023,28 +13585,21 @@ msgstr "Oktopus"
 #: apps/web/src/components/settings/StorageSettings.tsx#RetentionControl
 #: apps/web/src/components/settings/StorageSettings.tsx#WorktreeCleanupSection
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#endpointStatus
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 #: apps/web/src/threadNotifications.ts
 msgid "Off"
 msgstr "Aus"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Off ·"
+msgstr "Aus ·"
 
 #: apps/web/src/components/cloud/cloudEnvironmentConnectionPresentation.ts#presentSavedCloudEnvironmentConnection
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#AccessSettings
 #: apps/web/src/components/settings/SettingsScopeSentence.tsx#ScopeOptionLabel
 msgid "Offline"
 msgstr "Offline"
-
-#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
-msgid ""
-"Old history is cleaned up automatically, but these databases still hold the "
-"freed space. Run the command on each machine to return it to disk; it pauses "
-"and restarts the background service. Quit the desktop app first if it hosts "
-"the environment."
-msgstr ""
-"Alter Verlauf wird automatisch bereinigt, aber diese Datenbanken halten den "
-"freigegebenen Platz weiterhin belegt. Führe den Befehl auf jedem Rechner aus,"
-" um ihn freizugeben; dabei wird der Hintergrunddienst pausiert und neu "
-"gestartet. Beende zuerst die Desktop-App, wenn sie die Umgebung hostet."
 
 #: apps/web/src/components/pullRequest/PullRequestDetailPanel.tsx#PullRequestDetailPanel
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
@@ -13084,9 +13639,20 @@ msgstr "auf {label}"
 msgid "on {label} · {threadRelationshipStatusLabelText}"
 msgstr "auf {label} · {threadRelationshipStatusLabelText}"
 
-#: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
-msgid "On a tailnet, run <0>npx t3 pair --tailscale</0> instead."
-msgstr "Führe in einem Tailnet stattdessen <0>npx t3 pair --tailscale</0> aus."
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#FastWorktreeCheckoutRow
+msgid ""
+"On a Mac, clone new worktrees from a checkout cached in the T3 home folder "
+"instead of writing every file. Uses Git’s normal checkout when it can’t. "
+"Turning it off deletes the cache."
+msgstr ""
+"Klont auf einem Mac neue Worktrees aus einem im T3-Home-Verzeichnis "
+"zwischengespeicherten Checkout, statt jede Datei zu schreiben. Falls das nicht"
+" möglich ist, wird das normale Git-Checkout verwendet. Beim Ausschalten wird "
+"der Cache gelöscht."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "On an environment"
+msgstr "Auf einer Umgebung"
 
 #: apps/web/src/components/ThreadContextChip.tsx#ThreadContextChip
 msgid ""
@@ -13109,12 +13675,8 @@ msgid "on settle"
 msgstr "beim Abschließen"
 
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
-msgid ""
-"On the computer with your code, start T3 Code or run <0>npx t3 serve</0>, then"
-" run:"
-msgstr ""
-"Starte T3 Code auf dem Computer mit deinem Code oder führe <0>npx t3 "
-"serve</0> aus. Führe dann Folgendes aus:"
+msgid "On the computer with your code:"
+msgstr "Auf dem Rechner mit deinem Code:"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "On webhook"
@@ -13135,6 +13697,14 @@ msgstr "Einen Moment, während diese Umgebung die Anfrage des Agenten prüft."
 #: apps/web/src/components/settings/ProjectIconPickerDialog.tsx#ProjectIconPickerBody
 msgid "One or two letters or numbers."
 msgstr "Ein oder zwei Buchstaben oder Ziffern."
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+msgid "One thread, continuing the conversation"
+msgstr "Ein Thread, fortlaufende Unterhaltung"
+
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx
+msgid "One thread, fresh session each run"
+msgstr "Ein Thread, neue Sitzung bei jedem Lauf"
 
 #: apps/web/src/components/chat/LinkRequestCard.tsx#PendingLinkRequest
 msgid "Only a session that manages access here can answer this."
@@ -13191,6 +13761,10 @@ msgstr "In einem Archiv können nur UTF-8-Text und Bilder geöffnet werden."
 msgid "Open"
 msgstr "Öffnen"
 
+#: apps/web/src/components/chat/SecretRequestCard.tsx#PendingSecretRequestForm
+msgid "Open {host}"
+msgstr "{host} öffnen"
+
 #: apps/web/src/components/pullRequest/guide/GuideExcerpt.tsx#ExcerptDiff
 msgid "Open {path} in Code"
 msgstr "{path} in Code öffnen"
@@ -13240,7 +13814,7 @@ msgstr "App öffnen"
 msgid "Open approval"
 msgstr "Genehmigung öffnen"
 
-#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestMarkdown
+#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestBodySegmentView
 msgid "Open attachment on {hostMediaDefinitionLabelText}"
 msgstr "Anhang auf {hostMediaDefinitionLabelText} öffnen"
 
@@ -13391,6 +13965,10 @@ msgstr "Im Browserpanel öffnen. {externalClickLabel} für deinen Browser."
 #: apps/web/src/components/chat/OpenInPicker.tsx#OpenInPicker
 msgid "Open in…"
 msgstr "Öffnen in…"
+
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx#ReferenceStateIcon
+msgid "Open issue"
+msgstr "Offenes Issue"
 
 #: apps/web/src/components/promptLinks/NewThreadLinkView.tsx#NewThreadLinkView
 msgid "Open it again"
@@ -13576,12 +14154,17 @@ msgstr ""
 #: apps/web/src/components/ThreadNotificationCoordinator.tsx#present
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedMessage
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserTimelineRow
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskThreadLink
 msgid "Open thread"
 msgstr "Thread öffnen"
 
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Open usage"
 msgstr "Nutzung öffnen"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Open voice settings"
+msgstr "Spracheinstellungen öffnen"
 
 #: apps/web/src/fileContextMenu.ts#buildFileContextMenuItems
 msgid "Open with"
@@ -13594,6 +14177,10 @@ msgstr "WSL-Ordner öffnen"
 #: apps/web/src/components/settings/OpenSourceLicenses.tsx#LicenseManifestError
 msgid "Open-source notices are unavailable"
 msgstr "Open-Source-Hinweise nicht verfügbar"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "OpenAI handles silence automatically."
+msgstr "OpenAI verarbeitet Stille automatisch."
 
 #: apps/web/src/components/pullRequest/PullRequestLinkPreview.tsx#PullRequestLinkPreview
 msgid "opened"
@@ -13611,6 +14198,10 @@ msgstr "Gerät wird geöffnet…"
 msgid "Opening it in the environment’s browser, which reaches its network"
 msgstr "Wird im Browser der Umgebung geöffnet, der ihr Netzwerk erreicht"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Opening microphone…"
+msgstr "Mikrofon wird geöffnet…"
+
 #: apps/web/src/components/promptLinks/NewThreadLinkView.tsx#NewThreadLinkView
 msgid "Opening the link..."
 msgstr "Link wird geöffnet…"
@@ -13623,6 +14214,18 @@ msgstr "Wird geöffnet…"
 #: apps/web/src/components/clerk/T3ConnectUserProfilePage.tsx#T3ConnectTunnelUsage
 msgid "Opening…"
 msgstr "Wird geöffnet…"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid "OpenRouter model"
+msgstr "OpenRouter-Modell"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+msgid ""
+"OpenRouter no longer lists {current}. Dictation stays off until you choose "
+"another model."
+msgstr ""
+"OpenRouter listet {current} nicht mehr auf. Das Diktat bleibt ausgeschaltet, "
+"bis du ein anderes Modell auswählst."
 
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Opens a thread that knows which {singular} you mean."
@@ -14057,6 +14660,10 @@ msgstr "Bei Client-Energiesparmodus pausieren"
 msgid "Pause on host low power"
 msgstr "Bei Host-Energiesparmodus pausieren"
 
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Pause recording"
+msgstr "Aufnahme pausieren"
+
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx
 msgid "Pause when host is locked"
 msgstr "Bei gesperrtem Host pausieren"
@@ -14161,6 +14768,17 @@ msgstr "Wähle Datum und Uhrzeit."
 msgid "Pick a thread to continue"
 msgstr "Wähle einen Chat, um fortzufahren"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid ""
+"Pick languages to see models that support all of them. Accuracy is word or "
+"character error rate: lower is better. Speed is the time to transcribe 30 "
+"seconds of audio on Handy’s benchmark GPU."
+msgstr ""
+"Wähle Sprachen aus, um Modelle zu sehen, die alle davon unterstützen. Die "
+"Genauigkeit entspricht der Wort- oder Zeichenfehlerrate: niedriger ist besser."
+" Die Geschwindigkeit gibt die Zeit an, um 30 Sekunden Audio auf Handys "
+"Benchmark-GPU zu transkribieren."
+
 #: apps/web/src/components/GitActionsControl.tsx#PublishRepositoryDialog
 msgid "Pick where to host it, then point us at a repo to push to."
 msgstr "Wähle einen Host und dann ein Repository als Push-Ziel."
@@ -14213,8 +14831,6 @@ msgstr "Angeheftete Projekte stehen in der Projektauswahl zuerst."
 msgid "Plain text"
 msgstr "Klartext"
 
-#: apps/web/src/components/chat/CompactComposerControlsMenu.tsx#CompactComposerControlsMenu
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#ProposedPlanCard
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 #: apps/web/src/components/usage/UsageLimitsPooled.tsx#SegmentPopover
@@ -14224,19 +14840,6 @@ msgstr "Plan"
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#ProposedPlanCard
 msgid "Plan actions"
 msgstr "Planaktionen"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-#: apps/web/src/components/settings/settingsSearch.ts
-msgid "Plan mode (legacy)"
-msgstr "Planmodus (veraltet)"
-
-#: apps/web/src/components/chat/ComposerFooterControls.tsx#ComposerFooterModeControls
-msgid "Plan mode. Click to return to normal build mode"
-msgstr "Planmodus. Klicken, um zum normalen Umsetzungsmodus zurückzukehren"
-
-#: apps/web/src/components/chat/ComposerPlanFollowUpBanner.tsx#ComposerPlanFollowUpBanner
-msgid "Plan ready"
-msgstr "Plan bereit"
 
 #: apps/web/src/components/Sidebar.logic.ts#resolveThreadStatusPill
 msgid "Plan Ready"
@@ -14257,6 +14860,10 @@ msgstr "{label} abspielen"
 #: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
 msgid "Play Click"
 msgstr "Klick abspielen"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Play recording"
+msgstr "Aufnahme wiedergeben"
 
 #: apps/web/src/components/media/MediaVideoPlayer.tsx#MediaVideoPlayer
 msgid "Play video"
@@ -14666,11 +15273,20 @@ msgstr "Projekt erstellt"
 msgid "Project defaults and overrides"
 msgstr "Projektstandards und Überschreibungen"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "project dictionary"
+msgstr "Projektwörterbuch"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Project dictionary"
+msgstr "Projektwörterbuch"
+
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Project for ACP providers"
 msgstr "Projekt für ACP-Anbieter"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Project for ACP sessions"
 msgstr "Projekt für ACP-Sitzungen"
 
@@ -14891,15 +15507,6 @@ msgstr ""
 "Namens lesen. Die Werte werden beim Start eines Anbieters mit der op-CLI auf "
 "diesem Server gelesen."
 
-#: apps/web/src/components/settings/SecretsSettings.tsx#RemoveSecretProviderButton
-msgid ""
-"Provider variables that read from {label} stop resolving until a provider with"
-" the same name is added again. The secrets themselves are untouched."
-msgstr ""
-"Anbietervariablen, die aus {label} lesen, werden erst wieder aufgelöst, wenn "
-"ein Anbieter mit demselben Namen hinzugefügt wird. Die Geheimnisse selbst "
-"bleiben unverändert."
-
 #: apps/web/src/components/chat/ModelPickerSidebar.tsx#ModelPickerSidebar
 #: apps/web/src/components/settings/settingsSearch.ts
 #: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
@@ -14991,7 +15598,7 @@ msgid "Pull request URL or #42"
 msgstr "Pull-Request-URL oder #42"
 
 #: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestHostVideo
-#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestMarkdown
+#: apps/web/src/components/pullRequest/PullRequestMarkdown.tsx#PullRequestBodySegmentView
 msgid "Pull request video"
 msgstr "Pull-Request-Video"
 
@@ -15048,7 +15655,6 @@ msgstr "Violett"
 
 #: apps/web/src/components/GitActionsControl.logic.ts#buildMenuItems
 #: apps/web/src/components/GitActionsControl.logic.ts#resolveQuickAction
-#: apps/web/src/components/GitActionsControl.tsx#GitQuickActionIcon
 msgid "Push"
 msgstr "Pushen"
 
@@ -15087,12 +15693,6 @@ msgstr "Zu bedenkende Fragen"
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Queue"
 msgstr "Einreihen"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
-msgid "Queue follow-ups while the agent runs or steer the current run. "
-msgstr ""
-"Folgeaufträge einreihen, während der Agent arbeitet, oder den aktuellen "
-"Durchlauf steuern. "
 
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Queue message"
@@ -15201,15 +15801,6 @@ msgstr "Lesedurchsatz"
 msgid "Read Total"
 msgstr "Insgesamt gelesen"
 
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-msgid ""
-"Read your existing Cursor CLI login from macOS Keychain to show account "
-"history and monthly limits. macOS may ask you to allow access."
-msgstr ""
-"Lies deine bestehende Cursor-CLI-Anmeldung aus dem macOS-Schlüsselbund, um "
-"Kontoverlauf und Monatslimits anzuzeigen. macOS fragt möglicherweise nach "
-"deiner Erlaubnis."
-
 #: apps/web/src/components/files/FilePreviewPanel.tsx
 msgid "Read-only connection. Unsaved edits are kept until write access returns."
 msgstr ""
@@ -15261,6 +15852,10 @@ msgstr "Bereit für Review"
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentCard
 msgid "Ready to code."
 msgstr "Bereit zum Programmieren."
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Ready to dictate"
+msgstr "Bereit zum Diktieren"
 
 #: apps/web/src/components/chat/useAutoBalanceUpdateBanner.tsx#useAutoBalanceUpdateBanner
 msgid "Ready to update to {targetVersion}"
@@ -15326,9 +15921,29 @@ msgstr "Kürzlich verwendet"
 msgid "Recents"
 msgstr "Zuletzt verwendet"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Reclaim"
+msgstr "Freigeben"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Reclaim {amount} on {label}?"
+msgstr "{amount} auf {label} freigeben?"
+
 #: apps/web/src/components/settings/DatabaseStorageNotice.tsx#DatabaseStorageNotice
 msgid "Reclaim freed database space"
 msgstr "Freien Datenbankspeicher zurückgewinnen"
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "Reclaiming {amount} on {label}"
+msgstr "{amount} auf {label} wird freigegeben"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Recommended"
+msgstr "Empfohlen"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Recommended for {recommendedLanguage}"
+msgstr "Empfohlen für {recommendedLanguage}"
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
@@ -15394,6 +16009,11 @@ msgstr ""
 msgid "Reconnecting…"
 msgstr "Verbindung wird wiederhergestellt…"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Record again"
+msgstr "Erneut aufnehmen"
+
 #: apps/web/src/components/settings/useSnapShotShortcutRecorder.tsx#useSnapShotShortcutRecorder
 msgid "Record snapshot shortcut, currently {formatSnapShotShortcutLabelText}"
 msgstr "Aufnahmekürzel aufzeichnen, aktuell {formatSnapShotShortcutLabelText}"
@@ -15406,6 +16026,14 @@ msgstr "Aufgezeichneter Inhalt danach"
 msgid "Recorded content before"
 msgstr "Aufgezeichneter Inhalt davor"
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Recording interrupted"
+msgstr "Aufnahme unterbrochen"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophonePlayback
+msgid "Recording playback position"
+msgstr "Wiedergabeposition der Aufnahme"
+
 #: apps/web/src/components/preview/ThreadPreviewMiniPlayer.tsx#MiniPlayerShell
 msgid "Recording preview"
 msgstr "Aufnahmevorschau"
@@ -15414,6 +16042,10 @@ msgstr "Aufnahmevorschau"
 #: apps/web/src/components/preview/PreviewView.tsx#handleCapture
 msgid "Recording saved"
 msgstr "Aufnahme gespeichert"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+msgid "Recording time"
+msgstr "Aufnahmezeit"
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserSettingsPanel
 msgid "Recordings"
@@ -15457,9 +16089,9 @@ msgstr ""
 msgid "Reduce Transparency"
 msgstr "Transparenz reduzieren"
 
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Refine"
-msgstr "Verfeinern"
+#: apps/web/src/components/pullRequest/PullRequestMarkdownTextarea.tsx
+msgid "Reference an issue or change request"
+msgstr "Issue oder Änderungsanfrage referenzieren"
 
 #: apps/web/src/components/chat/NativeChildWorkDialog.tsx#NativeChildWorkContent
 #: apps/web/src/components/chat/ProviderStatusBanner.tsx#ProviderStatusBanner
@@ -15467,9 +16099,10 @@ msgstr "Verfeinern"
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 #: apps/web/src/components/pullRequest/PullRequestSummaryTab.tsx#PullRequestSummaryTab
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#WebhookDeliveriesDialog
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
 msgid "Refresh"
 msgstr "Aktualisieren"
 
@@ -15492,6 +16125,11 @@ msgstr "Dateien aktualisieren"
 #: apps/web/src/components/usage/UsagePage.tsx#UsagePage
 msgid "Refresh limits"
 msgstr "Limits aktualisieren"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Refresh microphones"
+msgstr "Mikrofone aktualisieren"
 
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid "Refresh process diagnostics"
@@ -15646,6 +16284,12 @@ msgstr "Installationsfortschritt des Relay-Clients"
 msgid "Release control"
 msgstr "Steuerung freigeben"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Release the model’s memory on the environment after it sits idle."
+msgstr ""
+"Gibt den Speicher des Modells in der Umgebung frei, nachdem es eine Weile "
+"inaktiv war."
+
 #: apps/web/src/components/onboarding/FirstRunGate.tsx#FirstRunRecovery
 #: apps/web/src/components/preview/PreviewUnreachable.tsx#PreviewUnreachable
 msgid "Reload"
@@ -15703,6 +16347,7 @@ msgstr "Nur Remote"
 #: apps/web/src/components/settings/SecretsSettings.tsx#RemoveSecretProviderButton
 #: apps/web/src/components/settings/SourceControlHostSettings.tsx#SourceControlHostSettings
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove"
 msgstr "Entfernen"
@@ -15727,6 +16372,10 @@ msgstr "{label} von diesem Gerät entfernen?"
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove {label}?"
 msgstr "{label} entfernen?"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Remove {removingConfigText}?"
+msgstr "{removingConfigText} entfernen?"
 
 #: apps/web/src/components/settings/ProjectDefaultsSettings.tsx#ProjectDefaultsSettings
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -15757,6 +16406,10 @@ msgstr "Checkout entfernen"
 msgid "Remove choice"
 msgstr "Auswahl entfernen"
 
+#: apps/web/src/components/settings/ChatGptAccountPicker.tsx#ChatGptAccountPicker
+msgid "Remove connection"
+msgstr "Verbindung entfernen"
+
 #: apps/web/src/components/settings/ProviderModelsSection.tsx#ProviderModelRow
 msgid "Remove custom model"
 msgstr "Eigenes Modell entfernen"
@@ -15764,6 +16417,15 @@ msgstr "Eigenes Modell entfernen"
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Remove downloaded runtime"
 msgstr "Heruntergeladene Laufzeit entfernen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Remove filler words"
+msgstr "Füllwörter entfernen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Remove filler words like “um” and “uh” from transcripts."
+msgstr "Entfernt Füllwörter wie „ähm“ und „äh“ aus Transkripten."
 
 #: apps/web/src/components/files/AttachmentFilePreview.tsx#AttachmentFilePreview
 msgid "Remove from draft"
@@ -15789,6 +16451,14 @@ msgstr "Von diesem Gerät entfernen…"
 #: apps/web/src/components/settings/UsageProviderSettings.tsx#RemoveUsageProviderButton
 msgid "Remove hub"
 msgstr "Hub entfernen"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove key"
+msgstr "Schlüssel entfernen"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove key…"
+msgstr "Schlüssel entfernen…"
 
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Remove new model"
@@ -15850,6 +16520,10 @@ msgstr "Tastenkürzel entfernen…"
 #: apps/web/src/components/chat/useComposerAttachmentIntake.ts#foldPastedText
 msgid "Remove some text or an attachment, then paste again."
 msgstr "Entferne Text oder einen Anhang und füge dann erneut ein."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Remove the {company} key?"
+msgstr "Schlüssel für {company} entfernen?"
 
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Remove the attachments and context, then send it again."
@@ -15948,6 +16622,10 @@ msgstr "Erneut öffnen"
 #: apps/web/src/components/pullRequest/PullRequestActionsMenu.tsx#PullRequestActionsMenu
 msgid "Reopen {singular}"
 msgstr "{singular} erneut öffnen"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Replace API key"
+msgstr "API-Schlüssel ersetzen"
 
 #: apps/web/src/components/DevReplayHost.tsx#DevReplayHost
 msgid "Replay a recorded turn"
@@ -16126,13 +16804,13 @@ msgstr "Zoom zurücksetzen"
 msgid "Resets"
 msgstr "Zurücksetzungen"
 
-#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
-msgid "Resets {formatUpcomingTimestampText}"
-msgstr "Wird {formatUpcomingTimestampText} zurückgesetzt"
-
 #: apps/web/src/components/usage/UsageLimits.tsx#WindowBar
 msgid "Resets {resetsAt}{resetsInText}"
 msgstr "Wird {resetsAt} zurückgesetzt{resetsInText}"
+
+#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
+msgid "Resets {resetTime}"
+msgstr "Wird {resetTime} zurückgesetzt"
 
 #: apps/web/src/components/chat/ThreadDetailsUsage.tsx#LimitRow
 msgid "Resets in {formatDurationText} · {formatUpcomingTimestampText}"
@@ -16252,6 +16930,10 @@ msgstr "Neu starten und deaktivieren"
 msgid "Restart and enable"
 msgstr "Neu starten und aktivieren"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Restart and reclaim"
+msgstr "Neu starten und freigeben"
+
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "Restart in {seconds}s"
 msgstr "Neustart in {seconds} s"
@@ -16277,6 +16959,7 @@ msgstr "wird neu gestartet"
 #: apps/web/src/components/ServerUpdateAction.tsx
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AdvertisedEndpointListRow
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
 #: apps/web/src/components/settings/LocalEnvironmentSetting.tsx#LocalEnvironmentSetting
 #: apps/web/src/components/sidebar/updateEverything.logic.ts#describeUpdateCapsule
 msgid "Restarting…"
@@ -16290,6 +16973,10 @@ msgstr "Neustarts"
 msgid "restarts last"
 msgstr "zuletzt neu gestartet"
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "Restarts T3 Code there. It is offline for about {minutes} min."
+msgstr "Startet T3 Code dort neu. Die Umgebung ist etwa {minutes} Min. offline."
+
 #: apps/web/src/components/device/DeviceControlsRail.tsx#DeviceControlsRail
 msgid "Restore 3D view"
 msgstr "3D-Ansicht wiederherstellen"
@@ -16297,12 +16984,6 @@ msgstr "3D-Ansicht wiederherstellen"
 #: apps/web/src/components/chat/ThreadActivityBanners.tsx#branchMismatchBannerItem
 msgid "Restore branch"
 msgstr "Branch wiederherstellen"
-
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
-msgstr ""
-"Stelle Build/Plan, /plan, /default und Umschalt+Tab wieder her. Bei "
-"Deaktivierung wird der Umsetzungsmodus verwendet."
 
 #: apps/web/src/routes/_chat.settings.tsx#RestoreDeviceDefaultsButton
 msgid "Restore device defaults"
@@ -16347,7 +17028,7 @@ msgstr "{title} fortsetzen"
 msgid "Resume after usage limits"
 msgstr "Nach Nutzungslimits fortsetzen"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Resume agent-owned conversations as T3 threads."
 msgstr "Setze agenteneigene Unterhaltungen als T3-Threads fort."
 
@@ -16360,6 +17041,10 @@ msgstr "Beim Zurücksetzen fortsetzen"
 msgid "Resume thread"
 msgstr "Thread fortsetzen"
 
+#: apps/web/src/components/chat/UsageLimitRecoveryBanner.tsx#usageLimitRecoveryBannerItem
+msgid "Resumes {resetTime}"
+msgstr "Wird {resetTime} fortgesetzt"
+
 #: apps/web/src/components/ProjectCloneToastCoordinator.tsx#EnvironmentCloneToasts
 #: apps/web/src/components/chat/MermaidDiagram.tsx#DiagramError
 #: apps/web/src/components/chat/ThreadFindBar.tsx#ThreadFindBar
@@ -16369,6 +17054,7 @@ msgstr "Thread fortsetzen"
 #: apps/web/src/components/chat/useSystemComposerBanners.tsx#useSystemComposerBanners
 #: apps/web/src/components/device/DeviceHostUpdates.tsx#DeviceHostUpdates
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/onboarding/FirstRunGate.tsx#FirstRunRecovery
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#AgentInstallTerminal
 #: apps/web/src/components/onboarding/WelcomeWizard.tsx#ImportStep
@@ -16396,6 +17082,10 @@ msgstr "Fehlgeschlagene Speichervorgänge wiederholen"
 msgid "Retry installation"
 msgstr "Installation wiederholen"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Retry loading API key"
+msgstr "API-Schlüssel erneut laden"
+
 #: apps/web/src/components/diffs/DiffFileStatus.tsx#DiffFileStatus
 msgid "Retry loading diff"
 msgstr "Diff erneut laden"
@@ -16403,6 +17093,11 @@ msgstr "Diff erneut laden"
 #: apps/web/src/components/files/FileBreadcrumbs.tsx#BreadcrumbMenuContent
 msgid "Retry loading folder"
 msgstr "Ordner erneut laden"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Retry loading models"
+msgstr "Modelle erneut laden"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Retry monitor"
@@ -16433,6 +17128,10 @@ msgstr "Stapelaktualisierung wiederholen"
 msgid "Retry to bring in the repository."
 msgstr "Wiederhole den Vorgang, um das Repository zu übernehmen."
 
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Retry transcription"
+msgstr "Transkription wiederholen"
+
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
 msgid "Retry update"
@@ -16455,6 +17154,7 @@ msgid "Retrying provider ({progress})"
 msgstr "Anbieter wird erneut versucht ({progress})"
 
 #: apps/web/src/components/device/DeviceHostUpdates.tsx#DeviceHostUpdates
+#: apps/web/src/components/device/DevicePanel.tsx#DeviceDiscoveryWarning
 #: apps/web/src/components/media/MediaVideoPlayer.tsx#MediaVideoPlayer
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#renderWslRow
 msgid "Retrying…"
@@ -16943,7 +17643,8 @@ msgstr "Samstag"
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 #: apps/web/src/components/pullRequest/PullRequestMarkdownEditor.tsx#PullRequestMarkdownEditor
 #: apps/web/src/components/pullRequest/PullRequestTitleEditor.tsx#PullRequestTitleEditor
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
 #: apps/web/src/components/settings/CustomModelEditor.tsx#CustomModelEditor
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingKeyControl
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingSettingsRow
@@ -16968,6 +17669,14 @@ msgstr "{label}-Token speichern"
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 msgid "Save action"
 msgstr "Aktion speichern"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Save and continue"
+msgstr "Speichern und fortfahren"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Save and enable"
+msgstr "Speichern und aktivieren"
 
 #: apps/web/src/components/settings/SnapShotSetupDialog.tsx#SnapShotSetupDialog
 msgid "Save and finish"
@@ -17002,6 +17711,10 @@ msgstr ""
 msgid "Save it to open in an app that supports this format."
 msgstr ""
 "Speichere sie, um sie in einer App zu öffnen, die dieses Format unterstützt."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Save key"
+msgstr "Schlüssel speichern"
 
 #: apps/web/src/components/chat/ProposedPlanCard.tsx#SavePlanToWorkspaceForm
 msgid "Save plan to workspace"
@@ -17046,9 +17759,29 @@ msgstr "Gespeichert"
 msgid "Saved for {savedHostsJoinText}."
 msgstr "Für {savedHostsJoinText} gespeichert."
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid ""
+"Saved on the environment and used in every project there, along with each "
+"person’s own dictionary. Pick a project above to limit these words to one "
+"project."
+msgstr ""
+"Wird in der Umgebung gespeichert und dort in jedem Projekt verwendet, zusammen"
+" mit dem persönlichen Wörterbuch jeder Person. Wähle oben ein Projekt aus, "
+"um diese Wörter auf ein Projekt zu beschränken."
+
 #: apps/web/src/components/files/NotebookPreview.tsx
 msgid "Saved outputs only. Code is never executed."
 msgstr "Nur gespeicherte Ausgaben. Code wird nie ausgeführt."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid ""
+"Saved with {label} on its environment. Everyone who dictates in this project "
+"gets these spellings, along with their own dictionary. Project spellings win "
+"when the two overlap."
+msgstr ""
+"Wird mit {label} in seiner Umgebung gespeichert. Alle, die in diesem Projekt "
+"diktieren, erhalten diese Schreibweisen zusätzlich zum eigenen Wörterbuch. "
+"Bei Überschneidungen haben die Projektschreibweisen Vorrang."
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "Saved, but the shortcut needs attention. Check Advanced for help."
@@ -17057,7 +17790,7 @@ msgstr ""
 " unter „Erweitert“."
 
 #: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#KeybindingKeyControl
 #: apps/web/src/components/settings/KeybindingsSettings.tsx#NewKeybindingSettingsRow
 msgid "Saving"
@@ -17092,6 +17825,15 @@ msgstr "Wird gespeichert…"
 #: apps/web/src/components/usage/UsagePriceOverrides.tsx#UsagePriceOverrides
 msgid "Saving…"
 msgstr "Wird gespeichert…"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid ""
+"Say a sentence in the language above. Cleanup is skipped, so you see exactly "
+"what the model heard. The transcript stays on this page."
+msgstr ""
+"Sprich einen Satz in der oben ausgewählten Sprache. Die Bereinigung wird "
+"übersprungen, damit du genau siehst, was das Modell erkannt hat. Das "
+"Transkript bleibt auf dieser Seite."
 
 #: apps/web/src/components/settings/SourceControlSettings.tsx#EmptySourceControlDiscovery
 msgid "Scan"
@@ -17204,6 +17946,10 @@ msgstr "Agenten suchen…"
 msgid "Search all Lucide icons"
 msgstr "Alle Lucide-Symbole durchsuchen"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Search all threads..."
+msgstr "Alle Threads durchsuchen..."
+
 #: apps/web/src/components/pullRequest/PullRequestListFilters.tsx#PullRequestAuthorChoices
 msgid "Search authors"
 msgstr "Autoren suchen"
@@ -17255,6 +18001,7 @@ msgid "Search labels"
 msgstr "Labels suchen"
 
 #: apps/web/src/components/chat/ComposerCodeBlockLanguagePicker.tsx#ComposerCodeBlockLanguagePicker
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
 msgid "Search languages"
 msgstr "Sprachen suchen"
 
@@ -17269,6 +18016,11 @@ msgstr "Lucide-Symbole suchen"
 #: apps/web/src/components/settings/ThemeEditorPanel.tsx
 msgid "Search matches"
 msgstr "Suchtreffer"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelList
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Search models"
+msgstr "Modelle suchen"
 
 #: apps/web/src/components/chat/ModelPickerContent.tsx#ModelPickerContent
 msgid "Search models..."
@@ -17285,6 +18037,10 @@ msgstr "Open-Source-Lizenzen suchen"
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
 msgid "Search or enter URL"
 msgstr "Suchen oder URL eingeben"
+
+#: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx#PullRequestReviewerPicker
+msgid "Search people with access"
+msgstr "Personen mit Zugriff suchen"
 
 #: apps/web/src/components/CommandPalette.tsx#CommandPaletteDialog
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
@@ -17336,6 +18092,7 @@ msgstr "Einstellungen suchen"
 msgid "Search themes..."
 msgstr "Designs suchen…"
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
 #: apps/web/src/components/sidebar/SidebarThreadHeader.tsx#SidebarThreadHeader
 msgid "Search threads"
 msgstr "Threads suchen"
@@ -17343,6 +18100,11 @@ msgstr "Threads suchen"
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#ThreadPicker
 msgid "Search threads or projects..."
 msgstr "Threads oder Projekte suchen…"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#ModelPicker
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Search transcription models"
+msgstr "Transkriptionsmodelle suchen"
 
 #: apps/web/src/session-logic.ts#projectedWorkEntry
 msgid "Searched files"
@@ -17492,9 +18254,21 @@ msgstr ""
 msgid "Select where to clone"
 msgstr "Klonziel auswählen"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Selected"
+msgstr "Ausgewählt"
+
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
 msgid "Selected by T3 Code."
 msgstr "Von T3 Code gewählt."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Selected microphone (unavailable)"
+msgstr "Ausgewähltes Mikrofon (nicht verfügbar)"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Selected microphone (Unavailable)"
+msgstr "Ausgewähltes Mikrofon (nicht verfügbar)"
 
 #: apps/web/src/components/chat/AssistantSelectionToolbar.tsx#AssistantSelectionToolbar
 msgid "Selection is too long to cite"
@@ -17548,6 +18322,10 @@ msgstr "Sende erneut, wenn es bereit ist."
 msgid "Send feedback to decline this request"
 msgstr "Feedback senden, um diese Anfrage abzulehnen"
 
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Send into the current turn"
+msgstr "In den aktuellen Turn senden"
+
 #: apps/web/src/components/chat/ThreadErrorBanner.tsx#copyAdminRequest
 msgid "Send it to your workspace admin."
 msgstr "Sende sie an deinen Arbeitsbereichsadministrator."
@@ -17595,10 +18373,6 @@ msgid "Sending is unavailable right now. Finish the current action, then send."
 msgstr ""
 "Senden ist gerade nicht verfügbar. Schließe die aktuelle Aktion ab und sende"
 " dann."
-
-#: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
-msgid "Sending..."
-msgstr "Wird gesendet…"
 
 #: apps/web/src/components/chat/TimelineUserMessageRow.tsx#UserTimelineRow
 msgid "Sending…"
@@ -17655,6 +18429,10 @@ msgstr "Servereinstellungen aktualisieren"
 #: apps/web/src/components/chat/threadDetailsItems.ts
 msgid "Servers"
 msgstr "Server"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid "Service"
+msgstr "Dienst"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ResourceTelemetryDiagnosticsBody
 msgid "Session"
@@ -17733,6 +18511,10 @@ msgstr "T3 Connect einrichten"
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid "Set up Tailscale HTTPS?"
 msgstr "Tailscale HTTPS einrichten?"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Set up voice input"
+msgstr "Spracheingabe einrichten"
 
 #: apps/web/src/components/settings/SettingsPanels.tsx#DiffsSettingsPanel
 msgid "Set whether the diff panel ignores whitespace-only edits by default."
@@ -17856,18 +18638,18 @@ msgstr "Teilen"
 
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#GuestLinksRow
 msgid ""
-"Share a thread with a guest who watches it live in their browser and sends "
+"Share a thread with a guest who watches it live in a browser and sends "
 "messages you approve. Needs T3 Connect: sign in and link this machine in "
-"<0>Sharing & access</0>. While it is off, every guest link stops working."
+"<0>Sharing & access</0>. Turning it off stops every guest link."
 msgstr ""
 "Teile einen Thread mit einem Gast, der ihn live im Browser verfolgt und "
-"Nachrichten sendet, die du genehmigst. Benötigt T3 Connect: Melde dich an und"
-" verknüpfe diesen Rechner unter <0>Teilen und Zugriff</0>. Bei Deaktivierung "
-"funktionieren alle Gastlinks nicht mehr."
+"Nachrichten sendet, die du genehmigst. Erfordert T3 Connect: Melde dich an und"
+" verknüpfe diesen Rechner unter <0>Freigabe und Zugriff</0>. Beim Ausschalten"
+" werden alle Gastlinks deaktiviert."
 
 #: apps/web/src/components/settings/LabsSettingsPanel.tsx#GuestLinksRowWithSignIn
 msgid ""
-"Share a thread with a guest who watches it live in their browser and sends "
+"Share a thread with a guest who watches it live in a browser and sends "
 "messages you approve. Sign in to T3 Connect to use guest links."
 msgstr ""
 "Teile einen Thread mit einem Gast, der ihn live im Browser verfolgt und "
@@ -17887,6 +18669,14 @@ msgstr "Gemeinsame Hintergrundrichtlinie"
 #: apps/web/src/components/settings/CodexSetupSection.tsx#CodexManagedRuntimeFields
 msgid "Shared Codex config, sessions, and state."
 msgstr "Gemeinsame Codex-Konfiguration, Sitzungen und Zustände."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "shared dictionary"
+msgstr "gemeinsames Wörterbuch"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ProjectDictionaryRow
+msgid "Shared dictionary"
+msgstr "Gemeinsames Wörterbuch"
 
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivityAdvancedDialog
 msgid "Shared policy"
@@ -17984,6 +18774,17 @@ msgstr "3D-Smartphone anzeigen"
 msgid "Show a gentle cue on the captured window."
 msgstr "Sanften Hinweis auf dem erfassten Fenster anzeigen."
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#PromptSuggestionsRow
+msgid ""
+"Show a predicted next message in the empty composer after a Claude or Codex "
+"turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex "
+"0.165+. Claude threads update on restart."
+msgstr ""
+"Zeigt nach einem Claude- oder Codex-Turn einen Vorschlag für die nächste "
+"Nachricht im leeren Eingabefeld. Tab übernimmt ihn. Jeder Vorschlag ist eine "
+"zusätzliche gecachte Anfrage über deinen Tarif. Erfordert Codex 0.165+. "
+"Claude-Threads werden beim Neustart aktualisiert."
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#GeneralSettingsPanel
 msgid ""
 "Show a toast when another thread finishes, fails, or needs input or approval "
@@ -18001,6 +18802,7 @@ msgid "Show account"
 msgstr "Konto anzeigen"
 
 #: apps/web/src/components/pullRequest/PullRequestChecksPopover.tsx#ChecksBody
+#: apps/web/src/components/settings/SettingsPanels.tsx
 msgid "Show all"
 msgstr "Alle anzeigen"
 
@@ -18079,6 +18881,14 @@ msgstr "Dateibaum anzeigen"
 msgid "Show finished paragraphs"
 msgstr "Fertige Absätze anzeigen"
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#BoringSidebarMultilineRow
+msgid ""
+"Show folder threads on two lines: the title, then the branch, pull request, "
+"and agent."
+msgstr ""
+"Zeigt Ordner-Threads in zwei Zeilen: erst den Titel, dann Branch, Pull Request"
+" und Agent."
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#ChatSettingsPanel
 msgid "Show formatted Markdown as you type."
 msgstr "Formatiertes Markdown während der Eingabe anzeigen."
@@ -18124,6 +18934,10 @@ msgstr "Link anzeigen"
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Show linked pull requests"
 msgstr "Verknüpfte Pull Requests anzeigen"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid "Show models"
+msgstr "Modelle anzeigen"
 
 #: apps/web/src/components/chat/ModelPickerContent.tsx#ModelPickerContent
 #: apps/web/src/components/settings/AddProviderInstanceDialog.tsx#AddProviderInstanceDialog
@@ -18285,9 +19099,9 @@ msgstr "In Anbieterliste und Modellauswahl angezeigt."
 msgid "Shown in the provider list."
 msgstr "In Anbieterliste angezeigt."
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#LegacyFeaturesSection
-msgid "Shows context window usage as a circular indicator in the composer."
-msgstr "Zeigt die Kontextfensternutzung als Kreis im Eingabefeld."
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Shows words in your draft as you speak, before the recording finishes."
+msgstr "Zeigt Wörter beim Sprechen im Entwurf, bevor die Aufnahme beendet ist."
 
 #: apps/web/src/components/ThreadTerminalDrawer.tsx#TerminalSidebarGroup
 msgid "Side by side"
@@ -18439,6 +19253,20 @@ msgstr "Angemeldetes GitHub-Konto"
 msgid "Signing in..."
 msgstr "Anmeldung läuft…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Silence filtering"
+msgstr "Stille filtern"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Silero (1.2 MB), used for silence filtering and pause detection, downloads "
+"alongside the speech model. An installed copy is reused."
+msgstr ""
+"Silero (1,2 MB) wird für Stillefilterung und Pausenerkennung zusammen mit dem"
+" Sprachmodell heruntergeladen. Eine bereits installierte Version wird "
+"wiederverwendet."
+
 #: apps/web/src/components/settings/simlockDeviceHostsSettings.logic.ts#newSimlockDeviceHost
 msgid "Simlock"
 msgstr "Simlock"
@@ -18487,8 +19315,13 @@ msgid "skills in slash menu"
 msgstr "Skills im Slash-Menü"
 
 #: apps/web/src/components/BranchToolbar.logic.ts
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
 msgid "Skip"
 msgstr "Überspringen"
+
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Skip compaction and send this message"
+msgstr "Komprimierung überspringen und diese Nachricht senden"
 
 #: apps/web/src/components/settings/ProviderWizardAuthenticationStep.tsx#ProviderWizardAuthenticationStep
 msgid "Skip for now"
@@ -18497,6 +19330,24 @@ msgstr "Vorerst überspringen"
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 msgid "Skip requests older than"
 msgstr "Anfragen überspringen, die älter sind als"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"Skip silence and other non-speech audio before transcription, keeping a short "
+"buffer so words aren’t cut off."
+msgstr ""
+"Überspringt Stille und andere nichtsprachliche Geräusche vor der "
+"Transkription. Ein kurzer Puffer verhindert, dass Wörter abgeschnitten "
+"werden."
+
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid ""
+"Skip the install if you already have <0>t3</0>. If <1>t3</1> is not found "
+"after installing, add the folder the installer names to your PATH."
+msgstr ""
+"Überspringe die Installation, wenn du <0>t3</0> bereits hast. Wird <1>t3</1> "
+"nach der Installation nicht gefunden, füge den vom Installer genannten Ordner"
+" zu PATH hinzu."
 
 #: apps/web/src/components/pullRequest/pullRequestPresentation.tsx
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
@@ -18544,10 +19395,6 @@ msgstr "Kleinster angezeigter Wert"
 #: apps/web/src/components/desktop/SnapShotCoordinator.tsx#handleSnapShotEvent
 msgid "Snapshot failed"
 msgstr "Aufnahme fehlgeschlagen"
-
-#: apps/web/src/components/settings/SnapShotSettings.tsx#SnapShotSettings
-msgid "Snapshot sound: "
-msgstr "Aufnahmeton: "
 
 #: apps/web/src/components/desktop/SnapShotCoordinator.tsx#operation
 msgid "Snapshot taken, but no project is available"
@@ -18653,15 +19500,23 @@ msgstr ""
 msgid "Some workspace entries are not shown."
 msgstr "Einige Arbeitsbereichseinträge werden nicht angezeigt."
 
-#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#change
+#: apps/web/src/components/settings/CliCommandSettingsRow.tsx#run
 #: apps/web/src/routes/__root.tsx#RootRouteErrorView
 msgid "Something went wrong."
 msgstr "Etwas ist schiefgelaufen."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "sorry"
+msgstr "Entschuldigung"
 
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Sort"
 msgstr "Sortieren"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "Sort by"
+msgstr "Sortieren nach"
 
 #: apps/web/src/components/pullRequest/PullRequestsPage.tsx#PullRequestsPage
 msgid "Sort pull requests"
@@ -18737,13 +19592,38 @@ msgstr "Spans mit einer Dauer von mindestens {formatDurationText}."
 msgid "Sparkles"
 msgstr "Funkeln"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Speak and transcribe in multiple languages or translate into English, and get "
+"names and technical terms right with the dictionary in Voice settings."
+msgstr ""
+"Sprich und transkribiere in mehreren Sprachen oder übersetze ins Englische. "
+"Mit dem Wörterbuch in den Spracheinstellungen werden Namen und Fachbegriffe "
+"korrekt erkannt."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Speak any language and get English text."
+msgstr "Sprich in einer beliebigen Sprache und erhalte englischen Text."
+
 #: apps/web/src/components/files/office/Presentation.tsx
 msgid "Speaker notes"
 msgstr "Sprechernotizen"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Speech model download progress"
+msgstr "Download-Fortschritt des Sprachmodells"
+
 #: apps/web/src/components/settings/customModelEditor.logic.ts
 msgid "Speed"
 msgstr "Geschwindigkeit"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "Speed: <0>{secondsPer30s} s</0> / 30 s"
+msgstr "Geschwindigkeit: <0>{secondsPer30s} s</0> / 30 s"
+
+#: apps/web/src/components/settings/SpeechModelComparison.tsx#ModelBenchmarks
+msgid "Speed: not benchmarked"
+msgstr "Geschwindigkeit: nicht getestet"
 
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 #: apps/web/src/components/settings/SettingsPanels.tsx
@@ -18887,6 +19767,10 @@ msgstr "Starten"
 msgid "Start a Codex thread first"
 msgstr "Starte zuerst einen Codex-Thread"
 
+#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
+msgid "Start a fresh session; earlier messages stay visible"
+msgstr "Neue Sitzung starten; frühere Nachrichten bleiben sichtbar"
+
 #: apps/web/src/components/ChatView.logic.ts#getStartedThreadModelChangeBlockReason
 msgid "Start a new chat to switch providers"
 msgstr "Starte einen neuen Chat, um den Anbieter zu wechseln"
@@ -18894,6 +19778,14 @@ msgstr "Starte einen neuen Chat, um den Anbieter zu wechseln"
 #: apps/web/src/components/CommandPalette.tsx#buildAddProjectSourceGroups
 msgid "Start a new Git repository from a name"
 msgstr "Neues Git-Repository anhand eines Namens starten"
+
+#: apps/web/src/components/chat/QueuedRunsControl.tsx#QueuedRunsControl
+msgid "Start a turn with this message"
+msgstr "Mit dieser Nachricht einen Turn starten"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Start dictating"
+msgstr "Diktat starten"
 
 #: apps/web/src/components/BranchPicker.tsx#BranchPicker
 #: apps/web/src/components/settings/settingsSearch.ts
@@ -18903,6 +19795,14 @@ msgstr "Vom Remote starten"
 #: apps/web/src/components/settings/WorktreesSettings.tsx#StartFromRemoteRow
 msgid "Start new worktrees from remote by default"
 msgstr "Neue Worktrees standardmäßig vom Remote starten"
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#PairingForm
+msgid ""
+"Start T3 Code or run <0>t3 serve</0> there before <1>t3 pair</1>. On a "
+"tailnet, run <2>t3 pair --tailscale</2> instead."
+msgstr ""
+"Starte dort T3 Code oder führe <0>t3 serve</0> vor <1>t3 pair</1> aus. "
+"Verwende in einem Tailnet stattdessen <2>t3 pair --tailscale</2>."
 
 #: apps/web/src/components/CommandPalette.tsx#handleOpenProjectFromFileManager
 msgid "Start the matching WSL backend, then choose the folder again."
@@ -18939,6 +19839,10 @@ msgstr ""
 "Von einem Agenten auf {activeThreadLinkOrigin} über eine verknüpfte Umgebung"
 " gestartet."
 
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
+msgid "Started by the first run"
+msgstr "Durch den ersten Lauf gestartet"
+
 #: apps/web/src/components/chat/useComposerSend.ts#onSend
 msgid "Started in background"
 msgstr "Im Hintergrund gestartet"
@@ -18966,6 +19870,10 @@ msgstr "Gerätehub wird gestartet…"
 #: apps/web/src/components/device/DevicePanel.tsx#DevicePanel
 msgid "Starting device…"
 msgstr "Gerät wird gestartet…"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "Starting download…"
+msgstr "Download wird gestartet…"
 
 #: apps/web/src/components/settings/ProviderAuthenticationSection.tsx#ProviderAuthenticationSection
 msgid "Starting sign-in…"
@@ -19091,6 +19999,7 @@ msgid "stop guest share"
 msgstr "Gastfreigabe stoppen"
 
 #: apps/web/src/components/preview/PreviewChromeRow.tsx#PreviewChromeRow
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
 msgid "Stop recording"
 msgstr "Aufnahme stoppen"
 
@@ -19114,6 +20023,10 @@ msgstr ""
 "Stoppe t3 auf {serverLabel} und starte es mit `{command}` mit demselben "
 "Unterbefehl und denselben Optionen neu. Dies aktualisiert keinen installierten"
 " t3-Befehl."
+
+#: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
+msgid "Stop this action when the thread settles"
+msgstr "Diese Aktion stoppen, wenn der Thread zur Ruhe kommt"
 
 #: apps/web/src/components/pullRequest/ThreadPullRequestsPanel.tsx#LinkRowImpl
 msgid "Stop watching"
@@ -19181,6 +20094,11 @@ msgstr "Submodule"
 msgid "Subtle surface"
 msgstr "Dezente Fläche"
 
+#: apps/web/src/components/settings/LabsSettingsPanel.tsx#PromptSuggestionsRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Suggest next prompt"
+msgstr "Nächsten Prompt vorschlagen"
+
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
 msgid "Suggestions"
 msgstr "Vorschläge"
@@ -19246,14 +20164,6 @@ msgstr "Einschalten"
 #: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
 msgid "Switch response model for this thread"
 msgstr "Antwortmodell für diesen Thread wechseln"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "Switch this thread back to normal build mode"
-msgstr "Diesen Thread in den normalen Umsetzungsmodus zurückschalten"
-
-#: apps/web/src/components/chat/useComposerMenuItems.ts#useComposerMenuItems
-msgid "Switch this thread into plan mode"
-msgstr "Diesen Thread in den Planmodus schalten"
 
 #: apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx#UpdateTrackSwitchDialog
 #: apps/web/src/components/settings/UpdateTrackSwitchDialog.tsx#SwitchPlan
@@ -19324,7 +20234,9 @@ msgstr ""
 "Genehmigungen benötigt. Gilt für dieses Gerät, solange T3 Code geöffnet "
 "ist."
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/settings/SettingsPanels.tsx
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
 msgid "System default"
 msgstr "Systemstandard"
 
@@ -19332,6 +20244,15 @@ msgstr "Systemstandard"
 msgid "System default follows your browser or OS clock preference."
 msgstr ""
 "Systemstandard folgt dem Uhrzeitformat deines Browsers oder Betriebssystems."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"System default follows your operating system. Record a ten-second test and "
+"play it back here. Test audio stays on this device and is never transcribed."
+msgstr ""
+"Der Systemstandard folgt deinem Betriebssystem. Nimm hier einen "
+"zehnsekündigen Test auf und spiele ihn ab. Die Testaufnahme bleibt auf diesem"
+" Gerät und wird niemals transkribiert."
 
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#CaptureShortcutConfig
 msgid "T3 Code also reads any files included by this file."
@@ -19395,6 +20316,20 @@ msgid ""
 msgstr ""
 "T3 Code benötigt den Relay-Client, um diese Umgebung über T3 Connect "
 "verfügbar zu machen."
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid ""
+"T3 Code on {label} stops, rebuilds its database, and starts again. It is "
+"offline for about {minutes} min. Running agents stop when it restarts."
+msgstr ""
+"T3 Code auf {label} wird gestoppt, baut seine Datenbank neu auf und startet "
+"wieder. Die Umgebung ist etwa {minutes} Min. offline. Laufende Agenten werden "
+"beim Neustart gestoppt."
+
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#start
+msgid "T3 Code there restarts and is back in about {minutes} min."
+msgstr ""
+"T3 Code startet dort neu und ist nach etwa {minutes} Min. wieder verfügbar."
 
 #: apps/web/src/connection/clientMetadata.ts#clientPresentationMetadata
 msgid "T3 Code Web"
@@ -19666,6 +20601,7 @@ msgstr "Beenden"
 #: apps/web/src/components/projectScriptEditor.tsx
 #: apps/web/src/components/projectScriptEditor.tsx#ProjectScriptEditorForm
 #: apps/web/src/components/settings/TelemetryExportSettings.tsx#TelemetryExportForm
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGenerationTaskPicker
 msgid "Test"
 msgstr "Testen"
 
@@ -19685,6 +20621,20 @@ msgstr "Aufnahme testen und fortfahren"
 #: apps/web/src/components/settings/DeviceSourcesSettings.tsx#DeviceSourcesSettings
 msgid "Test connection"
 msgstr "Verbindung testen"
+
+#: apps/web/src/components/settings/MicrophoneTest.tsx#MicrophoneTest
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Test microphone"
+msgstr "Mikrofon testen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Test model"
+msgstr "Modell testen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Test transcript"
+msgstr "Testtranskript"
 
 #: apps/web/src/projectIconOptions.ts
 msgid "Test tube"
@@ -19728,6 +20678,10 @@ msgstr "Texterzeugungsmodell"
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 msgid "Text generation model not saved"
 msgstr "Texterzeugungsmodell nicht gespeichert"
+
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Text generators"
+msgstr "Textgeneratoren"
 
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
 msgid "Text size"
@@ -19787,6 +20741,10 @@ msgstr ""
 "Der Agent liest hier T3 Codes Protokolle und Quellcode und fragt, bevor er "
 "etwas repariert oder veröffentlicht."
 
+#: apps/web/src/components/chat/ComposerFreshSession.tsx#freshSessionBannerItem
+msgid "The agent won't see earlier messages in this thread."
+msgstr "Der Agent sieht frühere Nachrichten in diesem Thread nicht."
+
 #: apps/web/src/components/preview/PreviewView.tsx#handlePickElement
 msgid "The annotation was kept without the screenshot."
 msgstr "Die Anmerkung wurde ohne Screenshot beibehalten."
@@ -19845,6 +20803,10 @@ msgstr "Die zitierte Antwort ist nicht verfügbar"
 #: apps/web/src/components/ProjectCloneToastCoordinator.tsx#EnvironmentCloneToasts
 msgid "The clone failed."
 msgstr "Das Klonen ist fehlgeschlagen."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "The cloud provider can detect your language automatically."
+msgstr "Der Cloud-Anbieter kann deine Sprache automatisch erkennen."
 
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserAppearanceSetting
 msgid ""
@@ -19978,6 +20940,10 @@ msgstr "Die Tastenkürzeldatei wurde nicht geöffnet."
 msgid "The labels could not be read."
 msgstr "Die Labels konnten nicht gelesen werden."
 
+#: apps/web/src/components/settings/DatabaseStorageNotice.tsx#ReclaimRow
+msgid "The last attempt failed: {reclaimFailure}"
+msgstr "Der letzte Versuch ist fehlgeschlagen: {reclaimFailure}"
+
 #: apps/web/src/components/usage/UsageLimits.tsx#WindowBar
 msgid "The line is where even spending would be."
 msgstr "Die Linie zeigt einen gleichmäßigen Verbrauch."
@@ -20008,6 +20974,10 @@ msgstr ""
 #: apps/web/src/components/media/MediaActions.tsx#showMenu
 msgid "The media action failed."
 msgstr "Die Medienaktion ist fehlgeschlagen."
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorModelsDialog
+msgid "The model list couldn't load."
+msgstr "Die Modellliste konnte nicht geladen werden."
 
 #: apps/web/src/components/auth/ConnectAgentSurface.tsx#ConnectAgentSurface
 msgid ""
@@ -20144,6 +21114,14 @@ msgstr "die gewählte Umgebung"
 msgid "The selected environment is not connected."
 msgstr "Die gewählte Umgebung ist nicht verbunden."
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"The selected microphone is unavailable. Choose another or use the system "
+"default."
+msgstr ""
+"Das ausgewählte Mikrofon ist nicht verfügbar. Wähle ein anderes oder "
+"verwende den Systemstandard."
+
 #: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
 msgid "The selected targets use different streaming modes."
 msgstr "Die gewählten Ziele verwenden unterschiedliche Streamingmodi."
@@ -20197,6 +21175,16 @@ msgstr "Der Titel konnte nicht gespeichert werden"
 msgid "The URL appears after you save."
 msgstr "Die URL erscheint nach dem Speichern."
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid ""
+"The word or phrase you say to flag a correction, like “sorry” or "
+"“scratch that”. Cleanup applies the correction only where one is meant, "
+"and hears the cue as a hint."
+msgstr ""
+"Das Wort oder der Ausdruck, mit dem du eine Korrektur ankündigst, etwa "
+"„Entschuldigung“ oder „streiche das“. Die Bereinigung korrigiert nur, "
+"wo es so gemeint ist, und verwendet das Signal als Hinweis."
+
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
 msgid ""
 "The WSL backend will stop. Threads and projects opened against WSL stay safe "
@@ -20228,6 +21216,10 @@ msgstr "Designname"
 msgid "Themes"
 msgstr "Designs"
 
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "Then"
+msgstr "Dann"
+
 #: apps/web/src/components/settings/BrowserImportWizard.tsx#DoneStep
 msgid "There were no cookies to import for {destinationEnvironmentName}."
 msgstr "Keine Cookies für {destinationEnvironmentName} zu importieren."
@@ -20252,6 +21244,14 @@ msgid ""
 msgstr ""
 "Diese Berechtigungen gelten für deine aktive Route. Andere Routen können "
 "andere Berechtigungen haben."
+
+#: apps/web/src/components/settings/SecretsSettings.tsx#SecretProviderUses
+msgid ""
+"These read from {label} and will be unset. The secrets themselves are "
+"untouched."
+msgstr ""
+"Diese lesen aus {label} und werden zurückgesetzt. Die Secrets selbst bleiben "
+"unverändert."
 
 #: apps/web/src/components/pullRequest/PullRequestCodeTab.tsx#PullRequestCodeTab
 msgid "These ticks are kept here, not on the host"
@@ -20347,6 +21347,12 @@ msgid ""
 msgstr ""
 "Dieser Checkout ist im gewählten Projekt und in der gewählten Umgebung nicht"
 " mehr verfügbar."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "This choice applies only to this device. Choose Off to stop sharing."
+msgstr ""
+"Diese Auswahl gilt nur für dieses Gerät. Wähle „Aus“, um die Freigabe "
+"zu beenden."
 
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#AuthorizedClientsHeaderAction
 msgid "This client can create or revoke access for other devices."
@@ -20476,6 +21482,15 @@ msgstr "Diese Anzahl deckt nur einen Teil der Änderung ab"
 msgid "This database has no readable tables."
 msgstr "Diese Datenbank hat keine lesbaren Tabellen."
 
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorsSettings
+msgid ""
+"This deletes the API key stored on {environmentLabel}. Anything set to use "
+"this generator falls back to the text generation model."
+msgstr ""
+"Dadurch wird der auf {environmentLabel} gespeicherte API-Schlüssel gelöscht."
+" Alles, was diesen Generator verwendet, greift auf das Textgenerierungsmodell "
+"zurück."
+
 #: apps/web/src/components/CommandPalette.tsx#buildEnvironmentItem
 #: apps/web/src/components/settings/AuthorizedClientsSettings.tsx#ConnectedClientListRow
 msgid "This device"
@@ -20506,6 +21521,10 @@ msgid "This driver has no required configuration. You can add the instance now."
 msgstr ""
 "Dieser Treiber benötigt keine Konfiguration. Du kannst die Instanz jetzt "
 "hinzufügen."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+msgid "This environment can’t transcribe audio: {reason}."
+msgstr "Diese Umgebung kann Audio nicht transkribieren: {reason}."
 
 #: apps/web/src/components/chat/LinkRequestCard.tsx#LinkRequestDialog
 msgid ""
@@ -20765,14 +21784,6 @@ msgstr ""
 "Dieses Repository hat mehr Labels als hier aufgelistet. Wende die übrigen auf"
 " dem Host an."
 
-#: apps/web/src/components/pullRequest/PullRequestReviewerPicker.tsx#PullRequestReviewerPicker
-msgid ""
-"This repository has more people with access than are listed here. Ask for the "
-"rest on the host."
-msgstr ""
-"Dieses Repository hat mehr Personen mit Zugriff als hier aufgelistet. Frage "
-"die übrigen auf dem Host an."
-
 #: apps/web/src/components/pullRequest/PullRequestLabelPicker.tsx#PullRequestLabelPicker
 msgid "This repository has no labels."
 msgstr "Dieses Repository hat keine Labels."
@@ -20906,6 +21917,7 @@ msgstr ""
 
 #: apps/web/src/components/ChatMarkdown.tsx
 #: apps/web/src/components/Sidebar.tsx#moveThreadContextDrag
+#: apps/web/src/components/chat/MarkdownThreadLink.tsx#MarkdownThreadLink
 #: apps/web/src/components/settings/StorageSettings.tsx#CleanupResults
 #: apps/web/src/components/threadActionMenu.logic.ts#buildThreadActionMenuItems
 #: apps/web/src/lib/threadContextAttachment.ts#threadContextAttachment
@@ -20969,10 +21981,6 @@ msgstr "Thread-ID"
 msgid "Thread ID copied"
 msgstr "Chat-ID kopiert"
 
-#: apps/web/src/components/ThreadContextChip.tsx#ThreadContextChip
-msgid "Thread no longer available"
-msgstr "Thread nicht mehr verfügbar"
-
 #: apps/web/src/components/settings/NotificationSettings.tsx#NotificationSettings
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Thread notifications"
@@ -21008,6 +22016,10 @@ msgstr "Anweisungen für Threadtitel"
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Thread title instructions"
 msgstr "Anweisungen für Threadtitel"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Thread titles and other generated text"
+msgstr "Thread-Titel und andere generierte Texte"
 
 #: apps/web/src/components/AppSidebarLayout.tsx#AppSidebarLayout
 #: apps/web/src/components/CommandPalette.logic.ts#filterCommandPaletteGroups
@@ -21154,6 +22166,10 @@ msgstr "Threaddetailpanel umschalten"
 msgid "Toggle thread details{threadPanelShortcutLabelText}"
 msgstr "Threaddetails umschalten{threadPanelShortcutLabelText}"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx
+msgid "Toggle: press to start, press again to stop"
+msgstr "Umschalten: Zum Starten drücken, zum Stoppen erneut drücken"
+
 #: apps/web/src/components/settings/SourceControlTokenSettings.tsx#SourceControlTokenSettings
 msgid "Token"
 msgstr "Token"
@@ -21195,6 +22211,15 @@ msgstr "Tool-Aufruf fehlgeschlagen"
 msgid "Tool calls"
 msgstr "Tool-Aufrufe"
 
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+msgid "tool calls in chat"
+msgstr "Tool-Aufrufe im Chat"
+
+#: apps/web/src/components/settings/SettingsPanels.tsx#ToolCallVisibilityRow
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Tool calls in chat"
+msgstr "Tool-Aufrufe im Chat"
+
 #: apps/web/src/components/chat/V2ItemInspector.tsx#ToolOutputImages
 msgid "Tool output image"
 msgstr "Bild aus Tool-Ausgabe"
@@ -21230,10 +22255,6 @@ msgstr ""
 "Gesamte CPU-Nutzung laufender Unterprozesse des aktuellen Serverprozesses. "
 "Desktop-Shell und andere übergeordnete Prozesse sind nicht enthalten."
 
-#: apps/web/src/components/chat/ContextWindowMeter.tsx#ContextWindowMeter
-msgid "Total processed"
-msgstr "Insgesamt verarbeitet"
-
 #: apps/web/src/components/settings/DiagnosticsSettings.tsx#DiagnosticsSettingsBody
 msgid ""
 "Total resident memory across live child processes of the current server "
@@ -21268,6 +22289,61 @@ msgstr "Trace-ID kopiert"
 msgid "Traces"
 msgstr "Traces"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid ""
+"Transcribe speech on {transcriptionEnvironment} and use voice input across "
+"environments."
+msgstr ""
+"Transkribiere Sprache auf {transcriptionEnvironment} und nutze Spracheingabe "
+"über Umgebungen hinweg."
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcribe with"
+msgstr "Transkribieren mit"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Transcription"
+msgstr "Transkription"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Transcription failed"
+msgstr "Transkription fehlgeschlagen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Transcription hardware"
+msgstr "Transkriptionshardware"
+
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription hardware and model unloading"
+msgstr "Transkriptionshardware und Entladen des Modells"
+
+#: apps/web/src/components/settings/SpeechLanguageSelect.tsx#SpeechLanguageSelect
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription language"
+msgstr "Transkriptionssprache"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#SpeechModelBrowser
+#: apps/web/src/components/settings/settingsSearch.ts
+msgid "Transcription models"
+msgstr "Transkriptionsmodelle"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Transcription options"
+msgstr "Transkriptionsoptionen"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Transcription still busy"
+msgstr "Transkription noch beschäftigt"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Translate"
+msgstr "Übersetzen"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Translate to English"
+msgstr "Ins Englische übersetzen"
+
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Triage an issue"
 msgstr "Issue untersuchen"
@@ -21283,6 +22359,7 @@ msgstr "Versuche eine breitere Suche."
 
 #: apps/web/src/browser/ServerBrowserSurface.tsx#ServerBrowserSurface
 #: apps/web/src/components/auth/PairingRouteSurface.tsx#HostedPairingRouteSurface
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
 #: apps/web/src/components/clerk/MobileClientsUserProfilePage.tsx#MobileClientsUserProfilePage
 #: apps/web/src/components/cloud/CloudEnvironmentConnectList.tsx#CloudEnvironmentConnectRows
 #: apps/web/src/components/files/fileSurfaceChrome.tsx#FileSurfaceFailure
@@ -21640,8 +22717,7 @@ msgstr "Ausgelagerte Vorschau konnte nicht aktualisiert werden"
 msgid "Unable to update the thread pull request"
 msgstr "Thread-Pull-Request konnte nicht aktualisiert werden"
 
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#handleArchivedThreadContextMenu
-#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx#ArchivedThreadsPanel
+#: apps/web/src/components/settings/ArchivedThreadsPanel.tsx
 #: apps/web/src/components/settings/ProjectSettingsPanel.tsx#ProjectDetail
 msgid "Unarchive"
 msgstr "Aus Archiv holen"
@@ -21663,6 +22739,10 @@ msgstr "nicht verfügbar"
 #: apps/web/src/components/usage/usagePriceTable.ts#usagePriceCell
 msgid "Unavailable"
 msgstr "Nicht verfügbar"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "unavailable environment"
+msgstr "nicht verfügbare Umgebung"
 
 #: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskEditorForm
 #: apps/web/src/components/settings/SettingsScopeSentence.tsx#EnvironmentScopeMenu
@@ -21759,6 +22839,10 @@ msgstr "Von Thread lösen"
 msgid "Unlinking…"
 msgstr "Verknüpfung wird gelöst…"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#AdvancedSpeechSettings
+msgid "Unload model"
+msgstr "Modell entladen"
+
 #: apps/web/src/browser/BrowserDeviceToolbar.tsx#BrowserDeviceToolbar
 msgid "Unlock aspect ratio"
 msgstr "Seitenverhältnis entsperren"
@@ -21839,8 +22923,8 @@ msgid "Untitled commit"
 msgstr "Unbenannter Commit"
 
 #: apps/web/src/components/CommandPalette.logic.ts#buildLinkedThreadActionItems
-#: apps/web/src/components/chat/MarkdownThreadLink.tsx#MarkdownThreadLink
 #: apps/web/src/components/pullRequest/PullRequestThreadLinks.tsx#ThreadPicker
+#: apps/web/src/components/settings/ScheduledTasksSettings.tsx#ScheduledTaskDestination
 msgid "Untitled thread"
 msgstr "Unbenannter Thread"
 
@@ -21848,6 +22932,7 @@ msgstr "Unbenannter Thread"
 msgid "Up to {MAX_SNOOZE_PRESETS} options"
 msgstr "Bis zu {MAX_SNOOZE_PRESETS} Optionen"
 
+#: apps/web/src/components/settings/IntegrationsSettings.tsx#versionActions
 #: apps/web/src/components/settings/SavedEnvironmentRows.tsx#SavedBackendListRow
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update"
@@ -21856,6 +22941,10 @@ msgstr "Aktualisieren"
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update “{messageText}”?"
 msgstr "„{messageText}“ aktualisieren?"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Update {label} to use OpenRouter dictation."
+msgstr "Aktualisiere {label}, um OpenRouter-Diktate zu verwenden."
 
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Update {name}"
@@ -21895,10 +22984,6 @@ msgstr "Aktualisierungsbefehl kopiert"
 #: apps/web/src/components/sidebar/SidebarUpdatePill.tsx#handleAction
 msgid "Update confirmation failed."
 msgstr "Update-Bestätigung fehlgeschlagen."
-
-#: apps/web/src/components/settings/UsageProviderSettings.tsx#UsageProviderSettings
-msgid "update Cursor account usage"
-msgstr "Cursor-Kontonutzung aktualisieren"
 
 #: apps/web/src/components/sidebar/updateEverythingRun.tsx#startDesktopUpdateLaunchNotice
 msgid "Update did not apply"
@@ -21993,10 +23078,6 @@ msgstr "Aktualisiere diese Umgebung, um Antigravity zu verwalten."
 msgid "Update to {clientVersion}"
 msgstr "Auf {clientVersion} aktualisieren"
 
-#: apps/web/src/components/settings/IntegrationsSettings.tsx#versionActions
-msgid "Update to v{requiredVersion}"
-msgstr "Auf v{requiredVersion} aktualisieren"
-
 #: apps/web/src/components/settings/SettingsPanels.tsx#AboutVersionSection
 #: apps/web/src/components/settings/settingsSearch.ts
 msgid "Update track"
@@ -22070,6 +23151,10 @@ msgstr "Pull Requests werden aktualisiert"
 #: apps/web/src/components/chat/ComposerPrimaryActions.tsx#ComposerPrimaryActions
 msgid "Updating queued message"
 msgstr "Eingereihte Nachricht wird aktualisiert"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Updating the key keeps dictation enabled."
+msgstr "Beim Aktualisieren des Schlüssels bleibt das Diktat aktiviert."
 
 #: apps/web/src/components/settings/ThemeSearchSection.tsx#ThemeSearchSection
 msgid "Updating..."
@@ -22164,6 +23249,10 @@ msgstr "Nutzungsanbieter"
 msgid "USD / million tokens"
 msgstr "USD / Million Token"
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Use"
+msgstr "Verwenden"
+
 #: apps/web/src/components/chat/ComposerUsageLimits.tsx#modelFallbackBannerItem
 msgid "Use {defaultModelName}"
 msgstr "{defaultModelName} verwenden"
@@ -22181,6 +23270,14 @@ msgstr "Modus {mode} verwenden"
 msgid "Use {mode} variant, currently {label}"
 msgstr "Variante {mode} verwenden, aktuell {label}"
 
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Use {name}"
+msgstr "{name} verwenden"
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid "Use {name} for dictation?"
+msgstr "{name} für Diktate verwenden?"
+
 #: apps/web/src/components/settings/CaptureShortcutConfig.tsx#apply
 msgid "Use {shortcut} from another app."
 msgstr "Verwende {shortcut} aus einer anderen App."
@@ -22188,6 +23285,10 @@ msgstr "Verwende {shortcut} aus einer anderen App."
 #: apps/web/src/components/settings/IntegrationsSettings.tsx#BrowserSearchEngineSetting
 msgid "Use %s where the search terms go."
 msgstr "Verwende %s an der Stelle der Suchbegriffe."
+
+#: apps/web/src/components/onboarding/WelcomeWizard.tsx#CliPathSetup
+msgid "Use <0>t3</0> from any terminal. Adds one line to {file}."
+msgstr "Verwende <0>t3</0> in jedem Terminal. Fügt eine Zeile zu {file} hinzu."
 
 #: apps/web/src/components/PullRequestThreadDialog.tsx#PullRequestThreadDialog
 msgid "Use a {singular} URL, checkout command, 123, or #123."
@@ -22201,6 +23302,10 @@ msgstr "Anderes Konto verwenden"
 #: apps/web/src/components/usage/UsageLimits.tsx#ResetCreditDialog
 msgid "Use a reset credit?"
 msgstr "Rücksetzguthaben verwenden?"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#CleanupModelRow
+msgid "Use a separate cleanup model"
+msgstr "Separates Bereinigungsmodell verwenden"
 
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
 msgid "Use a separate review guide model"
@@ -22290,6 +23395,10 @@ msgstr ""
 msgid "Use local SSH config, agent, and tunnels for the backend."
 msgstr "Lokale SSH-Konfiguration, Agent und Tunnel für das Backend verwenden."
 
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Use model"
+msgstr "Modell verwenden"
+
 #: apps/web/src/components/search/ProjectContentSearchDialog.tsx#OpenContentSearchDialog
 msgid "Use regular expression"
 msgstr "Regulären Ausdruck verwenden"
@@ -22318,6 +23427,10 @@ msgstr ""
 #: apps/web/src/components/ChatMarkdown.tsx#CodexArtifactTemplateCard
 msgid "Use template"
 msgstr "Vorlage verwenden"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#VoiceSettingsPanel
+msgid "Use the built-in instructions or write your own."
+msgstr "Verwende die integrierten Anweisungen oder schreibe eigene."
 
 #: apps/web/src/components/settings/ThemeSettings.tsx#ThemeLibraryCard
 msgid "Use the first variants for light and dark"
@@ -22386,14 +23499,6 @@ msgstr ""
 "Wird für neue Threads verwendet, wenn der Anbieter des Standardmodells sein "
 "Nutzungslimit erreicht hat."
 
-#: apps/web/src/components/settings/SettingsPanels.tsx#ThreadsSettingsPanel
-msgid ""
-"Used for thread titles and other generated text on connected devices with this"
-" provider. Source control can override it."
-msgstr ""
-"Wird für Threadtitel und andere generierte Texte auf verbundenen Geräten mit"
-" diesem Anbieter verwendet. Die Versionsverwaltung kann dies überschreiben."
-
 #: apps/web/src/components/chat/TimelineMinimap.tsx#TimelineMinimap
 msgid "User message"
 msgstr "Nutzernachricht"
@@ -22409,6 +23514,13 @@ msgstr "Benutzername"
 #: apps/web/src/components/settings/BackgroundActivitySettings.tsx#BackgroundActivitySettingsRow
 msgid "Uses custom intervals. Shared policy: {messageText}."
 msgstr "Verwendet eigene Intervalle. Gemeinsame Richtlinie: {messageText}."
+
+#: apps/web/src/components/settings/CloudVoiceConfiguration.tsx#CloudVoiceConfiguration
+msgid ""
+"Uses the API key saved on {label}. This choice applies only to this device."
+msgstr ""
+"Verwendet den auf {label} gespeicherten API-Schlüssel. Diese Auswahl gilt nur"
+" für dieses Gerät."
 
 #: apps/web/src/components/settings/ProviderSetupSection.tsx#ProviderSetupActions
 msgid "Uses the custom binary path below. Installation keeps that path."
@@ -22477,7 +23589,7 @@ msgstr "Kopplungslink wird geprüft und deine Sitzung vorbereitet."
 msgid "value"
 msgstr "Wert"
 
-#: apps/web/src/components/settings/SecretSourceInput.tsx#SecretSourceInput
+#: apps/web/src/components/settings/SecretSourceInput.tsx#SecretSourceSelect
 msgid "Value"
 msgstr "Wert"
 
@@ -22501,6 +23613,11 @@ msgstr ""
 #: apps/web/src/components/cloud/RelayClientInstallDialog.tsx
 msgid "Verifying download"
 msgstr "Download wird geprüft"
+
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#ModelCard
+msgid "Verifying download…"
+msgstr "Download wird überprüft…"
 
 #: apps/web/src/components/settings/AboutVersionTitle.tsx#AboutVersionTitle
 #: apps/web/src/components/settings/ConnectionsSettings.tsx#ConnectionsSettingsContent
@@ -22641,6 +23758,28 @@ msgstr "Violett"
 msgid "Visibility"
 msgstr "Sichtbarkeit"
 
+#: apps/web/src/components/settings/settingsSearch.ts
+#: apps/web/src/components/settings/settingsTranslations.ts#getSettingsSectionLabels
+msgid "Voice"
+msgstr "Spracheingabe"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#voiceErrorLabel
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx#VoiceInputErrorPill
+msgid "Voice input failed"
+msgstr "Spracheingabe fehlgeschlagen"
+
+#: apps/web/src/components/chat/ComposerSpeechButton.tsx#ComposerSpeechRecordingPill
+msgid "Voice input is busy"
+msgstr "Spracheingabe beschäftigt"
+
+#: apps/web/src/components/chat/VoiceInputErrorPill.tsx
+msgid "Voice input unavailable"
+msgstr "Spracheingabe nicht verfügbar"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx
+msgid "Voice transcript cleanup"
+msgstr "Bereinigung von Sprachtranskripten"
+
 #: apps/web/src/components/device/DeviceToolsPanel.tsx#DeviceToolsPanel
 msgid "VoiceOver"
 msgstr "VoiceOver"
@@ -22707,6 +23846,10 @@ msgstr "Wartet auf Installationsprogramm"
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#LastSampleLabel
 msgid "Waiting for sample"
 msgstr "Wartet auf Messwert"
+
+#: apps/web/src/components/settings/VoiceSettingsPanel.tsx#TranscriptionTest
+msgid "Waiting for the environment to connect"
+msgstr "Warten auf Verbindung mit der Umgebung"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ProcessTable
 msgid "Waiting for the native process monitor."
@@ -22810,10 +23953,6 @@ msgstr "Was er tun darf"
 msgid "What should the agent do each time this runs?"
 msgstr "Was soll der Agent bei jedem Durchlauf tun?"
 
-#: apps/web/src/components/chat/DraftHeroProjectHeading.tsx#DraftHeroProjectHeading
-msgid "What should we build in <0>{children}</0>?"
-msgstr "Was sollen wir in <0>{children}</0> entwickeln?"
-
 #: apps/web/src/components/NoProjectsHero.tsx#NoProjectsHero
 #: apps/web/src/components/chat/DraftHeroHeadline.tsx#DraftHeroHeadline
 msgid "What should we work on?"
@@ -22890,6 +24029,10 @@ msgstr "Breit"
 #: apps/web/src/components/pullRequest/PullRequestListEmptyState.tsx#PullRequestListEmptyState
 msgid "Widen the state, involvement or project filter to see more."
 msgstr "Erweitere Status-, Beteiligungs- oder Projektfilter, um mehr zu sehen."
+
+#: apps/web/src/components/InstallT3Commands.tsx#InstallT3Commands
+msgid "Windows (PowerShell)"
+msgstr "Windows (PowerShell)"
 
 #: apps/web/src/components/CommandPalette.tsx#handleAddProjectForEnvironment
 #: apps/web/src/components/CommandPalette.tsx#submitAddProjectCloneFlow
@@ -23085,13 +24228,22 @@ msgstr "Schreibdurchsatz"
 msgid "Write Total"
 msgstr "Insgesamt geschrieben"
 
-#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#AcpSessionManagementSection
+#: apps/web/src/components/settings/AcpSessionManagementSection.tsx#InstanceSessionManagement
 msgid "Write-only headers JSON, e.g. {example}"
 msgstr "Nur schreibbares Header-JSON, z. B. {example}"
 
 #: apps/web/src/components/settings/ResourceTelemetryDiagnostics.tsx#ProcessTable
 msgid "Write/s"
 msgstr "Schreiben/s"
+
+#: apps/web/src/components/settings/TextGeneratorsSettings.tsx#TextGeneratorWizard
+msgid ""
+"Writes thread titles, commit messages, and other short text without starting a"
+" coding agent. Your API key is stored on this environment."
+msgstr ""
+"Schreibt Thread-Titel, Commit-Nachrichten und andere kurze Texte, ohne einen "
+"Coding-Agenten zu starten. Dein API-Schlüssel wird in dieser Umgebung "
+"gespeichert."
 
 #: apps/web/src/components/settings/SourceControlWritingSettings.tsx#SourceControlWritingSettingsSection
 msgid "Writing & review"
@@ -23266,6 +24418,10 @@ msgstr ""
 "Dein neuerer Entwurf bleibt unverändert. Stelle den fehlgeschlagenen Prompt "
 "wieder her, wenn dieses Eingabefeld leer ist."
 
+#: apps/web/src/components/chat/ComposerFreshSession.tsx#freshSessionBannerItem
+msgid "Your next message starts a fresh session"
+msgstr "Deine nächste Nachricht startet eine neue Sitzung"
+
 #: apps/web/src/components/CommandPalette.tsx#OpenCommandPaletteDialog
 msgid "Your next message starts a fresh session."
 msgstr "Deine nächste Nachricht startet eine neue Sitzung."
@@ -23295,6 +24451,10 @@ msgstr ""
 msgid "Your ticks could not be read"
 msgstr "Deine Häkchen konnten nicht gelesen werden"
 
+#: apps/web/src/components/chat/VoiceInputSetup.tsx#VoiceInputSetup
+msgid "your transcription environment"
+msgstr "deine Transkriptionsumgebung"
+
 #: apps/web/src/components/chat/usePendingThreadRequests.ts#onSelectActivePendingUserInputOption
 msgid "Your typed text was set aside"
 msgstr "Dein eingegebener Text wurde beiseitegelegt"
@@ -23306,6 +24466,10 @@ msgstr "Deine ungespeicherte Änderung{where} wurde verworfen."
 #: apps/web/src/components/chat/useQueuedRunEdit.ts#beginEdit
 msgid "Your unsaved edit{where} was kept in the composer."
 msgstr "Deine ungespeicherte Änderung{where} wurde im Eingabefeld behalten."
+
+#: apps/web/src/components/settings/SettingsPanels.tsx
+msgid "Zen"
+msgstr "Zen"
 
 #: apps/web/src/components/preview/PreviewMoreMenu.tsx#PreviewMoreMenu
 msgid "Zoom"
@@ -23325,10 +24489,14 @@ msgstr "Vergrößern"
 msgid "Zoom out"
 msgstr "Verkleinern"
 
+#: apps/web/src/components/chat/ChatComposer.tsx#ChatComposer
+msgid "⇥ Tab"
+msgstr "⇥ Tab"
+
 #: apps/web/src/components/chat/ThreadServersPanel.tsx#ThreadServersList
 msgid "⌘-click"
 msgstr "⌘-Klick"
 
-#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#DiffCommentAnnotation
+#: apps/web/src/components/diffs/DiffCommentAnnotation.tsx#renderDraft
 msgid "⌘/Ctrl Enter to send"
 msgstr "⌘/Strg Eingabe zum Senden"

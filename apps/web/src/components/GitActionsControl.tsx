@@ -309,10 +309,8 @@ function GitQuickActionIcon({
     }
     return <SourceControlIcon className={className} />;
   }
-  if (quickAction.label === t({ message: "Commit" }))
-    return <GitCommitIcon className={className} />;
-  if (quickAction.label === t({ message: "Push" }))
-    return <CloudUploadIcon className={className} />;
+  if (quickAction.label === "Commit") return <GitCommitIcon className={className} />;
+  if (quickAction.label === "Push") return <CloudUploadIcon className={className} />;
   return <InfoIcon className={className} />;
 }
 
@@ -1683,7 +1681,9 @@ export default function GitActionsControl({
         >
           <FileDiffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
           <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-            <span className="shrink-0">Changes</span>
+            <span className="shrink-0">
+              <Trans>Changes</Trans>
+            </span>
             {changesBaseLabel ? (
               <Tooltip>
                 <TooltipTrigger

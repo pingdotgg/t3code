@@ -59,7 +59,7 @@ export function ChatGptAccountPicker({
         </DialogHeader>
         <div className="px-6 pb-6">
           <RadioGroup
-            aria-label="ChatGPT account to connect"
+            aria-label={t({ message: "ChatGPT account to connect" })}
             disabled={disabled}
             value={selectedMethodId}
             onValueChange={(value) => setSelection(value)}
@@ -93,7 +93,7 @@ export function ChatGptAccountPicker({
               disabled={disabled || !canRemove}
               onClick={() => onRemove(selectedMethodId)}
             >
-              Remove connection
+              <Trans>Remove connection</Trans>
             </Button>
           ) : null}
           <ChatGptConnectionButton disabled={disabled} onClick={() => onSelect(selectedMethodId)} />
