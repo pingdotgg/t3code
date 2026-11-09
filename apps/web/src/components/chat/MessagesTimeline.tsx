@@ -469,8 +469,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const findActive = findExpanded;
 
   const preserveDisclosurePosition = (anchorKey: string) => {
-    listRef.current?.cancelScroll();
-    listRef.current?.anchorVisibleContent({ key: anchorKey });
+    const list = listRef.current;
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (!list || (isWorking && list.getState().isFollowingEnd)) return;
+    list.cancelScroll();
+    list.anchorVisibleContent({ key: anchorKey });
   };
 
   const onToggleTurnFold = (runId: RunId) => {

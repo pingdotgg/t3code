@@ -3360,9 +3360,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const preserveDisclosurePosition = (anchorKey: string | null) => {
     const list = listRef.current;
-    if (anchorKey !== null) {
-      list?.cancelScroll();
-      list?.anchorVisibleContent({ key: anchorKey });
+    const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
+      list.cancelScroll();
+      list.anchorVisibleContent({ key: anchorKey });
     }
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
