@@ -1446,6 +1446,7 @@ export function createServerEnvironmentAtoms<R, E>(
             input.usage ?? false,
             input.usageSources ?? false,
             input.usageProviders === undefined ? null : [...new Set(input.usageProviders)].sort(),
+            input.modelCatalogOnly ?? false,
           ]),
       },
     }),

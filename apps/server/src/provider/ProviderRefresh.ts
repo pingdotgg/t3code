@@ -77,6 +77,10 @@ const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const secretResolver = yield* SecretResolver.SecretResolver;
   const refresh = Effect.fn("ProviderRefresh.refresh")(function* (input: RefreshInput) {
+    if (input.modelCatalogOnly === true) {
+      yield* providerRegistry.refreshModelCatalog;
+      return { providers: [] };
+    }
     // Older clients omit usage and expect a quota refresh; current clients opt out for health.
     const usage = input.usage !== false;
     const sourcesOnly = input.usageSources === true;

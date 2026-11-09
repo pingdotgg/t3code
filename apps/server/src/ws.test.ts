@@ -1119,6 +1119,7 @@ it.effect.each([
 
 it.effect("on-demand clients get provider config without workspace snapshots", () =>
   Effect.gen(function* () {
+    let catalogRefreshes = 0;
     const refreshModes: boolean[] = [];
     const reloaded: Array<ProviderInstanceId | undefined> = [];
     const reloadModes: boolean[] = [];
@@ -1165,6 +1166,9 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
         resolveFileManagerRevealKind: () => Effect.undefined,
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
+        refreshModelCatalog: Effect.sync(() => {
+          catalogRefreshes++;
+        }),
         getProviders: Effect.succeed([provider]),
         streamChanges: Stream.fromQueue(providerChanges).pipe(
           Stream.tap(() => Queue.offer(pulled, undefined)),
@@ -1340,6 +1344,17 @@ it.effect("on-demand clients get provider config without workspace snapshots", (
       refreshed.providers.map((entry) => [entry.workspaceSnapshots, entry.slashCommands]),
       [[[snapshotFor("/b", "2026-10-25T00:00:00.000Z")], []]],
     );
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("catalog-only-refresh"),
+      tag: WS_METHODS.serverRefreshProviders,
+      payload: { modelCatalogOnly: true },
+      headers: Headers.empty,
+    });
+    assert.deepEqual(yield* Queue.take(responses), { providers: [] });
+    assert.equal(catalogRefreshes, 1);
+    assert.deepEqual(refreshModes, []);
+    assert.equal(sourceRefreshes, 0);
     for (const [index, payload] of [{}, { usage: false }, { usage: true }].entries()) {
       yield* server.write(0, {
         _tag: "Request",
