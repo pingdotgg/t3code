@@ -18,7 +18,7 @@ import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as SshAuth from "./auth.ts";
-import { SshCommandError, SshPasswordPromptError } from "./errors.ts";
+import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
 const isSshCommandError = Schema.is(SshCommandError);
@@ -75,7 +75,7 @@ const hangingHttpClient = HttpClient.make(() => Effect.never);
 const testNetService = NetService.NetService.of({
   canListenOnHost: () => Effect.succeed(true),
   isPortAvailableOnLoopback: () => Effect.succeed(true),
-  hasListenerOnHost: () => Effect.succeed(false),
+  hasListenerOnHost: () => Effect.succeed(true),
   reserveLoopbackPort: () => Effect.succeed(41_773),
   findAvailablePort: (preferred) => Effect.succeed(preferred),
 });
@@ -343,6 +343,61 @@ describe("ssh tunnel scripts", () => {
         yield* TestClock.adjust(Duration.seconds(60));
         const environment = yield* Fiber.join(ensure);
         assert.equal(environment.httpBaseUrl, `http://127.0.0.1:${LOCAL_PORT}/`);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    }),
+  );
+
+  it.effect("fails with a readiness error when ssh never connects", () =>
+    Effect.gen(function* () {
+      const tunnelSpawned = yield* Deferred.make<void>();
+      let tunnelKilled = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        commandArgs(command).includes("-N")
+          ? Deferred.succeed(tunnelSpawned, undefined).pipe(
+              Effect.as(
+                makeRunningProcess(() => {
+                  tunnelKilled = true;
+                }),
+              ),
+            )
+          : Effect.succeed(makeSuccessfulProcess('{"remotePort":3773}\n')),
+      );
+      const layer = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Layer.succeed(HttpClient.HttpClient, hangingHttpClient),
+        Layer.succeed(
+          NetService.NetService,
+          NetService.NetService.of({
+            ...testNetService,
+            hasListenerOnHost: () => Effect.succeed(false),
+          }),
+        ),
+        SshAuth.SshPasswordPrompt.disabledLayer,
+        SshTunnel.SshEnvironmentManager.layer({ resolveCliRunner: Effect.succeed(ARCHIVE) }),
+      );
+      yield* Effect.gen(function* () {
+        const manager = yield* SshTunnel.SshEnvironmentManager;
+        const ensure = yield* Effect.forkChild(
+          Effect.result(
+            manager.ensureEnvironment({
+              alias: "devbox",
+              hostname: "devbox",
+              username: null,
+              port: null,
+            }),
+          ),
+        );
+        yield* Deferred.await(tunnelSpawned);
+        yield* TestClock.adjust(Duration.minutes(2));
+        const result = yield* Fiber.join(ensure);
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.instanceOf(result.failure, SshReadinessError);
+          assert.include(result.failure.message, "SSH connection to devbox did not come up");
+        }
+        assert.isTrue(tunnelKilled);
       }).pipe(Effect.provide(layer), Effect.scoped);
     }),
   );
