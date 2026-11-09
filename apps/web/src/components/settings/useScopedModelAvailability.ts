@@ -6,7 +6,6 @@ import {
 
 import { mergeEnvironmentSettings } from "../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
-import { textGeneratorBrand } from "../../textGenerators";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
@@ -24,16 +23,20 @@ export function useScopedModelDisabledReason(
   const providersByEnvironment = useEnvironmentProviders();
   return (instanceId: ProviderInstanceId, model: string): string | null => {
     const sourceEntry = entries.find((entry) => entry.instanceId === instanceId);
-    const isTextGenerator = textGeneratorForSelection(settings, instanceId) !== undefined;
+    const shownGenerator = textGeneratorForSelection(settings, instanceId);
     for (const candidate of targets) {
       const environment = environments.find(
         (entry) => entry.environmentId === candidate.environmentId,
       );
       const unavailable = `This model is unavailable on ${environment?.label ?? "a selected environment"}. Select that environment to choose its model separately.`;
       const generator = textGeneratorForSelection(candidate.settings, instanceId);
-      if (isTextGenerator || generator !== undefined) {
-        // Only the shown environment's model list is loaded; elsewhere the generator must match.
-        if (!generator?.enabled || textGeneratorBrand(generator) !== sourceEntry?.driverKind) {
+      if (shownGenerator !== undefined || generator !== undefined) {
+        // Only the shown environment's model list is loaded; elsewhere it must reach the same API.
+        if (
+          !generator?.enabled ||
+          generator.kind !== shownGenerator?.kind ||
+          generator.baseUrl !== shownGenerator.baseUrl
+        ) {
           return unavailable;
         }
         continue;

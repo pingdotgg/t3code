@@ -1,5 +1,10 @@
 import { it } from "@effect/vitest";
-import { ProviderInstanceId, type TextGeneratorConfig } from "@t3tools/contracts";
+import {
+  type ManagedPolicySummary,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type TextGeneratorConfig,
+} from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -13,14 +18,17 @@ import * as TextGenerators from "./TextGenerators.ts";
 
 const ID = ProviderInstanceId.make("router");
 
-const layer = (generator: Partial<TextGeneratorConfig>) =>
+const layer = (generator: Partial<TextGeneratorConfig>, policy?: ManagedPolicySummary) =>
   Layer.effect(TextGenerators.TextGenerators, TextGenerators.make).pipe(
     Layer.provideMerge(
-      ServerSettings.layerTest({
-        textGenerators: {
-          [ID]: { kind: "openaiCompatible", baseUrl: "https://api.test/v1", ...generator },
+      ServerSettings.layerTest(
+        {
+          textGenerators: {
+            [ID]: { kind: "openaiCompatible", baseUrl: "https://api.test/v1", ...generator },
+          },
         },
-      }),
+        policy,
+      ),
     ),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
@@ -189,5 +197,39 @@ it.effect("checks unsaved settings, keeping the saved key behind a redaction mar
       url: "https://api.test/v1/chat/completions",
       auth: "Bearer saved-key",
     });
+
+    // An allow-list names agent drivers only, so no unsaved config may reach an API either.
+    const managed = yield* TextGenerators.TextGenerators.pipe(
+      Effect.provide(
+        layer(
+          { apiKey: "saved-key" },
+          {
+            organization: "Example Corp",
+            lockedSettings: [],
+            limits: {
+              providers: {
+                allowedDrivers: [ProviderDriverKind.make("codex")],
+                lockedInstanceFields: {},
+              },
+            },
+          },
+        ),
+      ),
+    );
+    const requestsBefore = seen.length;
+    const refused = yield* managed
+      .listModels({
+        id: ProviderInstanceId.make("draft"),
+        config: {
+          kind: "openaiCompatible",
+          baseUrl: "https://new.test/v1",
+          apiKey: "k",
+          enabled: true,
+        },
+        test: true,
+      })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream), Effect.flip);
+    expect(refused.detail).toContain("policy");
+    expect(seen).toHaveLength(requestsBefore);
   }),
 );

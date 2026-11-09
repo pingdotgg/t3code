@@ -149,6 +149,15 @@ const textGeneratorCatalogAtom = Atom.family((keys: string) =>
 );
 
 /**
+ * Has open pickers ask the server again. Needed after a saved key changes: clients only see the
+ * redaction marker, so the cache key does not change with it.
+ */
+export function rereadTextGeneratorModels(environmentId: EnvironmentId, id: ProviderInstanceId) {
+  const atom = refreshCountAtom(`${environmentId}:${id}`);
+  appAtomRegistry.set(atom, appAtomRegistry.get(atom) + 1);
+}
+
+/**
  * Asks the API for its model list again, skipping the server's cache, then has open pickers
  * read it. Resolves to the model count, or the error to show.
  */
@@ -162,8 +171,7 @@ export async function refreshTextGeneratorModels(
     { environmentId, input: { id, refresh: true } },
     { reportFailure: false },
   );
-  const atom = refreshCountAtom(`${environmentId}:${id}`);
-  appAtomRegistry.set(atom, appAtomRegistry.get(atom) + 1);
+  rereadTextGeneratorModels(environmentId, id);
   return result._tag === "Success"
     ? { count: result.value.models.length }
     : { error: formatEnvironmentQueryError(result.cause) };
@@ -235,7 +243,7 @@ function textGeneratorSnapshot(
   selectedModels: ReadonlyArray<string>,
 ): ServerProvider {
   const discovered = AsyncResult.isSuccess(result) ? result.value.map(toProviderModel) : [];
-  const missing = selectedModels
+  const missing = [...new Set(selectedModels)]
     .filter((slug) => !discovered.some((model) => model.slug === slug))
     .map((slug): ServerProviderModel => ({
       slug,

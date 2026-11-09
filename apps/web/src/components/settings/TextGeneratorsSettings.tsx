@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import {
   checkTextGeneratorConfig,
+  rereadTextGeneratorModels,
   nextTextGeneratorId,
   refreshTextGeneratorModels,
   testTextGeneratorModel,
@@ -177,7 +178,12 @@ export function TextGeneratorsSettings({
           editing={editing}
           providers={providers}
           onClose={() => setEditing(null)}
-          onSave={(id, config) => updateSettings({ textGenerators: { [id]: config } })}
+          onSave={(id, config) =>
+            updateSettings(
+              { textGenerators: { [id]: config } },
+              { onSaved: () => rereadTextGeneratorModels(environmentId, id) },
+            )
+          }
           newId={(preset) => nextTextGeneratorId(preset.id, settings, providers)}
         />
       ) : null}
@@ -297,6 +303,7 @@ function TextGeneratorWizard({
     const id = savedId ?? newId(preset);
     setChecking(true);
     setCheckError(null);
+    // The form is disabled while this runs, so the checked config is the one saved below.
     const result = await checkTextGeneratorConfig(environmentId, id, config.value);
     setChecking(false);
     if ("error" in result) {
@@ -337,104 +344,106 @@ function TextGeneratorWizard({
                 void connect();
               }}
             >
-              {existing === null ? (
-                <div className="grid gap-1.5">
-                  <span className="text-sm font-medium">Service</span>
-                  <div
-                    role="radiogroup"
-                    aria-label="Service"
-                    className="grid grid-cols-2 gap-2 sm:grid-cols-4"
-                  >
-                    {TEXT_GENERATOR_PRESETS.map((candidate) => {
-                      const selected = candidate.id === preset.id;
-                      return (
-                        <button
-                          key={candidate.id}
-                          type="button"
-                          role="radio"
-                          aria-checked={selected}
-                          className={
-                            selected
-                              ? "flex flex-col items-center gap-2 rounded-lg border border-primary bg-primary/5 px-2 py-3 text-sm font-medium text-foreground ring-1 ring-primary ring-inset outline-none focus-visible:ring-2 focus-visible:ring-inset"
-                              : "flex flex-col items-center gap-2 rounded-lg border bg-background px-2 py-3 text-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-                          }
-                          onClick={() => {
-                            setPreset(candidate);
-                            setBaseUrl(candidate.baseUrl);
-                            setCheckError(null);
-                          }}
-                        >
-                          {candidate.id === "custom" ? (
-                            <ServerIcon className="size-5" aria-hidden />
-                          ) : (
-                            <ProviderInstanceIcon
-                              driverKind={textGeneratorBrand(candidate)}
-                              displayName={candidate.label}
-                              badgeContent="none"
-                            />
-                          )}
-                          {candidate.id === "custom" ? "Custom" : candidate.label}
-                        </button>
-                      );
-                    })}
+              <fieldset disabled={checking} className="contents">
+                {existing === null ? (
+                  <div className="grid gap-1.5">
+                    <span className="text-sm font-medium">Service</span>
+                    <div
+                      role="radiogroup"
+                      aria-label="Service"
+                      className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                    >
+                      {TEXT_GENERATOR_PRESETS.map((candidate) => {
+                        const selected = candidate.id === preset.id;
+                        return (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            className={
+                              selected
+                                ? "flex flex-col items-center gap-2 rounded-lg border border-primary bg-primary/5 px-2 py-3 text-sm font-medium text-foreground ring-1 ring-primary ring-inset outline-none focus-visible:ring-2 focus-visible:ring-inset"
+                                : "flex flex-col items-center gap-2 rounded-lg border bg-background px-2 py-3 text-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                            }
+                            onClick={() => {
+                              setPreset(candidate);
+                              setBaseUrl(candidate.baseUrl);
+                              setCheckError(null);
+                            }}
+                          >
+                            {candidate.id === "custom" ? (
+                              <ServerIcon className="size-5" aria-hidden />
+                            ) : (
+                              <ProviderInstanceIcon
+                                driverKind={textGeneratorBrand(candidate)}
+                                displayName={candidate.label}
+                                badgeContent="none"
+                              />
+                            )}
+                            {candidate.id === "custom" ? "Custom" : candidate.label}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-              {showBaseUrl ? (
+                ) : null}
+                {showBaseUrl ? (
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="text-generator-url">Base URL</Label>
+                    <Input
+                      id="text-generator-url"
+                      placeholder="http://localhost:11434/v1"
+                      value={baseUrl}
+                      onChange={(event) => {
+                        setBaseUrl(event.target.value);
+                        setCheckError(null);
+                      }}
+                      spellCheck={false}
+                      autoFocus={existing === null && preset.id === "custom"}
+                    />
+                  </div>
+                ) : null}
                 <div className="grid gap-1.5">
-                  <Label htmlFor="text-generator-url">Base URL</Label>
-                  <Input
-                    id="text-generator-url"
-                    placeholder="http://localhost:11434/v1"
-                    value={baseUrl}
+                  <Label htmlFor="text-generator-key">
+                    {keyRequired ? "API key" : "API key (optional)"}
+                  </Label>
+                  <SecretSourceInput
+                    id="text-generator-key"
+                    aria-label="API key"
+                    value={keyDraft}
+                    configured={storedKey !== ""}
+                    sources={secretSources}
                     onChange={(event) => {
-                      setBaseUrl(event.target.value);
+                      setKeyDraft(event.target.value);
                       setCheckError(null);
                     }}
-                    spellCheck={false}
-                    autoFocus={existing === null && preset.id === "custom"}
+                    onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                    autoFocus={existing === null && preset.id !== "custom"}
+                    onValidityChange={setKeyValid}
                   />
                 </div>
-              ) : null}
-              <div className="grid gap-1.5">
-                <Label htmlFor="text-generator-key">
-                  {keyRequired ? "API key" : "API key (optional)"}
-                </Label>
-                <SecretSourceInput
-                  id="text-generator-key"
-                  aria-label="API key"
-                  value={keyDraft}
-                  configured={storedKey !== ""}
-                  sources={secretSources}
-                  onChange={(event) => {
-                    setKeyDraft(event.target.value);
-                    setCheckError(null);
-                  }}
-                  onSecretChange={(secret) => setKeyDraft(secret ?? "")}
-                  autoFocus={existing === null && preset.id !== "custom"}
-                  onValidityChange={setKeyValid}
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="text-generator-label">Name (optional)</Label>
-                <Input
-                  id="text-generator-label"
-                  placeholder={
-                    existing !== null
-                      ? textGeneratorDisplayName(existing)
-                      : preset.id === "custom"
-                        ? "e.g. My local model"
-                        : preset.label
-                  }
-                  value={label}
-                  onChange={(event) => setLabel(event.target.value)}
-                />
-              </div>
-              {checkError ? (
-                <p role="alert" className="text-sm text-destructive">
-                  {checkError}
-                </p>
-              ) : null}
+                <div className="grid gap-1.5">
+                  <Label htmlFor="text-generator-label">Name (optional)</Label>
+                  <Input
+                    id="text-generator-label"
+                    placeholder={
+                      existing !== null
+                        ? textGeneratorDisplayName(existing)
+                        : preset.id === "custom"
+                          ? "e.g. My local model"
+                          : preset.label
+                    }
+                    value={label}
+                    onChange={(event) => setLabel(event.target.value)}
+                  />
+                </div>
+                {checkError ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {checkError}
+                  </p>
+                ) : null}
+              </fieldset>
             </form>
           ) : (
             <div className="grid gap-4">

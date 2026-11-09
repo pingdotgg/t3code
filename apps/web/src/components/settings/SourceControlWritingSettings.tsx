@@ -161,20 +161,26 @@ export function SourceControlWritingSettingsSection() {
     (entry) => entry.instanceId === activeSelection.instanceId,
   );
   const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
+  // Resolve against agents this project can use, so the fallback never lands on one it turned off.
+  const projectAgentProviders = textGenerationProviders.filter((provider) =>
+    instanceEntries.some(
+      (entry) => entry.instanceId === provider.instanceId && entry.enabled && entry.isAvailable,
+    ),
+  );
   const reviewGuideSelection = resolveAppModelSelectionState(
     {
       ...settings,
       textGenerationModelSelection: resolveReviewGuideModelSelection(
         settings,
-        textGenerationProviders,
+        projectAgentProviders,
         target?.projectId ?? null,
       ),
     },
-    textGenerationProviders,
+    projectAgentProviders,
   );
   const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    projectAgentProviders,
     reviewGuideSelection.instanceId,
     reviewGuideSelection.model,
   );
