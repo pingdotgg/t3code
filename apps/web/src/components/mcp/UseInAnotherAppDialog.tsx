@@ -19,11 +19,12 @@ import { Atom } from "effect/reactivity";
 import * as Result from "effect/Result";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
-import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { checkReachability } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
+import { readCachedCloudLinkState } from "~/cloud/cloudLinkState";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
@@ -46,7 +47,6 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { CommandBlock } from "../CommandBlock";
 import { MorphIcon } from "../MorphIcon";
 import { AccessOption, accessConfig } from "../auth/ConnectAgentSurface";
-import { TunnelLimitAlert } from "../cloud/TunnelUsage";
 import { useAccessEnvironment } from "../settings/useAccessEnvironment";
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
@@ -231,7 +231,9 @@ function useGate(environment: EnvironmentPresentation) {
   const { isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
   const controller = useCloudLinkController(environmentId);
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
-  const thisMachine = environmentId === usePrimaryEnvironmentId();
+  const thisMachine =
+    environmentId === usePrimaryEnvironmentId() ||
+    isDesktopLocalConnectionTarget(environment.entry.target);
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const refreshDiscovery = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
@@ -259,17 +261,15 @@ function useGate(environment: EnvironmentPresentation) {
     linkState,
     linkStateError: controller.linkState.error,
     thisMachine,
-    relay: discovery.listed
-      ? {
-          status: "listed",
-          endpoint: discovery.environments.get(environmentId)?.environment.endpoint,
-        }
-      : {
-          status:
-            !discovery.refreshing && (discovery.offline || Option.isSome(discovery.error))
-              ? "failed"
-              : "loading",
-        },
+    relay:
+      !discovery.refreshing && (discovery.offline || Option.isSome(discovery.error))
+        ? { status: "failed" }
+        : discovery.listed
+          ? {
+              status: "listed",
+              endpoint: discovery.environments.get(environmentId)?.environment.endpoint,
+            }
+          : { status: "loading" },
     reachability:
       typeof check === "string"
         ? "checking"
@@ -286,7 +286,10 @@ function useGate(environment: EnvironmentPresentation) {
     setCheck(
       result._tag === "Success"
         ? { result: result.value, since: result.value.checkedAt }
-        : { result: null, since: reported?.checkedAt ?? "" },
+        : {
+            result: null,
+            since: readCachedCloudLinkState({ environmentId })?.reachability?.checkedAt ?? "",
+          },
     );
   };
   const turnOn = async () => {
@@ -298,13 +301,6 @@ function useGate(environment: EnvironmentPresentation) {
     if (!ok) setConnecting(false);
   };
   const tunnelActive = linkState !== null && isManagedTunnelActive(linkState, undefined);
-  const discoverOnOpen = useEffectEvent(() => {
-    if (!thisMachine) void refreshDiscovery();
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- T3 Connect lists a saved machine's address only once asked, so ask when the wizard opens
-  useEffect(() => {
-    queueMicrotask(discoverOnOpen);
-  }, []);
   const checkOnce = useEffectEvent(() => {
     if (check === "idle") void runReachabilityCheck();
   });
@@ -348,7 +344,6 @@ function GateScreen({
   const name = environment.label;
   const turnOnHere = useT3ConnectTurnOn(environment.environmentId);
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  const { upgrade } = useManagedTunnelUsage();
   const checkAgain = (
     <Button variant="outline" onClick={() => void check()}>
       Check again
@@ -429,7 +424,12 @@ function GateScreen({
                 <p className="text-xs text-destructive-foreground">{operationError}</p>
               ) : null}
               {tunnelLimit !== null ? (
-                <TunnelLimitAlert upgrade={upgrade} onLinkT3Chat={null} onManageTunnels={null} />
+                <>
+                  <p className="text-sm text-destructive-foreground">
+                    Your T3 Connect account is out of tunnels.
+                  </p>
+                  <ManageAccessButton environment={environment} label="Manage tunnels" />
+                </>
               ) : null}
             </div>
           ) : turnOnHere.kind === "policy" ? (
@@ -623,34 +623,27 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
   }
   const { copy, link } = action;
   const handOff = async () => {
-    if (copy === null) {
-      openLink(link);
-      return;
-    }
-    // Start the copy while this page has focus, and reserve the tab within this click, since
-    // browsers block opens after an await. The app opens only once the copy lands.
-    const copying = writeTextToClipboard(copy.text, copy.title).catch(() => false);
-    const tab = isElectron ? null : window.open("", "_blank");
-    if (tab) tab.opener = null;
-    if (!(await copying)) {
-      tab?.close();
+    if (copy !== null) {
+      // The app opens only once the copy lands, so it never gets an older clipboard.
+      const copied = await writeTextToClipboard(copy.text, copy.title).catch(() => false);
+      if (!copied) {
+        toastManager.add({
+          type: "error",
+          title: "Could not copy",
+          description: "Use Set up another way.",
+        });
+        return;
+      }
       toastManager.add({
-        type: "error",
-        title: "Could not copy",
-        description: "Use Set up another way.",
+        type: "success",
+        title: copy.title,
+        // A browser can block an open that follows the copy; this keeps a way through.
+        ...(isElectron
+          ? {}
+          : { actionProps: { children: `Open ${app.name}`, onClick: () => openLink(link) } }),
       });
-      return;
     }
-    if (tab) tab.location.href = link;
-    else if (isElectron) openLink(link);
-    toastManager.add({
-      type: "success",
-      title: copy.title,
-      // A blocked tab still leaves a way to finish the handoff.
-      ...(tab || isElectron
-        ? {}
-        : { actionProps: { children: `Open ${app.name}`, onClick: () => openLink(link) } }),
-    });
+    openLink(link);
   };
   return (
     <div className="space-y-2">
@@ -771,7 +764,14 @@ function LinkedLine({
   return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;
 }
 
-function ManageAccessButton({ environment }: { readonly environment: EnvironmentPresentation }) {
+/** Opens Sharing & access on this environment, where its clients and T3 Connect tunnels live. */
+function ManageAccessButton({
+  environment,
+  label = "Manage access",
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly label?: string;
+}) {
   const navigate = useNavigate();
   return (
     <Button
@@ -781,7 +781,7 @@ function ManageAccessButton({ environment }: { readonly environment: Environment
         void navigate({ to: "/settings/access", search: { machine: environment.environmentId } });
       }}
     >
-      Manage access
+      {label}
     </Button>
   );
 }

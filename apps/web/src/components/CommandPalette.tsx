@@ -1623,7 +1623,12 @@ function OpenCommandPaletteDialog(props: {
     title: "Use T3 Code in another app (MCP)",
     icon: <PlugIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
-      openUseInAnotherApp(currentProjectEnvironmentId);
+      openUseInAnotherApp(
+        currentProjectEnvironmentId ??
+          (paletteRouteTarget?.kind === "server"
+            ? paletteRouteTarget.threadRef.environmentId
+            : null),
+      );
     },
   });
 

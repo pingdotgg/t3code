@@ -171,6 +171,7 @@ function RootRouteBranch() {
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
         <UseInAnotherAppDialogHost />
+        <RelayClientInstallDialog />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />

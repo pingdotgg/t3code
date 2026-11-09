@@ -55,6 +55,13 @@ describe("resolveMcpGate", () => {
       kind: "open",
       mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
     });
+    // This machine's probe outranks a stale publish-only record in that list.
+    expect(
+      resolveMcpGate({
+        ...open,
+        relay: { status: "listed", endpoint: { ...savedTunnel, providerKind: "manual" } },
+      }).kind,
+    ).toBe("open");
   });
 
   it.each([

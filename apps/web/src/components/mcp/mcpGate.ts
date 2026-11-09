@@ -32,7 +32,7 @@ export function resolveMcpGate(input: {
   readonly canReadRelay: boolean;
   readonly linkState: EnvironmentCloudLinkStateResult | null;
   readonly linkStateError: string | null;
-  /** The environment this device runs; its link state names its own tunnel. */
+  /** A backend this device runs; its link state names its own tunnel. */
   readonly thisMachine: boolean;
   /** The account's machines on T3 Connect, where a saved machine's address comes from. */
   readonly relay:
@@ -50,7 +50,8 @@ export function resolveMcpGate(input: {
   if (input.linkStateError !== null) return { kind: "error", message: input.linkStateError };
   const { linkState, relay } = input;
   if (linkState === null) return { kind: "checking" };
-  const endpoint = relay.status === "listed" ? relay.endpoint : undefined;
+  // This machine reports its own tunnel and the probe proves it; the list speaks for saved ones.
+  const endpoint = !input.thisMachine && relay.status === "listed" ? relay.endpoint : undefined;
   if (!isManagedTunnelActive(linkState, endpoint?.providerKind)) return { kind: "turn-on" };
   if (!input.thisMachine) {
     if (relay.status === "loading") return { kind: "checking" };
