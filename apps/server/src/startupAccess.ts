@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 
 import { isPrivateNetworkHost, isSharedAddressSpaceHost } from "@t3tools/shared/hostClassification";
 import { QrCode } from "@t3tools/shared/qrCode";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as Effect from "effect/Effect";
 import { HttpServer } from "effect/http";
@@ -48,6 +49,9 @@ export const formatHostForUrl = (host: string): string =>
 export const VIRTUAL_INTERFACE =
   /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge[1-9]\d\d)/;
 
+// VirtualBox and VMware host-only adapters on Windows. Their names are mutable; Linux bridges can inherit these MACs.
+export const WINDOWS_HOST_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
 /**
  * Loopback or private-range IPv4 (LAN, tailnet, CGNAT), not link-local, in
  * plain or IPv4-mapped IPv6 form.
@@ -87,6 +91,7 @@ const resolveHeadlessConnectionHost = (
   host: string | undefined,
   interfaces: NetworkInterfacesMap,
   privateNetworkOnly: boolean,
+  platform: NodeJS.Platform | undefined,
 ): string => {
   if (!host) {
     return "localhost";
@@ -103,7 +108,9 @@ const resolveHeadlessConnectionHost = (
     (entry) =>
       !entry.internal &&
       isIpv4Family(entry.family) &&
-      (!privateNetworkOnly || isPrivateNetworkAddress(entry.address)),
+      (!privateNetworkOnly ||
+        (isPrivateNetworkAddress(entry.address) &&
+          !(platform === "win32" && WINDOWS_HOST_ADAPTER_MAC.test(entry.mac)))),
   );
   // A tailnet or other CGNAT address reaches fewer devices than the LAN one.
   const externalIpv4 = privateNetworkOnly
@@ -129,12 +136,14 @@ export const resolveHeadlessConnectionString = (
   options: {
     readonly interfaces?: NetworkInterfacesMap;
     readonly privateNetworkOnly?: boolean | undefined;
+    readonly platform?: NodeJS.Platform | undefined;
   } = {},
 ): string => {
   const connectionHost = resolveHeadlessConnectionHost(
     host,
     options.interfaces ?? NodeOS.networkInterfaces(),
     options.privateNetworkOnly === true,
+    options.platform,
   );
   return `http://${formatHostForUrl(connectionHost)}:${port}`;
 };
@@ -200,7 +209,7 @@ export const issueHeadlessServeAccessInfo = Effect.fn("issueHeadlessServeAccessI
   const connectionString = resolveHeadlessConnectionString(
     serverConfig.host,
     resolveListeningPort(httpServer.address, serverConfig.port),
-    { privateNetworkOnly: serverConfig.privateNetworkOnly },
+    { privateNetworkOnly: serverConfig.privateNetworkOnly, platform: yield* HostProcess.Platform },
   );
   const issued = yield* serverAuth.issueStartupPairingCredential();
 
