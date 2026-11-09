@@ -9,6 +9,7 @@ import { vi } from "vite-plus/test";
 import {
   AuthAccessReadScope,
   AuthAccessWriteScope,
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -157,54 +158,31 @@ describe("command permissions", () => {
     ),
   );
 
-  it.effect("requires the destination settings grant to run storage cleanup", () =>
+  it.effect.each([
+    { method: WS_METHODS.serverRunStorageCleanup, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.serverReclaimDatabaseSpace, scope: AuthEnvironmentMaintainScope },
+    { method: WS_METHODS.serverStartChatSync, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.knowledgeRemove, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.coursesRemove, scope: AuthSettingsWriteScope },
+    { method: WS_METHODS.visualsClear, scope: AuthSettingsWriteScope },
+  ])("requires the destination $scope grant for $method", ({ method, scope }) =>
     Effect.scoped(
       Effect.gen(function* () {
         const registry = yield* setup;
-        const cleanup = createCommandPermissions(runtime, WS_METHODS.serverRunStorageCleanup);
+        const command = createCommandPermissions(runtime, method);
         registry.set(sessions(env), AsyncResult.success(grant(true)));
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(false);
-        expect((yield* cleanup.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+        expect(registry.get(command.permissionAtom(env))).toBe(false);
+        expect((yield* command.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
           "EnvironmentAuthorizationError",
         );
         registry.set(
           sessions(env),
-          AsyncResult.success({
-            ...grant(true),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
+          AsyncResult.success({ ...grant(true), scopes: [scope], permissions: [scope] }),
         );
-        expect(registry.get(cleanup.permissionAtom(env))).toBe(true);
-        yield* cleanup.authorize(registry, env);
+        expect(registry.get(command.permissionAtom(env))).toBe(true);
+        yield* command.authorize(registry, env);
         registry.set(sessions(other), AsyncResult.success(grant(false)));
-        expect(registry.get(cleanup.permissionAtom(other))).toBe(false);
-
-        const sync = createCommandPermissions(runtime, WS_METHODS.serverStartChatSync);
-        const knowledge = createCommandPermissions(runtime, WS_METHODS.knowledgeRemove);
-        const courses = createCommandPermissions(runtime, WS_METHODS.coursesRemove);
-        const visuals = createCommandPermissions(runtime, WS_METHODS.visualsClear);
-        registry.set(sessions(env), AsyncResult.success(grant(false)));
-        expect(registry.get(sync.permissionAtom(env))).toBe(false);
-        expect(registry.get(knowledge.permissionAtom(env))).toBe(false);
-        expect(registry.get(courses.permissionAtom(env))).toBe(false);
-        expect(registry.get(visuals.permissionAtom(env))).toBe(false);
-        registry.set(
-          sessions(env),
-          AsyncResult.success({
-            ...grant(true),
-            scopes: [AuthSettingsWriteScope],
-            permissions: [AuthSettingsWriteScope],
-          }),
-        );
-        expect(registry.get(sync.permissionAtom(env))).toBe(true);
-        expect(registry.get(knowledge.permissionAtom(env))).toBe(true);
-        expect(registry.get(courses.permissionAtom(env))).toBe(true);
-        expect(registry.get(visuals.permissionAtom(env))).toBe(true);
-        yield* sync.authorize(registry, env);
-        yield* knowledge.authorize(registry, env);
-        yield* courses.authorize(registry, env);
-        yield* visuals.authorize(registry, env);
+        expect(registry.get(command.permissionAtom(other))).toBe(false);
       }),
     ),
   );

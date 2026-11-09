@@ -7,6 +7,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Random from "effect/Random";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
@@ -171,7 +172,8 @@ export const install = Effect.gen(function* () {
     }
     if (Option.getOrUndefined(existing) !== content) {
       yield* fs.makeDirectory(path.dirname(shimPath), { recursive: true });
-      const staging = `${shimPath}.${process.pid}.tmp`;
+      // Unique per call: backend startup and the first-launch command install can race here.
+      const staging = `${shimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
       yield* fs.writeFileString(staging, content, { mode: 0o755 });
       yield* fs.rename(staging, shimPath);
       yield* logInfo("installed t3 launcher", { shimPath });
@@ -186,7 +188,7 @@ export const install = Effect.gen(function* () {
       if (Option.isNone(oldExisting) || isOurLauncher(oldExisting.value)) {
         if (Option.getOrUndefined(oldExisting) !== legacyContent) {
           yield* fs.makeDirectory(path.dirname(oldShimPath), { recursive: true });
-          const staging = `${oldShimPath}.${process.pid}.tmp`;
+          const staging = `${oldShimPath}.${process.pid}.${yield* Random.nextIntBetween(0, 0xffffff)}.tmp`;
           yield* fs.writeFileString(staging, legacyContent, { mode: 0o755 });
           yield* fs.rename(staging, oldShimPath);
         }
@@ -202,7 +204,8 @@ export const install = Effect.gen(function* () {
         return Option.some(shimPath);
       }
       yield* fs.remove(oldShimPath, { force: true }).pipe(Effect.ignore);
-      yield* fs.symlink(shimPath, oldShimPath);
+      // Best effort: a concurrent install (backend startup, first launch) may have just linked it.
+      yield* fs.symlink(shimPath, oldShimPath).pipe(Effect.ignore);
     }
     return Option.some(shimPath);
   }).pipe(

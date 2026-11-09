@@ -229,8 +229,11 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
     ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
     ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
   ].filter((entry) => entry.trim().length > 0);
-  for (const directory of candidates) {
-    const shimPath = path.join(directory, "t3.cmd");
+  // `ominax install` writes ominax.cmd; upstream's install scripts write t3.cmd.
+  const shimPaths = candidates.flatMap((directory) =>
+    [`${T3_LEARN_COMMAND}.cmd`, "t3.cmd"].map((name) => path.join(directory, name)),
+  );
+  for (const shimPath of shimPaths) {
     const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
     if (Option.isNone(contents)) continue;
     const target = windowsShimTarget(contents.value);

@@ -111,7 +111,6 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
-  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -119,9 +118,7 @@ import {
   useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
-  type ComponentRef,
   type ReactNode,
-  type Ref,
   type RefObject,
 } from "react";
 import {
@@ -139,20 +136,19 @@ import {
 import { Image as ExpoImage } from "expo-image";
 import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
-import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
+import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
 import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
 import { messageImageGallery } from "./messageImageGallery";
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
 import { ThreadInlineFilePreview } from "./ThreadInlineFilePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { NativeScrollViewMarker } from "../../native/NativeScrollViewMarker";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInDown, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { FONT_FAMILIES } from "../../lib/fontFamilies";
@@ -172,7 +168,7 @@ import {
 } from "../../native/SelectableMarkdownText";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { markdownFileEmbedLabel, resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
 import { attachmentVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "./CopyTextButton";
@@ -218,15 +214,7 @@ import {
   messageFoldRunId,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import {
-  resolveThreadFeedLiveFollow,
-  resolveThreadFeedReflowAnchor,
-  resolveThreadFeedReflowOffset,
-  resolveThreadFeedReflowScroll,
-  type ThreadFeedLiveFollowEvent,
-  type ThreadFeedReflowAnchor,
-  type ThreadWorkGroupScrollPosition,
-} from "./thread-feed-live-follow";
+import { type ThreadWorkGroupScrollPosition } from "./thread-feed-scroll-position";
 import {
   collapsedWorkLogHeight,
   ThreadDisclosureChevron,
@@ -268,6 +256,7 @@ import {
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useModelMentions } from "../../state/model-mentions";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -298,6 +287,7 @@ import {
 } from "./ThreadMarkdownImage";
 import { openSettings } from "../settings/settings-navigation";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import { formatMessageTimestamp } from "./messageTimestamp";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // iOS blockquotes and selectable text measure separately; definite bubble width matches UIKit's drawing width.
@@ -305,30 +295,10 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
-const MESSAGE_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-function formatMessageTime(input: string): string {
-  const timestamp = Date.parse(input);
-  if (Number.isNaN(timestamp)) {
-    return "";
-  }
-  return MESSAGE_TIME_FORMATTER.format(timestamp);
-}
-
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
-// Rows re-measure within a commit or two of a width change. LegendList also defers imperative
-// scrolls for 100ms after it compensates a size change, and a deferred restore could land
-// under a drag that starts meanwhile.
-const FEED_REFLOW_SETTLE_MS = 200;
-// A fold resizes the feed in steps about 200ms apart. Holding the place taken at the first step
-// across all of them keeps a passing moment off the end from re-anchoring the rest to a row.
-const FEED_REFLOW_HOLD_MS = 600;
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
 const ASSISTANT_ROW_HORIZONTAL_PADDING = 3.5;
-
 // Virtualization remounts old rows; only newly created content should replay an entrance.
 const FRESH_ENTRY_WINDOW_MS = 3_000;
 function isFreshTimestamp(input: string): boolean {
@@ -343,11 +313,6 @@ export interface ThreadFeedHistoryControls {
   readonly onLoadEarlier: () => void;
   /** Loads earlier history down to the entry, in one request. */
   readonly onLoadThrough: (entryId: string) => void;
-}
-
-export interface ThreadFeedHandle {
-  /** A send re-arms following the end, whatever the reader had scrolled to. */
-  readonly resetEndFollow: () => void;
 }
 
 export interface ThreadFeedProps {
@@ -388,7 +353,7 @@ export interface ThreadFeedProps {
   readonly layoutVariant?: LayoutVariant;
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
-  readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
 }
@@ -1196,6 +1161,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
+  const models = useModelMentions(props.environmentId, props.markdown);
   const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
   const threadIcons = useThreadChipIcons(props.environmentId, liveMarkdown);
   const linkHandlers: MarkdownLinkHandlers = {
@@ -1212,6 +1178,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
       onUseArtifactTemplate={props.onUseArtifactTemplate}
       renderImage={props.renderImage}
       skills={props.skills}
+      models={models}
     />
   );
 });
@@ -1224,6 +1191,7 @@ function AssistantMarkdownBlocks(props: {
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
+  readonly models: ReturnType<typeof useModelMentions>;
 }) {
   const blocks = useMemo(
     () =>
@@ -1263,6 +1231,7 @@ function AssistantMarkdownBlocks(props: {
           key={`markdown:${offset}`}
           markdown={renderCodexInlineDirectivesAsMarkdown(segment.markdown)}
           skills={props.skills}
+          models={props.models}
           textStyle={props.markdownStyles.nativeTextStyle}
           {...props.linkHandlers}
           renderImage={props.renderImage}
@@ -1970,7 +1939,7 @@ function renderFeedEntry(
     const presentation = resolveUserMessagePresentation(message);
     const renderedText = renderAssistantCitationsAsText(presentation.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
-    const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
+    const timestampLabel = formatMessageTimestamp(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
     const hasReviewCommentContext = presentation.text.includes("<review_comment");
     // Android does not reposition children after maxWidth clamps bubbles; definite width prevents wide-block overlap.
@@ -2406,7 +2375,6 @@ function renderFeedEntry(
 
   return (
     <ThreadWorkLog
-      key={`${entry.id}:${props.workRowSizing.textSizeKey}`}
       activities={entry.activities}
       continuesWorkLog={entry.continuesWorkLog}
       environmentId={props.environmentId}
@@ -2577,6 +2545,7 @@ function UserMessageContent(props: UserMessageContentProps) {
 
 function UserMessageMarkdownContent(props: UserMessageContentProps) {
   const text = props.text;
+  const models = useModelMentions(props.environmentId, text);
   const segments = parseReviewCommentMessageSegments(text);
   const hasReviewComment = segments.some((segment) => segment.kind === "review-comment");
   const contextClipboardFragment = props.context
@@ -2592,6 +2561,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
         markdown={text}
         contextClipboardFragment={contextClipboardFragment}
         skills={props.skills}
+        models={models}
         textStyle={props.markdownStyles.nativeTextStyle}
         preserveSoftBreaks
         {...props.linkHandlers}
@@ -2624,6 +2594,7 @@ function UserMessageMarkdownContent(props: UserMessageContentProps) {
             markdown={text}
             contextClipboardFragment={contextClipboardFragment}
             skills={props.skills}
+            models={models}
             textStyle={props.markdownStyles.nativeTextStyle}
             preserveSoftBreaks
             {...props.linkHandlers}
@@ -2752,11 +2723,13 @@ function DisclosureRow(props: {
   );
 }
 
-export const ThreadFeed = memo(function ThreadFeed({
-  ref,
-  ...props
-}: ThreadFeedProps & { readonly ref?: Ref<ThreadFeedHandle> }) {
-  const { listRef, onEndFollowEnabledChange, onHeaderMaterialVisibilityChange } = props;
+const THREAD_FEED_MAINTAIN_SCROLL_AT_END = {
+  animated: false,
+  on: { dataChange: true, itemLayout: true, layout: true },
+} as const;
+
+export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
+  const { listRef, onIsAtEndChange, onHeaderMaterialVisibilityChange } = props;
   const workflowOpening = useWorkflowOpening(props.detailRef);
   const threadProjection = Option.getOrNull(
     useEnvironmentThread(props.environmentId, props.threadId).data,
@@ -2782,10 +2755,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   );
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const disclosureSettleFrameRef = useRef<number | null>(null);
-  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
-  const disclosureAnchorKeyRef = useRef<string | null>(null);
-  const userScrollSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headerMaterialVisibleRef = useRef(false);
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const { appearance } = useAppearancePreferences();
@@ -2799,48 +2768,12 @@ export const ThreadFeed = memo(function ThreadFeed({
   const viewportWidth =
     settledPaneWidth !== null ? Math.round(settledPaneWidth) : measuredViewportWidth;
   const [viewportHeight, setViewportHeight] = useState(0);
-  const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const [disclosureLayout, setDisclosureLayout] = useState<DisclosureLayout | null>(null);
   const disclosureMotionRef = useRef<DisclosureLayout | null>(null);
   const disclosureMotionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const disclosureSettleFrameRef = useRef<number | null>(null);
+  const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const reduceMotion = useReduceMotionEnabled();
-  const headerEndRef = useRef<ComponentRef<typeof View>>(null);
-  const lastFeedId = props.feed.at(-1)?.id;
-  const [disclosureGap, setDisclosureGap] = useState<{
-    space: number;
-    tail: typeof lastFeedId;
-  } | null>(null);
-  const disclosureTopSpace = disclosureGap?.tail === lastFeedId ? (disclosureGap?.space ?? 0) : 0;
-  // LegendList's geometric follow threshold can reclaim users reading history when streamed rows grow.
-  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  const endFollowEnabledRef = useRef(true);
-  // Only user scrolls from drag through momentum break follow; ignore MVCP and programmatic adjustments.
-  const userScrollSessionRef = useRef(false);
-  const setEndFollow = (enabled: boolean) => {
-    if (endFollowEnabledRef.current === enabled) {
-      return;
-    }
-    endFollowEnabledRef.current = enabled;
-    setEndFollowEnabled(enabled);
-    onEndFollowEnabledChange?.(enabled);
-  };
-  const transitionEndFollow = (event: ThreadFeedLiveFollowEvent) => {
-    setEndFollow(resolveThreadFeedLiveFollow(endFollowEnabledRef.current, event));
-  };
-  // Capture the reader's anchor before width reflow; LegendList thresholds see only new geometry.
-  // iOS preserves it during re-measures. Android restores after because following disables MVCP.
-  // undefined means no reflow; null means reflow with nothing to restore.
-  const reflowAnchorRef = useRef<ThreadFeedReflowAnchor | null | undefined>(undefined);
-  const reflowAnchorsSizeChanges = Platform.OS === "ios";
-  const [reflowFollowsEnd, setReflowFollowsEnd] = useState(false);
-  const reflowSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const listHeaderSizeRef = useRef(0);
-  const loadedListKeyRef = useRef<string | null>(null);
-  const cancelReflow = () => {
-    if (reflowAnchorRef.current === undefined) return;
-    reflowAnchorRef.current = undefined;
-    setReflowFollowsEnd(false);
-  };
   const [interactionState, setInteractionState] = useState<{
     readonly copiedRowId: string | null;
     readonly expandedWorkGroups: Record<string, boolean>;
@@ -2913,7 +2846,6 @@ export const ThreadFeed = memo(function ThreadFeed({
   const userBubbleMaxWidth = contentWidth * 0.85;
   const markdownContentWidth = Math.max(0, contentWidth - ASSISTANT_ROW_HORIZONTAL_PADDING * 2);
   const reviewCommentBubbleWidth = Math.min(Math.max(280, contentWidth * 0.85), contentWidth);
-  const insets = useSafeAreaInsets();
   const barInset = useBarInset();
   const topContentInset = props.contentTopInset ?? barInset;
   const bottomContentInset = props.contentBottomInset ?? 18;
@@ -2924,7 +2856,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     usesNativeAutomaticInsets,
     bottomContentInset,
   });
-  // LegendList cannot see UIKit's adjustedContentInset; include header height in anchor offsets.
   const anchorTopInset = usesNativeAutomaticInsets ? barInset : topContentInset;
 
   const theme = useUniwindTheme();
@@ -3344,77 +3275,40 @@ export const ThreadFeed = memo(function ThreadFeed({
     headerMaterialVisibleRef.current = visible;
     onHeaderMaterialVisibilityChange?.(visible);
   };
+  const handleMetricsChange = () => {
+    const state = listRef.current?.getState();
+    if (state) onIsAtEndChange?.(state.isAtEnd);
+  };
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     reportHeaderMaterialVisibility(event.nativeEvent.contentOffset.y + anchorTopInset > 6);
-    // Re-arm follow only at the actual end; the broader threshold can reclaim upward drags during streaming.
-    const listState = listRef.current?.getState();
-    if (listState) {
-      transitionEndFollow({
-        type: "scroll",
-        isAtEnd: listState.isAtEnd,
-        userScrollSessionActive: userScrollSessionRef.current,
-      });
-    }
+    handleMetricsChange();
   };
-  const clearUserScrollSettle = () => {
-    if (userScrollSettleTimerRef.current !== null) {
-      clearTimeout(userScrollSettleTimerRef.current);
-      userScrollSettleTimerRef.current = null;
-    }
-  };
-  const handleScrollBeginDrag = () => {
-    clearUserScrollSettle();
-    userScrollSessionRef.current = true;
-    cancelReflow();
-    // Pause before the first scroll event. Otherwise a stream update can run
-    // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
-    transitionEndFollow({ type: "user-scroll-begin" });
-  };
-  const finishUserScroll = (releaseIsAtEnd?: boolean) => {
-    clearUserScrollSettle();
-    const userScrollSessionActive = userScrollSessionRef.current;
-    userScrollSessionRef.current = false;
-    transitionEndFollow({
-      type: "user-scroll-end",
-      // Without momentum, retain release position; stream growth during detection must not disable follow.
-      isAtEnd: releaseIsAtEnd ?? listRef.current?.getState().isAtEnd ?? false,
-      userScrollSessionActive,
-    });
-  };
-  // Zero release velocity may still produce momentum; wait for native detection before ending the session.
-  const handleScrollEndDrag = () => {
-    clearUserScrollSettle();
-    const releaseIsAtEnd = listRef.current?.getState().isAtEnd ?? false;
-    userScrollSettleTimerRef.current = setTimeout(() => finishUserScroll(releaseIsAtEnd), 160);
-  };
-  const handleMomentumScrollBegin = () => {
-    if (userScrollSessionRef.current) {
-      clearUserScrollSettle();
-    }
-  };
-  const handleMomentumScrollEnd = () => {
-    finishUserScroll();
-  };
-
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the list's end state to report it to the parent
+  useLayoutEffect(() => {
+    const state = listRef.current?.getState();
+    if (!state) return;
+    handleMetricsChange();
+    const stops = [
+      state.listen("isAtEnd", handleMetricsChange),
+      state.listen("totalSize", handleMetricsChange),
+      state.listen("footerSize", handleMetricsChange),
+      state.listen("headerSize", handleMetricsChange),
+    ];
+    return () => {
+      for (const stop of stops) stop();
+    };
+  }, [listRef, handleMetricsChange]);
   const feedThreadKey = scopedThreadKey(props.environmentId, props.threadId);
-  const workGroupScrollPositions = new Map<string, ThreadWorkGroupScrollPosition>();
-  // ThreadDetailScreen remounts the feed per thread, so only a send resets following.
-  useImperativeHandle(ref, () => ({
-    resetEndFollow: () => {
-      clearUserScrollSettle();
-      userScrollSessionRef.current = false;
-      setDisclosureGap(null);
-      cancelReflow();
-      transitionEndFollow({ type: "reset" });
-    },
-  }));
+  const [workGroupScrollPositions] = useState(
+    () => new Map<string, ThreadWorkGroupScrollPosition>(),
+  );
 
   // Opening at a message: once the filled list has loaded, the render that sees
   // the jump unfolds a run hiding the message and stops following the end, so
   // the committed list holds the target row with end maintenance off.
   const [loadedListKey, setLoadedListKey] = useState<string | null>(null);
   const { jumpToMessageId } = props;
-  const jumpReady = !!jumpToMessageId && loadedListKey === `${feedThreadKey}:filled`;
+  const jumpReady = !!jumpToMessageId && loadedListKey === feedThreadKey;
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
@@ -3447,11 +3341,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     setupAnchorIndex:
       props.worktreeSetup || props.setupWorkingStartedAt ? setupAnchorIndex : undefined,
   });
-  // The empty↔filled key below remounts the list and resets its imperative
-  // content-inset override. Seed each fresh instance as it attaches with the
-  // current overlay height before the scroll integration's next reaction;
-  // on Android the declarative contentInset floor covers this same window.
-  const listMountKey = `${feedThreadKey}:${presentedFeed.some((entry) => entry.type !== "thinking") ? "filled" : "empty"}`;
   const { contentInsetEndAdjustment } = props;
   const attachList = (list: LegendListRef | null) => {
     listRef.current = list;
@@ -3461,84 +3350,29 @@ export const ThreadFeed = memo(function ThreadFeed({
   const jumpIndex = jumpReady
     ? presentedFeed.findIndex((entry) => entry.type === "message" && entry.id === jumpToMessageId)
     : null;
-  const followsEnd = endFollowEnabled && !jumpReady;
   const landJump = useEffectEvent((index: number) => {
-    if (index !== -1) {
-      setEndFollow(false);
-      void listRef.current?.scrollToIndex({ index, viewPosition: 0.2, animated: false });
-    }
-    props.onJumpedToMessage?.();
+    const list = listRef.current;
+    if (!list) return;
+    let cancelled = false;
+    const positioning =
+      index === -1 ? undefined : list.scrollToIndex({ index, viewPosition: 0.2, animated: false });
+    void Promise.resolve(positioning).then(() => {
+      if (!cancelled && listRef.current === list) props.onJumpedToMessage?.();
+    });
+    return () => {
+      cancelled = true;
+    };
   });
-  // Z: a native list scroll after the commit that rendered its target row. The
-  // row is often already measured, so no LegendList callback fires for that
-  // commit, and setEndFollow notifies the parent, so it can't run during render.
+  // A jump can unfold a run; keep end maintenance off until its position settles.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the native list to the jump target after the commit that rendered its row
   useEffect(() => {
-    if (jumpIndex !== null) landJump(jumpIndex);
+    if (jumpIndex !== null) return landJump(jumpIndex);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Jumping to a different message whose row index is unchanged must still land the jump.
   }, [jumpToMessageId, jumpIndex]);
-
-  const reflowLayout = () => ({
-    rowsTop: FEED_PADDING_TOP + listHeaderSizeRef.current,
-    headerInset: anchorTopInset,
-  });
-  const settleReflow = () => {
-    reflowSettleTimerRef.current = null;
-    const anchor = reflowAnchorRef.current;
-    cancelReflow();
-    const list = listRef.current;
-    if (reflowAnchorsSizeChanges || !anchor || anchor === "end" || !list) return;
-    if (userScrollSessionRef.current) return;
-    if (loadedListKeyRef.current !== listMountKey) return;
-    const target = resolveThreadFeedReflowScroll(anchor, list.getState(), reflowLayout());
-    if (target) void list.scrollToIndex({ ...target, viewPosition: 0, animated: false });
-  };
-  const beginReflow = () => {
-    // Until the list loads, its own initial end positioning owns the offset.
-    if (loadedListKeyRef.current !== listMountKey) return;
-    if (reflowAnchorRef.current === undefined) {
-      const listState = listRef.current?.getState();
-      const anchor =
-        listState && !userScrollSessionRef.current
-          ? resolveThreadFeedReflowAnchor(listState, reflowLayout(), endFollowEnabledRef.current)
-          : null;
-      reflowAnchorRef.current = anchor;
-      if (anchor === "end" && !reflowAnchorsSizeChanges) {
-        // The list may already have judged the first new sizes against its own threshold, so
-        // pin the end once; the lifted threshold keeps it there as later rows re-measure.
-        setReflowFollowsEnd(true);
-        void listRef.current?.scrollToEnd({ animated: false });
-      }
-    }
-    // Every re-measure restarts the countdown.
-    if (reflowSettleTimerRef.current !== null) clearTimeout(reflowSettleTimerRef.current);
-    reflowSettleTimerRef.current = setTimeout(
-      settleReflow,
-      reflowAnchorsSizeChanges ? FEED_REFLOW_HOLD_MS : FEED_REFLOW_SETTLE_MS,
-    );
-  };
-
-  const holdReflowAnchor = () => {
-    const anchor = reflowAnchorRef.current;
-    if (anchor === "end") return Number.POSITIVE_INFINITY;
-    const list = listRef.current;
-    return anchor && list
-      ? resolveThreadFeedReflowOffset(anchor, list.getState(), reflowLayout())
-      : undefined;
-  };
 
   const handleViewportLayout = (event: LayoutChangeEvent) => {
     const nextWidth = Math.round(event.nativeEvent.layout.width);
     const nextHeight = Math.round(event.nativeEvent.layout.height);
-    // A native resize re-wraps the rows before JS hears of it. This event reaches JS ahead
-    // of the row measurements it caused, since layout events are sent parent first.
-    if (Math.abs(measuredViewportWidth - nextWidth) > 1) beginReflow();
-    if (
-      Math.abs(measuredViewportWidth - nextWidth) > 1 ||
-      Math.abs(viewportHeight - nextHeight) > 1
-    ) {
-      setDisclosureGap(null);
-    }
     setViewportWidth((current) => (Math.abs(current - nextWidth) > 1 ? nextWidth : current));
     setViewportHeight((current) => (Math.abs(current - nextHeight) > 1 ? nextHeight : current));
   };
@@ -3583,12 +3417,9 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
   }
 
-  // Timers and frames the feed schedules die with it.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the feed's scroll, reflow and copy timers and disclosure animation frames on unmount
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears copy feedback and disclosure animation timers and frames on unmount
   useEffect(
     () => () => {
-      if (userScrollSettleTimerRef.current !== null) clearTimeout(userScrollSettleTimerRef.current);
-      if (reflowSettleTimerRef.current !== null) clearTimeout(reflowSettleTimerRef.current);
       if (copyFeedbackTimeoutRef.current) clearTimeout(copyFeedbackTimeoutRef.current);
       if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
       if (disclosureSettleFrameRef.current !== null) {
@@ -3610,16 +3441,6 @@ export const ThreadFeed = memo(function ThreadFeed({
     }
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        const listState = listRef.current?.getState();
-        if (listState) {
-          transitionEndFollow({
-            type: "disclosure-settled",
-            isAtEnd: listState.isAtEnd,
-            userScrollSessionActive: userScrollSessionRef.current,
-          });
-        }
-        disclosureAnchorKeyRef.current = null;
-        setDisclosureToggleSettling(false);
         const motion = disclosureMotionRef.current;
         if (motion && !motion.playing) {
           const playing = { ...motion, playing: true };
@@ -3640,12 +3461,14 @@ export const ThreadFeed = memo(function ThreadFeed({
     });
   };
 
-  // The quiet-frame countdown's first frame lands after the disclosure's commit.
-  // Every measured item-size change restarts it, so end maintenance cannot
-  // wake between the data mutation and LegendList's final layout correction.
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string | null) => {
-    cancelReflow();
+  const preserveDisclosurePosition = (anchorKey: string | null) => {
     const list = listRef.current;
+    const working = props.activeWorkStartedAt !== null || props.runlessWorkActive === true;
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (anchorKey !== null && list && !(working && list.getState().isFollowingEnd)) {
+      list.cancelScroll();
+      list.anchorVisibleContent({ key: anchorKey });
+    }
     if (list && anchorKey && !reduceMotion) {
       const state = list.getState();
       const anchorIndex = state.indexByKey(anchorKey);
@@ -3675,35 +3498,15 @@ export const ThreadFeed = memo(function ThreadFeed({
         if (disclosureMotionTimer.current !== null) clearTimeout(disclosureMotionTimer.current);
         disclosureMotionRef.current = motion;
         setDisclosureLayout(motion);
+        settleDisclosureAfterLayout();
       }
     }
-    // Keep a short feed's bottom-alignment gap through collapse too; replacing it mid-frame moves the tap target.
-    const first = list?.getState().elementAtIndex(0);
-    if (first && headerEndRef.current) {
-      const gap =
-        first.getBoundingClientRect().top - headerEndRef.current.getBoundingClientRect().bottom;
-      if (gap > 1) setDisclosureGap({ space: disclosureTopSpace + gap, tail: lastFeedId });
-    }
-    disclosureAnchorKeyRef.current = anchorKey;
-    setDisclosureToggleSettling(true);
-    settleDisclosureAfterLayout();
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosureAnchorKeyRef.current !== null) {
+    if (disclosureMotionRef.current && !disclosureMotionRef.current.playing) {
       settleDisclosureAfterLayout();
     }
-  };
-
-  const shouldRestoreVisibleContentPosition = (entry: ThreadFeedRow) => {
-    const disclosureAnchorKey = disclosureAnchorKeyRef.current;
-    return disclosureAnchorKey === null || entry.id === disclosureAnchorKey;
-  };
-
-  const maintainVisibleContentPosition = {
-    data: true,
-    size: true,
-    shouldRestorePosition: shouldRestoreVisibleContentPosition,
   };
 
   const onCopyWorkRow = (rowId: string, value: string) => {
@@ -3724,7 +3527,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   };
 
   const onToggleWorkGroup = (groupId: string, anchorKey?: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey ?? `work-toggle:${groupId}`);
+    preserveDisclosurePosition(anchorKey ?? `work-toggle:${groupId}`);
     setInteractionState((current) => ({
       ...current,
       expandedWorkGroups: {
@@ -3736,7 +3539,7 @@ export const ThreadFeed = memo(function ThreadFeed({
 
   // Lone rows share their group's disclosure state so opened details survive a second call joining.
   const onToggleWorkRow = (rowId: string, anchorKey?: string, groupId?: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey ?? null);
+    preserveDisclosurePosition(anchorKey ?? null);
     setInteractionState((current) => {
       const expanded = !(current.expandedWorkRows[rowId] ?? false);
       return {
@@ -3750,7 +3553,7 @@ export const ThreadFeed = memo(function ThreadFeed({
   };
 
   const onToggleTurnFold = (runId: RunId) => {
-    suspendEndScrollMaintenanceForDisclosure(`run-fold:${runId}`);
+    preserveDisclosurePosition(`run-fold:${runId}`);
     setInteractionState((current) => {
       const next = new Set(current.expandedTurnIds);
       if (next.has(runId)) {
@@ -3814,17 +3617,15 @@ export const ThreadFeed = memo(function ThreadFeed({
   const { textSizeKey } = workRowSizing;
   const hasHtmlRenders = presentedFeed.some((entry) => entry.type === "html-render");
   const previousRowGeometry = useRef({ textSizeKey, contentWidth });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches and starts a reflow after the commit that brings new row geometry
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears LegendList size caches after the commit that brings new row geometry
   useLayoutEffect(() => {
     const previous = previousRowGeometry.current;
     if (previous.textSizeKey === textSizeKey && previous.contentWidth === contentWidth) return;
     previousRowGeometry.current = { textSizeKey, contentWidth };
-    // Rows re-rendered at this width are measured in the next commit, after this effect.
-    if (previous.contentWidth !== contentWidth) beginReflow();
     if (previous.textSizeKey !== textSizeKey || hasHtmlRenders) {
       listRef.current?.clearCaches({ mode: "sizes" });
     }
-  }, [textSizeKey, contentWidth, hasHtmlRenders, beginReflow, listRef]);
+  }, [textSizeKey, contentWidth, hasHtmlRenders, listRef]);
 
   const renderItem = (info: { item: GroupedThreadFeedRow; index: number }) => (
     <DisclosureRow
@@ -3937,62 +3738,21 @@ export const ThreadFeed = memo(function ThreadFeed({
           {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- ThreadFeedScrollView is passed through the iOS-only spread below; the prop rejects undefined. */}
           <KeyboardAwareLegendList
             ref={attachList}
-            // LegendList cannot see adjustedContentInset; remount so initial positioning waits for UIKit attachment.
-            key={listMountKey}
+            dataKey={feedThreadKey}
             style={{ flex: 1 }}
             // RN 0.81+ drops inset-area touches (facebook/react-native#54123), making blank post-send space unscrollable.
             applyWorkaroundForContentInsetHitTestBug
             {...(Platform.OS === "ios" ? { ScrollViewComponent: ThreadFeedScrollView } : {})}
-            // Horizontal Duo reservations are already included in the row padding.
-            contentInsetAdjustmentBehavior={
-              usesNativeAutomaticInsets
-                ? duoColumns && splitLayout
-                  ? "scrollableAxes"
-                  : "automatic"
-                : "never"
-            }
+            contentInsetAdjustmentBehavior="never"
             automaticallyAdjustsScrollIndicatorInsets={usesNativeAutomaticInsets}
-            {...(usesNativeAutomaticInsets
-              ? {
-                  // Manual contentInset zeroes UIKit's automatic header inset and scroll-edge region; derive it from the transparent header.
-                  scrollIndicatorInsets: { top: 0, left: 0, right: 0, bottom: 0 },
-                }
-              : { scrollIndicatorInsets: { top: topContentInset, bottom: 0 } })}
+            scrollIndicatorInsets={{ top: anchorTopInset, bottom: 0 }}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
-            // Patched LegendList math must allow -headerInset so short-content end scrolls rest below the header.
-            contentInsetStartAdjustment={usesNativeAutomaticInsets ? anchorTopInset : 0}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
             keyboardOffset={props.keyboardOffset}
-            // UIKit adds the safe-area bottom to raw contentInset; ThreadDetailScreen under-reports it.
-            // Include that extra inset in LegendList's scroll math so end scrolls reach the resting offset.
-            contentInsetEndStaticAdjustment={usesNativeAutomaticInsets ? insets.bottom : 0}
-            // Seed composer height until keyboard integration reports it, or Android's initial end scroll runs too early.
-            {...(initialContentInset ? { contentInset: initialContentInset } : {})}
-            adjustedInsetCompensation={usesNativeAutomaticInsets ? insets.bottom : 0}
+            contentInset={usesNativeAutomaticInsets ? { top: anchorTopInset } : initialContentInset}
             freeze={props.freeze}
-            // Follow the measured end immediately; animating estimates races row measurement on acknowledgement.
-            maintainScrollAtEnd={
-              disclosureToggleSettling || props.sendingWithKeyboard || !followsEnd
-                ? false
-                : {
-                    animated: false,
-                    on: {
-                      dataChange: true,
-                      itemLayout: true,
-                      layout: true,
-                    },
-                  }
-            }
-            // A reflow grows every visible row at once, well past the near-end threshold
-            // that otherwise lets a status-bar tap leave the end.
-            maintainScrollAtEndThreshold={reflowFollowsEnd ? Number.POSITIVE_INFINITY : undefined}
-            sizeChangeAnchor={reflowAnchorsSizeChanges ? holdReflowAnchor : undefined}
-            maintainVisibleContentPosition={
-              (followsEnd && !disclosureToggleSettling) ||
-              (disclosureToggleSettling && disclosureTopSpace > 0)
-                ? false
-                : maintainVisibleContentPosition
-            }
+            maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
+            maintainVisibleContentPosition
             data={groupedFeed}
             extraData={listAppearanceData}
             renderItem={renderItem}
@@ -4013,34 +3773,25 @@ export const ThreadFeed = memo(function ThreadFeed({
                 : `message:${entry.message.role}`;
             }}
             getFixedItemSize={getFixedItemSize}
-            // Native layout transitions retain stale row positions during sync, even at duration zero.
-            onItemSizeChanged={handleItemSizeChanged}
             drawDistance={500}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
             keyboardLiftBehavior={props.sendingWithKeyboard ? "persistent" : "whenAtEnd"}
-            // Seed viewport size to skip programmatic attach-time positioning, which races UIKit's adjustedContentInset.
+            // Seed the initial viewport before native onLayout.
             {...(viewportHeight > 0 && viewportWidth > 0
               ? { estimatedListSize: { height: viewportHeight, width: viewportWidth } }
               : {})}
-            // Enable overflow: RN scrollTo clamps against raw insets and ignores the automatic header inset.
             scrollToOverflowEnabled
             estimatedItemSize={180}
             alignItemsAtEnd
             initialScrollAtEnd
-            onLoad={() => {
-              loadedListKeyRef.current = listMountKey;
-              setLoadedListKey(listMountKey);
+            onReady={() => {
+              setLoadedListKey(feedThreadKey);
+              handleMetricsChange();
             }}
-            // Row positions start below the header; the reflow anchor converts between them.
-            onMetricsChange={(metrics) => {
-              listHeaderSizeRef.current = metrics.headerSize;
-            }}
+            onLayout={handleMetricsChange}
+            onItemSizeChanged={handleItemSizeChanged}
             onScroll={handleScroll}
-            onScrollBeginDrag={handleScrollBeginDrag}
-            onScrollEndDrag={handleScrollEndDrag}
-            onMomentumScrollBegin={handleMomentumScrollBegin}
-            onMomentumScrollEnd={handleMomentumScrollEnd}
             scrollEventThrottle={16}
             ListHeaderComponent={
               <>
@@ -4051,7 +3802,6 @@ export const ThreadFeed = memo(function ThreadFeed({
                 {props.historyControls ? (
                   <ThreadFeedLoadEarlierControl {...props.historyControls} />
                 ) : null}
-                <View ref={headerEndRef} collapsable={false} />
               </>
             }
             ListFooterComponent={
@@ -4067,7 +3817,7 @@ export const ThreadFeed = memo(function ThreadFeed({
             }
             contentContainerStyle={{
               ...(props.fitShortFeedToViewport ? { minHeight: "100%" } : {}),
-              paddingTop: FEED_PADDING_TOP + disclosureTopSpace,
+              paddingTop: FEED_PADDING_TOP,
               paddingLeft: contentHorizontalPadding + contentLeftInset,
               paddingRight: contentHorizontalPadding + contentRightInset,
             }}
