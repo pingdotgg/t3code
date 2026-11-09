@@ -1,0 +1,87 @@
+name: Release fork
+
+on:
+  push:
+    branches: [main]
+    paths: [fork-version]
+  workflow_dispatch:
+
+concurrency:
+  group: release-fork
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Linux AppImage
+    if: github.repository == 'KLI31/t3code'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # .repos holds orphaned gitlinks that break checkout's submodule cleanup.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Resolve version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < fork-version)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$version is already released; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup dependencies
+        if: steps.version.outputs.skip != 'true'
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          install-args: --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        if: steps.version.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install Linux desktop build libraries
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      - name: Build AppImage
+        if: steps.version.outputs.skip != 'true'
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: KLI31/t3code
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          node scripts/build-desktop-artifact.ts \
+            --platform linux --target AppImage --arch x64 \
+            --build-version "$VERSION" --output-dir "release/$VERSION"
+
+      - name: Publish release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          out="release/$VERSION"
+          ls "$out"/*.AppImage "$out/latest-linux.yml" >/dev/null
+          assets=("$out"/*.AppImage "$out"/*.blockmap "$out"/*.deb "$out"/latest-linux.yml)
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+            --title "v$VERSION" --notes "Fork build of ${GITHUB_SHA::7}." \
+            "${assets[@]}"

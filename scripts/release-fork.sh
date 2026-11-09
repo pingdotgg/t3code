@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds this fork's Linux AppImage and publishes it as a GitHub release. Builds from this script
-# read their update feed from that repository, so the installed app offers each new release.
+# Bumps this fork's version and pushes it; CI (.github/workflows/release-fork.yml) then builds the
+# Linux AppImage and publishes it as a GitHub release. Those builds read their update feed from
+# that repository, so the installed app offers each new release.
 #
 # Usage: scripts/release-fork.sh [patch|minor|major|X.Y.Z]   (default: patch)
 # The fork keeps its own semver in ./fork-version, apart from upstream's package versions, so
@@ -30,21 +31,8 @@ if gh release view "v$version" --repo "$repo" >/dev/null 2>&1; then
   exit 1
 fi
 
-upstream=$(node -p 'require("./apps/desktop/package.json").version')
-out="release/$version"
-
-T3CODE_DESKTOP_UPDATE_REPOSITORY="$repo" node scripts/build-desktop-artifact.ts \
-  --platform linux --target AppImage --arch x64 \
-  --build-version "$version" --output-dir "$out"
-
 echo "$version" >fork-version
 git commit -q -m "chore(release): v$version" fork-version
 git push -q origin HEAD
 
-shopt -s nullglob
-assets=("$out"/*.AppImage "$out"/*.blockmap "$out"/latest-linux.yml)
-gh release create "v$version" --repo "$repo" --target "$(git rev-parse HEAD)" --latest \
-  --title "v$version" --notes "Fork build of $(git rev-parse --short HEAD) on upstream $upstream." \
-  "${assets[@]}"
-
-echo "Published v$version to https://github.com/$repo/releases"
+echo "Pushed v$version; follow the build at https://github.com/$repo/actions/workflows/release-fork.yml"
