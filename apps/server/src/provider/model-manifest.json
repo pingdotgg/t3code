@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-05T22:38:29Z",
+  "updatedAt": "2026-11-09T19:02:01Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -125,7 +125,13 @@
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest"
     ],
-    "claudeAgent": ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    "claudeAgent": [
+      "claude-fable-5-2",
+      "claude-fable-5-1",
+      "claude-opus-5-5",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5"
+    ],
     "antigravity": ["gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low"]
   },
   "providers": {
@@ -756,6 +762,14 @@
           "status": "current",
           "profile": "sonnet-5-5",
           "adapter": { "claudeCode": { "minVersion": "2.1.284" } }
+        },
+        {
+          "slug": "claude-fable-5-2",
+          "name": "Claude Fable 5.2",
+          "aliases": ["fable-5.2", "claude-fable-5.2"],
+          "status": "current",
+          "releasedAt": "2026-11-09",
+          "profile": "fable-5"
         },
         {
           "slug": "claude-fable-5-1",
