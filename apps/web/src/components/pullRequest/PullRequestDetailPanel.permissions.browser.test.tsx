@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { act, fakeTimers, render } from "../../../test/render";
 
@@ -104,7 +105,14 @@ const detail: PullRequestDetailView = {
   commentCount: 0,
   commentsTruncated: false,
   reviewThreads: [],
-  commits: [],
+  commits: [
+    {
+      oid: "a".repeat(40),
+      messageHeadline: "Earlier commit",
+      committedDate: "2026-09-01T00:00:00Z",
+    },
+    { oid: "b".repeat(40), messageHeadline: "Later commit", committedDate: "2026-09-02T00:00:00Z" },
+  ],
   mergeCapabilities: { merge: false, squash: false, rebase: false },
   capabilities: {
     diff: true,
@@ -195,4 +203,36 @@ it("reads the first diff page once the pointer rests on the Code tab", async () 
     environmentId,
     input: { projectId: detail.projectId, repository: detail.repository, number: detail.number },
   });
+});
+
+it("switches the timeline between newest and oldest activity first", async () => {
+  setup();
+  await using screen = await render(panel());
+  await userEvent.click(screen.getByRole("button", { name: "Timeline", exact: true }));
+  await expect.element(screen.getByText("Later commit", { exact: true })).toBeVisible();
+  expect(
+    screen
+      .getByText("Later commit", { exact: true })
+      .element()
+      .compareDocumentPosition(screen.getByText("Earlier commit", { exact: true }).element()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "More pull request actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Show oldest activity first" }));
+  expect(
+    screen
+      .getByText("Earlier commit", { exact: true })
+      .element()
+      .compareDocumentPosition(screen.getByText("Later commit", { exact: true }).element()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "More pull request actions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: "Show newest activity first" }));
+  expect(
+    screen
+      .getByText("Later commit", { exact: true })
+      .element()
+      .compareDocumentPosition(screen.getByText("Earlier commit", { exact: true }).element()) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
 });
