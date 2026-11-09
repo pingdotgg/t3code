@@ -547,7 +547,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 placeholder={
                   mixedWatchInstructions
                     ? "Mixed. Enter instructions to apply to all selected targets."
-                    : "Rebase onto the base when the branch conflicts. Fix failing checks yourself. Ask me before replying to a reviewer."
+                    : "Rebase onto the base branch when the branch conflicts. Fix failing checks yourself. Ask me before replying to a reviewer."
                 }
                 onBlur={(event) => {
                   const value = event.target.value.trim();

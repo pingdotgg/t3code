@@ -1098,7 +1098,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Pull request watch instructions",
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: ["pull request pr watch wake babysit rebase conflict checks agent prompt custom"],
+    searchTerms: ["pull request pr watch wake rebase conflict checks agent prompt custom"],
   },
   {
     id: "source-control",
