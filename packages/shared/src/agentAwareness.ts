@@ -26,23 +26,11 @@ export interface SubagentRequestAwareness {
   readonly updatedAt: DateTime.Utc;
 }
 
-// The activity run stays set when a follow-up is queued behind a blocked run;
-// older servers omit it, so fall back to the latest run's status.
-const isChildRunLive = (
-  thread: Pick<OrchestrationV2ThreadShell, "activityRunStatus" | "status">,
-) =>
-  thread.activityRunStatus !== undefined
-    ? thread.activityRunStatus !== null
-    : thread.status === "preparing" ||
-      thread.status === "starting" ||
-      thread.status === "running" ||
-      thread.status === "waiting";
-
 /** Provider-native subagents ask on their parent; the coordinator answers child questions. */
 export function subagentAwaitsApproval(
   thread: Pick<
     OrchestrationV2ThreadShell,
-    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest" | "status"
+    "activityRunStatus" | "creationSource" | "lineage" | "pendingRuntimeRequest"
   >,
 ): boolean {
   const kind = thread.pendingRuntimeRequest?.kind;
@@ -52,7 +40,8 @@ export function subagentAwaitsApproval(
     kind !== "user_input" &&
     thread.lineage.relationshipToParent === "subagent" &&
     !isProviderNativeSubagentThread(thread) &&
-    isChildRunLive(thread)
+    // The activity run stays set when a follow-up is queued behind a blocked run.
+    thread.activityRunStatus != null
   );
 }
 

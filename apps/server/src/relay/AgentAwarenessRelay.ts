@@ -300,7 +300,6 @@ function describeThreadShellForAwareness(
 interface SubagentRequest {
   readonly topLevelThreadId: ThreadId;
   readonly requestId: RuntimeRequestId;
-  readonly changeOrder: number;
 }
 
 interface SubagentAlert {
@@ -410,35 +409,10 @@ export const make = Effect.gen(function* () {
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
-  // Android keys alerts by phase and time, so a child's new wait must never reuse
-  // an earlier alert time and an unchanged one must keep its own. Kept across
-  // clears, tombstones and relinks for that reason.
-  const alertByThread = new Map<
-    ThreadId,
-    { readonly latestAt: DateTime.Utc; readonly childRequest?: SubagentAlert }
-  >();
-  const recordAlert = (
-    threadId: ThreadId,
-    updatedAt: string,
-    childRequestId?: RuntimeRequestId,
-  ) => {
-    const previous = alertByThread.get(threadId);
-    const next = DateTime.makeUnsafe(updatedAt);
-    const latestAt = DateTime.max(previous?.latestAt ?? next, next);
-    const childRequest =
-      childRequestId === undefined
-        ? previous?.childRequest
-        : { requestId: childRequestId, updatedAt };
-    alertByThread.set(
-      threadId,
-      childRequest === undefined ? { latestAt } : { latestAt, childRequest },
-    );
-  };
+  // Android keys alerts by phase and time, so a child's unchanged request keeps
+  // its first alert time through parent renames, relinks and the parent's own requests.
+  const childAlertByThread = new Map<ThreadId, SubagentAlert>();
   const subagentRequests = new Map<ThreadId, SubagentRequest>();
-  let subagentRequestChangeOrder = 0;
-  // Environments that never publish skip the extra shell read while paused.
-  // Set by the first publish or by a startup snapshot, even an empty one.
-  let hasPublished = false;
 
   const readSecretString = (name: string) =>
     secrets
@@ -508,7 +482,6 @@ export const make = Effect.gen(function* () {
     if (!publishAgentActivity) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
-      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
         threadId,
       });
@@ -518,7 +491,6 @@ export const make = Effect.gen(function* () {
     if (!relayConfig) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
-      yield* trackSubagentWhilePaused(threadId);
       yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
         threadId,
       });
@@ -680,8 +652,6 @@ export const make = Effect.gen(function* () {
           state: completion,
           reason: unsettled.reason,
         }).pipe(withRelayClientTracing);
-        hasPublished = true;
-        recordAlert(threadId, completion.updatedAt);
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
         yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -708,33 +678,22 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    // A newer parent can mask several child requests, so a new one advances past
-    // every earlier alert time. Only successful publishes record it, so retries,
-    // renames and relinks of the same request reuse its time.
-    const alert = alertByThread.get(threadId);
     const childRequestId = snapshot.subagentWait?.requestId;
+    const childAlert = childAlertByThread.get(threadId);
     const state =
-      snapshot.state === null || childRequestId === undefined || alert === undefined
-        ? snapshot.state
-        : {
-            ...snapshot.state,
-            updatedAt:
-              alert.childRequest?.requestId === childRequestId
-                ? alert.childRequest.updatedAt
-                : DateTime.formatIso(
-                    DateTime.max(
-                      DateTime.makeUnsafe(snapshot.state.updatedAt),
-                      DateTime.add(alert.latestAt, { milliseconds: 1 }),
-                    ),
-                  ),
-          };
+      snapshot.state !== null &&
+      childRequestId !== undefined &&
+      childAlert?.requestId === childRequestId
+        ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
+        : snapshot.state;
     yield* publishState({
       projectId: snapshot.projectId,
       state,
       reason: snapshot.reason,
     }).pipe(withRelayClientTracing);
-    hasPublished = true;
-    if (state !== null) recordAlert(threadId, state.updatedAt, childRequestId);
+    if (state !== null && childRequestId !== undefined) {
+      childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
+    }
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
@@ -780,24 +739,14 @@ export const make = Effect.gen(function* () {
     const topLevelThreadId =
       previous?.topLevelThreadId ?? (yield* findTopLevelThreadId(threadShell));
     if (topLevelThreadId === null) return;
-    subagentRequests.set(threadId, {
-      topLevelThreadId,
-      requestId,
-      changeOrder: ++subagentRequestChangeOrder,
-    });
+    subagentRequests.set(threadId, { topLevelThreadId, requestId });
     yield* enqueueTopLevelPublish(topLevelThreadId);
-  });
-
-  const trackSubagentWhilePaused = Effect.fnUntraced(function* (threadId: ThreadId) {
-    if (!hasPublished) return;
-    yield* trackSubagentRequest(threadId, yield* readAwarenessThread(threadId));
   });
 
   // The map can miss a child's update while publishing is off or the relay is
   // unlinked, so each waiting child is re-read before its parent is published.
   const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
     let pending: SubagentRequestAwareness | null = null;
-    let pendingChangeOrder = 0;
     for (const [childId, entry] of subagentRequests) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* readAwarenessThread(childId);
@@ -806,21 +755,10 @@ export const make = Effect.gen(function* () {
         subagentRequests.delete(childId);
         continue;
       }
-      let changeOrder = entry.changeOrder;
-      if (requestId !== entry.requestId) {
-        changeOrder = ++subagentRequestChangeOrder;
-        subagentRequests.set(childId, { ...entry, requestId, changeOrder });
-      }
-      // The newest wait is the one to announce. Request-change order breaks
-      // ties within one millisecond.
-      if (
-        pending === null ||
-        DateTime.isGreaterThan(child.updatedAt, pending.updatedAt) ||
-        (child.updatedAt.epochMilliseconds === pending.updatedAt.epochMilliseconds &&
-          changeOrder > pendingChangeOrder)
-      ) {
+      if (requestId !== entry.requestId) subagentRequests.set(childId, { ...entry, requestId });
+      // The newest wait is the one to announce.
+      if (pending === null || DateTime.isGreaterThan(child.updatedAt, pending.updatedAt)) {
         pending = { requestId, updatedAt: child.updatedAt };
-        pendingChangeOrder = changeOrder;
       }
     }
     return pending;
@@ -944,7 +882,6 @@ export const make = Effect.gen(function* () {
         Effect.orElseSucceed(() => "failed" as const),
       );
       if (result === "published") {
-        hasPublished = true;
         if (logEnabledWhenReady) {
           const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
           yield* Effect.logInfo("agent activity publishing enabled after link reconciliation", {
