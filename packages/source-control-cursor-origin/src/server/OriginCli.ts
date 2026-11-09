@@ -64,6 +64,14 @@ const OriginAuthStatusSchema = Schema.Struct({
 });
 type OriginAuthStatus = typeof OriginAuthStatusSchema.Type;
 
+/** `origin` exits 1 on a bare `--json`, so this names the fields `OriginAuthStatusSchema` reads. */
+export const ORIGIN_AUTH_STATUS_ARGS = [
+  "auth",
+  "status",
+  "--json",
+  "authenticated,tokenValid,account",
+] as const;
+
 export function parseOriginAuthStatus(raw: string): OriginAuthStatus | null {
   const decoded = decodeJsonResult(OriginAuthStatusSchema)(raw);
   return Result.isSuccess(decoded) ? decoded.success : null;
@@ -382,7 +390,7 @@ const make = Effect.gen(function* () {
   });
 
   const authStatus = (cwd: string) =>
-    run({ cwd, operation: "authStatus", args: ["auth", "status", "--json"] }).pipe(
+    run({ cwd, operation: "authStatus", args: ORIGIN_AUTH_STATUS_ARGS }).pipe(
       Effect.flatMap((result) => {
         const status = parseOriginAuthStatus(result.stdout);
         if (status !== null) return Effect.succeed(status);
