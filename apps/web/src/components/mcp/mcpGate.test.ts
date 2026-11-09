@@ -29,6 +29,7 @@ const savedTunnel = {
 const open = {
   signedIn: true,
   connected: true,
+  relayOffline: false,
   approvalCodes: true,
   canReadRelay: true,
   linkState: tunnel,
@@ -54,6 +55,11 @@ describe("resolveMcpGate", () => {
     expect(resolveMcpGate(saved)).toEqual({
       kind: "open",
       mcpUrl: "https://prod-b2.t3coderelay.com/mcp",
+    });
+    // A saved machine T3 Connect reports offline says so instead of asking to reconnect.
+    expect(resolveMcpGate({ ...saved, connected: false, relayOffline: true })).toEqual({
+      kind: "disconnected",
+      offline: true,
     });
     // This machine's probe outranks a stale publish-only record in that list.
     expect(
@@ -158,6 +164,13 @@ describe("afterFailedCheck", () => {
       { result: null, since: older.reachability.checkedAt },
     ],
     ["nothing read at all, so only a retry counts", null, null, { result: null, since: null }],
+    [
+      "a first server check",
+      tunnel,
+      newer,
+      { result: newer.reachability, since: newer.reachability.checkedAt },
+    ],
+    ["no server check yet, so any later one counts", tunnel, null, { result: null, since: "" }],
   ] as const)("with %s", (_, prior, latest, expected) => {
     expect(afterFailedCheck(prior, latest)).toEqual(expected);
   });

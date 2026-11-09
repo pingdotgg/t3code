@@ -254,6 +254,8 @@ function useGate(environment: EnvironmentPresentation) {
   const gate = resolveMcpGate({
     signedIn: isSignedIn,
     connected: environment.connection.phase === "connected",
+    relayOffline:
+      !thisMachine && discovery.environments.get(environmentId)?.availability === "offline",
     approvalCodes:
       serverConfig === null
         ? undefined
@@ -378,7 +380,11 @@ function GateScreen({
         </GateMessage>
       );
     case "disconnected":
-      return <GateMessage title={`Connect to ${name} first.`} />;
+      return gate.offline ? (
+        <GateMessage title={`${name}'s T3 Connect is offline`}>{checkAgain}</GateMessage>
+      ) : (
+        <GateMessage title={`Connect to ${name} first.`} />
+      );
     case "update":
       return <GateMessage title={`Update T3 Code on ${name}`} />;
     case "no-relay-read":

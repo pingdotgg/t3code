@@ -15,7 +15,8 @@ type Unreachable = Extract<EnvironmentConnectReachability, { readonly status: "u
 export type McpGate =
   | { readonly kind: "checking" }
   | { readonly kind: "sign-in" }
-  | { readonly kind: "disconnected" }
+  /** `offline`: T3 Connect reports the saved machine offline, so reconnecting cannot help. */
+  | { readonly kind: "disconnected"; readonly offline: boolean }
   | { readonly kind: "update" }
   | { readonly kind: "no-relay-read" }
   | { readonly kind: "error"; readonly message: string }
@@ -27,6 +28,8 @@ export function resolveMcpGate(input: {
   /** Undefined until T3 Connect sign-in has loaded. */
   readonly signedIn: boolean | undefined;
   readonly connected: boolean;
+  /** T3 Connect's list reports this saved machine offline. */
+  readonly relayOffline: boolean;
   /** The environment's `mcpApprovalCodes` capability; undefined until its config loads. */
   readonly approvalCodes: boolean | undefined;
   readonly canReadRelay: boolean;
@@ -43,7 +46,7 @@ export function resolveMcpGate(input: {
 }): McpGate {
   if (input.signedIn === undefined) return { kind: "checking" };
   if (!input.signedIn) return { kind: "sign-in" };
-  if (!input.connected) return { kind: "disconnected" };
+  if (!input.connected) return { kind: "disconnected", offline: input.relayOffline };
   if (input.approvalCodes === undefined) return { kind: "checking" };
   if (!input.approvalCodes) return { kind: "update" };
   if (!input.canReadRelay) return { kind: "no-relay-read" };
