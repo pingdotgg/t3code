@@ -317,7 +317,7 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.effect("reuses a descriptor a host check just read, once and only while fresh", () =>
+  it.effect("reuses a descriptor a host check just read, once, while fresh, over HTTPS", () =>
     Effect.gen(function* () {
       const descriptor = {
         ...DESCRIPTOR,
@@ -330,6 +330,8 @@ describe("RemoteEnvironmentAuthorization", () => {
           websocketTicket("second-ticket"),
           Response.json(descriptor),
           websocketTicket("third-ticket"),
+          Response.json(descriptor),
+          websocketTicket("lan-ticket"),
         ],
       });
 
@@ -348,9 +350,20 @@ describe("RemoteEnvironmentAuthorization", () => {
         yield* remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, descriptor as never);
         yield* TestClock.adjust("6 seconds");
         yield* authorize;
+        // After a network change, a plain LAN address can belong to another machine.
+        const lan = { httpBaseUrl: "http://192.168.1.2:3773", wsBaseUrl: "ws://192.168.1.2:3773" };
+        yield* remote.rememberCheckedDescriptor(lan.httpBaseUrl, descriptor as never);
+        yield* remote.authorizeBearer({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          ...lan,
+          bearerToken: "bearer-token",
+          connectionMethod: "direct",
+        });
       }).pipe(Effect.provide(harness.layer));
 
       expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
         "/api/auth/websocket-ticket/rpc",
         "/.well-known/t3/environment",
         "/api/auth/websocket-ticket/rpc",

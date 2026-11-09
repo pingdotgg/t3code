@@ -949,6 +949,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // may have missed events, so those show sync progress until confirmed.
   const resumingLive = yield* Ref.make(initialState.status === "live");
   const socketSnapshotFailed = yield* Ref.make(false);
+  const socketOnlyOpen = yield* Ref.make(false);
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -983,6 +984,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           canLoadHistory &&
           !(yield* Ref.get(socketSnapshotFailed)) &&
           Option.exists(config, (value) => value.threadSnapshotPagination === true);
+        yield* Ref.set(socketOnlyOpen, socketSnapshot && Option.isNone(current.data));
 
         if (Option.isNone(current.data) && !socketSnapshot) {
           const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
@@ -1068,9 +1070,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
           const retryOverHttp =
             !isAuthorizationFailure(cause) &&
-            !(yield* Ref.getAndSet(socketSnapshotFailed, true)) &&
+            (yield* Ref.get(socketOnlyOpen)) &&
             Option.isNone((yield* SubscriptionRef.get(state)).data);
-          if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
+          if (retryOverHttp) yield* Ref.set(socketSnapshotFailed, true);
+          else yield* setStreamError(formatThreadError(cause));
         }),
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
