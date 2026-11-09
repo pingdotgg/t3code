@@ -1,4 +1,8 @@
-import { type ModelCapabilities, type ProviderOptionChoice } from "@t3tools/contracts";
+import {
+  type ModelCapabilities,
+  type ProviderOptionChoice,
+  type ProviderOptionDescriptor,
+} from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Predicate from "effect/Predicate";
 
@@ -21,27 +25,68 @@ export const EMPTY_PI_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabil
   optionDescriptors: [],
 });
 
-export function thinkingCapabilitiesForPiModel(
+/** Selecting Standard sends no `service_tier`, leaving the endpoint's default. */
+export const PI_STANDARD_SERVICE_TIER = "default";
+
+export function piModelCapabilities(
   model: unknown,
   defaultThinkingLevel: unknown,
 ): ModelCapabilities {
+  const optionDescriptors = [
+    thinkingDescriptor(model, defaultThinkingLevel),
+    serviceTierDescriptor(model),
+  ].filter(Predicate.isNotUndefined);
+  return optionDescriptors.length === 0
+    ? EMPTY_PI_MODEL_CAPABILITIES
+    : createModelCapabilities({ optionDescriptors });
+}
+
+function thinkingDescriptor(
+  model: unknown,
+  defaultThinkingLevel: unknown,
+): ProviderOptionDescriptor | undefined {
   const levels = supportedPiThinkingLevelsFromModel(model);
-  if (levels.length === 0) return EMPTY_PI_MODEL_CAPABILITIES;
+  if (levels.length === 0) return undefined;
   const defaultLevel = clampPiThinkingLevel(defaultThinkingLevel, levels);
-  return createModelCapabilities({
-    optionDescriptors: [
-      {
-        id: "thinking",
-        label: "Thinking",
-        type: "select",
-        options: levels.map((level): ProviderOptionChoice => ({
-          id: level,
-          label: PI_THINKING_LEVEL_LABELS[level],
-          ...(level === defaultLevel ? { isDefault: true } : {}),
-        })),
-      },
-    ],
-  });
+  return {
+    id: "thinking",
+    label: "Thinking",
+    type: "select",
+    options: levels.map((level): ProviderOptionChoice => ({
+      id: level,
+      label: PI_THINKING_LEVEL_LABELS[level],
+      ...(level === defaultLevel ? { isDefault: true } : {}),
+    })),
+  };
+}
+
+// Pi has no service tier concept; provider extensions advertise `serviceTiers` on a model,
+// and T3's injected extension sends the chosen id as the request's `service_tier`.
+function serviceTierDescriptor(model: unknown): ProviderOptionDescriptor | undefined {
+  const tiers = recordField(model, "serviceTiers");
+  if (!Array.isArray(tiers)) return undefined;
+  const seen = new Set<string>([PI_STANDARD_SERVICE_TIER]);
+  const options: Array<ProviderOptionChoice> = [];
+  for (const tier of tiers) {
+    const id = recordField(tier, "id");
+    if (typeof id !== "string" || id.trim() === "" || seen.has(id)) continue;
+    seen.add(id);
+    const name = recordField(tier, "name");
+    const description = recordField(tier, "description");
+    options.push({
+      id,
+      label: typeof name === "string" && name.trim() !== "" ? name : id,
+      ...(typeof description === "string" && description.trim() !== "" ? { description } : {}),
+    });
+  }
+  if (options.length === 0) return undefined;
+  return {
+    id: "serviceTier",
+    label: "Service Tier",
+    type: "select",
+    options: [{ id: PI_STANDARD_SERVICE_TIER, label: "Standard", isDefault: true }, ...options],
+    currentValue: PI_STANDARD_SERVICE_TIER,
+  };
 }
 
 function clampPiThinkingLevel(
