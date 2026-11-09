@@ -202,8 +202,8 @@ describe("Codex App Server stderr excerpt", () => {
     },
     {
       name: "launcher diagnostics remain bounded",
-      stderr: `${"x".repeat(1_000)}\nError: launcher exited with code 1\n`,
-      excerpt: `${"x".repeat(511)}…`,
+      stderr: `${"x".repeat(1_000)}\noauth2: invalid_request\nError: launcher exited with code 1\n`,
+      excerpt: `…${`${"x".repeat(1_000)} | oauth2: invalid_request | Error: launcher exited with code 1`.slice(-511)}`,
     },
     {
       name: "ANSI color, carriage returns and repeated whitespace",

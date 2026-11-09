@@ -82,8 +82,11 @@ export const stderrExcerpt = (tail: string): string | undefined => {
   const excerpt = EXIT_SUMMARY_PATTERN.test(line)
     ? lines.slice(Math.max(0, lineIndex - 2), lineIndex + 1).join(" | ")
     : line;
-  return excerpt.length <= STDERR_EXCERPT_MAX_CHARS
-    ? excerpt
+  if (excerpt.length <= STDERR_EXCERPT_MAX_CHARS) {
+    return excerpt;
+  }
+  return excerpt !== line
+    ? `…${excerpt.slice(-(STDERR_EXCERPT_MAX_CHARS - 1))}`
     : `${excerpt.slice(0, STDERR_EXCERPT_MAX_CHARS - 1)}…`;
 };
 
