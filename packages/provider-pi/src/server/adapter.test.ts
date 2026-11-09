@@ -4691,6 +4691,52 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("fails the turn as a usage limit when Pi's retry hits the limit", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "stream disconnected before completion",
+        },
+      });
+      yield* fake.emit({
+        type: "auto_retry_start",
+        attempt: 1,
+        maxAttempts: 3,
+        delayMs: 2_000,
+        errorMessage: "stream disconnected before completion",
+      });
+      const errorMessage = "Codex error: The usage limit has been reached";
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage },
+      });
+      yield* fake.emit({
+        type: "auto_retry_end",
+        success: false,
+        attempt: 1,
+        finalError: errorMessage,
+      });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+      if (terminal.type !== "turn.terminal" || terminal.status !== "failed") return;
+      assert.strictEqual(terminal.failure.class, "usage_limit");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     {
       pi: "clears its native queue",

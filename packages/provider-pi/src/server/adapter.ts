@@ -2134,11 +2134,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.failure = null;
               return;
             }
-            const failure = makeProviderFailure({
-              message: recordString(event, "finalError") ?? "Pi auto-retry failed.",
-              class: "provider_error",
+            const failure = {
+              ...piModelErrorFailure(
+                recordString(event, "finalError") ?? "Pi auto-retry failed.",
+                emittedAt,
+              ),
               retryable: false,
-            });
+            };
             const attempt = Math.max(1, Math.trunc(recordNumber(event, "attempt") ?? 1));
             const current = turn.activeProviderRetry;
             const providerRetry = {
