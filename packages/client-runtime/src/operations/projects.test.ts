@@ -11,6 +11,7 @@ import {
   getDefaultCloneUrl,
   githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
+  resolveAddProjectPath,
 } from "./projects.ts";
 import type { EnvironmentProject } from "../state/models.ts";
 
@@ -166,5 +167,15 @@ describe("add project shared logic", () => {
     expect(findExistingAddProject({ projects, environmentId: env, path: "/repo" })?.id).toBe(
       "project",
     );
+  });
+
+  it.each([
+    { rawPath: "C:\\code\\app", currentProjectCwd: null },
+    { rawPath: "./app", currentProjectCwd: null },
+    { rawPath: "../app", currentProjectCwd: "/home/me/web", path: "/home/me/app" },
+    { rawPath: "  /home/me/app/ ", currentProjectCwd: null, path: "/home/me/app" },
+  ])("resolves the add-project path $rawPath", ({ rawPath, currentProjectCwd, path }) => {
+    const result = resolveAddProjectPath({ rawPath, currentProjectCwd, platform: "Linux" });
+    expect(result.ok ? result.path : null).toBe(path ?? null);
   });
 });

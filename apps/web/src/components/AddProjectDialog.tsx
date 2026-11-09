@@ -14,11 +14,14 @@ import {
 import {
   type DesktopDiscoveredSshHost,
   type EnvironmentId,
+  FilesystemBrowseError,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { resolvePastedPath } from "@t3tools/shared/path";
 import { ChevronRightIcon, CornerLeftUpIcon, FolderIcon, TerminalIcon } from "lucide-react";
 import { type KeyboardEvent, useDeferredValue, useEffect, useId, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import * as Schema from "effect/Schema";
 import { create } from "zustand";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -75,6 +78,7 @@ type Step =
   | { readonly kind: "connecting"; readonly host: DesktopDiscoveredSshHost }
   | { readonly kind: "folder"; readonly environmentId: EnvironmentId };
 
+const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
 const EMPTY_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
 
 // Cloning and empty projects stay in the palette's add-project flow.
@@ -198,6 +202,17 @@ function MachineStep({
     (sshHosts.data ?? EMPTY_SSH_HOSTS).filter((host) => host.source === "ssh-config"),
     environments,
   );
+  const navigate = useNavigate();
+  const openConnectionSettings = () => {
+    closeAddProjectDialog();
+    void navigate({ to: "/settings/connections" });
+  };
+  const noMachine =
+    newSshHosts.length === 0 &&
+    !sshHosts.isPending &&
+    !environments.some((environment) =>
+      canCreateProjectInEnvironment(environment.connection.phase),
+    );
   const sortedEnvironments = environments.toSorted((left, right) => {
     const leftPrimary = isPrimaryEnvironment(left);
     if (leftPrimary !== isPrimaryEnvironment(right)) return leftPrimary ? -1 : 1;
@@ -237,10 +252,18 @@ function MachineStep({
         <DialogDescription>Where is the project?</DialogDescription>
       </DialogHeader>
       <DialogPanel>
-        {error ? (
+        {(error ?? sshHosts.error) ? (
           <Alert variant="error">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{error ?? sshHosts.error}</AlertDescription>
           </Alert>
+        ) : null}
+        {noMachine ? (
+          <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-muted-foreground text-sm">
+            No connected machine can add a project.
+            <Button type="button" size="sm" variant="outline" onClick={openConnectionSettings}>
+              Connect a machine
+            </Button>
+          </div>
         ) : null}
         <div className="flex max-h-80 flex-col overflow-y-auto rounded-md border">
           {sortedEnvironments.map((environment) => {
@@ -364,6 +387,8 @@ function FolderStep({
   const listing = browse.data;
   const isCurrentListing = listing !== null && directory === ensureBrowseDirectoryPath(path);
   const parentPath = getBrowseParentPath(listing?.parentPath ?? path);
+  const pathMissing =
+    isFilesystemBrowseError(browse.failure) && browse.failure.pathMissing === true;
   const rows = [
     ...(parentPath !== null ? [{ key: "..", name: "..", target: parentPath }] : []),
     ...(listing?.entries ?? []).map((entry) => ({
@@ -462,10 +487,18 @@ function FolderStep({
           pending={access.isPending || browse.isPending}
           error={
             access.isPending || access.canReadFiles
-              ? browse.error
+              ? pathMissing
+                ? null
+                : browse.error
               : (access.error ?? "This connection cannot browse folders.")
           }
-          empty={listing !== null && listing.entries.length === 0}
+          empty={
+            pathMissing
+              ? "New folder. Add project creates it."
+              : listing !== null && listing.entries.length === 0
+                ? "No folders inside."
+                : null
+          }
         />
       </div>
     </>
@@ -506,9 +539,9 @@ function FolderListStatus({
 }: {
   pending: boolean;
   error: string | null;
-  empty: boolean;
+  empty: string | null;
 }) {
-  const message = error ?? (empty ? "No folders inside." : null);
+  const message = error ?? empty;
   if (!pending && message === null) return null;
   return (
     <div

@@ -170,6 +170,7 @@ function RootRouteBranch() {
       <>
         <CustomSnoozeDialogHost />
         <GuestShareDialogHost />
+        <AddProjectDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
             <Outlet />

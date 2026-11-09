@@ -1,12 +1,10 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import {
-  findProjectByPath,
-  inferProjectTitleFromPath,
-  isExplicitRelativeProjectPath,
-  isUnsupportedWindowsProjectPath,
-  resolveProjectPathForDispatch,
-} from "@t3tools/client-runtime/state/projects";
+  canCreateProjectInEnvironment,
+  findExistingAddProject,
+  resolveAddProjectPath,
+} from "@t3tools/client-runtime/operations/projects";
+import { inferProjectTitleFromPath } from "@t3tools/client-runtime/state/projects";
 import {
   isAtomCommandInterrupted,
   settlePromise,
@@ -19,41 +17,24 @@ import { useNavigate } from "@tanstack/react-router";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { isSidebarHiddenThread } from "../components/Sidebar.logic";
 import { newProjectId } from "../lib/utils";
-import { useProjects, useVisibleThreadShells } from "../state/entities";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { readProjects } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { readEnvironmentScope } from "../state/session";
+import { environmentThreadShells } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { reportProjectFailure } from "./useProjectGroupUpdate";
-import { useClientSettings } from "./useSettings";
+import { getClientSettings } from "./useSettings";
 
 export interface AddProjectAtPathInput {
   readonly environmentId: EnvironmentId;
   readonly rawCwd: string;
   readonly platform: string;
   readonly currentProjectCwd: string | null;
-}
-
-export type AddProjectPathResolution =
-  | { readonly kind: "path"; readonly cwd: string }
-  | { readonly kind: "empty" }
-  | { readonly kind: "invalid"; readonly message: string };
-
-export function resolveAddProjectPath(
-  input: Pick<AddProjectAtPathInput, "rawCwd" | "platform" | "currentProjectCwd">,
-): AddProjectPathResolution {
-  const trimmed = input.rawCwd.trim();
-  if (isUnsupportedWindowsProjectPath(trimmed, input.platform)) {
-    return { kind: "invalid", message: "Windows-style paths are only supported on Windows." };
-  }
-  if (isExplicitRelativeProjectPath(trimmed) && !input.currentProjectCwd) {
-    return { kind: "invalid", message: "Relative paths require an active project." };
-  }
-  const cwd = resolveProjectPathForDispatch(input.rawCwd, input.currentProjectCwd);
-  return cwd.length === 0 ? { kind: "empty" } : { kind: "path", cwd };
 }
 
 function toastError(title: string, description: string) {
@@ -71,9 +52,6 @@ function errorDescription(error: unknown) {
 export function useAddProjectAtPath() {
   const navigate = useNavigate();
   const { environments } = useEnvironments();
-  const projects = useProjects();
-  const threads = useVisibleThreadShells().filter((thread) => !isSidebarHiddenThread(thread));
-  const sortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
   const handleNewThread = useNewThreadHandler();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
@@ -92,18 +70,23 @@ export function useAddProjectAtPath() {
       return false;
     }
 
-    const resolution = resolveAddProjectPath(input);
-    if (resolution.kind === "invalid") {
-      toastError("Failed to add project", resolution.message);
+    if (input.rawCwd.trim().length === 0) return false;
+    const resolution = resolveAddProjectPath({
+      rawPath: input.rawCwd,
+      currentProjectCwd: input.currentProjectCwd,
+      platform: input.platform,
+    });
+    if (!resolution.ok) {
+      toastError("Failed to add project", resolution.error);
       return false;
     }
-    if (resolution.kind === "empty") return false;
-    const { cwd } = resolution;
+    const cwd = resolution.path;
 
-    const existing = findProjectByPath(
-      projects.filter((project) => project.environmentId === input.environmentId),
-      cwd,
-    );
+    const existing = findExistingAddProject({
+      projects: readProjects(),
+      environmentId: input.environmentId,
+      path: cwd,
+    });
     if (existing) {
       // Adding an archived project's folder again brings the project back.
       if (existing.archivedAt != null) {
@@ -113,9 +96,14 @@ export function useAddProjectAtPath() {
         }).then((result) => reportProjectFailure("Failed to unarchive project", result));
       }
       const latestThread = getLatestThreadForProject(
-        threads.filter((thread) => thread.environmentId === existing.environmentId),
+        appAtomRegistry
+          .get(environmentThreadShells.visibleThreadShellsAtom)
+          .filter(
+            (thread) =>
+              thread.environmentId === existing.environmentId && !isSidebarHiddenThread(thread),
+          ),
         existing.id,
-        sortOrder,
+        getClientSettings().sidebarThreadSortOrder,
       );
       if (latestThread && latestThread.settledOverride !== "settled") {
         await navigate({

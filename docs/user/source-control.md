@@ -145,7 +145,7 @@ To add a folder that already exists, click the folder icon beside **New thread**
 Pick a machine, then a folder on it. On desktop, the list also shows hosts from `~/.ssh/config`
 that are not connected yet; picking one connects it first.
 
-Use **Clone repository** in the command palette (`Cmd/Ctrl+K`), or **Clone or create new…** in the
+Use **Clone or create project** in the command palette (`Cmd/Ctrl+K`), or **Clone or create new…** in the
 Add project dialog, to clone a repository. Choose a hosting
 provider or paste a Git URL, then choose where to save it. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
