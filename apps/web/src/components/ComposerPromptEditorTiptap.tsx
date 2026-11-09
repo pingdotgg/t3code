@@ -477,8 +477,16 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     editor.chain().focus().deleteRange({ from, to }).run();
   };
 
+  const sentRef = useRef(false);
   const onRestoreFocus = () => {
+    const sent = sentRef.current;
+    sentRef.current = false;
     if (!editor.isEditable) return;
+    // The send rewrites the document after this commit; a caret move now would emit the old prompt.
+    if (sent) {
+      editor.view.focus();
+      return;
+    }
     const pos = nodePos();
     if (pos === null) return;
     const current = editor.state.doc.nodeAt(pos);
@@ -525,6 +533,7 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
             if (!onSaveComment(comment)) return false;
+            sentRef.current = true;
             commentContext.onSubmitAndSend();
             return true;
           },

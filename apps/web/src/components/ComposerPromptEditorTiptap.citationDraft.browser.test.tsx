@@ -121,4 +121,5 @@ it("clears the sent prompt when an empty citation comment sends it", async () =>
 
   await expect.element(comment).not.toBeInTheDocument();
   expect(drafts()?.prompt).toBe("");
+  await expect.element(page.getByTestId("composer-editor")).toHaveFocus();
 });
