@@ -158,15 +158,27 @@ const PI_STDERR_MAX_STACK_FRAMES = 3;
 // `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `fatal: …`
 const PI_STDERR_ERROR_LINE = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
 // Credential and URI remainders may contain spaces, encoded quotes or incomplete escapes.
-const PI_STDERR_SECRET_KEY =
-  /((?<![\w-])(?:\\?["'])?[\w-]*(?:access[_-]?token|api[_-]?key|authorization|cookie|credential|password|private[_-]?key|secret|token)[\w-]*(?:\\?["'])?\s*[:=]\s*)[\s\S]*/giu;
+const PI_STDERR_CREDENTIAL_NAME = String.raw`[\w-]*(?:access[_-]?token|api[\s_-]?key|authorization|cookie|credential|password|private[_-]?key|secret|token)[\w-]*`;
+const PI_STDERR_SECRET_KEY = new RegExp(
+  String.raw`((?<![\w-])(?:\\?["'])?${PI_STDERR_CREDENTIAL_NAME}(?:\\?["'])?\s*[:=]\s*)[\s\S]*`,
+  "giu",
+);
+const PI_STDERR_SECRET_FLAG = new RegExp(
+  String.raw`(--${PI_STDERR_CREDENTIAL_NAME}\s+)[\s\S]*`,
+  "giu",
+);
 
 function redactPiStderrLine(line: string): string {
   const redacted = line
     .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/gu, " ")
-    .replace(/\b[a-z][a-z\d+.-]*:\/\/[\s\S]*/giu, "[redacted]")
+    .replace(/\b[a-z][a-z\d+.-]*:\/\/[\s\S]*/giu, (uri) =>
+      // Local stack locations carry the same paths as plain frames; other URI data can be secret.
+      line.startsWith("at ") && /^file:\/\/\/[^\s?#@%\\()]+:\d+:\d+\)?$/iu.test(uri)
+        ? uri
+        : "[redacted]",
+    )
     .replace(PI_STDERR_SECRET_KEY, "$1[redacted]")
-    .replace(/(--[\w-]*(?:token|api[_-]?key)[\w-]*\s+)[\s\S]*/giu, "$1[redacted]")
+    .replace(PI_STDERR_SECRET_FLAG, "$1[redacted]")
     .replace(/\b(Bearer|Basic)\s+[\s\S]*/giu, "$1 [redacted]")
     .replace(
       /\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|AIza[A-Za-z0-9_-]+|gsk_[A-Za-z0-9_-]+|xai-[A-Za-z0-9_-]+|hf_[A-Za-z0-9_-]+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|xox[a-z]-[A-Za-z0-9-]+)/gu,

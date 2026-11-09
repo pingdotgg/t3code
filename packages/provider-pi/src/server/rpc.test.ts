@@ -109,6 +109,70 @@ describe("PiRpc stderr diagnostics", () => {
 
   it.live.each([
     {
+      name: "labeled API key",
+      stderr: "Error: Invalid API key: Zx9plainkey123",
+      secret: "Zx9plainkey123",
+      diagnosis: "Error: Invalid API key:",
+    },
+    {
+      name: "missing API key without a delimiter",
+      stderr: "Error: No API key found for provider",
+      secret: "[redacted]",
+      diagnosis: "Error: No API key found for provider",
+    },
+    {
+      name: "local file URL stack location",
+      stderr:
+        "Error: extension render failed\n    at PromptEditor.render (file:///ext/mitsupi/extensions/prompt-editor.ts:1184:7)",
+      secret: "[redacted]",
+      diagnosis:
+        "Error: extension render failed\nat PromptEditor.render (file:///ext/mitsupi/extensions/prompt-editor.ts:1184:7)",
+    },
+    {
+      name: "local file URL userinfo",
+      stderr:
+        "Error: extension render failed\n    at file://alice:file-userinfo-secret@localhost/ext.ts:1:1",
+      secret: "file-userinfo-secret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL query",
+      stderr: "Error: extension render failed\n    at file:///ext.ts?opaque-query-secret:1:1",
+      secret: "opaque-query-secret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL fragment",
+      stderr: "Error: extension render failed\n    at file:///ext.ts#opaque-fragment-secret:1:1",
+      secret: "opaque-fragment-secret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL encoded path",
+      stderr: "Error: extension render failed\n    at file:///opaque%2Dencoded%2Dsecret.ts:1:1",
+      secret: "opaque%2Dencoded%2Dsecret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL credential path",
+      stderr: "Error: extension render failed\n    at file:///password=path-secret.ts:1:1",
+      secret: "path-secret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL credential prefix",
+      stderr: "Error: extension render failed\n    at password=prefix-secret (file:///ext.ts:1:1)",
+      secret: "prefix-secret",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
+      name: "local file URL credential flag prefix",
+      stderr:
+        "Error: extension render failed\n    at --private-key prefix-material (file:///ext.ts:1:1)",
+      secret: "prefix-material",
+      diagnosis: "Error: extension render failed\nat ",
+    },
+    {
       name: "long noncredential diagnostic",
       stderr: "Error: " + "x".repeat(500),
       secret: "x".repeat(241),
@@ -239,6 +303,24 @@ describe("PiRpc stderr diagnostics", () => {
       stderr: "Error: failed --api-key abc123secret zzz999",
       secret: "abc123secret",
       diagnosis: "Error:",
+    },
+    {
+      name: "--password space delimiter",
+      stderr: "Error: extension launch failed --password hunter2-value",
+      secret: "hunter2-value",
+      diagnosis: "Error: extension launch failed",
+    },
+    {
+      name: "--client-secret space delimiter",
+      stderr: "Error: extension launch failed --client-secret opaque-secret-value",
+      secret: "opaque-secret-value",
+      diagnosis: "Error: extension launch failed",
+    },
+    {
+      name: "--private-key space delimiter",
+      stderr: "Error: extension launch failed --private-key private-material",
+      secret: "private-material",
+      diagnosis: "Error: extension launch failed",
     },
     {
       name: "https whitespace userinfo ' '",
