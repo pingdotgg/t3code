@@ -26,17 +26,27 @@ client ID cannot connect.
 
 ## Get the MCP URL
 
-In **Settings → Environments**, open a saved environment's menu and choose
-**Copy MCP URL**. The URL is the environment's address followed by `/mcp`, for
-example:
+For the environment on this machine, open **Settings → Sharing & access** and
+find **MCP URL** on its card. With T3 Connect on and its tunnel connected, this
+is the environment's public address followed by `/mcp`:
 
 ```text
 https://<environment-address>/mcp
 ```
 
-When T3 Connect serves the environment, the copied URL is its T3 Connect
-address, which agents can reach from anywhere. Otherwise it uses the route this
-device is connected over, so an agent on the same device can reach it.
+That is the URL a hosted agent, such as ChatGPT, needs, because it can reach
+this environment from anywhere. Without a tunnel URL, the setting shows a
+loopback or `https` route instead; a plain-HTTP LAN route has no MCP URL row.
+Only the loopback address is limited to the machine running T3 Code.
+
+For a saved remote environment, open **Settings → Environments**, open the
+environment's menu, and choose **Copy MCP URL**.
+
+For the local environment, the copied URL uses its T3 Connect address when the
+tunnel is available, and otherwise a loopback or `https` route.
+
+For a saved remote environment, the copied URL uses the connected route when
+that route has an address, and otherwise the first saved route with one.
 
 - **An agent on your own computers** can use `localhost` on the host, T3
   Connect, or any `https` address, such as
