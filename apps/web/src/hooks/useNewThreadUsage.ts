@@ -80,13 +80,12 @@ export function useNewThreadUsage(
           ? completed.providers.find((result) => result.instanceId === provider.instanceId)
               ?.usageLimits
           : undefined;
+      const incomingFailed = reading?.unavailable?.reason === "probeFailed";
+      const currentFailed = provider.usageLimits?.unavailable?.reason === "probeFailed";
       return reading &&
         (!provider.usageLimits ||
-          (!reading.unavailable &&
-            (provider.usageLimits.unavailable ||
-              Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt))) ||
-          (reading.unavailable &&
-            provider.usageLimits.unavailable &&
+          (!incomingFailed && currentFailed) ||
+          (incomingFailed === currentFailed &&
             Date.parse(reading.checkedAt) > Date.parse(provider.usageLimits.checkedAt)))
         ? { ...provider, usageLimits: reading }
         : provider;

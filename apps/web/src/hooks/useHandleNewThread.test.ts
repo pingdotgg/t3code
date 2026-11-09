@@ -230,7 +230,6 @@ vi.mock("../composerDraftStore", () => {
 });
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
-  hasExplicitComposerModelSelection: () => false,
   resolveNewThreadModelSelectionOverride: (input: {
     projectDefaultSelection: ModelSelection | null;
   }) => input.projectDefaultSelection,
@@ -404,7 +403,7 @@ describe("useNewThreadHandler", () => {
   });
 });
 
-it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
+it.each(["fresh", "primary-blocked", "fallback-blocked", "explicit-draft"] as const)(
   "new-draft quota preflight: %s",
   async (mode) => {
     vi.useFakeTimers();
@@ -425,6 +424,28 @@ it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
       skills: [],
     }));
     testState.setDefaultModels(primary, fallback, providers);
+    if (mode === "explicit-draft") {
+      testState.reset({
+        draftId: "explicit-draft",
+        environmentId: "environment-ssh",
+        promotedTo: null,
+        threadId: "explicit-thread",
+      });
+      testState.setDefaultModels(primary, fallback, providers);
+    }
+    using _draft = vi
+      .spyOn(testState.draftStore, "getComposerDraft")
+      .mockImplementation((draftId) => ({
+        draftId,
+        ...(mode === "explicit-draft"
+          ? {
+              activeProvider: "claudeAgent",
+              modelSelectionExplicit: true,
+              modelSelectionByProvider: { claudeAgent: fallback },
+            }
+          : {}),
+      }));
+
     const fresh = AsyncResult.success({
       providers: providers.map((provider) => ({
         ...provider,
@@ -475,19 +496,25 @@ it.each(["fresh", "primary-blocked", "fallback-blocked"] as const)(
       } else {
         await vi.advanceTimersByTimeAsync(4_999);
       }
-      expect(finished).toBe(mode === "fresh");
+      expect(finished).toBe(mode === "fresh" || mode === "explicit-draft");
       await vi.advanceTimersByTimeAsync(1);
       expect(finished).toBe(true);
       const opened = await pending;
-      expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
-        opened?.draftId,
-        mode === "primary-blocked" ? primary : fallback,
-        { replaceOptions: true },
-      );
+      if (mode === "explicit-draft")
+        expect(testState.draftStore.setModelSelection).not.toHaveBeenCalled();
+      else {
+        expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+          opened?.draftId,
+          mode === "primary-blocked" ? primary : fallback,
+          { replaceOptions: true },
+        );
+      }
       expect(vi.getTimerCount()).toBe(0);
       completeBlocked(fresh);
       await vi.advanceTimersByTimeAsync(0);
-      expect(testState.refreshProviders).toHaveBeenCalledTimes(mode === "primary-blocked" ? 1 : 2);
+      expect(testState.refreshProviders).toHaveBeenCalledTimes(
+        mode === "explicit-draft" ? 0 : mode === "primary-blocked" ? 1 : 2,
+      );
     } finally {
       completeFirst(fresh);
       completeBlocked(fresh);

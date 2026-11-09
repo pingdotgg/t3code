@@ -147,6 +147,32 @@ export function createNewThreadHandler(router: AnyRouter) {
       project?.id ?? null,
       project,
     );
+    const logicalProjectKey = project
+      ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
+      : scopedProjectKey(projectRef);
+    const hasBranchOption = options?.branch !== undefined;
+    const hasWorktreePathOption = options?.worktreePath !== undefined;
+    const hasEnvModeOption = options?.envMode !== undefined;
+    const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
+    const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+    const storedDraftThreadRef = storedDraftThread
+      ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
+      : null;
+    const reusableStoredDraftThread =
+      storedDraftThread !== null &&
+      storedDraftThread.promotedTo == null &&
+      storedDraftThreadRef !== null &&
+      readThreadShell(storedDraftThreadRef) === null
+        ? storedDraftThread
+        : null;
+    if (storedDraftThreadRef && reusableStoredDraftThread === null) {
+      markPromotedDraftThreadByRef(storedDraftThreadRef);
+    }
+    const emptyStoredDraftThread =
+      reusableStoredDraftThread &&
+      !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
+        ? reusableStoredDraftThread
+        : null;
     const configuredDefaultModelSelection = projectSettings.settings.defaultModelSelection ?? null;
     const selectionInput = {
       defaultSelection:
@@ -164,12 +190,16 @@ export function createNewThreadHandler(router: AnyRouter) {
       projectId: projectRef.projectId,
       now: Date.now(),
     };
-    const providers = await refreshNewThreadUsage({
-      registry: appAtomRegistry,
-      server: serverEnvironment,
-      environmentId: projectRef.environmentId,
-      input: selectionInput,
-    });
+    const providers =
+      emptyStoredDraftThread &&
+      hasExplicitComposerModelSelection(getComposerDraft(emptyStoredDraftThread.draftId))
+        ? selectionInput.providers
+        : await refreshNewThreadUsage({
+            registry: appAtomRegistry,
+            server: serverEnvironment,
+            environmentId: projectRef.environmentId,
+            input: selectionInput,
+          });
     if (abandonedSinceRequest()) return null;
     const fallbackResolution = resolveNewThreadModelSelection({ ...selectionInput, providers });
     const projectDefaultModelSelection = fallbackResolution.fallback
@@ -217,32 +247,6 @@ export function createNewThreadHandler(router: AnyRouter) {
           ) > 0,
       });
     };
-    const logicalProjectKey = project
-      ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
-      : scopedProjectKey(projectRef);
-    const hasBranchOption = options?.branch !== undefined;
-    const hasWorktreePathOption = options?.worktreePath !== undefined;
-    const hasEnvModeOption = options?.envMode !== undefined;
-    const hasStartFromOriginOption = options?.startFromOrigin !== undefined;
-    const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-    const storedDraftThreadRef = storedDraftThread
-      ? scopeThreadRef(storedDraftThread.environmentId, storedDraftThread.threadId)
-      : null;
-    const reusableStoredDraftThread =
-      storedDraftThread !== null &&
-      storedDraftThread.promotedTo == null &&
-      storedDraftThreadRef !== null &&
-      readThreadShell(storedDraftThreadRef) === null
-        ? storedDraftThread
-        : null;
-    if (storedDraftThreadRef && reusableStoredDraftThread === null) {
-      markPromotedDraftThreadByRef(storedDraftThreadRef);
-    }
-    const emptyStoredDraftThread =
-      reusableStoredDraftThread &&
-      !composerDraftHasUserContent(getComposerDraft(reusableStoredDraftThread.draftId))
-        ? reusableStoredDraftThread
-        : null;
     const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
       ? currentRouteTarget.kind === "server"
         ? getDraftThread(currentRouteTarget.threadRef)
