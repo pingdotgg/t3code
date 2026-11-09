@@ -4,6 +4,7 @@ import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildMenuItems,
+  buildSyncMenuItems,
   requiresDefaultBranchConfirmation,
   resolveChangesTotals,
   resolveDefaultBranchActionDialogCopy,
@@ -96,6 +97,17 @@ describe("when: on default ref without open PR", () => {
 });
 
 describe("when: local changes are behind upstream", () => {
+  it("blocks pulling a diverged branch until it is rebased or merged", () => {
+    const diverged = status({ aheadCount: 1, behindCount: 1 });
+    const items = buildSyncMenuItems(diverged, false);
+    assert.isTrue(items.pull?.disabled);
+    assert.equal(
+      items.pull?.disabledReason,
+      "Branch has diverged from upstream. Rebase/merge first.",
+    );
+    assert.isFalse(buildSyncMenuItems(status({ behindCount: 1 }), false).pull?.disabled);
+  });
+
   it("keeps the commit action available without pushing, with or without an open PR", () => {
     const behind = status({ hasWorkingTreeChanges: true, behindCount: 2 });
     const commit = {

@@ -1,13 +1,18 @@
 import { createMemoryHistory } from "@tanstack/react-router";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   AgentSessionImportProjectChangedError,
+  NodeId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  RuntimeRequestId,
   ThreadId,
+  TurnItemId,
   WS_METHODS,
   type AgentSessionImportInput,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -23,10 +28,12 @@ import {
   ENVIRONMENT_ID,
   PROJECT_ID,
   fakeDriver,
+  emitThreadEvent,
   installFakeEnvironment,
+  threadWithHistory,
   type FakeDriver,
 } from "../../test/fakeEnvironment";
-import { render } from "../../test/render";
+import { act, render } from "../../test/render";
 
 // The socket is the only fake layer; see test/appScenarios.renders.tsx.
 vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (importOriginal) => {
@@ -135,4 +142,77 @@ it("a new draft does not load its reserved thread before the server lists it", a
     .filter((url) => url.includes(`/api/orchestration/threads/${threadId}/`));
   // A 404 here marks the thread deleted, and the view never loads it once the send creates it.
   expect(threadRequests).toEqual([]);
+});
+
+it("answers a pending question while an oversized message draft is set aside", async () => {
+  const thread = threadWithHistory("oversized-question-draft", 0);
+  using _environment = installFakeEnvironment([thread]);
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  const target = scopeThreadRef(ENVIRONMENT_ID, thread.id);
+  const oversizedDraft = "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS + 1);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  // AppRoot owns the router.
+  await using _app = await render(<AppRoot router={router} />, { router: false });
+  await expect.element(page.getByTestId("composer-editor")).toBeVisible();
+
+  const requestId = RuntimeRequestId.make("oversized-draft-question");
+  const nodeId = NodeId.make("oversized-draft-node");
+  const now = DateTime.makeUnsafe("2026-03-17T19:12:28.000Z");
+  await act(async () => {
+    await emitThreadEvent(thread.id, {
+      type: "runtime-request.updated",
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+    await emitThreadEvent(thread.id, {
+      type: "turn-item.updated",
+      payload: {
+        id: TurnItemId.make("oversized-draft-question-card"),
+        threadId: thread.id,
+        runId: null,
+        nodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "user_input_request",
+        requestId,
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope should we use?",
+            options: [],
+            initialAnswer: "Composer",
+          },
+        ],
+      },
+    });
+  });
+  await expect.element(page.getByText("Which scope should we use?", { exact: true })).toBeVisible();
+  await act(() => {
+    useComposerDraftStore.getState().setPrompt(target, oversizedDraft);
+  });
+  await expect.element(page.getByText(/Prompt is 1 character over/)).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Answer", exact: true }).click();
+  await expect.element(page.getByRole("button", { name: /Submitting/ }).first()).toBeVisible();
+  expect(useComposerDraftStore.getState().getComposerDraft(target)?.prompt).toBe(oversizedDraft);
 });

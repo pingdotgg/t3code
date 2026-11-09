@@ -525,6 +525,8 @@ type MessagesTimelineRowContent =
       updates: readonly OrchestrationV2Notification[];
       active: boolean;
       expanded: boolean;
+      /** The rows this fold shows only while open, in order. Empty while it is closed. */
+      revealedRowIds: readonly string[];
     }
   | {
       kind: "worktree-setup";
@@ -3148,6 +3150,22 @@ export function applyBackgroundActivityGroups(
       .find((id) => id !== undefined && updateIds.has(id.slice("background-activity:".length)));
     const id = expandedId ?? previousId ?? `background-activity:${first.id}`;
     const expanded = input.expandedWorkGroupIds?.has(id) ?? false;
+    const groupRows = rows.slice(start, index);
+    const finalAnswer = groupRows.findLast(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "assistant" &&
+        (row.message.runId === activeRunId || !row.message.streaming),
+    );
+    // The answer and its meta stay when the fold closes.
+    const keptRows =
+      finalAnswer?.kind === "message"
+        ? groupRows.filter(
+            (row) =>
+              row === finalAnswer ||
+              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
+          )
+        : [];
     result.push({
       kind: "background-activity",
       id,
@@ -3157,30 +3175,39 @@ export function applyBackgroundActivityGroups(
       updates,
       active: activeRunId !== null && runIds.has(activeRunId),
       expanded,
+      revealedRowIds: expanded
+        ? groupRows.filter((row) => !keptRows.includes(row)).map((row) => row.id)
+        : [],
     });
     // Expansion returns the original virtual rows, identities, disclosures and actions.
-    const groupRows = rows.slice(start, index);
-    if (expanded) {
-      result.push(...groupRows);
-    } else {
-      const finalAnswer = groupRows.findLast(
-        (row) =>
-          row.kind === "message" &&
-          row.message.role === "assistant" &&
-          (row.message.runId === activeRunId || !row.message.streaming),
-      );
-      if (finalAnswer?.kind === "message") {
-        result.push(
-          ...groupRows.filter(
-            (row) =>
-              row === finalAnswer ||
-              (row.kind === "assistant-meta" && row.message.id === finalAnswer.message.id),
-          ),
-        );
-      }
-    }
+    result.push(...(expanded ? groupRows : keptRows));
   }
   return result;
+}
+
+/**
+ * Where each row an open wake-ups fold reveals sits on the fold's rail: "end" closes it.
+ * Takes the folds' row ids as one string (ids newline-joined, folds NUL-joined) so callers
+ * can keep the map's identity while the rows around it stream.
+ */
+export function wakeUpsRailRows(foldRowIds: string): ReadonlyMap<string, "body" | "end"> {
+  const rail = new Map<string, "body" | "end">();
+  for (const fold of foldRowIds.split("\0")) {
+    const ids = fold.split("\n").filter((id) => id.length > 0);
+    ids.forEach((id, index) => rail.set(id, index === ids.length - 1 ? "end" : "body"));
+  }
+  return rail;
+}
+
+/** The key `wakeUpsRailRows` reads: every open wake-ups fold's revealed row ids. */
+export function wakeUpsRailKey(rows: readonly MessagesTimelineRow[]): string {
+  return rows
+    .flatMap((row) =>
+      row.kind === "background-activity" && row.revealedRowIds.length > 0
+        ? [row.revealedRowIds.join("\n")]
+        : [],
+    )
+    .join("\0");
 }
 
 interface MessagesTimelineRowsProjection {

@@ -8024,6 +8024,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       name: "attaches Claude's in-window categories at turn end, with T3 tools split out",
       getContextUsage: Effect.succeed(claudeContextUsage),
+      timesOut: false,
       breakdowns: [
         [
           { kind: "system_prompt", tokens: 3_000 },
@@ -8039,11 +8040,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       name: "keeps plain usage when Claude cannot report categories",
       getContextUsage: contextUsageUnsupported,
+      timesOut: false,
       breakdowns: [] satisfies ReadonlyArray<ContextBreakdown>,
     },
-  ])("$name", ({ getContextUsage, breakdowns }) =>
+    {
+      name: "completes the turn when Claude's context summary never responds",
+      getContextUsage: Effect.never,
+      timesOut: true,
+      breakdowns: [] satisfies ReadonlyArray<ContextBreakdown>,
+    },
+  ])("$name", ({ getContextUsage, timesOut, breakdowns }) =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarnessWithOptions({ getContextUsage });
+      const contextRequested = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        getContextUsage: Deferred.succeed(contextRequested, undefined).pipe(
+          Effect.andThen(getContextUsage),
+        ),
+      });
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -8063,6 +8076,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         harness.sdkMessages,
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000690", result: "OK" }),
       );
+      yield* Deferred.await(contextRequested);
+      if (timesOut) yield* TestClock.adjust("2 seconds");
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       const usages = harness.events.flatMap((event) =>
