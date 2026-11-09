@@ -78,6 +78,7 @@ function QuestionText(props: {
     <SelectableMarkdownText
       markdown={markdown}
       textStyle={styles.nativeTextStyle}
+      preserveSoftBreaks
       writingDirection={markdownProseDirection(markdown)}
       // Android's renderer aligns relative to each paragraph's direction.
       textAlign={
