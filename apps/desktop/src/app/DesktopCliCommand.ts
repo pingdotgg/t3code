@@ -437,7 +437,9 @@ export const make = Effect.gen(function* () {
       // A t3 that is not ours where we would link, even off PATH, means the user has one already.
       for (const directory of userCandidates(environment.homeDirectory)) {
         const other = path.join(directory, "t3");
-        if ((yield* exists(other)) && !(yield* isOurLink(other))) {
+        const present =
+          (yield* exists(other)) || Option.isSome(yield* fs.readLink(other).pipe(Effect.option));
+        if (present && !(yield* isOurLink(other))) {
           return yield* logInfo("left the t3 command to Settings beside another t3", { other });
         }
       }

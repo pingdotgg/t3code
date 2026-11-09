@@ -182,12 +182,18 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect(yield* fs.readFileString(theirs)).toBe("npm's t3\n");
       expect(yield* fs.readLink(path.join(home, "bin", "t3"))).toBe(path.join(home, "gone"));
 
-      // A fresh install beside someone else's t3, even off PATH, adds no second t3 in ~/bin.
-      const besideHome = yield* fs.makeTempDirectoryScoped();
-      yield* fs.makeDirectory(path.join(besideHome, ".local", "bin"), { recursive: true });
-      yield* fs.writeFileString(path.join(besideHome, ".local", "bin", "t3"), "npm's t3\n");
-      yield* (yield* commandIn({ home: besideHome })).installOnFirstLaunch;
-      expect(yield* fs.exists(path.join(besideHome, "bin", "t3"))).toBe(false);
+      // A fresh install beside someone else's t3 (even off PATH or a dangling link) adds no second
+      // t3 in ~/bin.
+      for (const dangling of [false, true]) {
+        const besideHome = yield* fs.makeTempDirectoryScoped();
+        const other = path.join(besideHome, ".local", "bin", "t3");
+        yield* fs.makeDirectory(path.dirname(other), { recursive: true });
+        yield* dangling
+          ? fs.symlink(path.join(besideHome, "gone"), other)
+          : fs.writeFileString(other, "npm's t3\n");
+        yield* (yield* commandIn({ home: besideHome })).installOnFirstLaunch;
+        expect(yield* fs.exists(path.join(besideHome, "bin", "t3"))).toBe(false);
+      }
 
       const launcher = path.join(home, ".t3", "bin", "t3");
       yield* fs.writeFileString(launcher, "npm's t3\n");
