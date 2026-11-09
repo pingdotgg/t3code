@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { createElement } from "react";
+import { describe, expect, it, vi } from "vite-plus/test";
 
+import { act, fakeTimers, render } from "../test/render";
 import {
   shortcutModifierStateAfterKeyboardEvent,
   type ShortcutModifierState,
+  useShortcutModifierSelector,
 } from "./shortcutModifierState";
 
 const emptyState = (): ShortcutModifierState => ({
@@ -107,5 +110,35 @@ describe("shortcutModifierState", () => {
       keyboardEventLike("keydown", { key: "a", metaKey: false }),
     );
     expect(state).toEqual(emptyState());
+  });
+});
+
+function HeldControl() {
+  const shown = useShortcutModifierSelector((modifiers, held) => held && modifiers.ctrlKey);
+  return createElement("output", null, shown ? "shown" : "hidden");
+}
+
+describe("useShortcutModifierSelector", () => {
+  it("waits for the delay again on a second hold", async () => {
+    await using screen = await render(createElement(HeldControl), {
+      // A bare hook host; nothing here links or navigates.
+      router: false,
+    });
+    using _timers = fakeTimers();
+    const control = (type: "keydown" | "keyup") =>
+      act(() => window.dispatchEvent(new KeyboardEvent(type, { key: "Control", ctrlKey: true })));
+
+    await control("keydown");
+    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1_000));
+    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
+
+    await control("keyup");
+    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
+
+    await control("keydown");
+    await expect.element(screen.getByRole("status")).toHaveTextContent("hidden");
+    await act(() => vi.advanceTimersByTime(1_000));
+    await expect.element(screen.getByRole("status")).toHaveTextContent("shown");
   });
 });
