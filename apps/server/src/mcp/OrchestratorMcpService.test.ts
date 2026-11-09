@@ -22,7 +22,6 @@ import {
   ProviderTurnId,
   RunId,
   ThreadId,
-  type OrchestrationV2DomainEvent,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
@@ -36,7 +35,6 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -56,7 +54,6 @@ import {
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderContinuationService from "../orchestration-v2/ProviderContinuationService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -73,8 +70,6 @@ import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { resolveRuntimeMode } from "./delegatedTaskModes.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 const decodeTarget = Schema.decodeUnknownEffect(OrchestratorMcpTarget);
 
@@ -3768,279 +3763,6 @@ describe("OrchestratorMcpService thread stop", () => {
             runId: runningRun.id,
             status: "interrupt_requested",
           });
-        }).pipe(Effect.provide(layerTest));
-      }),
-    ),
-  );
-});
-
-describe("OrchestratorMcpService provider wake turns", () => {
-  const driver = ProviderDriverKind.make("claudeAgent");
-  const instanceId = ProviderInstanceId.make("claudeAgent");
-  const modelSelection = { instanceId, model: "claude-opus-4-6" };
-  const threadId = ThreadId.make("thread:mcp-wake-parent");
-  const providerSessionId = "provider-session:mcp-wake";
-  const scope: McpInvocationScope = {
-    environmentId: EnvironmentId.make("environment:mcp-wake"),
-    requestNamespace: providerSessionId,
-    thread: { threadId, providerSessionId, providerInstanceId: instanceId },
-    client: undefined,
-    capabilities: new Set(["orchestration"]),
-    issuedAt: 1,
-  };
-
-  it.effect("delegate_task in a provider-started wake turn joins that turn's run", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace("mcp-wake-delegate");
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-        const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-          instanceId,
-          driver,
-          getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-          openSession: (input) =>
-            Effect.gen(function* () {
-              const now = yield* DateTime.now;
-              return {
-                instanceId,
-                driver,
-                providerSessionId: input.providerSessionId,
-                providerSession: {
-                  id: input.providerSessionId,
-                  driver,
-                  providerInstanceId: instanceId,
-                  status: "ready",
-                  cwd,
-                  model: modelSelection.model,
-                  capabilities: CodexProviderCapabilitiesV2,
-                  createdAt: now,
-                  updatedAt: now,
-                  lastError: null,
-                },
-                events: Stream.fromQueue(events),
-                ensureThread: ({ threadId: appThreadId }) =>
-                  Effect.succeed({
-                    id: ProviderThreadId.make(`provider-thread:${appThreadId}`),
-                    driver,
-                    providerInstanceId: instanceId,
-                    providerSessionId: input.providerSessionId,
-                    appThreadId,
-                    ownerNodeId: null,
-                    nativeThreadRef: {
-                      driver,
-                      nativeId: `native:${appThreadId}`,
-                      strength: "strong",
-                    },
-                    nativeConversationHeadRef: null,
-                    status: "idle",
-                    firstRunOrdinal: null,
-                    lastRunOrdinal: null,
-                    handoffIds: [],
-                    forkedFrom: null,
-                    createdAt: now,
-                    updatedAt: now,
-                  }),
-                resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-                startTurn: (turn) =>
-                  Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: null,
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  }).pipe(Effect.asVoid),
-                steerTurn: () => Effect.die("unused"),
-                interruptTurn: () => Effect.void,
-                respondToRuntimeRequest: () => Effect.die("unused"),
-                readThreadSnapshot: () => Effect.die("unused"),
-                rollbackThread: () => Effect.die("unused"),
-                forkThread: () => Effect.die("unused"),
-              };
-            }),
-        };
-        const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
-        const layerDatabase = SqlitePersistence.layerMemory;
-        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-          { name: "mcp-wake-delegate", runtimePolicyOverride: { cwd } },
-          layerAdapters,
-          { databaseLayer: layerDatabase, runEffectWorker: false },
-        );
-        const layerSettings = ServerSettings.layerTest({
-          providerInstances: { [instanceId]: { driver: "claudeAgent", enabled: true } },
-        });
-        const layerThreads = ThreadManagementService.layer.pipe(
-          Layer.provideMerge(layerOrchestrator),
-          Layer.provide(layerSettings),
-          Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-        );
-        // The orchestrator is slow to commit the wake turn's message.dispatch: hold it.
-        const continuationDispatchReached = yield* Deferred.make<void>();
-        const releaseContinuationDispatch = yield* Deferred.make<void>();
-        const layerSlowContinuationService = ProviderContinuationService.layer.pipe(
-          Layer.provide(
-            Layer.effect(
-              ThreadManagementService.ThreadManagementService,
-              Effect.gen(function* () {
-                const threads = yield* ThreadManagementService.ThreadManagementService;
-                return ThreadManagementService.ThreadManagementService.of({
-                  ...threads,
-                  dispatch: (command) =>
-                    Deferred.succeed(continuationDispatchReached, undefined).pipe(
-                      Effect.andThen(Deferred.await(releaseContinuationDispatch)),
-                      Effect.andThen(threads.dispatch(command)),
-                    ),
-                });
-              }),
-            ),
-          ),
-          Layer.provide(IdAllocator.layer),
-        );
-        const layerTest = layerOrchestratorService.pipe(
-          Layer.merge(layerSlowContinuationService),
-          Layer.provideMerge(layerThreads),
-          Layer.provide(
-            Layer.mergeAll(
-              NodeServices.layer,
-              NodeCrypto.layer,
-              layerAdapters,
-              layerSettings,
-              Layer.mock(ProviderRegistry.ProviderRegistry)({
-                getProviders: Effect.succeed([
-                  {
-                    instanceId,
-                    driver,
-                    enabled: true,
-                    installed: true,
-                    version: "test",
-                    status: "ready",
-                    auth: { status: "authenticated" },
-                    checkedAt: "2026-11-09T00:00:00.000Z",
-                    models: [
-                      {
-                        slug: modelSelection.model,
-                        name: modelSelection.model,
-                        isCustom: false,
-                        capabilities: null,
-                      },
-                    ],
-                    slashCommands: [],
-                    skills: [],
-                  },
-                ]),
-              }),
-              Layer.mock(ProjectService.ProjectService)({}),
-              Layer.mock(SecretRequests.SecretRequests)({}),
-              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-            ),
-          ),
-          Layer.provideMerge(ProviderContinuationRequests.layer),
-        );
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          const continuations = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-            orchestrator.streamDomainEvents.pipe(
-              Stream.filter(predicate),
-              Stream.take(1),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make("create"),
-            threadId,
-            projectId: ProjectId.make("project:mcp-wake"),
-            title: "Wake",
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-            createdBy: "user",
-            creationSource: "web",
-          });
-          const running = yield* watch(
-            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
-          );
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make("send:start"),
-            threadId,
-            messageId: MessageId.make("message:start"),
-            text: "Run the build in the background.",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-            createdBy: "user",
-            creationSource: "web",
-          });
-          yield* worker.drain();
-          yield* Fiber.join(running);
-          const started = yield* orchestrator.getThreadProjection(threadId);
-          const firstRun = started.runs[0]!;
-          const turn = started.providerTurns[0]!;
-          const firstSettled = yield* watch(
-            (event) =>
-              event.type === "run.updated" &&
-              event.payload.id === firstRun.id &&
-              event.payload.status === "waiting",
-          );
-          yield* Queue.offer(events, {
-            type: "provider_turn.updated",
-            driver,
-            providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
-          });
-          yield* Queue.offer(events, {
-            type: "turn.terminal",
-            driver,
-            providerThreadId: turn.providerThreadId,
-            providerTurnId: turn.id,
-            runOrdinal: firstRun.ordinal,
-            status: "completed",
-            failure: null,
-            threadDisposition: "reusable",
-          });
-          yield* Fiber.join(firstSettled);
-          yield* worker.drain();
-          const idle = yield* orchestrator.getThreadProjection(threadId);
-          assert.equal(idle.runs[0]?.status, "completed");
-
-          // The background command finished and Claude started a wake turn on its own.
-          yield* continuations.offer({
-            threadId,
-            providerThreadId: turn.providerThreadId,
-            driver,
-            detail: null,
-          });
-          yield* Deferred.await(continuationDispatchReached);
-          const delegated = yield* service
-            .delegateTask(scope, {
-              task: "Review the build output.",
-              mode: "async",
-              clientRequestId: "wake-delegate",
-            })
-            .pipe(Effect.result, Effect.forkScoped);
-          yield* Deferred.succeed(releaseContinuationDispatch, undefined);
-          const result = yield* Fiber.join(delegated);
-          if (Result.isFailure(result)) {
-            assert.fail(`delegate_task failed in the wake turn: ${JSON.stringify(result.failure)}`);
-          }
-          const after = yield* orchestrator.getThreadProjection(threadId);
-          const wakeRun = after.runs.find((run) => run.ordinal === firstRun.ordinal + 1);
-          assert.isDefined(wakeRun);
-          const task = after.subagents.find((subagent) => subagent.id === result.success.taskId);
-          assert.equal(task?.runId, wakeRun!.id);
         }).pipe(Effect.provide(layerTest));
       }),
     ),

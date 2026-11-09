@@ -40,14 +40,16 @@ export class ProviderContinuationRequests extends Context.Reference<{
   readonly take: Effect.Effect<ProviderContinuationRequest>;
   /** The taker calls this once per request when its dispatch has finished, either way. */
   readonly settle: (threadId: ThreadId) => Effect.Effect<void>;
-  /** Waits until no request for the thread is offered and unsettled; true when it had to wait. */
-  readonly awaitSettled: (threadId: ThreadId) => Effect.Effect<boolean>;
+  readonly isPending: (threadId: ThreadId) => Effect.Effect<boolean>;
+  /** Waits until no request for the thread is offered and unsettled. */
+  readonly awaitSettled: (threadId: ThreadId) => Effect.Effect<void>;
 }>("@t3tools/provider-core/server/ProviderContinuationRequests", {
   defaultValue: () => ({
     offer: () => Effect.void,
     take: Effect.never,
     settle: () => Effect.void,
-    awaitSettled: () => Effect.succeed(false),
+    isPending: () => Effect.succeed(false),
+    awaitSettled: () => Effect.void,
   }),
 }) {}
 
@@ -65,26 +67,31 @@ export const layer = Layer.effect(
         return updated;
       });
     return {
-      offer: Effect.fn("ProviderContinuationRequests.offer")(function* (
-        request: ProviderContinuationRequest,
-      ) {
-        yield* adjustPending(request.threadId, 1);
-        yield* Queue.offer(queue, request);
-      }),
+      offer: Effect.fn("ProviderContinuationRequests.offer")(
+        function* (request: ProviderContinuationRequest) {
+          yield* adjustPending(request.threadId, 1);
+          yield* Queue.offer(queue, request);
+        },
+        // Every count the taker will settle must reach the queue.
+        Effect.uninterruptible,
+      ),
       take: Queue.take(queue),
       settle: Effect.fn("ProviderContinuationRequests.settle")(function* (threadId: ThreadId) {
         yield* adjustPending(threadId, -1);
       }),
+      isPending: Effect.fn("ProviderContinuationRequests.isPending")(function* (
+        threadId: ThreadId,
+      ) {
+        return (yield* SubscriptionRef.get(pending)).has(threadId);
+      }),
       awaitSettled: Effect.fn("ProviderContinuationRequests.awaitSettled")(function* (
         threadId: ThreadId,
       ) {
-        if (!(yield* SubscriptionRef.get(pending)).has(threadId)) return false;
         yield* SubscriptionRef.changes(pending).pipe(
           Stream.filter((current) => !current.has(threadId)),
           Stream.take(1),
           Stream.runDrain,
         );
-        return true;
       }),
     };
   }),

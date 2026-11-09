@@ -31,7 +31,6 @@ import * as Option from "effect/Option";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 
 import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
-import { requireOwnedRun } from "../mcp/threadAccess.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
@@ -238,15 +237,21 @@ const make = Effect.gen(function* () {
         const existing = yield* readCard(threadId, turnItemId).pipe(Effect.mapError(unreadable));
         if (existing !== undefined) return resultOf(existing);
       }
-      const readParent = threadManagement
+      const parent = yield* threadManagement
         .getThreadRecords(threadId, ["runs"], { messageRoles: [] })
         .pipe(Effect.mapError(unreadable));
-      const run = yield* requireOwnedRun(
-        threadScope,
-        yield* readParent,
-        readParent,
-        "Asking to link an environment requires an active run owned by this MCP provider session.",
-      );
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message:
+            "Asking to link an environment requires an active run owned by this MCP provider session.",
+        });
+      }
       // Best effort: the card names the machine at an address the agent was
       // given, and the client finds it by id.
       const peer = input.url === undefined ? Option.none() : yield* peerLinks.describe(input.url);

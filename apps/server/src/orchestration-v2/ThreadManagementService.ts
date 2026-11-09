@@ -504,7 +504,7 @@ export class ThreadManagementService extends Context.Service<
   ThreadManagementServiceShape
 >()("t3/orchestration-v2/ThreadManagementService") {}
 
-function isActiveRun(run: OrchestrationV2Run): boolean {
+export function isActiveRun(run: OrchestrationV2Run): boolean {
   return (
     run.status === "preparing" ||
     run.status === "starting" ||

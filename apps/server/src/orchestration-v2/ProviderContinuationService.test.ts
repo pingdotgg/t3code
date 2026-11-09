@@ -112,9 +112,8 @@ describe("ProviderContinuationService", () => {
       const dispatched = yield* Queue.unbounded<unknown>();
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-        assert.isFalse(yield* requests.awaitSettled(threadId));
         yield* requests.offer(request());
-        assert.isTrue(yield* requests.awaitSettled(threadId));
+        yield* requests.awaitSettled(threadId);
         assert.equal(yield* Queue.size(dispatched), 0);
       }).pipe(
         Effect.provide(

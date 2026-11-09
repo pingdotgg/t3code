@@ -125,12 +125,7 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import {
-  isLiveCallerShell,
-  recheckAfterProviderContinuation,
-  requireOwnedRun,
-  threadNotFound,
-} from "./threadAccess.ts";
+import { isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
@@ -1260,25 +1255,23 @@ const make = Effect.gen(function* () {
       "parent_not_active",
       "The calling provider no longer owns an active thread run.",
     );
-    // Decide from one fresh snapshot: a run may have started since `parent` was read.
-    const checkShell = threadManagement.getThreadShell(parent.thread.id).pipe(
-      Effect.mapError(threadManagementFailure),
-      Effect.flatMap((shell) =>
-        isLiveCallerShell(shell, scope.thread?.providerInstanceId)
-          ? Effect.void
-          : Effect.fail(notActive),
-      ),
-    );
     const activeRun = ThreadManagementService.latestActiveRun(parent);
-    const check =
-      parent.thread.archivedAt === null && activeRun === undefined
-        ? checkShell
-        : parent.thread.archivedAt !== null ||
-            activeRun === undefined ||
-            activeRun.providerInstanceId !== scope.thread?.providerInstanceId
-          ? Effect.fail(notActive)
-          : Effect.void;
-    return check.pipe(recheckAfterProviderContinuation(parent.thread.id, checkShell));
+    if (parent.thread.archivedAt === null && activeRun === undefined) {
+      // Decide from this one fresh snapshot: a run may have started since `parent` was read.
+      return threadManagement.getThreadShell(parent.thread.id).pipe(
+        Effect.mapError(threadManagementFailure),
+        Effect.flatMap((shell) =>
+          isLiveCallerShell(shell, scope.thread?.providerInstanceId)
+            ? Effect.void
+            : Effect.fail(notActive),
+        ),
+      );
+    }
+    return parent.thread.archivedAt !== null ||
+      activeRun === undefined ||
+      activeRun.providerInstanceId !== scope.thread?.providerInstanceId
+      ? Effect.fail(notActive)
+      : Effect.void;
   };
 
   const loadReadableThread = Effect.fn("OrchestratorMcpService.loadReadableThread")(function* (
@@ -2191,12 +2184,17 @@ const make = Effect.gen(function* () {
     requestSecret: Effect.fn("OrchestratorMcpService.requestSecret")(function* (scope, input) {
       const { scope: threadScope, parent } = yield* loadThreadCaller(scope, "request_secret");
       const threadId = threadScope.thread.threadId;
-      const run = yield* requireOwnedRun(
-        threadScope,
-        parent,
-        loadThreadRecords(threadScope.thread.threadId, ["runs"]),
-        "Asking for a secret requires an active run owned by this MCP provider session.",
-      );
+      const run = ThreadManagementService.latestActiveRun(parent);
+      if (
+        run === undefined ||
+        run.rootNodeId === null ||
+        run.providerInstanceId !== threadScope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Asking for a secret requires an active run owned by this MCP provider session.",
+        );
+      }
       // A secret the user already pasted needs no card: it goes straight to a file.
       if (input.value !== undefined) {
         if (input.delivery === "secretRef") {
@@ -2446,12 +2444,19 @@ const make = Effect.gen(function* () {
           "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
         );
       }
-      const parentRun = yield* requireOwnedRun(
-        scope,
-        parent,
-        loadThreadRecords(scope.thread.threadId, ["runs"]),
-        "Delegated tasks require an active run owned by this MCP provider session.",
-      );
+      const parentRun = parent.runs
+        .filter(ThreadManagementService.isActiveRun)
+        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      if (
+        parentRun === undefined ||
+        parentRun.rootNodeId === null ||
+        parentRun.providerInstanceId !== scope.thread.providerInstanceId
+      ) {
+        return yield* failure(
+          "parent_not_active",
+          "Delegated tasks require an active run owned by this MCP provider session.",
+        );
+      }
       const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
@@ -2832,12 +2837,17 @@ const make = Effect.gen(function* () {
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
-        const parentRun = yield* requireOwnedRun(
-          scope,
-          parent,
-          loadThreadRecords(scope.thread.threadId, ["runs"]),
-          "Thread creation requires an active run owned by this MCP provider session.",
-        );
+        const parentRun = ThreadManagementService.latestActiveRun(parent);
+        if (
+          parentRun === undefined ||
+          parentRun.rootNodeId === null ||
+          parentRun.providerInstanceId !== scope.thread.providerInstanceId
+        ) {
+          return yield* failure(
+            "parent_not_active",
+            "Thread creation requires an active run owned by this MCP provider session.",
+          );
+        }
         const parentNodeId = parentRun.rootNodeId;
         const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);

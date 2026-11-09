@@ -8,10 +8,14 @@ import {
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
@@ -356,6 +360,40 @@ it.effect("refuses a change when the calling thread cannot be read", () =>
       ),
     ),
   ),
+);
+
+it.effect("reads a waking caller's modes after its continuation starts the run", () =>
+  Effect.gen(function* () {
+    const shell = yield* Ref.make(liveThreadShell(fullAccessThreadId, { activeRunId: null }));
+    const waiting = yield* Deferred.make<void>();
+    const settled = yield* Deferred.make<void>();
+    const outcome = yield* call("writes_environment", fullAccess).pipe(
+      Effect.provide(
+        probeServer(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: () => Ref.get(shell),
+          }),
+        ),
+      ),
+      Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
+        offer: () => Effect.void,
+        take: Effect.never,
+        settle: () => Effect.void,
+        isPending: () => Effect.succeed(true),
+        awaitSettled: () =>
+          Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Deferred.await(settled))),
+      }),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(waiting);
+    // The wake turn's run starts after the user lowered the thread's modes.
+    yield* Ref.set(
+      shell,
+      liveThreadShell(fullAccessThreadId, { runtimeMode: "approval-required" }),
+    );
+    yield* Deferred.succeed(settled, undefined);
+    expect(yield* Fiber.join(outcome)).toBe("capability_denied");
+  }),
 );
 
 const box = EnvironmentId.make("environment-box");

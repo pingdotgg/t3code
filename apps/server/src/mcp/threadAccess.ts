@@ -2,7 +2,6 @@ import type { ProjectionRecordField } from "../orchestration-v2/ProjectionStore.
 import {
   CommandId,
   OrchestratorMcpFailure,
-  type OrchestrationV2ThreadProjection,
   type ProjectId,
   type ProviderInstanceId,
   type ProviderInteractionMode,
@@ -12,9 +11,6 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -141,73 +137,17 @@ export const isLiveCallerShell = (
     ) ??
       false));
 
-const isOrchestratorMcpFailure = Schema.is(OrchestratorMcpFailure);
-
-/** True when a continuation for the thread was pending and has since dispatched or failed. */
-const awaitProviderContinuation = (threadId: ThreadId): Effect.Effect<boolean> =>
-  ProviderContinuationRequests.ProviderContinuationRequests.pipe(
-    Effect.flatMap((continuations) => continuations.awaitSettled(threadId)),
-    Effect.timeoutOption("60 seconds"),
-    Effect.map(Option.getOrElse(() => false)),
-  );
-
-/**
- * A provider-started wake turn calls tools before its continuation dispatch commits the run.
- * When `self` fails with parent_not_active while one is pending, wait for it once and run `recheck`.
- */
-export const recheckAfterProviderContinuation =
-  <A2, E2, R2>(threadId: ThreadId, recheck: Effect.Effect<A2, E2, R2>) =>
-  <A, E, R>(self: Effect.Effect<A, E, R>) =>
-    self.pipe(
-      Effect.catchIf(
-        (error): error is E & OrchestratorMcpFailure =>
-          isOrchestratorMcpFailure(error) && error.code === "parent_not_active",
-        (notActive) =>
-          Effect.gen(function* () {
-            if (!(yield* awaitProviderContinuation(threadId))) return yield* notActive;
-            return yield* recheck;
-          }),
-      ),
-    );
-
-/** The caller's latest active run with its root node, rereading once if a wake turn's run is pending. */
-export const requireOwnedRun = <E, R>(
-  scope: McpInvocationContext.McpThreadInvocationScope,
-  parent: Pick<OrchestrationV2ThreadProjection, "runs">,
-  rereadRuns: Effect.Effect<Pick<OrchestrationV2ThreadProjection, "runs">, E, R>,
-  message: string,
-) => {
-  const owned = (projection: Pick<OrchestrationV2ThreadProjection, "runs">) => {
-    const run = ThreadManagement.latestActiveRun(projection);
-    return run === undefined ||
-      run.rootNodeId === null ||
-      run.providerInstanceId !== scope.thread.providerInstanceId
-      ? Effect.fail(new OrchestratorMcpFailure({ code: "parent_not_active", message }))
-      : Effect.succeed({ ...run, rootNodeId: run.rootNodeId });
-  };
-  return owned(parent).pipe(
-    recheckAfterProviderContinuation(scope.thread.threadId, rereadRuns.pipe(Effect.flatMap(owned))),
-  );
-};
-
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
-export function assertLiveCaller({ caller, scope, threads }: Caller) {
+export function assertLiveCaller({ caller, scope }: Caller) {
   if (caller === undefined) return Effect.void;
-  const check = (shell: OrchestrationV2ThreadShell | null) =>
-    isLiveCallerShell(shell, scope.thread?.providerInstanceId)
-      ? Effect.void
-      : Effect.fail(
-          new OrchestratorMcpFailure({
-            code: "parent_not_active",
-            message: "The calling provider no longer owns an active thread run.",
-          }),
-        );
-  return check(caller).pipe(
-    recheckAfterProviderContinuation(
-      caller.id,
-      threads.getThreadShell(caller.id).pipe(Effect.mapError(unavailable), Effect.flatMap(check)),
-    ),
-  );
+  return isLiveCallerShell(caller, scope.thread?.providerInstanceId)
+    ? Effect.void
+    : Effect.fail(
+        new OrchestratorMcpFailure({
+          code: "parent_not_active",
+          message: "The calling provider no longer owns an active thread run.",
+        }),
+      );
 }
 
 export const assertFullAccess = (context: Caller, message: string) =>
