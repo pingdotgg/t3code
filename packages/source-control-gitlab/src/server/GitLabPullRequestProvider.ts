@@ -104,10 +104,10 @@ const READ_CACHE_CAPACITY = 256;
 /** A host's GitLab version only changes on upgrade. */
 const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 /**
- * GitLab takes at most 50 paths per `projects` read, but 50 projects' rows time out its query;
- * 25 projects of 20 rows answer in about seven seconds on gitlab.com.
+ * gitlab.com cuts GraphQL requests off at about 20 s: 25 projects of 20 rows took 8.5-15 s and
+ * sometimes timed out, while 10 took about 6 s and 5 about 2-4 s.
  */
-const PROJECTS_PER_READ = 25;
+const PROJECTS_PER_READ = 10;
 const ROWS_PER_PROJECT = 20;
 /** A whole chunk of the service's projects at once. */
 const PROJECT_READ_CONCURRENCY = 4;
@@ -343,8 +343,12 @@ export const make = Effect.gen(function* () {
             detail: "This GitLab version lists one project at a time.",
           });
         }
+        const boundarySecond =
+          input.cursor === undefined ? undefined : wholeSecond(input.cursor.updatedBefore);
         const updatedBefore =
-          input.cursor === undefined ? undefined : pastBoundarySecond(input.cursor.updatedBefore);
+          boundarySecond === undefined
+            ? undefined
+            : DateTime.formatIso(DateTime.add(boundarySecond, { seconds: 1 }));
         const chunks: Array<ReadonlyArray<string>> = [];
         for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
           chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
@@ -352,20 +356,48 @@ export const make = Effect.gen(function* () {
         const pages = (yield* Effect.forEach(
           chunks,
           (repositories) =>
-            cli.listMergeRequestsInProjects({
-              cwd: input.cwd,
-              host: input.host,
-              repositories,
-              state: input.state,
-              involvement: input.involvement,
-              viewer: input.viewer,
-              first: Math.min(input.limit, ROWS_PER_PROJECT),
-              updatedBefore,
-              query: input.query,
-              filters: input.filters,
-            }),
+            cli
+              .listMergeRequestsInProjects({
+                cwd: input.cwd,
+                host: input.host,
+                repositories,
+                state: input.state,
+                involvement: input.involvement,
+                viewer: input.viewer,
+                first: Math.min(input.limit, ROWS_PER_PROJECT),
+                updatedBefore,
+                query: input.query,
+                filters: input.filters,
+              })
+              .pipe(
+                // The caller reads a project left out on its own, so one slow read loses no rows.
+                Effect.catchIf(
+                  (cause) =>
+                    cause._tag !== "GitLabCliUnavailableError" &&
+                    cause._tag !== "GitLabCliAuthenticationError",
+                  (cause) =>
+                    Effect.logWarning("GitLab merge request list across projects failed", {
+                      projects: repositories.length,
+                      reason: cause._tag,
+                    }).pipe(Effect.as([])),
+                ),
+              ),
           { concurrency: PROJECT_READ_CONCURRENCY },
-        ).pipe(Effect.mapError(failed))).flat();
+        ).pipe(Effect.mapError(failed)))
+          .flat()
+          // A project whose whole read sits in the boundary second would hand the same rows back
+          // on every continuation; leaving it out sends it to the caller's offset-paged read.
+          .filter(({ page }) => {
+            const oldest = page.items.at(-1)?.updatedAt;
+            return (
+              boundarySecond === undefined ||
+              !page.hasNextPage ||
+              (oldest !== undefined &&
+                Option.exists(DateTime.make(oldest), (time) =>
+                  DateTime.isLessThan(time, boundarySecond),
+                ))
+            );
+          });
 
         // A project with more rows than it sent may have some newer than another project's
         // oldest, so rows older than the newest such cut are left to the next page.
@@ -749,14 +781,13 @@ export const make = Effect.gen(function* () {
 });
 
 /**
- * GitLab reports `updatedAt` to the second but compares its stored fraction, so reading the
- * boundary second inclusively takes the next one. The caller drops rows it already has there.
+ * GitLab reports `updatedAt` to the second but compares its stored fraction, so a continuation
+ * reads up to the end of the boundary second. The caller drops rows it already has there.
  */
-function pastBoundarySecond(updatedBefore: string): string {
-  return Option.match(DateTime.make(updatedBefore), {
-    onNone: () => updatedBefore,
-    onSome: (boundary) => DateTime.formatIso(DateTime.add(boundary, { seconds: 1 })),
-  });
+function wholeSecond(updatedAt: string): DateTime.Utc | undefined {
+  return Option.getOrUndefined(
+    Option.map(DateTime.make(updatedAt), (time) => DateTime.startOf(time, "second")),
+  );
 }
 
 function withListState<Item extends { readonly number: number }>(

@@ -2358,74 +2358,196 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
   }),
 );
 
+const gitLabProviderOver = (run: (args: ReadonlyArray<string>, stdin: string) => unknown) =>
+  GitLabDriver.driver.make.pipe(
+    Effect.map(({ pullRequests }) => {
+      assert.isNotNull(pullRequests);
+      return pullRequests;
+    }),
+    Effect.provide(
+      Layer.mergeAll(
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) =>
+              Effect.sync(() =>
+                TestSourceControlHost.processOutput(
+                  JSON.stringify(
+                    input.args[1] === "user"
+                      ? { username: "reviewer" }
+                      : run(input.args, input.stdin ?? "{}"),
+                  ),
+                ),
+              ),
+          },
+        }),
+        SourceControlRateLimit.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+        FetchHttpClient.layer,
+      ),
+    ),
+  );
+
+const gitLabProjects = (repositories: ReadonlyArray<string>) =>
+  repositories.map((repository, index) =>
+    project({
+      id: `p${index}`,
+      title: repository,
+      workspaceRoot: `/w/${index}`,
+      repository,
+      provider: "gitlab",
+    }),
+  );
+
+interface GitLabGraphqlRequest {
+  readonly query?: string;
+  readonly variables?: {
+    readonly fullPaths?: ReadonlyArray<string>;
+    readonly first?: number;
+    readonly updatedBefore?: string;
+  };
+}
+
 it.effect("lists many GitLab projects on one host in a few glab reads, not one per project", () =>
   Effect.gen(function* () {
     const reads: Array<string> = [];
     const emptyPage = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] };
-    const gitlab = yield* GitLabDriver.driver.make.pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          TestSourceControlHost.layer({
-            process: {
-              run: (input) => {
-                const path = input.args[1];
-                if (path === "user") {
-                  return Effect.succeed(
-                    TestSourceControlHost.processOutput(JSON.stringify({ username: "reviewer" })),
-                  );
-                }
-                reads.push(path ?? input.args.join(" "));
-                if (path !== "graphql") {
-                  return Effect.succeed(TestSourceControlHost.processOutput("[]"));
-                }
-                const request = JSON.parse(input.stdin ?? "{}") as {
-                  readonly query?: string;
-                  readonly variables?: { readonly fullPaths?: ReadonlyArray<string> };
-                };
-                const data = request.query?.includes("version")
-                  ? { metadata: { version: "19.6.0" } }
-                  : {
-                      metadata: { enterprise: false },
-                      project: { mergeRequests: emptyPage },
-                      projects: {
-                        pageInfo: emptyPage.pageInfo,
-                        nodes: (request.variables?.fullPaths ?? []).map((fullPath) => ({
-                          fullPath,
-                          mergeRequests: emptyPage,
-                        })),
-                      },
-                    };
-                return Effect.succeed(
-                  TestSourceControlHost.processOutput(JSON.stringify({ data })),
-                );
-              },
+    const gitlab = yield* gitLabProviderOver((args, stdin) => {
+      const path = args[1];
+      reads.push(path ?? args.join(" "));
+      if (path !== "graphql") return [];
+      const request = JSON.parse(stdin) as GitLabGraphqlRequest;
+      const data = request.query?.includes("version")
+        ? { metadata: { version: "19.6.0" } }
+        : {
+            metadata: { enterprise: false },
+            project: { mergeRequests: emptyPage },
+            projects: {
+              nodes: (request.variables?.fullPaths ?? []).map((fullPath) => ({
+                fullPath,
+                mergeRequests: emptyPage,
+              })),
             },
-          }),
-          SourceControlRateLimit.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
-          FetchHttpClient.layer,
-        ),
-      ),
+          };
+      return { data };
+    });
+    const projects = gitLabProjects(
+      Array.from({ length: 60 }, (_, index) => `gitlab-org/project-${index}`),
     );
-    assert.isNotNull(gitlab.pullRequests);
-    const projects = Array.from({ length: 60 }, (_, index) =>
-      project({
-        id: `p${index}`,
-        title: `project ${index}`,
-        workspaceRoot: `/w/${index}`,
-        repository: `gitlab-org/project-${index}`,
-        provider: "gitlab",
-      }),
-    );
-    const service = yield* makeService({ projects, providers: [gitlab.pullRequests] });
+    const service = yield* makeService({ projects, providers: [gitlab] });
 
     const result = yield* service.list({ state: "open", involvement: "all" });
 
     assert.deepStrictEqual(result.errors, []);
-    // GitLab takes at most 50 project paths per GraphQL request; one read per project is what
-    // got gitlab.com to answer HTTP 429 on a large workspace.
-    expect(reads.length).toBeLessThanOrEqual(projects.length / 10);
+    // One read per project is what got gitlab.com to answer HTTP 429 on a large workspace.
+    expect(reads.length).toBeLessThanOrEqual(projects.length / 5);
+  }),
+);
+
+it.effect("pages GitLab projects whose newest rows all share the boundary second", () =>
+  Effect.gen(function* () {
+    // GitLab stores sub-second times, shows them to the second, and compares the stored time.
+    const at = (second: number, millis: number) =>
+      `2026-11-09T10:00:0${second}.${String(millis).padStart(3, "0")}Z`;
+    const stored = new Map([
+      [
+        "acme/a",
+        [
+          ...Array.from({ length: 25 }, (_, index) => at(5, 900 - index * 30)),
+          ...Array.from({ length: 5 }, (_, index) => at(1, 900 - index * 100)),
+        ].map((time, index) => ({ iid: index + 1, time })),
+      ],
+      [
+        "acme/b",
+        Array.from({ length: 10 }, (_, index) => ({
+          iid: index + 1,
+          time: at(3, 900 - index * 50),
+        })),
+      ],
+    ]);
+    const node = (repository: string, iid: number, updatedAt: string) => ({
+      iid: String(iid),
+      title: `${repository} !${iid}`,
+      webUrl: `https://gitlab.com/${repository}/-/merge_requests/${iid}`,
+      state: "opened",
+      createdAt: updatedAt,
+      updatedAt,
+      sourceBranch: `feature-${iid}`,
+      targetBranch: "main",
+    });
+    const gitlab = yield* gitLabProviderOver((args, stdin) => {
+      const path = args[1] ?? "";
+      if (path.startsWith("projects/")) {
+        const url = new URL(path, "https://gitlab.com/api/v4/");
+        const repository = decodeURIComponent(path.split("/")[1] ?? "");
+        const perPage = Number(url.searchParams.get("per_page"));
+        const page = Number(url.searchParams.get("page"));
+        return (stored.get(repository) ?? [])
+          .slice((page - 1) * perPage, page * perPage)
+          .map(({ iid, time }) => {
+            const { webUrl, sourceBranch, targetBranch, ...rest } = node(repository, iid, time);
+            return {
+              ...rest,
+              iid,
+              web_url: webUrl,
+              source_branch: sourceBranch,
+              target_branch: targetBranch,
+              created_at: rest.createdAt,
+              updated_at: rest.updatedAt,
+            };
+          });
+      }
+      const request = JSON.parse(stdin) as GitLabGraphqlRequest;
+      if (request.query?.includes("version")) return { data: { metadata: { version: "19.6.0" } } };
+      const { fullPaths = [], first = 20, updatedBefore } = request.variables ?? {};
+      const before = updatedBefore ?? "9999";
+      return {
+        data: {
+          metadata: { enterprise: false },
+          project: { mergeRequests: { pageInfo: { hasNextPage: false }, nodes: [] } },
+          projects: {
+            nodes: fullPaths.map((fullPath) => {
+              const rows = (stored.get(fullPath) ?? []).filter(({ time }) => time < before);
+              return {
+                fullPath,
+                mergeRequests: {
+                  pageInfo: { hasNextPage: rows.length > first },
+                  nodes: rows
+                    .slice(0, first)
+                    .map(({ iid, time }) => node(fullPath, iid, `${time.slice(0, 19)}Z`)),
+                },
+              };
+            }),
+          },
+        },
+      };
+    });
+    const service = yield* makeService({
+      projects: gitLabProjects([...stored.keys()]),
+      providers: [gitlab],
+    });
+
+    const delivered: Array<string> = [];
+    let cursors: Record<string, string> | undefined;
+    let pages = 0;
+    do {
+      const result = yield* service.list({
+        state: "open",
+        involvement: "all",
+        ...(cursors === undefined ? {} : { cursors }),
+      });
+      assert.deepStrictEqual(result.errors, []);
+      delivered.push(...result.entries.map((entry) => `${entry.repository}!${entry.number}`));
+      cursors = Object.keys(result.nextCursors).length === 0 ? undefined : result.nextCursors;
+      pages += 1;
+    } while (cursors !== undefined && pages < 10);
+
+    expect(cursors).toBeUndefined();
+    expect(delivered.toSorted()).toEqual(
+      [...stored]
+        .flatMap(([repository, rows]) => rows.map(({ iid }) => `${repository}!${iid}`))
+        .toSorted(),
+    );
   }),
 );
 

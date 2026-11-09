@@ -1084,8 +1084,9 @@ describe("review decisions", () => {
 
         yield* read();
         yield* read({ updatedBefore: "2026-11-09T10:10:44Z", delivered: 10 });
+        yield* read({ updatedBefore: "2026-11-09T10:10:44.873Z", delivered: 10 });
 
-        expect(asked).toEqual([undefined, "2026-11-09T10:10:45.000Z"]);
+        expect(asked).toEqual([undefined, "2026-11-09T10:10:45.000Z", "2026-11-09T10:10:45.000Z"]);
       }),
     );
 
@@ -1112,7 +1113,48 @@ describe("review decisions", () => {
           { repositories },
         );
 
-        expect(requested.toSorted((left, right) => right - left)).toEqual([25, 25, 10]);
+        expect(requested.toSorted((left, right) => right - left)).toEqual([10, 10, 10, 10, 10, 10]);
+      }),
+    );
+
+    it.effect("leaves the projects of a failed read to the caller and keeps the others", () =>
+      Effect.gen(function* () {
+        const repositories = Array.from({ length: 20 }, (_, index) => `acme/project-${index}`);
+
+        const page = yield* readAcross(
+          (input) =>
+            input.repositories.includes("acme/project-0")
+              ? Effect.fail(
+                  new GitLabCli.GitLabCliCommandError({
+                    operation: "execute",
+                    command: "glab",
+                    cwd: input.cwd,
+                    cause: "Request timed out. Please try a less complex query.",
+                  }),
+                )
+              : Effect.succeed([pageOf("acme/project-10", ["2026-11-09T10:00:05Z"])]),
+          { repositories },
+        );
+
+        expect(page.items.map(({ repository }) => repository)).toEqual(["acme/project-10"]);
+        expect(page.unresolved).toEqual([...repositories.slice(0, 10), ...repositories.slice(11)]);
+      }),
+    );
+
+    it.effect("fails the whole read when glab cannot sign in to the host", () =>
+      Effect.gen(function* () {
+        const error = yield* readAcross((input) =>
+          Effect.fail(
+            new GitLabCli.GitLabCliAuthenticationError({
+              operation: "execute",
+              command: "glab",
+              cwd: input.cwd,
+              cause: null,
+            }),
+          ),
+        ).pipe(Effect.flip);
+
+        expect(error.reason).toBe("unauthenticated");
       }),
     );
   });

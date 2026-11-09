@@ -383,7 +383,10 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly involvement: PullRequestInvolvement;
       readonly viewer: string;
       readonly first: number;
-      /** Exclusive, at GitLab's sub-second precision. */
+      /**
+       * GitLab shows `updatedAt` to the second but compares its stored fraction, so `…:44Z` also
+       * leaves out every row shown as `…:44Z`.
+       */
       readonly updatedBefore?: string | undefined;
       readonly query?: string | undefined;
       readonly filters?: PullRequestListFilters | undefined;
