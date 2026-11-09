@@ -968,48 +968,6 @@ function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
  */
 const settledWhenOpened = new Map<string, boolean>();
 
-function useSidebarSnooze(
-  snoozeThread: ReturnType<typeof useThreadActions>["snoozeThread"],
-  planForwardNavigation: (
-    threadKey: string,
-    coParkingKeys?: ReadonlySet<string>,
-  ) => (() => void) | null,
-  router: AnyRouter,
-) {
-  const snoozingThreadKeysRef = useRef(new Set<string>());
-  return async (
-    threadRef: ScopedThreadRef,
-    preset: Pick<SnoozePreset, "snoozedUntil">,
-    opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
-  ) => {
-    const threadKey = scopedThreadKey(threadRef);
-    if (snoozingThreadKeysRef.current.has(threadKey)) {
-      return { status: "skipped" } as const;
-    }
-    snoozingThreadKeysRef.current.add(threadKey);
-    const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
-    const result = await snoozeThread(threadRef, preset.snoozedUntil);
-    snoozingThreadKeysRef.current.delete(threadKey);
-    if (result._tag === "Failure") {
-      return isAtomCommandInterrupted(result)
-        ? ({ status: "interrupted" } as const)
-        : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
-    }
-    if (
-      shouldNavigateAfterThreadPark({
-        threadKey,
-        currentThreadKey: readRouteThreadKey(router),
-        action: "snooze",
-        now: new Date().toISOString(),
-        thread: readThreadShell(threadRef),
-      })
-    ) {
-      navigateAfterSnooze?.();
-    }
-    return { status: "success" } as const;
-  };
-}
-
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const {
     projects,
@@ -1176,6 +1134,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     action: SidebarSweepAction;
     keys: ReadonlySet<string>;
   } | null>(null);
+  const snoozingThreadKeysRef = useRef(new Set<string>());
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const terminalFocused = useTerminalFocus();
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
@@ -2439,7 +2398,38 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
-  const performSnooze = useSidebarSnooze(snoozeThread, planForwardNavigation, router);
+  const performSnooze = async (
+    threadRef: ScopedThreadRef,
+    preset: Pick<SnoozePreset, "snoozedUntil">,
+    opts: { coSnoozingKeys?: ReadonlySet<string> } = {},
+  ) => {
+    const threadKey = scopedThreadKey(threadRef);
+    if (snoozingThreadKeysRef.current.has(threadKey)) {
+      return { status: "skipped" } as const;
+    }
+    snoozingThreadKeysRef.current.add(threadKey);
+    const navigateAfterSnooze = planForwardNavigation(threadKey, opts.coSnoozingKeys);
+    const result = await snoozeThread(threadRef, preset.snoozedUntil);
+    snoozingThreadKeysRef.current.delete(threadKey);
+    if (result._tag === "Failure") {
+      return isAtomCommandInterrupted(result)
+        ? ({ status: "interrupted" } as const)
+        : ({ status: "failure", error: squashAtomCommandFailure(result) } as const);
+    }
+    if (
+      shouldNavigateAfterThreadPark({
+        threadKey,
+        currentThreadKey: readRouteThreadKey(router),
+        action: "snooze",
+        // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
+        now: new Date().toISOString(),
+        thread: readThreadShell(threadRef),
+      })
+    ) {
+      navigateAfterSnooze?.();
+    }
+    return { status: "success" } as const;
+  };
   const attemptSnooze = (
     threadRef: ScopedThreadRef,
     preset: Pick<SnoozePreset, "snoozedUntil">,
@@ -2471,6 +2461,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
       if (threadKeys.length === 0) return;
       const count = threadKeys.length;
+      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const selectionNow = new Date();
       const selectedThreads = threadKeys.flatMap((threadKey) => {
         const thread = threadByKeyRef.current.get(threadKey);
@@ -2501,6 +2492,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         pinnedCount: pinnedSelectedThreads.length,
       });
       // Presets sync across environments, so the first selected thread's stand for all.
+      // oxlint-disable-next-line react/purity -- runs in an event handler (oxc#27309)
       const menuOpenedAt = new Date();
       const snoozePresets = resolveSnoozePresets(
         menuOpenedAt,
