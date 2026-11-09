@@ -55,6 +55,8 @@ interface UpdateEverythingDialogProps {
   readonly disabledReason?: string | null;
   /** The confirmed work is starting; it cannot be cancelled from here. */
   readonly busy?: boolean;
+  /** Machines are still looking for provider updates, so more rows can appear. */
+  readonly checking?: boolean;
 }
 
 type UpdateEverythingDialogContentProps = Omit<
@@ -114,6 +116,7 @@ function UpdateEverythingDialogContent({
   disabledReason = null,
   busy = false,
   descriptionId,
+  checking = false,
 }: UpdateEverythingDialogContentProps) {
   const restarting = new Set(restarts.map((machine) => machine.environmentId));
   const updating = rows.filter((row) => row.app !== null || row.providers.length > 0);
@@ -134,6 +137,9 @@ function UpdateEverythingDialogContent({
           {version !== null && providerCount > 0 ? " · " : null}
           {providerCount > 0
             ? `${providerCount} provider ${providerCount === 1 ? "update" : "updates"}`
+            : null}
+          {checking
+            ? `${version !== null || providerCount > 0 ? " · " : ""}Checking for more…`
             : null}
         </AlertDialogDescription>
       </AlertDialogHeader>
