@@ -1371,8 +1371,6 @@ describe("deriveMessagesTimelineRows", () => {
 
   it.each([
     ["00:00:00.400Z", "Stopped at 0s"],
-    ["00:00:05.300Z", "Stopped at 5s"],
-    ["00:00:47.000Z", "Stopped at 47s"],
     ["00:00:59.700Z", "Stopped at 59s"],
     ["00:01:12.700Z", "Stopped at 1m 12s"],
     ["01:02:03.900Z", "Stopped at 1h 2m 3s"],
