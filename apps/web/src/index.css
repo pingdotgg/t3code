@@ -4606,6 +4606,19 @@ html[data-theme-id="t3-chat"] [data-app-sidebar] {
   );
 }
 
+/* A split's unfocused panes draw their tab labels a tier down (strong to muted, muted to dim),
+   so the window has one strong tab label and it marks focus. Declared on the notch, so black
+   chrome's tokens there are the ones that step down. */
+[data-pane-notch][data-pane-notch-unfocused] {
+  --pane-notch-unfocused-strong: var(--contrast-muted-foreground);
+  --pane-notch-unfocused-muted: var(--contrast-dim-foreground);
+
+  & > * {
+    --contrast-strong-foreground: var(--pane-notch-unfocused-strong);
+    --contrast-muted-foreground: var(--pane-notch-unfocused-muted);
+  }
+}
+
 body {
   /* Reference the theme token (not a literal stack) so the Settings ->
      Appearance runtime override of --font-sans reaches all interface text. */
