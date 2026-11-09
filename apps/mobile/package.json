@@ -179,7 +179,12 @@
         "expo-video",
         "expo-network",
         "expo-sharing"
-      ]
+      ],
+      "ios": {
+        "exclude": [
+          "react-native-pdf-jsi"
+        ]
+      }
     }
   },
   "reanimated": {

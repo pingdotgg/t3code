@@ -123,6 +123,7 @@ overrides:
   react-native-gesture-handler: 3.5.0
   react-native-reanimated: 4.7.1
   react-native-keyboard-controller: 1.23.0
+  # 6.1.1 cannot build Android: it downloads PDFium from a release asset that was never published.
   react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
@@ -244,9 +245,6 @@ patchedDependencies:
   react-native-gesture-handler@3.5.0: patches/react-native-gesture-handler@3.5.0.patch
   # Screens v5 stack, split and tab screens leave at once, like legacy screens. Exiting animations
   # inside one otherwise hold its removal for a later mount, after its stack has moved on.
-  # iOS: 6.1.1's fix for the NitroPdfJsi-Swift.h build failure (upstream #44). 6.1.1 itself
-  # cannot build Android: it downloads PDFium from a release asset that was never published.
-  react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
   react-native-reanimated@4.7.1: patches/react-native-reanimated@4.7.1.patch
   react-native-keyboard-controller@1.23.0: patches/react-native-keyboard-controller@1.23.0.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
