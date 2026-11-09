@@ -457,7 +457,7 @@ export const makePipelineRunner = Effect.fn("PipelineRunner.make")(function* (
           : null;
       const records = yield* threads.getProjectThreadRecords(
         { projectId, threadId },
-        ["runs", "messages", "turnItems"],
+        ["runs", "messages", "turnItems", "providerTurns"],
         {
           messageRoles: ["assistant"],
           messageRunIds: wake === null ? [run.id] : [wake.id, run.id],

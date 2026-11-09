@@ -255,7 +255,6 @@ import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import type { PipelineId } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { ComposerPipelinePicker } from "./ComposerPipelinePicker";
 import { draftPipelineSelectionAtom } from "./chatViewSend";

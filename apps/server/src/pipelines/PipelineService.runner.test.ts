@@ -254,6 +254,7 @@ const makeHarness = Effect.gen(function* () {
         ...subagent,
       })),
       providerThreads: [{ pendingBackgroundTasks: work?.backgroundTasks ?? [] }],
+      providerTurns: [],
     };
   };
 
