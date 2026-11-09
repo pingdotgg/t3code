@@ -762,6 +762,35 @@ describe("pools", () => {
     ).toEqual(["weekly", "weekly:secondary"]);
   });
 
+  it("orders pools by the saved driver order", () => {
+    const account = (id: string, driver: string) => ({
+      id,
+      driver: ProviderDriverKind.make(driver),
+      usageLimits: { checkedAt, windows: [{ ...weekly, id: `${id}-weekly`, usedPercent: 50 }] },
+    });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [],
+              usageLimitSources: [
+                { ...source, accounts: [account("c", "codex"), account("a", "claudeAgent")] },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    const drivers = (order?: string[]) =>
+      collectLimitPools(accounts, now, order).map((pool) => pool.driver);
+
+    expect(drivers()).toEqual(["codex", "claudeAgent"]);
+    expect(drivers(["claudeAgent"])).toEqual(["claudeAgent", "codex"]);
+  });
+
   it("pools windows by id across accounts and orders resets by when they land", () => {
     const input = new Map([
       [

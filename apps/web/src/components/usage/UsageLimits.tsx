@@ -18,6 +18,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { providerDriverOrder } from "@t3tools/shared/providerOrder";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useLayoutEffect, useState } from "react";
 
@@ -39,6 +40,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useProviderOrderSettings } from "../../state/usage";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
@@ -400,5 +402,12 @@ export function UsageLimitsSection({
       ];
     }),
   );
-  return <UsageLimitsPooled presentations={selected} now={now} />;
+  const providerOrderSettings = useProviderOrderSettings();
+  return (
+    <UsageLimitsPooled
+      presentations={selected}
+      now={now}
+      driverOrder={providerOrderSettings ? providerDriverOrder(providerOrderSettings) : []}
+    />
+  );
 }

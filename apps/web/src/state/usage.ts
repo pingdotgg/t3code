@@ -13,8 +13,13 @@ import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useState } from "react";
 
+import {
+  firstProviderOrderSettings,
+  type ProviderOrderSettings,
+} from "@t3tools/shared/providerOrder";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useEnvironments, usePrimaryEnvironmentId } from "./environments";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { environmentSession, readEnvironmentScope } from "./session";
@@ -243,4 +248,16 @@ export function useUsage(
     isPartial: answeredCount > 0 && stillReporting > 0,
     refresh,
   };
+}
+
+/** The order Usage and Limits follow: the primary's saved order, else the first other saved one. */
+export function useProviderOrderSettings(): ProviderOrderSettings | null {
+  const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  return firstProviderOrderSettings(
+    [
+      ...environments.filter((environment) => environment.environmentId === primaryEnvironmentId),
+      ...environments.filter((environment) => environment.environmentId !== primaryEnvironmentId),
+    ].map((environment) => environment.serverConfig?.settings),
+  );
 }

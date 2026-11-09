@@ -52,7 +52,11 @@ describe("UsageLimitsPooled ChatGPT usage card", () => {
       ],
     ]);
     await using screen = await render(
-      <UsageLimitsPooled presentations={presentations} now={Date.parse(checkedAt)} />,
+      <UsageLimitsPooled
+        presentations={presentations}
+        now={Date.parse(checkedAt)}
+        driverOrder={[]}
+      />,
     );
 
     await expect

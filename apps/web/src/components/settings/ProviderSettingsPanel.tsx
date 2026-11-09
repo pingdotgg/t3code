@@ -33,10 +33,27 @@ import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
 } from "@t3tools/shared/backgroundActivitySettings";
+import { sortByProviderOrder } from "@t3tools/shared/providerOrder";
 import * as Arr from "effect/Array";
 import * as Duration from "effect/Duration";
 import * as Result from "effect/Result";
-import { PlusIcon } from "lucide-react";
+import {
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToParentElement, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  arrayMove,
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVerticalIcon, PlusIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
@@ -775,13 +792,28 @@ export function EnvironmentProviderSettings({
     }
   }
 
+  const orderedRows = sortByProviderOrder(rows, settings.providerOrder, (row) => row.instanceId);
   const targetInstanceMissing =
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
-    !rows.some((row) => row.instanceId === targetInstanceId);
+    !orderedRows.some((row) => row.instanceId === targetInstanceId);
   const selectedRow =
-    rows.find((row) => row.instanceId === selectedInstanceId) ??
-    (targetInstanceMissing ? null : (rows[0] ?? null));
+    orderedRows.find((row) => row.instanceId === selectedInstanceId) ??
+    (targetInstanceMissing ? null : (orderedRows[0] ?? null));
+  const canReorder = !readOnly && canWriteSettings && orderedRows.length > 1;
+  const moveProvider = (id: ProviderInstanceId, to: number) => {
+    const ids = orderedRows.map((row) => row.instanceId);
+    const from = ids.indexOf(id);
+    if (from === -1 || to < 0 || to >= ids.length || from === to) return;
+    updateSettings({ providerOrder: arrayMove(ids, from, to) });
+  };
+  const dropProvider = (event: DragEndEvent) => {
+    if (!event.over) return;
+    moveProvider(
+      event.active.id as ProviderInstanceId,
+      orderedRows.findIndex((row) => row.instanceId === event.over?.id),
+    );
+  };
 
   const persistInstance = async (
     instanceId: ProviderInstanceId,
@@ -928,7 +960,11 @@ export function EnvironmentProviderSettings({
   const favorites = settings.favorites.length > 0 ? settings.favorites : NO_FAVORITES;
 
   const representativeProjectId = projectIds[0];
-  const renderProviderInstance = (row: InstanceRow, mode: "list" | "editor") => {
+  const renderProviderInstance = (
+    row: InstanceRow,
+    mode: "list" | "editor",
+    dragHandle?: (label: string) => ReactNode,
+  ) => {
     const showProjectOverride =
       representativeProjectId !== undefined && supportsProjectProviderOverrides;
     return (
@@ -943,6 +979,7 @@ export function EnvironmentProviderSettings({
         isDirty={row.isDirty === true}
         mode={mode}
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
+        dragHandle={dragHandle}
         readOnly={readOnly}
         canWriteSettings={canWriteSettings}
         liveProvider={serverProviders.find((candidate) => candidate.instanceId === row.instanceId)}
@@ -1051,7 +1088,22 @@ export function EnvironmentProviderSettings({
               className="@min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-1"
             >
               <div className="divide-y divide-border/50">
-                {rows.map((row) => renderProviderInstance(row, "list"))}
+                <SortableProviderList
+                  ids={orderedRows.map((row) => row.instanceId)}
+                  disabled={!canReorder}
+                  onDrop={dropProvider}
+                >
+                  {orderedRows.map((row, index) => (
+                    <SortableProviderRow
+                      key={row.instanceId}
+                      id={row.instanceId}
+                      disabled={!canReorder}
+                      onStep={(step) => moveProvider(row.instanceId, index + step)}
+                    >
+                      {(dragHandle) => renderProviderInstance(row, "list", dragHandle)}
+                    </SortableProviderRow>
+                  ))}
+                </SortableProviderList>
                 {canAddProvider ? (
                   <button
                     type="button"
@@ -1229,6 +1281,7 @@ function ProviderInstanceRow({
   isDirty,
   mode,
   selected,
+  dragHandle,
   readOnly,
   canWriteSettings,
   liveProvider,
@@ -1249,6 +1302,7 @@ function ProviderInstanceRow({
   readonly isDirty: boolean;
   readonly mode: "list" | "editor";
   readonly selected: boolean;
+  readonly dragHandle: ((label: string) => ReactNode) | undefined;
   readonly readOnly: boolean;
   readonly canWriteSettings: boolean;
   readonly liveProvider: ServerProvider | undefined;
@@ -1314,6 +1368,7 @@ function ProviderInstanceRow({
       liveProvider={liveProvider}
       mode={mode}
       selected={selected}
+      dragHandle={dragHandle}
       onSelect={mode === "list" ? () => actions.selectInstance(instanceId) : undefined}
       readOnly={readOnly}
       runtime={
@@ -1444,5 +1499,76 @@ function ProviderInstanceRow({
       }
       isUpdating={isInstanceUpdateRunning}
     />
+  );
+}
+
+function SortableProviderList({
+  ids,
+  disabled,
+  onDrop,
+  children,
+}: {
+  readonly ids: readonly ProviderInstanceId[];
+  readonly disabled: boolean;
+  readonly onDrop: (event: DragEndEvent) => void;
+  readonly children: ReactNode;
+}) {
+  const sensors = useSensors(useSensor(PointerSensor));
+  if (disabled) return children;
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+      onDragEnd={onDrop}
+    >
+      <SortableContext items={[...ids]} strategy={verticalListSortingStrategy}>
+        {children}
+      </SortableContext>
+    </DndContext>
+  );
+}
+
+// Only the grip starts a drag, so clicks still select the row and toggle its switch.
+// Arrow keys move the row from the grip itself: the settings dialog swallows arrow keys
+// before dnd-kit's document-level keyboard sensor would see them.
+function SortableProviderRow({
+  id,
+  disabled,
+  onStep,
+  children,
+}: {
+  readonly id: ProviderInstanceId;
+  readonly disabled: boolean;
+  readonly onStep: (step: -1 | 1) => void;
+  readonly children: (dragHandle: ((label: string) => ReactNode) | undefined) => ReactNode;
+}) {
+  const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id, disabled });
+  if (disabled) return children(undefined);
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn("relative bg-background", isDragging && "z-10 shadow-md")}
+    >
+      {children((label) => (
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...listeners}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+            event.preventDefault();
+            onStep(event.key === "ArrowUp" ? -1 : 1);
+          }}
+          aria-label={`Reorder ${label}`}
+          aria-keyshortcuts="ArrowUp ArrowDown"
+          className="pointer-events-auto relative -ms-1.5 -me-1.5 flex h-5 w-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground/50 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset active:cursor-grabbing"
+        >
+          <GripVerticalIcon className="size-3.5" />
+        </button>
+      ))}
+    </div>
   );
 }

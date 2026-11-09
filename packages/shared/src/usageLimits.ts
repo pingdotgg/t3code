@@ -17,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+import { sortByProviderOrder } from "./providerOrder.ts";
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -472,6 +473,7 @@ const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
 export function collectLimitPools(
   accounts: readonly LimitAccount[],
   now: number,
+  driverOrder: readonly string[] = [],
 ): readonly LimitPool[] {
   const byDriver = new Map<ServerProvider["driver"], LimitAccount[]>();
   for (const account of accounts) {
@@ -479,27 +481,29 @@ export function collectLimitPools(
     if (list) list.push(account);
     else byDriver.set(account.driver, [account]);
   }
-  return [...byDriver].map(([driver, members]) => {
-    const orderWindow = members
-      .flatMap((account) => account.limits.windows)
-      .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
-    const orderReset = (account: LimitAccount) => {
-      const window = account.limits.windows.find(
-        (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
+  return sortByProviderOrder([...byDriver], driverOrder, ([driver]) => driver).map(
+    ([driver, members]) => {
+      const orderWindow = members
+        .flatMap((account) => account.limits.windows)
+        .sort((left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind])[0];
+      const orderReset = (account: LimitAccount) => {
+        const window = account.limits.windows.find(
+          (window) => orderWindow && poolKey(driver, window) === poolKey(driver, orderWindow),
+        );
+        return (
+          (window ? resetMillis(poolMember(account, window, now).window) : null) ??
+          Number.POSITIVE_INFINITY
+        );
+      };
+      const sorted = [...members].sort(
+        (left, right) =>
+          orderReset(left) - orderReset(right) ||
+          accountSortName(left).localeCompare(accountSortName(right)) ||
+          left.key.localeCompare(right.key),
       );
-      return (
-        (window ? resetMillis(poolMember(account, window, now).window) : null) ??
-        Number.POSITIVE_INFINITY
-      );
-    };
-    const sorted = [...members].sort(
-      (left, right) =>
-        orderReset(left) - orderReset(right) ||
-        accountSortName(left).localeCompare(accountSortName(right)) ||
-        left.key.localeCompare(right.key),
-    );
-    return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
-  });
+      return { driver, accounts: sorted, windows: poolWindows(sorted, now) };
+    },
+  );
 }
 
 function accountSortName(account: LimitAccount): string {

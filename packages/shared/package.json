@@ -51,6 +51,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./providerOrder": {
+      "types": "./src/providerOrder.ts",
+      "import": "./src/providerOrder.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

@@ -27,7 +27,7 @@ import { ProviderIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
-import { usageProviderKind, useProviderColors } from "./usageProviders";
+import { usageProviderKind, useProviderColors, useSavedDriverOrder } from "./usageProviders";
 
 const DRIVER_LABEL: Partial<Record<string, string>> = {
   codex: "Codex",
@@ -420,7 +420,8 @@ export function UsageLimitsSection({
     selectedEnvironmentIds === null
       ? presentations
       : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  const pools = collectLimitPools(collectLimitAccounts(selected), now);
+  const driverOrder = useSavedDriverOrder();
+  const pools = collectLimitPools(collectLimitAccounts(selected), now, driverOrder);
   const notices = collectLimitNotices(selected);
   const externalLinks = collectExternalUsageLinks(selected);
   const colors = useProviderColors();

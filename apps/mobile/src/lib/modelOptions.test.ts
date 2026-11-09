@@ -164,6 +164,13 @@ describe("mobile model options", () => {
         (option) => option.providerKey === "codex",
       ),
     );
+    const reordered = {
+      providers,
+      settings: { ...DEFAULT_SERVER_SETTINGS, providerOrder: ["claudeAgent"] },
+    } as unknown as ServerConfig;
+    expect(
+      buildModelOptions(reordered, selection, undefined, null).map((option) => option.providerKey),
+    ).toEqual(["claudeAgent", "codex"]);
   });
 
   it("keeps accounts in the continuation group and excludes other providers", () => {

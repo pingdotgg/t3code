@@ -605,13 +605,15 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
 export function UsageLimitsPooled({
   presentations,
   now,
+  driverOrder,
 }: {
   readonly presentations: Parameters<typeof collectLimitAccounts>[0];
   readonly now: number;
+  readonly driverOrder: readonly string[];
 }) {
   const [segmentPopover] = useState(() => PopoverCreateHandle<SegmentPayload>());
   const segmentPopoverActions = useRef<PopoverPrimitive.Root.Actions | null>(null);
-  const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const pools = collectLimitPools(collectLimitAccounts(presentations), now, driverOrder);
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   return (

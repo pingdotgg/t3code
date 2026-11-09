@@ -12,6 +12,7 @@ import {
   type ServerSettings,
   type ServerProviderState,
 } from "@t3tools/contracts";
+import { sortByProviderOrder } from "@t3tools/shared/providerOrder";
 import {
   normalizeProviderAccentColor,
   resolveProviderInstanceDisplayName,
@@ -153,16 +154,20 @@ function applyProviderInstanceBranding(
   };
 }
 
-/** Picker order: each driver's default instance first, then its custom instances. */
+/** Picker order: the saved provider order, then each driver's default instance before its custom ones. */
 export function providerInstanceEntriesFor(
   providers: ReadonlyArray<ServerProvider>,
-  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  settings: Pick<
+    ServerSettings,
+    "providerInstances" | "projectSettingsOverrides" | "providerOrder"
+  >,
   projectId: ProjectId | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
   return pipe(
     deriveProviderInstanceEntries(providers),
     (entries) => applyProviderInstanceSettings(entries, settings, projectId),
     sortProviderInstanceEntries,
+    (entries) => sortByProviderOrder(entries, settings.providerOrder, (entry) => entry.instanceId),
   );
 }
 

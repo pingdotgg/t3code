@@ -22,6 +22,7 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+import { sortByProviderOrder } from "@t3tools/shared/providerOrder";
 
 export type ModelOption = {
   readonly key: string;
@@ -336,7 +337,12 @@ export function buildModelOptions(
     };
   };
 
-  for (const provider of config?.providers ?? []) {
+  const orderedProviders = sortByProviderOrder(
+    config?.providers ?? [],
+    config?.settings?.providerOrder ?? [],
+    (provider) => provider.instanceId,
+  );
+  for (const provider of orderedProviders) {
     if (
       !matchesLockedProvider(provider) ||
       isDriverDisallowed(config, provider.driver) ||
