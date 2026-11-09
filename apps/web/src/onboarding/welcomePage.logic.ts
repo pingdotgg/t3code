@@ -3,6 +3,7 @@ import {
   managedCapabilityDenial,
   type ManagedPolicySummary,
   ProviderDriverKind,
+  type ProviderInstanceId,
   resolveProjectProviderInstanceEnabled,
   type ServerProvider,
   type ServerSettings,
@@ -144,4 +145,26 @@ export function welcomePhonePath(input: {
     return "connect";
   }
   return input.canPair ? "pairing" : null;
+}
+
+/**
+ * The Codex instance the setup card shows, or null when the card is closed. A rebuild briefly
+ * drops an instance from the list, so the card keeps its last status meanwhile instead of
+ * unmounting and losing a sign-in in progress.
+ */
+export function codexCardProvider(input: {
+  readonly providers: ReadonlyArray<ServerProvider> | null | undefined;
+  readonly instanceId: ProviderInstanceId | null;
+  readonly last: ServerProvider | null;
+  readonly settings: ComputerSettings | null | undefined;
+}) {
+  if (input.instanceId === null) return null;
+  const provider =
+    input.providers?.find((candidate) => candidate.instanceId === input.instanceId) ??
+    (input.last?.instanceId === input.instanceId ? input.last : undefined);
+  if (provider === undefined) return null;
+  const open =
+    codexNeedsSetup(provider, input.settings) ||
+    welcomeAgentState(provider, input.settings) === "checking";
+  return open ? provider : null;
 }

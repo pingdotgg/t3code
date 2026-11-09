@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   cliTerminalStep,
+  codexCardProvider,
   codexNeedsSetup,
   groupWelcomeAgents,
   welcomePhonePath,
@@ -200,6 +201,28 @@ describe("codexNeedsSetup", () => {
     expect(setup({})).toBe(false);
     const claude = provider("Claude", { auth: { status: "unauthenticated" } });
     expect(codexNeedsSetup(claude, undefined)).toBe(false);
+  });
+});
+
+describe("codexCardProvider", () => {
+  it("keeps the card on Codex's last status while a rebuild drops it, and closes once signed in", () => {
+    const signedOut = provider("Codex", { auth: { status: "unauthenticated" } });
+    const card = (providers: ReadonlyArray<ServerProvider>, last: ServerProvider | null = null) =>
+      codexCardProvider({ providers, instanceId: signedOut.instanceId, last, settings: undefined });
+
+    expect(card([signedOut])).toBe(signedOut);
+    // The instance is missing for one update while it is rebuilt.
+    expect(card([], signedOut)).toBe(signedOut);
+    expect(card([], provider("Other"))).toBeNull();
+    expect(card([provider("Codex")])).toBeNull();
+    expect(
+      codexCardProvider({
+        providers: [signedOut],
+        instanceId: null,
+        last: null,
+        settings: undefined,
+      }),
+    ).toBeNull();
   });
 });
 

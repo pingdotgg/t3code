@@ -65,6 +65,7 @@ import {
 } from "../../onboarding/providerReadiness.logic";
 import {
   cliTerminalStep,
+  codexCardProvider,
   codexNeedsSetup,
   groupWelcomeAgents,
   isBrokenVersion,
@@ -431,9 +432,10 @@ function AgentsSection({
     void refreshProviders({ environmentId, input: {} });
   }, [environmentId, refreshProviders]);
 
-  // Until the user opens or closes it, the list follows the finished checks: with nothing found,
-  // adding an agent is the task. A first status can be wrong, so this is not decided early.
-  const showMore = moreOpen ?? (!checking && found.length === 0);
+  // Opened once the finished checks find nothing, since adding an agent is then the task. A first
+  // status can be wrong, so this waits for the checks, and a later check never closes it.
+  if (moreOpen === null && !checking && found.length === 0) setMoreOpen(true);
+  const showMore = moreOpen ?? false;
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
   const needsInstallOrSignIn = (provider: ServerProvider) => {
@@ -445,22 +447,22 @@ function AgentsSection({
     );
   };
   // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
-  // Codex setup stays mounted by instance while its status changes, so a sign-in that
-  // starts after an install is not lost when the agent moves between groups. It closes once
-  // Codex is signed in or cannot use it; anything left, such as a broken version, shows on its row.
-  const codexSetupProvider =
-    providers?.find(
-      (provider) =>
-        provider.instanceId === codexSetupId &&
-        (codexNeedsSetup(provider, serverConfig?.settings) || stateOf(provider) === "checking"),
-    ) ?? null;
-  // Once the card closes, a later status change does not reopen it and move the page. A list
-  // that briefly lacks the instance does not count.
-  const trackedCodex =
+  // Codex setup stays mounted by instance while its status changes, so a sign-in that starts
+  // after an install is not lost when the agent moves between groups or briefly leaves the list.
+  const [lastCodex, setLastCodex] = useState<ServerProvider | null>(null);
+  const listedCodex =
     codexSetupId === null
       ? undefined
       : providers?.find((provider) => provider.instanceId === codexSetupId);
-  if (trackedCodex !== undefined && codexSetupProvider === null) setCodexSetupId(null);
+  if (listedCodex !== undefined && listedCodex !== lastCodex) setLastCodex(listedCodex);
+  const codexSetupProvider = codexCardProvider({
+    providers,
+    instanceId: codexSetupId,
+    last: lastCodex,
+    settings: serverConfig?.settings,
+  });
+  // Once the card closes, a later status change does not reopen it and move the page.
+  if (listedCodex !== undefined && codexSetupProvider === null) setCodexSetupId(null);
 
   const openTerminal = (provider: ServerProvider) => {
     if (
@@ -712,10 +714,10 @@ function AgentsSection({
           environmentLabel={label}
           showMoreProviders
           onOpenChange={setAddingProvider}
-          onCreated={() => {
+          onCreated={(_instanceId, driver) => {
             void refreshProviders({ environmentId, input: {} });
             // A new Claude Code, Codex, or Pi instance can bring more history to import.
-            onImportSourceEnabled();
+            if (isImportSource(driver)) onImportSourceEnabled();
           }}
         />
       ) : null}

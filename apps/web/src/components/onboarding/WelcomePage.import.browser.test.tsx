@@ -649,6 +649,14 @@ it("opens the list of agents to add once the checks find none, even after a wron
       element.textContent?.startsWith("Set up an agent"),
     );
   await vi.waitFor(() => expect(fold()?.getAttribute("aria-expanded")).toBe("true"));
+
+  // Turning an agent on starts a new check; the open list stays where the user is working.
+  await act(async () =>
+    appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+      { ...pi, installed: false, status: "warning", auth: { status: "unknown" } },
+    ]),
+  );
+  expect(fold()?.getAttribute("aria-expanded")).toBe("true");
 });
 
 it("starts without importing when this connection cannot import projects", async () => {
