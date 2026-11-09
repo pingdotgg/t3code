@@ -1,6 +1,6 @@
+import * as AWS from "@alchemy.run/aws";
+import * as S3 from "@alchemy.run/aws/S3";
 import * as Alchemy from "alchemy";
-import * as AWS from "alchemy/AWS";
-import * as S3 from "alchemy/AWS/S3";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import ApiFunction from "./src/ApiFunction.ts";
@@ -19,7 +19,7 @@ export default Alchemy.Stack(
     // Under `alchemy dev` the calls MUST land on the floci emulator — the
     // dummy account id (000000000000) in the stack outputs is the proof.
     // CLI-path counterpart of the harness regression in
-    // packages/alchemy/test/AWS/S3/Bucket.data-plane.test.ts.
+    // packages/integration-tests/test/AWS/S3/Bucket.data-plane.test.ts.
     const bucket = yield* S3.Bucket("SeedBucket", { forceDestroy: true });
     const SeedObject = Alchemy.Action(
       "SeedObject",
@@ -31,8 +31,7 @@ export default Alchemy.Stack(
           yield* putObject({ Key: input.key, Body: input.body });
           const object = yield* getObject({ Key: input.key });
           const text = yield* (
-            object.Body?.pipe(Stream.decodeText, Stream.mkString) ??
-              Effect.succeed("")
+            object.Body?.pipe(Stream.decodeText, Stream.mkString) ?? Effect.succeed("")
           );
           return { accountId: environment.accountId, text };
         });

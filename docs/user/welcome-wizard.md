@@ -4,8 +4,8 @@ T3 Code shows a setup flow when you open a new installation. Existing
 workspaces skip this flow.
 
 The hosted app at app.t3.codes does not open setup. With no computer connected,
-it asks you to sign in to T3 Connect, then to run `npx t3 connect` on your
-computer. From home, it adds compatible computers linked to your account and
+it asks you to sign in to T3 Connect, then to install T3 Code and run
+`t3 connect` on your computer. From home, it adds compatible computers linked to your account and
 opens the app.
 
 Close setup while no import is running to go straight to the app. You can connect
@@ -59,7 +59,7 @@ terminal metadata while the terminal process can use them.
 
 ## Import your projects
 
-T3 Code finds directories that Claude Code or Codex has used. Git repositories
+T3 Code finds directories that Claude Code, Codex or Pi has used. Git repositories
 are listed first, newest activity on top. When the remote is on GitHub, the
 group shows the repository as `owner/name`. Clones with the same remote share
 one group. Directories that are not git repositories sit under "Other folders".
@@ -74,8 +74,12 @@ offered.
 A large or malformed history can reach the scan limit. T3 Code keeps the
 projects it found and warns when projects or conversations may be missing.
 
-Imported projects include Codex and Claude conversations active within the last
-30 days. You can continue those conversations in T3 Code.
+Imported projects include Claude, Codex and Pi conversations active within the last
+30 days. You can continue those conversations in T3 Code. Pi is off by default:
+enable it in Settings, then open `/welcome` to import its sessions. Pi sessions
+are read from each enabled Pi provider's session directory, which follows
+`PI_CODING_AGENT_SESSION_DIR` and `PI_CODING_AGENT_DIR` in its environment. A
+Pi conversation imports its active branch, the one Pi reopens.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.

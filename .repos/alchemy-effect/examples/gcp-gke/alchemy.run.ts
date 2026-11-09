@@ -1,3 +1,5 @@
+import * as GCP from "@alchemy.run/gcp";
+import * as Kubernetes from "@alchemy.run/kubernetes";
 /**
  * A "guestbook" app on GKE Autopilot that exercises the full Kubernetes
  * container surface:
@@ -15,16 +17,10 @@
  *   (`src/SeedJob.ts`).
  */
 import * as Alchemy from "alchemy";
-import * as GCP from "alchemy/GCP";
-import * as Kubernetes from "alchemy/Kubernetes";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import ApiLive, { Api } from "./src/Api.ts";
-import {
-  EntriesDatabase,
-  GuestbookCluster,
-  GuestbookNamespace,
-} from "./src/infra.ts";
+import { EntriesDatabase, GuestbookCluster, GuestbookNamespace } from "./src/infra.ts";
 import SeedJob from "./src/SeedJob.ts";
 
 export default Alchemy.Stack(
