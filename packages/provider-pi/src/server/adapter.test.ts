@@ -609,6 +609,64 @@ const startTurn = Effect.fnUntraced(function* (
   });
 });
 
+/** A pi-subagents `subagent-async` widget frame, shaped like the recorded 0.80.0 snapshots. */
+const asyncStatusWidget = (generatedAt: number, runs: ReadonlyArray<unknown>) => ({
+  type: "extension_ui_request",
+  id: `widget-${generatedAt}`,
+  method: "setWidget",
+  widgetKey: "subagent-async",
+  widgetLines: [
+    `PI_SUBAGENT_ASYNC_JSON:${JSON.stringify({
+      kind: "pi-subagents.async-status-snapshot",
+      version: 1,
+      generatedAt,
+      caps: { maxRuns: 20, maxChildrenPerNode: 8, maxDepth: 3 },
+      omitted: { runs: 0, children: 0, byteLimitExceeded: false },
+      runs,
+    })}`,
+  ],
+});
+
+const piCustomMessage = (customType: string, details: unknown) => ({
+  type: "message_end",
+  message: { role: "custom", customType, content: customType, display: false, details },
+});
+
+type SubagentTurnItemEvent = ProviderAdapter.ProviderAdapterV2Event & {
+  readonly type: "turn_item.updated";
+  readonly turnItem: { readonly type: "subagent" };
+};
+
+const isSubagentTurnItem = (
+  event: ProviderAdapter.ProviderAdapterV2Event,
+): event is SubagentTurnItemEvent =>
+  event.type === "turn_item.updated" && event.turnItem.type === "subagent";
+
+/** Subagent rows emitted before an input dialog that Pi sends after `frames`. */
+const subagentRowsBefore = Effect.fnUntraced(function* (
+  fake: FakePi,
+  takeEvent: (
+    predicate: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+  ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+  barrierId: string,
+  frames: ReadonlyArray<Record<string, unknown>>,
+) {
+  for (const frame of frames) yield* fake.emit(frame);
+  yield* fake.emit({ type: "extension_ui_request", id: barrierId, method: "input", title: "?" });
+  const rows: Array<SubagentTurnItemEvent["turnItem"]> = [];
+  yield* takeEvent((event) => {
+    if (isSubagentTurnItem(event)) rows.push(event.turnItem);
+    return event.type === "runtime_request.updated";
+  });
+  return rows.map((row) => ({
+    title: row.title,
+    prompt: row.prompt,
+    status: row.status,
+    runId: row.runId,
+    nativeId: row.nativeItemRef?.nativeId,
+  }));
+});
+
 describe("PiAdapterV2", () => {
   it.effect(
     "replaces keyed extension statuses while idle without producing conversation items",
@@ -3120,6 +3178,564 @@ describe("PiAdapterV2", () => {
           subagentItem.turnItem.type === "subagent" &&
           subagentItem.turnItem.childThreadId === null,
       );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps a background subagent on its launching turn until its completion notice", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      // asyncByDefault: the launch omits `async` and returns a detached receipt with no results.
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_async",
+        toolName: "subagent",
+        args: { agent: "scout", task: "count to 200" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_async",
+        toolName: "subagent",
+        isError: false,
+        result: {
+          content: [{ type: "text", text: "Async: scout [run-1]\n\nDetached." }],
+          details: {
+            mode: "single",
+            runId: "run-1",
+            toolCallId: "call_async",
+            asyncId: "run-1",
+            asyncDir: "/tmp/async-subagent-runs/run-1",
+            results: [],
+          },
+        },
+      });
+      const running = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+      );
+      assert.isTrue(running.type === "turn_item.updated" && running.turnItem.type === "subagent");
+      if (running.type !== "turn_item.updated" || running.turnItem.type !== "subagent") return;
+      assert.deepInclude(running.turnItem, {
+        status: "running",
+        title: "scout",
+        prompt: "count to 200",
+        runId: RunId.make(`run:${THREAD_ID}:1`),
+        childThreadId: null,
+      });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+
+      yield* startTurn(runtime, providerThread, "default", [], "Hello again", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "custom",
+          customType: "subagent-notify",
+          content: "Background task completed: **scout**",
+          display: false,
+          details: {
+            runs: [
+              {
+                agent: "scout",
+                status: "completed",
+                runId: "run-1",
+                childRuns: [{ runId: "child-1", agent: "scout", status: "completed" }],
+              },
+            ],
+          },
+        },
+      });
+      const settled = yield* takeEvent(
+        (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+      );
+      assert.isTrue(settled.type === "subagent.updated");
+      if (settled.type !== "subagent.updated") return;
+      assert.deepInclude(settled.subagent, {
+        id: running.turnItem.subagentId,
+        status: "completed",
+        runId: RunId.make(`run:${THREAD_ID}:1`),
+      });
+      const settledItem = yield* takeEvent(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+      );
+      assert.deepInclude(settledItem.type === "turn_item.updated" ? settledItem.turnItem : {}, {
+        id: running.turnItem.id,
+        status: "completed",
+        runId: running.turnItem.runId,
+        providerTurnId: running.turnItem.providerTurnId,
+        ordinal: running.turnItem.ordinal,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "shows async workflow steps from the status widget and settles each from its notices",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        const workflowRunId = "5284158e-cd8f-474d-9127-68b272fd9aba";
+        const runOne = RunId.make(`run:${THREAD_ID}:1`);
+        const step = (id: string, state: string) => ({
+          id,
+          kind: "step",
+          label: id,
+          state,
+          agent: "scout",
+          model: "claude-bridge/claude-opus-5-5",
+          activity: { currentTool: "bash", turnCount: 1, toolCount: 1 },
+        });
+        const workflow = (state: string, children: ReadonlyArray<unknown>) => ({
+          id: workflowRunId,
+          kind: "workflow",
+          label: "scout, scout",
+          state,
+          children,
+        });
+        const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
+          {
+            type: "tool_execution_start",
+            toolCallId: "call_wf",
+            toolName: "subagent",
+            args: { workflow: "true", async: true },
+          },
+          asyncStatusWidget(1, [
+            { id: workflowRunId, kind: "workflow", label: "workflow", state: "queued" },
+          ]),
+          {
+            type: "tool_execution_end",
+            toolCallId: "call_wf",
+            toolName: "subagent",
+            isError: false,
+            result: {
+              content: [{ type: "text", text: `Async workflow [${workflowRunId}]\n\nDetached.` }],
+              details: {
+                mode: "workflow",
+                runId: workflowRunId,
+                asyncId: workflowRunId,
+                results: [],
+                workflow: { trace: [] },
+                workflowChildren: {
+                  version: 1,
+                  workflowRunId,
+                  inventoryComplete: false,
+                  workflowState: "running",
+                  children: [],
+                },
+              },
+            },
+          },
+          asyncStatusWidget(2, [
+            workflow("running", [step("alpha", "running"), step("beta", "running")]),
+          ]),
+          // Later snapshots only refresh activity; they must not repaint the rows.
+          asyncStatusWidget(3, [
+            workflow("running", [step("alpha", "running"), step("beta", "running")]),
+          ]),
+        ]);
+        assert.deepEqual(launched, [
+          {
+            title: "scout",
+            prompt: "",
+            status: "running",
+            runId: runOne,
+            nativeId: `${workflowRunId}:subagent:alpha`,
+          },
+          {
+            title: "scout",
+            prompt: "",
+            status: "running",
+            runId: runOne,
+            nativeId: `${workflowRunId}:subagent:beta`,
+          },
+        ]);
+        yield* fake.emit({ type: "agent_settled" });
+        yield* takeEvent((event) => event.type === "turn.terminal");
+
+        const alphaDone = yield* subagentRowsBefore(fake, takeEvent, "alpha", [
+          asyncStatusWidget(4, [
+            workflow("running", [step("alpha", "complete"), step("beta", "running")]),
+          ]),
+          piCustomMessage("subagent-incremental-child-notify", {
+            childKey: "alpha",
+            outcome: "completed",
+          }),
+          // A snapshot generated before the one already applied is stale.
+          asyncStatusWidget(3, [
+            workflow("running", [step("alpha", "running"), step("beta", "running")]),
+          ]),
+        ]);
+        assert.deepEqual(alphaDone, [
+          {
+            title: "scout",
+            prompt: "",
+            status: "completed",
+            runId: runOne,
+            nativeId: `${workflowRunId}:subagent:alpha`,
+          },
+        ]);
+
+        const finished = yield* subagentRowsBefore(fake, takeEvent, "finish", [
+          piCustomMessage("subagent-incremental-child-notify", {
+            childKey: "beta",
+            outcome: "completed",
+          }),
+          piCustomMessage("subagent-notify", {
+            runs: [
+              {
+                agent: "workflow",
+                status: "completed",
+                runId: workflowRunId,
+                workflowRunId,
+                childRuns: [
+                  {
+                    runId: "b8c7c430-71a8-4c96-9b82-5f4bfba830b4",
+                    workflowKey: "alpha",
+                    agent: "scout",
+                    status: "completed",
+                  },
+                  {
+                    runId: "7dc03e8b-8b45-4966-823a-1f9f0cf8304b",
+                    workflowKey: "beta",
+                    agent: "scout",
+                    status: "completed",
+                  },
+                ],
+              },
+            ],
+          }),
+          asyncStatusWidget(5, [
+            workflow("complete", [step("alpha", "complete"), step("beta", "complete")]),
+          ]),
+        ]);
+        assert.deepEqual(finished, [
+          {
+            title: "scout",
+            prompt: "",
+            status: "completed",
+            runId: runOne,
+            nativeId: `${workflowRunId}:subagent:beta`,
+          },
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("leaves a child notice shared by two workflows to their structured ids", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const launch = (asyncId: string) => ({
+        type: "tool_execution_end",
+        toolCallId: `call_${asyncId}`,
+        toolName: "subagent",
+        isError: false,
+        result: { content: [], details: { mode: "workflow", asyncId, results: [] } },
+      });
+      // Steps may carry agent and model, or only their workflow key.
+      const workflow = (id: string, state: string, step: Record<string, string>) => ({
+        id,
+        kind: "workflow",
+        label: "workflow",
+        state: "running",
+        children: [{ id: "alpha", kind: "step", label: "alpha", state, ...step }],
+      });
+      const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
+        launch("wf-1"),
+        launch("wf-2"),
+        asyncStatusWidget(1, [
+          workflow("wf-1", "running", { agent: "scout", model: "claude-bridge/claude-opus-5-5" }),
+          workflow("wf-2", "running", {}),
+        ]),
+      ]);
+      assert.deepEqual(
+        launched.map(({ title, status, nativeId }) => [title, status, nativeId]),
+        [
+          ["scout", "running", "wf-1:subagent:alpha"],
+          ["alpha", "running", "wf-2:subagent:alpha"],
+        ],
+      );
+      const ambiguous = yield* subagentRowsBefore(fake, takeEvent, "ambiguous", [
+        piCustomMessage("subagent-incremental-child-notify", {
+          childKey: "alpha",
+          outcome: "failed",
+        }),
+      ]);
+      assert.deepEqual(ambiguous, []);
+      const resolved = yield* subagentRowsBefore(fake, takeEvent, "resolved", [
+        asyncStatusWidget(2, [
+          workflow("wf-1", "running", { agent: "scout" }),
+          workflow("wf-2", "failed", {}),
+        ]),
+        piCustomMessage("subagent-notify", {
+          runs: [
+            {
+              agent: "workflow",
+              status: "completed",
+              runId: "wf-1",
+              workflowRunId: "wf-1",
+              childRuns: [
+                { runId: "child-1", workflowKey: "alpha", agent: "scout", status: "completed" },
+              ],
+            },
+          ],
+        }),
+      ]);
+      assert.deepEqual(
+        resolved.map(({ title, status, nativeId }) => [title, status, nativeId]),
+        [
+          ["alpha", "failed", "wf-2:subagent:alpha"],
+          ["scout", "completed", "wf-1:subagent:alpha"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("settles async parallel children by run id and ignores other extensions' frames", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const runOne = RunId.make(`run:${THREAD_ID}:1`);
+      const parallel = (children: ReadonlyArray<readonly [string, string, string]>) => ({
+        id: "par-1",
+        kind: "subagent",
+        label: "scout, reviewer",
+        state: "running",
+        children: children.map(([id, agent, state]) => ({
+          id,
+          kind: "step",
+          label: agent,
+          agent,
+          state,
+        })),
+      });
+      const launched = yield* subagentRowsBefore(fake, takeEvent, "launch", [
+        {
+          type: "tool_execution_end",
+          toolCallId: "call_par",
+          toolName: "subagent",
+          isError: false,
+          result: {
+            content: [{ type: "text", text: "Async parallel [par-1]" }],
+            details: { mode: "parallel", runId: "par-1", asyncId: "par-1", results: [] },
+          },
+        },
+        asyncStatusWidget(1, [
+          parallel([
+            ["step:0", "scout", "queued"],
+            ["step:1", "reviewer", "queued"],
+          ]),
+        ]),
+        // Each step's id becomes its child run id once it launches.
+        asyncStatusWidget(2, [
+          parallel([
+            ["child-a", "scout", "running"],
+            ["child-b", "reviewer", "running"],
+          ]),
+        ]),
+        asyncStatusWidget(3, [
+          { id: "unlaunched", kind: "subagent", label: "x", state: "running", children: [] },
+        ]),
+        {
+          type: "extension_ui_request",
+          id: "w",
+          method: "setWidget",
+          widgetKey: "other",
+          widgetLines: ["x"],
+        },
+        piCustomMessage("other-extension-notify", {
+          runs: [{ runId: "par-1", status: "completed" }],
+        }),
+      ]);
+      assert.deepEqual(
+        launched.map(({ title, status, nativeId }) => [title, status, nativeId]),
+        [
+          ["scout", "pending", "par-1:subagent:0"],
+          ["reviewer", "pending", "par-1:subagent:1"],
+          ["scout", "running", "par-1:subagent:0"],
+          ["reviewer", "running", "par-1:subagent:1"],
+        ],
+      );
+
+      const settled = yield* subagentRowsBefore(fake, takeEvent, "settle", [
+        piCustomMessage("subagent-notify", {
+          runs: [
+            {
+              agent: "parallel",
+              status: "stopped",
+              runId: "par-1",
+              childRuns: [{ runId: "child-a", agent: "scout", status: "failed" }],
+            },
+          ],
+        }),
+        asyncStatusWidget(4, [
+          parallel([
+            ["child-a", "scout", "running"],
+            ["child-b", "reviewer", "running"],
+          ]),
+        ]),
+      ]);
+      assert.deepEqual(settled, [
+        {
+          title: "scout",
+          prompt: "",
+          status: "failed",
+          runId: runOne,
+          nativeId: "par-1:subagent:0",
+        },
+        {
+          title: "reviewer",
+          prompt: "",
+          status: "interrupted",
+          runId: runOne,
+          nativeId: "par-1:subagent:1",
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "shows a foreground workflow's children while it runs and completes the same rows",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        yield* fake.emit({ type: "agent_start" });
+        const running = yield* subagentRowsBefore(fake, takeEvent, "running", [
+          {
+            type: "tool_execution_update",
+            toolCallId: "call_fg",
+            toolName: "subagent",
+            partialResult: {
+              content: [],
+              details: {
+                mode: "workflow",
+                results: [],
+                workflow: { trace: [{ key: "alpha", agent: "scout", state: "running" }] },
+                workflowChildren: {
+                  inventoryComplete: false,
+                  workflowState: "running",
+                  children: [{ childId: "alpha", state: "running", runId: "child-a" }],
+                },
+              },
+            },
+          },
+        ]);
+        assert.deepEqual(
+          running.map(({ title, prompt, status, nativeId }) => [title, prompt, status, nativeId]),
+          [["scout", "", "running", "call_fg:subagent:alpha"]],
+        );
+        const done = yield* subagentRowsBefore(fake, takeEvent, "done", [
+          {
+            type: "tool_execution_end",
+            toolCallId: "call_fg",
+            toolName: "subagent",
+            isError: false,
+            result: {
+              content: [{ type: "text", text: "done" }],
+              details: {
+                mode: "workflow",
+                results: [
+                  {
+                    agent: "scout",
+                    task: "map the repo",
+                    workflowKey: "alpha",
+                    exitCode: 0,
+                    messages: [
+                      { role: "assistant", content: [{ type: "text", text: "one file" }] },
+                    ],
+                  },
+                ],
+                workflowChildren: {
+                  inventoryComplete: true,
+                  workflowState: "completed",
+                  children: [{ childId: "alpha", state: "completed", runId: "child-a" }],
+                },
+              },
+            },
+          },
+        ]);
+        assert.deepEqual(
+          done.map(({ title, prompt, status, nativeId }) => [title, prompt, status, nativeId]),
+          [["scout", "map the repo", "completed", "call_fg:subagent:alpha"]],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("stops showing background subagents as running when the Pi process exits", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "call_async",
+        toolName: "subagent",
+        args: { agent: "scout", task: "watch the build", async: true },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "call_async",
+        toolName: "subagent",
+        isError: false,
+        result: { content: [], details: { mode: "single", asyncId: "run-1", results: [] } },
+      });
+      yield* takeEvent((event) => isSubagentTurnItem(event) && event.turnItem.status === "running");
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      yield* fake.closeStdout;
+      const stopped = yield* takeEvent(isSubagentTurnItem);
+      assert.deepInclude(isSubagentTurnItem(stopped) ? stopped.turnItem : {}, {
+        status: "interrupted",
+        title: "scout",
+        runId: RunId.make(`run:${THREAD_ID}:1`),
+      });
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 

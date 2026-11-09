@@ -58,6 +58,19 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
+/** The text blocks of a Pi message or tool result `content`, joined. */
+export function piContentText(content: unknown): string {
+  if (!Array.isArray(content)) {
+    return typeof content === "string" ? content : "";
+  }
+  return content
+    .map((block) => {
+      if (piRecordField(block, "type") === "text") return piRecordString(block, "text") ?? "";
+      return "";
+    })
+    .join("");
+}
+
 export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;

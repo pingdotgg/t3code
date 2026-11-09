@@ -60,6 +60,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import {
   makePiRpcConnection,
   parsePiModelSlug,
+  piContentText as contentText,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
   piRecordString as recordString,
@@ -73,6 +74,11 @@ import {
 } from "./mcpInjection.ts";
 import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
 import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
+import {
+  isPiSubagentSettled,
+  makePiSubagentLifecycle,
+  type PiSubagentMember,
+} from "./subagents.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
 const PI_DRIVER_KIND = PI_PROVIDER;
@@ -195,18 +201,6 @@ export interface PiAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
-}
-
-function contentText(content: unknown): string {
-  if (!Array.isArray(content)) {
-    return typeof content === "string" ? content : "";
-  }
-  return content
-    .map((block) => {
-      if (recordField(block, "type") === "text") return recordString(block, "text") ?? "";
-      return "";
-    })
-    .join("");
 }
 
 const MAX_STRUCTURED_TOOL_OUTPUT_BYTES = 64 * 1024;
@@ -536,6 +530,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      const subagents = makePiSubagentLifecycle<ActivePiTurn>();
       const sessionApprovals = new Set<string>();
       // Pi can settle immediately after dialog response; serialize so terminal cannot overtake request resolution.
       const sessionEventPermit = yield* Semaphore.make(1);
@@ -1256,52 +1251,44 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           },
         });
         if (toolName === "subagent") {
-          yield* emitSubagentTasks(turn, toolCallId, resultRecord, completed);
+          yield* emitSubagentMembers(
+            subagents.observeTool({
+              owner: turn,
+              toolCallId,
+              args,
+              details: recordField(resultRecord, "details"),
+              toolStatus: status,
+            }),
+          );
         }
       });
 
-      const emitSubagentTasks = Effect.fnUntraced(function* (
-        turn: ActivePiTurn,
-        toolCallId: string,
-        resultRecord: unknown,
-        completed: boolean,
+      // Members keep the turn that launched them; late frames still update that turn's rows.
+      const emitSubagentMembers = Effect.fnUntraced(function* (
+        members: ReadonlyArray<PiSubagentMember<ActivePiTurn>>,
       ) {
-        const results = recordField(recordField(resultRecord, "details"), "results");
-        if (!Array.isArray(results)) return;
+        if (members.length === 0) return;
         const emittedAt = yield* DateTime.now;
-        const parentNodeId = idAllocator.derive.nodeFromProviderItem({
-          driver: PI_PROVIDER,
-          nativeItemId: toolCallId,
-        });
-        for (const [index, result] of results.entries()) {
-          const agent = recordString(result, "agent");
-          const task = recordString(result, "task");
-          if (agent === undefined || task === undefined) continue;
-          const nativeTaskId = `${toolCallId}:subagent:${recordNumber(result, "step") ?? index}`;
+        for (const member of members) {
+          const turn = member.owner;
+          const { nativeTaskId, status } = member;
           const subagentId = idAllocator.derive.nodeFromProviderItem({
             driver: PI_PROVIDER,
             nativeItemId: nativeTaskId,
           });
           const startedAt = turn.toolStartedAt.get(nativeTaskId) ?? emittedAt;
           turn.toolStartedAt.set(nativeTaskId, startedAt);
-          const finished = completed || recordField(result, "finished") === true;
-          const stopReason = recordString(result, "stopReason");
-          const interrupted = finished && stopReason === "aborted";
-          const failed =
-            finished &&
-            !interrupted &&
-            ((recordNumber(result, "exitCode") ?? 0) !== 0 || stopReason === "error");
-          const status = interrupted
-            ? "interrupted"
-            : failed
-              ? "failed"
-              : finished
-                ? "completed"
-                : "running";
-          const outputText = piSubagentOutput(result);
-          const progress =
-            !finished && outputText.length > 0 ? { progress: outputText.slice(0, 200) } : {};
-          const resultText = finished && outputText.length > 0 ? outputText.slice(0, 10_000) : null;
+          const completedAt = isPiSubagentSettled(status) ? emittedAt : null;
+          const progress = member.progress === undefined ? {} : { progress: member.progress };
+          yield* emitItemNode(
+            turn,
+            nativeTaskId,
+            "subagent",
+            status,
+            startedAt,
+            completedAt,
+            member.toolCallId,
+          );
           yield* emit({
             type: "subagent.updated",
             driver: PI_PROVIDER,
@@ -1309,7 +1296,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               id: subagentId,
               threadId: turn.turnInput.threadId,
               runId: turn.turnInput.runId,
-              parentNodeId,
+              parentNodeId: idAllocator.derive.nodeFromProviderItem({
+                driver: PI_PROVIDER,
+                nativeItemId: member.toolCallId,
+              }),
               origin: "provider_native",
               createdBy: "agent",
               driver: PI_PROVIDER,
@@ -1317,14 +1307,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               providerThreadId: turn.turnInput.providerThread.id,
               childThreadId: null,
               nativeTaskRef: providerRef(nativeTaskId),
-              prompt: task,
-              title: agent,
-              model: recordString(result, "model") ?? null,
+              prompt: member.prompt,
+              title: member.title,
+              model: member.model,
               status,
               ...progress,
-              result: resultText,
+              result: member.result,
               startedAt,
-              completedAt: finished ? emittedAt : null,
+              completedAt,
               updatedAt: emittedAt,
             },
           });
@@ -1334,17 +1324,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             turnItem: {
               ...baseItemFields(turn, nativeTaskId, startedAt, emittedAt),
               status,
-              title: agent,
-              completedAt: finished ? emittedAt : null,
+              title: member.title,
+              completedAt,
               type: "subagent",
               subagentId,
               origin: "provider_native",
               driver: PI_PROVIDER,
               providerInstanceId: options.instanceId,
               childThreadId: null,
-              prompt: task,
+              prompt: member.prompt,
               ...progress,
-              result: resultText,
+              result: member.result,
             },
           });
         }
@@ -1859,6 +1849,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         // A native wake may wait for a turn owner; status belongs to the live session immediately.
         if (event["type"] === "extension_ui_request" && event["method"] === "setStatus") {
           yield* updateExtensionStatus(event);
+          return;
+        }
+        // Background subagents already belong to their launching turn, so a wake never buffers them.
+        const subagentMembers = subagents.observeSessionFrame(event);
+        if (subagentMembers !== undefined) {
+          yield* emitSubagentMembers(subagentMembers);
           return;
         }
         // Model hooks can show dialogs before turn ownership; keep requests session-scoped and buffer output.
@@ -2381,6 +2377,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   protocolError("Pi transport closed during rollback"),
                 );
               pendingWake = null;
+              yield* emitSubagentMembers(subagents.close());
               const interrupted = state?.activeTurn?.interrupted === true;
               if (state?.activeTurn != null) {
                 state.activeTurn.failure = interrupted
@@ -3541,27 +3538,6 @@ function piUncapturedForkEntry(
     if (timestamp >= from && timestamp <= to) earliest = id;
   }
   return earliest;
-}
-
-function piSubagentOutput(result: unknown): string {
-  const stopReason = recordString(result, "stopReason");
-  const failed =
-    (recordNumber(result, "exitCode") ?? 0) !== 0 ||
-    stopReason === "error" ||
-    stopReason === "aborted";
-  if (failed) {
-    const failure = recordString(result, "errorMessage") || recordString(result, "stderr");
-    if (failure !== undefined && failure.length > 0) return failure;
-  }
-  const messages = recordField(result, "messages");
-  if (!Array.isArray(messages)) return "";
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (recordString(message, "role") !== "assistant") continue;
-    const text = contentText(recordField(message, "content"));
-    if (text.length > 0) return text;
-  }
-  return "";
 }
 
 function piExtensionDisplayName(extensionPath: string | undefined): string {
