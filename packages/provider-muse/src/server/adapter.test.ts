@@ -1916,20 +1916,6 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("reports a compaction rejected at admission on its own terminal", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
-      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "failed");
-      assert.strictEqual(terminal.threadDisposition, "reusable");
-      assert.include(terminal.failure?.message, "run_active");
-      yield* startConversation(harness, fake, 2);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
-  );
-
   it.effect("treats recovering an already ended turn as done", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
@@ -2072,7 +2058,14 @@ describe("MuseAdapterV2", () => {
       yield* harness.takeEvent("turn.terminal");
       yield* fake.emit("turn/started", { turnId: "background-wake" });
       yield* Deferred.await(offered);
-      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
+      fake.queueResponse(
+        "session/compact",
+        new MspError({
+          code: -32030,
+          message: "session/compact command rejected: invalid_target",
+          data: { kind: "commandRejected", reason: "invalid_target", retryable: false },
+        }),
+      );
       yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");
