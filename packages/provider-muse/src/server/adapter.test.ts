@@ -1888,6 +1888,57 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("shows each turn and model retry chain on its own row", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const retry = Effect.fnUntraced(function* (
+        method: string,
+        record: string,
+        attempt: number,
+        params: Record<string, unknown>,
+      ) {
+        yield* fake.emit(method, {
+          turnId: nativeId,
+          attempt,
+          nextAttempt: attempt + 1,
+          sourceRange: { first: { id: record }, last: { id: record } },
+          ...params,
+        });
+        const { turnItem } = yield* harness.takeEvent(
+          "turn_item.updated",
+          (event) => event.turnItem.type === "system_notice",
+        );
+        return turnItem.type === "system_notice" ? turnItem : undefined;
+      });
+      const timeout = { maxAttempts: 2, retryDelayMs: 1_000, reason: "no first model event" };
+      const turnRetry = yield* retry("turn/retryScheduled", "record-1", 1, timeout);
+      assert.strictEqual(
+        turnRetry?.message,
+        "Muse is retrying this turn in 1s (attempt 2 of 2): no first model event",
+      );
+      const http = { maxAttempts: 10, errorKind: "server", httpStatus: 504, retryDelayMs: 1_000 };
+      const modelRetry = yield* retry("turn/modelRetryScheduled", "record-2", 1, http);
+      assert.strictEqual(
+        modelRetry?.message,
+        "Muse is retrying the model request in 1s (attempt 2 of 10): HTTP 504",
+      );
+      const nextChain = yield* retry("turn/retryScheduled", "record-3", 1, timeout);
+      assert.strictEqual(new Set([turnRetry?.id, modelRetry?.id, nextChain?.id]).size, 3);
+      const sameChain = yield* retry("turn/modelRetryScheduled", "record-4", 2, {
+        ...http,
+        httpStatus: 429,
+        retryDelayMs: 60_000,
+      });
+      assert.strictEqual(sameChain?.id, modelRetry?.id);
+      assert.strictEqual(
+        sameChain?.message,
+        "Muse is retrying the model request in 1m (attempt 3 of 10): HTTP 429",
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("opens a prompt-and-result child thread for a native subagent", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();

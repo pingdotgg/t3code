@@ -26,6 +26,7 @@ import {
 import type { MuseSettings } from "../settings.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -52,7 +53,7 @@ import {
   MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
-  MuseTurnRetryScheduled,
+  MuseRetryScheduled,
   MuseTurnCompleted,
   MuseTurnStartResult,
   MuseUserInput,
@@ -214,6 +215,8 @@ interface ActiveTurn {
   readonly started: Map<string, DateTime.Utc>;
   readonly dirty: Set<string>;
   readonly settledRequests: Set<string>;
+  /** The row each retry notification method's current chain updates. */
+  readonly retryRows: Map<string, string>;
   readonly done: Deferred.Deferred<void>;
   todoPlanId?: PlanId;
   nextOrdinal: number;
@@ -258,6 +261,7 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/tokenUsage",
   "session/todoListChanged",
   "turn/retryScheduled",
+  "turn/modelRetryScheduled",
   "usage/changed",
 ]);
 const TOOLS_WITH_NATIVE_ROWS = new Set(["write_todos", "request_user_input", "workflow"]);
@@ -1630,19 +1634,29 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
             });
             break;
           }
-          case "turn/retryScheduled": {
-            const retry = yield* decode(MuseTurnRetryScheduled, params);
+          case "turn/retryScheduled":
+          case "turn/modelRetryScheduled": {
+            const retry = yield* decode(MuseRetryScheduled, params);
+            // A chain's first retry opens a row; its later attempts update that row.
+            const row =
+              (retry.attempt > 1 ? turn.retryRows.get(method) : undefined) ??
+              `retry:${retry.sourceRange.first.id}`;
+            turn.retryRows.set(method, row);
+            const subject = method === "turn/retryScheduled" ? "this turn" : "the model request";
+            const reason =
+              retry.reason ??
+              (retry.httpStatus === undefined ? retry.errorKind : `HTTP ${retry.httpStatus}`);
             const time = yield* DateTime.now;
             yield* emit({
               type: "turn_item.updated",
               driver: MUSE_PROVIDER,
               turnItem: {
-                ...baseItem(turn, `retry:${retry.nextAttempt}`, time),
+                ...baseItem(turn, row, time),
                 type: "system_notice",
                 status: "completed",
                 title: "Muse retry",
                 completedAt: time,
-                message: `Muse is retrying this turn (attempt ${retry.nextAttempt} of ${retry.maxAttempts}): ${retry.reason}`,
+                message: `Muse is retrying ${subject} in ${formatDuration(retry.retryDelayMs)} (attempt ${retry.nextAttempt} of ${retry.maxAttempts})${reason ? `: ${reason}` : ""}`,
               },
             });
             break;
@@ -2041,6 +2055,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           started: new Map(),
           dirty: new Set(),
           settledRequests: new Set(),
+          retryRows: new Map(),
           done: yield* Deferred.make<void>(),
           nextOrdinal: turnInput.providerTurnOrdinal * 100 + 1,
           flushScheduled: false,
