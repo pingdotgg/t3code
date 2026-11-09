@@ -525,10 +525,7 @@ export const EnvironmentCloudLinkStateResult = Schema.Struct({
   reachability: Schema.optional(EnvironmentConnectReachability),
   /** The tunnel's public hostname, once cloudflared has connected. Older servers omit it. */
   tunnelHostname: Schema.optional(Schema.String),
-  /**
-   * Whether this session could link the environment from where it reached it: the desktop
-   * app's own session, or a loopback address. Older servers omit it.
-   */
+  /** Whether this is the desktop app's own session, which may link from where it is. */
   linkableHere: Schema.optional(Schema.Boolean),
 });
 export type EnvironmentCloudLinkStateResult = typeof EnvironmentCloudLinkStateResult.Type;

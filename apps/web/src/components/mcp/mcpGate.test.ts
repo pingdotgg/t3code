@@ -84,6 +84,15 @@ describe("resolveMcpGate", () => {
       "turn-on",
     ],
     ["T3 Connect's list still loading", { ...saved, relay: { status: "loading" } }, "checking"],
+    [
+      "no tunnel, before T3 Connect's list loads",
+      {
+        ...saved,
+        linkState: { ...tunnel, managedTunnelActive: false },
+        relay: { status: "loading" },
+      },
+      "turn-on",
+    ],
     ["the check still running", { ...open, reachability: "checking" }, "checking"],
     [
       "an offline tunnel",

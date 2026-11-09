@@ -20,7 +20,8 @@ export function useT3ConnectTurnOn(environmentId: EnvironmentId | null) {
   const linkState = useCloudLinkState(environmentId).data;
   return resolveT3ConnectTurnOn({
     desktopApp: isElectron,
-    linkableHere: linkState?.linkableHere === true,
+    // Unknown while loading and on older servers, which keep today's switch in Settings.
+    linkableHere: linkState?.linkableHere ?? true,
     cloudConfigured: hasCloudPublicConfig(),
     canReadRelay,
     canWriteRelay,

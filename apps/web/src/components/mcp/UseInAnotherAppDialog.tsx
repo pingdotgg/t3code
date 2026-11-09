@@ -24,6 +24,7 @@ import { checkReachability } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
+import { isElectron } from "~/env";
 import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useNowSecond } from "~/hooks/useNowSecond";
@@ -236,9 +237,12 @@ function useGate(environment: EnvironmentPresentation) {
     reportFailure: false,
   });
   const runCheck = useAtomCommand(checkReachability, { reportFailure: false });
-  // The gate opens on a check it ran, or on a newer one the link state reports.
+  // The gate opens on a check it ran, or on a newer one the link state reports. A failed run
+  // has no result, and counts only results newer than what the link state had then.
   const [check, setCheck] = useState<
-    "idle" | "running" | "failed" | EnvironmentConnectReachability
+    | "idle"
+    | "running"
+    | { readonly result: EnvironmentConnectReachability | null; readonly since: string }
   >("idle");
   const [connecting, setConnecting] = useState(false);
   const linkState = controller.linkState.data;
@@ -260,22 +264,30 @@ function useGate(environment: EnvironmentPresentation) {
           status: "listed",
           endpoint: discovery.environments.get(environmentId)?.environment.endpoint,
         }
-      : { status: Option.isSome(discovery.error) && !discovery.refreshing ? "failed" : "loading" },
+      : {
+          status:
+            !discovery.refreshing && (discovery.offline || Option.isSome(discovery.error))
+              ? "failed"
+              : "loading",
+        },
     reachability:
-      check === "idle" || check === "running"
+      typeof check === "string"
         ? "checking"
-        : check === "failed"
-          ? null
-          : reported !== undefined && reported.checkedAt > check.checkedAt
-            ? reported
-            : check,
+        : reported !== undefined && reported.checkedAt > check.since
+          ? reported
+          : check.result,
   });
   const runReachabilityCheck = async () => {
     setCheck("running");
-    if (!discovery.listed) void refreshDiscovery();
+    // A saved machine's address comes from T3 Connect's list, which can be stale.
+    if (!thisMachine) void refreshDiscovery();
     const result = await runCheck({ target: { environmentId } });
     controller.linkState.refresh();
-    setCheck(result._tag === "Success" ? result.value : "failed");
+    setCheck(
+      result._tag === "Success"
+        ? { result: result.value, since: result.value.checkedAt }
+        : { result: null, since: reported?.checkedAt ?? "" },
+    );
   };
   const turnOn = async () => {
     setConnecting(true);
@@ -286,6 +298,13 @@ function useGate(environment: EnvironmentPresentation) {
     if (!ok) setConnecting(false);
   };
   const tunnelActive = linkState !== null && isManagedTunnelActive(linkState, undefined);
+  const discoverOnOpen = useEffectEvent(() => {
+    if (!thisMachine) void refreshDiscovery();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- T3 Connect lists a saved machine's address only once asked, so ask when the wizard opens
+  useEffect(() => {
+    queueMicrotask(discoverOnOpen);
+  }, []);
   const checkOnce = useEffectEvent(() => {
     if (check === "idle") void runReachabilityCheck();
   });
@@ -604,17 +623,34 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
   }
   const { copy, link } = action;
   const handOff = async () => {
-    // Open only after the copy lands, so the app never gets an older clipboard.
-    if (copy !== null) {
-      const copied = await writeTextToClipboard(copy.text, copy.title).catch(() => false);
-      toastManager.add(
-        copied
-          ? { type: "success", title: copy.title }
-          : { type: "error", title: "Could not copy", description: "Use Set up another way." },
-      );
-      if (!copied) return;
+    if (copy === null) {
+      openLink(link);
+      return;
     }
-    openLink(link);
+    // Start the copy while this page has focus, and reserve the tab within this click, since
+    // browsers block opens after an await. The app opens only once the copy lands.
+    const copying = writeTextToClipboard(copy.text, copy.title).catch(() => false);
+    const tab = isElectron ? null : window.open("", "_blank");
+    if (tab) tab.opener = null;
+    if (!(await copying)) {
+      tab?.close();
+      toastManager.add({
+        type: "error",
+        title: "Could not copy",
+        description: "Use Set up another way.",
+      });
+      return;
+    }
+    if (tab) tab.location.href = link;
+    else if (isElectron) openLink(link);
+    toastManager.add({
+      type: "success",
+      title: copy.title,
+      // A blocked tab still leaves a way to finish the handoff.
+      ...(tab || isElectron
+        ? {}
+        : { actionProps: { children: `Open ${app.name}`, onClick: () => openLink(link) } }),
+    });
   };
   return (
     <div className="space-y-2">

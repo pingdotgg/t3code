@@ -238,10 +238,10 @@ describe("link proof over a non-loopback desktop transport", () => {
           LOOPBACK_ORIGIN,
         );
         expect(loopback.status).toBe(200);
-        // Link state tells clients the same, so Turn on shows only where linking works.
+        // Clients offer Turn on only to the desktop's own session; SSH forwards look like loopback.
         expect(yield* linkableHere(desktop)).toBe(true);
         expect(yield* linkableHere(token)).toBe(false);
-        expect(yield* linkableHere(token, LOOPBACK_ORIGIN)).toBe(true);
+        expect(yield* linkableHere(token, LOOPBACK_ORIGIN)).toBe(false);
       }),
   );
 

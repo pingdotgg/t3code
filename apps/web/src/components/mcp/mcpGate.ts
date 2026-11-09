@@ -50,17 +50,12 @@ export function resolveMcpGate(input: {
   if (input.linkStateError !== null) return { kind: "error", message: input.linkStateError };
   const { linkState, relay } = input;
   if (linkState === null) return { kind: "checking" };
-  if (!input.thisMachine && relay.status !== "listed") {
-    return relay.status === "failed"
-      ? { kind: "error", message: "Could not reach T3 Connect." }
-      : { kind: "checking" };
-  }
   const endpoint = relay.status === "listed" ? relay.endpoint : undefined;
-  if (
-    !isManagedTunnelActive(linkState, endpoint?.providerKind) ||
-    (!input.thisMachine && endpoint === undefined)
-  ) {
-    return { kind: "turn-on" };
+  if (!isManagedTunnelActive(linkState, endpoint?.providerKind)) return { kind: "turn-on" };
+  if (!input.thisMachine) {
+    if (relay.status === "loading") return { kind: "checking" };
+    if (relay.status === "failed") return { kind: "error", message: "Could not reach T3 Connect." };
+    if (endpoint === undefined) return { kind: "turn-on" };
   }
   const { reachability } = input;
   if (reachability === "checking") return { kind: "checking" };

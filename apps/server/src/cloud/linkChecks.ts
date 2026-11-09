@@ -80,18 +80,18 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
 }
 
 /**
- * Whether `linkProof` would accept a request like this one: never through a proxy, and from a
- * loopback address unless the desktop app's own bootstrap session sent it (WSL uses a distro IP).
+ * Whether clients should offer to turn on T3 Connect over this session: only the desktop app's
+ * own bootstrap session, from any address (WSL answers on a distro IP), never through a proxy.
+ * A loopback address alone does not count, since SSH port forwards look like loopback too.
  */
-export function canLinkFrom(
+export function canLinkHere(
   request: HttpServerRequest.HttpServerRequest,
   subject: string,
 ): boolean {
-  const url = requestAbsoluteUrl(request);
   return (
-    url !== null &&
-    !hasForwardedAuthorityHeaders(request) &&
-    (subject === "desktop-bootstrap" || isLoopbackHostname(new URL(url).hostname))
+    subject === "desktop-bootstrap" &&
+    requestAbsoluteUrl(request) !== null &&
+    !hasForwardedAuthorityHeaders(request)
   );
 }
 
