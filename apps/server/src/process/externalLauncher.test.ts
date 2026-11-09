@@ -536,6 +536,36 @@ it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Ze
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect.skipIf(windowsHost)("never launches the OpenZFS zed for Zed", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-launch-" });
+    const sbin = path.join(home, "sbin");
+    yield* fs.makeDirectory(sbin, { recursive: true });
+    yield* fs.writeFileString(path.join(sbin, "zed"), "#!/bin/sh\n");
+    yield* fs.chmod(path.join(sbin, "zed"), 0o755);
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({ editor: "zed", cwd: "/workspace" }).pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { HOME: home, PATH: sbin },
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+    // A host with Zed in /usr/bin may launch it; only the OpenZFS zed is wrong.
+    assert.notInclude(["zed", path.join(sbin, "zed")], spawned?.command);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.each([
   { editor: "webstorm", installPath: "Applications/WebStorm 2026.2.app/Contents/MacOS/webstorm" },
   { editor: "idea", installPath: "Applications/IntelliJ IDEA 2026.1.4.app/Contents/MacOS/idea" },
