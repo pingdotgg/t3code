@@ -27,7 +27,7 @@ import {
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
-import { resolveScopedModelInstanceId } from "./scopedModelSelection";
+import { resolveScopedModelInstanceId, scopedModelSelectionsEqual } from "./scopedModelSelection";
 
 function environment(
   id: string,
@@ -914,12 +914,20 @@ describe("model selections across environments' provider instances", () => {
       environment(target.label, {
         settings: { textGenerators: config ? { [generatorId]: config } : {} },
       });
-    const patch = forKeys({ instanceId: id, model: "openai/gpt-6-mini" }, [
+    const selection = { instanceId: id, model: "openai/gpt-6-mini" };
+    const patch = forKeys(selection, [
       "textGenerationModelSelection",
       "speechPostProcessingModelSelection",
     ]);
     // Generators have no provider snapshots to match accounts through.
     const source = withGenerator(laptop, openrouter);
+    const generator = { providers: [a(id)], settings: source.serverConfig!.settings };
+    expect(
+      scopedModelSelectionsEqual(selection, generator, selection, {
+        ...generator,
+        providers: [a(id, other)],
+      }),
+    ).toBe(true);
     const plan = (serverGenerator?: typeof openrouter) =>
       planScopedSettingsPatch(
         all,

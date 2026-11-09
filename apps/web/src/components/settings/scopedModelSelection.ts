@@ -82,6 +82,15 @@ export function scopedModelSelectionsEqual(
   secondEnvironment: ScopedModelEnvironment,
 ): boolean {
   if (first === null || second === null) return first === second;
+  const firstGenerator = textGeneratorForSelection(firstEnvironment.settings, first.instanceId);
+  const secondGenerator = textGeneratorForSelection(secondEnvironment.settings, second.instanceId);
+  if (firstGenerator || secondGenerator) {
+    return (
+      firstGenerator?.kind === secondGenerator?.kind &&
+      firstGenerator?.baseUrl === secondGenerator?.baseUrl &&
+      Equal.equals(first, second)
+    );
+  }
   const firstProvider = find(firstEnvironment.providers, first.instanceId);
   const secondProvider = find(secondEnvironment.providers, second.instanceId);
   const sameInstance =
