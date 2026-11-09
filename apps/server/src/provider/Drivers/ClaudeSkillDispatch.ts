@@ -75,9 +75,13 @@ export function rewriteClaudeSkillMentionsInAnswer(
 ): string {
   // A leading `/name` invokes a skill in the composer, so it counts here too.
   const leadingSlash = /^(\s*)\/(?=\S)/.exec(answer);
-  const source = leadingSlash
-    ? `${leadingSlash[1]}$${answer.slice(leadingSlash[0].length)}`
-    : answer;
-  const mentions = matchSkillMentions(source, skills);
-  return mentions.length === 0 ? answer : inlineSkillMentions(source, mentions, undefined);
+  if (leadingSlash) {
+    const asMention = `${leadingSlash[1]}$${answer.slice(leadingSlash[0].length)}`;
+    const mentions = matchSkillMentions(asMention, skills);
+    if (mentions[0]?.start === leadingSlash[1]?.length) {
+      return inlineSkillMentions(asMention, mentions, undefined);
+    }
+  }
+  const mentions = matchSkillMentions(answer, skills);
+  return mentions.length === 0 ? answer : inlineSkillMentions(answer, mentions, undefined);
 }
