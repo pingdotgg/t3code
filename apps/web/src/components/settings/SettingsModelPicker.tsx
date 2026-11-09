@@ -36,7 +36,7 @@ export function SettingsModelPicker({
     provider: ProviderDriverKind;
     models: ReadonlyArray<ServerProviderModel>;
     modelOptions: ProviderOptions | null | undefined;
-    planModeEnabled: boolean;
+    includePlanAgent?: boolean | undefined;
     onModelOptionsChange: (options: ProviderOptions | undefined) => void;
   } | null;
 }) {
@@ -46,7 +46,7 @@ export function SettingsModelPicker({
         models: traits.models,
         model: pickerProps.model,
         modelOptions: traits.modelOptions,
-        planModeEnabled: traits.planModeEnabled,
+        includePlanAgent: traits.includePlanAgent,
       })
     : null;
   return (
@@ -67,7 +67,7 @@ export function SettingsModelPicker({
               model={pickerProps.model}
               modelOptions={traits.modelOptions ?? []}
               allowPromptInjectedEffort={false}
-              planModeEnabled={traits.planModeEnabled}
+              includePlanAgent={traits.includePlanAgent}
               triggerVariant="settings"
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
               onModelOptionsChange={traits.onModelOptionsChange}
