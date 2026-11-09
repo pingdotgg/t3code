@@ -14,6 +14,7 @@ import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   persistScopedSettingsPatch,
+  planEnvironmentsSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -294,6 +295,16 @@ describe("scoped settings writes", () => {
           upgradedLaptop({
             projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
           }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("saves a tool preset on each connected environment, deleting one it never had", async () => {
+      const web = { skills: ["browse"], mcpServers: [] };
+      expect(
+        await outcome(
+          planEnvironmentsSettingsPatch(environments, { toolPresets: { Old: null, Web: web } }),
+          upgradedLaptop({ toolPresets: { Web: web } }),
         ),
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });

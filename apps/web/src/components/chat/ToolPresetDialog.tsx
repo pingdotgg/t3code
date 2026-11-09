@@ -1,4 +1,5 @@
 import {
+  AuthSettingsWriteScope,
   type EnvironmentId,
   mcpServerTransportSummary,
   type ProjectId,
@@ -11,11 +12,14 @@ import { SearchIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useId, useState } from "react";
 
+import { useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
-import { useAtomCommand } from "../../state/use-atom-command";
+import { useEnvironmentsWithScope } from "../../state/session";
+import { isConnectedWithConfig } from "../settings/scopedSettings";
 import { useCheckoutScans } from "../settings/SkillEnvironments";
 import { collectSkillRows, listMcpServerRows } from "../settings/toolsSettings.logic";
 import { TruncatedText } from "../settings/TruncatedText";
+import { useUpdateEnvironmentsSettings } from "../settings/useScopedSettings";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import {
@@ -43,9 +47,10 @@ interface ToolPresetMember {
 }
 
 /**
- * Create, change or delete one of the environment's tool presets from a
- * thread's composer. It lists the skills the agents find for this checkout and
- * the MCP servers settings define for the project.
+ * Create, change or delete a tool preset from a thread's composer. It lists the
+ * skills the agents find for this checkout and the MCP servers settings define
+ * for the project, and saves on every connected environment this client may
+ * change settings on, so a preset follows the user between machines.
  */
 export function ToolPresetDialog({
   environmentId,
@@ -67,9 +72,17 @@ export function ToolPresetDialog({
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_PROVIDERS;
   // Servers send a checkout's skills only to a client that asks for them.
   useCheckoutScans([{ environmentId, cwd }], [{ environmentId, providers }]);
-  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
-    label: "update tool presets",
-  });
+  const connected = useEnvironments().environments.filter(isConnectedWithConfig);
+  const writable = useEnvironmentsWithScope(connected, AuthSettingsWriteScope);
+  // The thread's environment leads, so the editor names it first.
+  const targets = connected
+    .filter((environment) => writable.has(environment.environmentId))
+    .toSorted(
+      (left, right) =>
+        Number(right.environmentId === environmentId) -
+        Number(left.environmentId === environmentId),
+    );
+  const updateEverywhere = useUpdateEnvironmentsSettings();
   const presets = settings?.toolPresets ?? {};
   const preset = initialName === null ? undefined : presets[initialName];
   const [name, setName] = useState(initialName ?? "");
@@ -102,8 +115,9 @@ export function ToolPresetDialog({
   const canSave =
     trimmed.length > 0 && nameError === null && chosenSkills.size + chosenServers.size > 0;
 
+  // Same name, same preset: a preset by this name elsewhere is replaced.
   const write = (patch: Readonly<Record<string, ToolPreset | null>>) => {
-    void updateSettings({ environmentId, input: { patch: { toolPresets: patch } } });
+    updateEverywhere(targets, { toolPresets: patch });
     onClose();
   };
   const save = () => {
@@ -129,8 +143,10 @@ export function ToolPresetDialog({
         <DialogHeader>
           <DialogTitle>{initialName === null ? "New preset" : `Edit ${initialName}`}</DialogTitle>
           <DialogDescription>
-            Pick the skills and servers a thread turns on or off together. Every project on this
-            environment can use the preset.
+            Pick the skills and servers a thread turns on or off together.{" "}
+            {targets.length > 1
+              ? `It's saved on ${targets.map((environment) => environment.label).join(", ")}, for every project there.`
+              : "Every project on this environment can use the preset."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

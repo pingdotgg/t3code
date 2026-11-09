@@ -11,6 +11,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
+  type ServerSettingsPatch,
   type UnifiedSettings,
 } from "@t3tools/contracts";
 
@@ -21,6 +22,7 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planEnvironmentsSettingsPatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -117,6 +119,15 @@ export function useClearScopedSettings() {
     if (context === null) return;
     run(planScopedSettingsClear(context.scope, context.environments, keys));
   };
+}
+
+/** Saves one environment-wide patch on each environment given, outside the settings scope. */
+export function useUpdateEnvironmentsSettings() {
+  const run = useRunScopedPlan();
+  return (
+    environments: Parameters<typeof planEnvironmentsSettingsPatch>[0],
+    patch: ServerSettingsPatch,
+  ) => run(planEnvironmentsSettingsPatch(environments, patch));
 }
 
 export function useClearProjectOverrides() {

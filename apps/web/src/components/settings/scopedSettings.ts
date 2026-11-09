@@ -412,6 +412,25 @@ export function planProjectOverridesClear(
   };
 }
 
+/** The same environment-wide patch on each connected environment. */
+export function planEnvironmentsSettingsPatch(
+  environments: readonly ScopedSettingsEnvironment[],
+  patch: ServerSettingsPatch,
+) {
+  const serverWrites = environments.filter(isConnectedWithConfig).map((environment) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+    previous: environment.serverConfig!.settings,
+    patch,
+  }));
+  return {
+    clientPatch: {} as ClientSettingsPatch,
+    hasClientWrite: false,
+    serverWrites,
+    unavailableReason: serverWrites.length > 0 ? null : "Connect an environment to save this.",
+  };
+}
+
 function writeWasDropped(value: unknown, before: unknown, saved: unknown): boolean {
   if (value === null) return before != null && Equal.equals(saved, before);
   if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {

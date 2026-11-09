@@ -78,8 +78,10 @@ a browser server and its testing skills. Settings hold the defaults for every th
 change them for one thread.
 
 Presets live in the composer's **Tools** menu: a switch for each preset, **New preset…** and
-**Edit preset**. Every project on the environment shares them, and making or changing one needs
-permission to change settings.
+**Edit preset**. Every project shares them, and making or changing one needs permission to change
+settings. Saving or deleting a preset does the same on every connected environment where you have
+that permission, replacing a preset of the same name there. An environment that's offline at the
+time keeps what it had. A preset's skills and servers apply only where an environment has them.
 
 Turning a preset on gives that thread its skills and servers even where settings have them off;
 turning it off takes them away for that thread. Where two presets share a tool and one is on, the
