@@ -3,6 +3,9 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  closeLayoutTab,
+  closedLayoutTabIds,
+  moveLayoutTabToNewWorkspace,
   createLayoutState,
   ghostLoneLayoutChats,
   layoutChatSwaps,
@@ -628,5 +631,19 @@ describe("moveLayoutTab", () => {
       ["chat-pane", expect.closeTo(0.55)],
       ["other-pane", expect.closeTo(0.45)],
     ]);
+  });
+});
+
+describe("closedLayoutTabIds", () => {
+  it("lists a tab that left the layout, not one that moved to another workspace", () => {
+    const layout = openLayoutTab(openLayoutTab(createLayoutState(), chat), diff, {
+      placement: "new-column",
+    });
+    const diffTabId = selectFocusedTab(layout)!.id;
+
+    expect(closedLayoutTabIds(layout, closeLayoutTab(layout, diffTabId))).toEqual([diffTabId]);
+    expect(closedLayoutTabIds(layout, moveLayoutTabToNewWorkspace(layout, diffTabId, 1))).toEqual(
+      [],
+    );
   });
 });
