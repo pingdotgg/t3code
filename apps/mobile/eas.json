@@ -75,6 +75,14 @@
       "ios": {
         "image": "macos-tahoe-26.6-xcode-27.1"
       }
+    },
+    "benchmark": {
+      "extends": "production",
+      "autoIncrement": false
+    },
+    "benchmark-ios": {
+      "extends": "testflight",
+      "autoIncrement": false
     }
   },
   "submit": {

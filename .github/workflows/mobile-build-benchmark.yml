@@ -1,0 +1,155 @@
+name: Mobile Build Benchmark
+
+# Throwaway benchmark: times the store build profiles with `eas build --local`
+# on Blacksmith runners, to compare against EAS's cloud builders. Nothing is
+# submitted, and the benchmark profiles never bump the remote build number.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/mobile-build-benchmark.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android ${{ matrix.runner }}
+    if: github.repository == 'pingdotgg/t3code'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [blacksmith-16vcpu-ubuntu-2404, blacksmith-32vcpu-ubuntu-2404]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: "17"
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          packager: npm
+
+      - name: Pull production environment variables
+        working-directory: apps/mobile
+        run: |
+          eas env:pull production --non-interactive
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from "node:fs";
+          import { parseEnv } from "node:util";
+          const env = parseEnv(readFileSync(".env.local", "utf8"));
+          appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${env.T3CODE_ANDROID_GOOGLE_SERVICES_FILE}\n`);
+          NODE
+
+      - name: Machine
+        run: |
+          nproc
+          free -g
+          echo "ANDROID_HOME=$ANDROID_HOME"
+
+      - name: Build (eas build --local, benchmark profile)
+        working-directory: apps/mobile
+        run: |
+          start=$(date +%s)
+          eas build --local --platform android --profile benchmark --non-interactive --output "$RUNNER_TEMP/t3code.aab"
+          echo "### Android ${{ matrix.runner }}: $(( ($(date +%s) - start) / 60 )) min $(( ($(date +%s) - start) % 60 )) s" >> "$GITHUB_STEP_SUMMARY"
+
+  ios:
+    name: iOS ${{ matrix.runner }}
+    if: github.repository == 'pingdotgg/t3code'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [blacksmith-12vcpu-macos-26]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      APP_VARIANT: production
+      NODE_OPTIONS: --max-old-space-size=8192
+      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Select Xcode 27.1
+        run: |
+          ls -d /Applications/Xcode*.app
+          xcode=$(ls -d /Applications/Xcode_27.1*.app /Applications/Xcode-27.1*.app 2>/dev/null | head -1)
+          if [ -z "$xcode" ]; then
+            echo "::warning::Xcode 27.1 not found; EAS uses 27.1. Falling back to the newest Xcode."
+            xcode=$(ls -d /Applications/Xcode*.app | sort -V | tail -1)
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          sysctl -n hw.ncpu machdep.cpu.brand_string
+          echo "$(( $(sysctl -n hw.memsize) / 1073741824 )) GB"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+          packager: npm
+
+      - name: Build tools
+        run: |
+          command -v pod || sudo gem install cocoapods --no-document
+          command -v fastlane || brew install fastlane
+          pod --version
+          fastlane --version | tail -1
+
+      - name: Pull production environment variables
+        working-directory: apps/mobile
+        run: eas env:pull production --non-interactive
+
+      - name: Build (eas build --local, benchmark-ios profile)
+        working-directory: apps/mobile
+        run: |
+          start=$(date +%s)
+          eas build --local --platform ios --profile benchmark-ios --non-interactive --output "$RUNNER_TEMP/t3code.ipa"
+          echo "### iOS ${{ matrix.runner }}: $(( ($(date +%s) - start) / 60 )) min $(( ($(date +%s) - start) % 60 )) s" >> "$GITHUB_STEP_SUMMARY"
