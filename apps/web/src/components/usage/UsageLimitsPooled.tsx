@@ -15,7 +15,10 @@ import {
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerAccentForegroundColor,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { AlertTriangleIcon, ExternalLinkIcon, TicketIcon } from "lucide-react";
 import {
   createContext,
@@ -348,6 +351,17 @@ function SegmentTriggers({
   const [segmentRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const accent = normalizeProviderAccentColor(account.accentColor);
+  // An accent fills at full strength to match the instance badge, so label text switches to
+  // the badge's foreground exactly where it crosses the fill.
+  const labelPaint = accent
+    ? ({
+        color: "transparent",
+        backgroundImage: `linear-gradient(to right, ${providerAccentForegroundColor(accent)} ${remaining}%, var(--foreground) ${remaining}%)`,
+        backgroundClip: "text",
+        WebkitBackgroundClip: "text",
+      } as const)
+    : undefined;
   return (
     <>
       <PopoverTrigger
@@ -369,7 +383,7 @@ function SegmentTriggers({
           <div className="absolute inset-0" style={paceMark?.gap}>
             <div
               aria-hidden
-              className="absolute inset-y-0 left-0 rounded-md opacity-35"
+              className={cn("absolute inset-y-0 left-0 rounded-md", !accent && "opacity-35")}
               style={{ width: `${remaining}%`, backgroundColor: color }}
             />
             {remaining < 100 && reset && refillPercent > 0 ? (
@@ -393,22 +407,24 @@ function SegmentTriggers({
         ) : null}
         <span
           aria-hidden
-          className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold text-foreground/80 tabular-nums @2xl/pool:hidden"
+          className={cn(
+            "absolute inset-0 flex items-center justify-center overflow-hidden rounded-md text-3xs leading-none font-semibold tabular-nums @2xl/pool:hidden",
+            !accent && "text-foreground/80",
+          )}
+          style={labelPaint}
         >
           {index}
         </span>
-        <div className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs @2xl/pool:flex">
+        <div
+          className="relative hidden h-full min-w-0 items-center gap-1.5 overflow-hidden rounded-md px-2 text-xs text-foreground @2xl/pool:flex"
+          style={labelPaint}
+        >
           {showAccountName ? (
-            <AccountName
-              account={account}
-              className="min-w-0 truncate font-medium text-foreground"
-            />
+            <AccountName account={account} className="min-w-0 truncate font-medium" />
           ) : null}
           {/* A single-account bar repeats the headline percentage. */}
           {showAccountName ? (
-            <span className="shrink-0 font-semibold text-foreground tabular-nums">
-              {remaining}%
-            </span>
+            <span className="shrink-0 font-semibold tabular-nums">{remaining}%</span>
           ) : null}
           {resetsIn || credits ? (
             <span className="ms-auto flex min-w-0 items-center gap-1.5 overflow-hidden rounded-sm bg-background/85 px-1.5 py-0.5 text-2xs whitespace-nowrap text-foreground tabular-nums">
@@ -451,6 +467,7 @@ function LegendRow({
   const remaining = remainingPercent(window);
   const resetsIn = formatResetsIn(window, now);
   const credits = account.limits.resetCredits?.availableCount ?? 0;
+  const accent = normalizeProviderAccentColor(account.accentColor);
   return (
     <PopoverTrigger
       handle={popover}
@@ -459,10 +476,16 @@ function LegendRow({
       render={<Button variant="ghost" size="compact" />}
       className="min-w-0 @2xl/pool:hidden"
     >
-      <span className="relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold text-foreground/80 tabular-nums">
+      <span
+        className={cn(
+          "relative inline-flex size-4 shrink-0 items-center justify-center rounded-sm text-3xs leading-none font-semibold tabular-nums",
+          !accent && "text-foreground/80",
+        )}
+        style={accent ? { color: providerAccentForegroundColor(accent) } : undefined}
+      >
         <span
           aria-hidden
-          className="absolute inset-0 rounded-sm opacity-35"
+          className={cn("absolute inset-0 rounded-sm", !accent && "opacity-35")}
           style={{ backgroundColor: color }}
         />
         <span className="sr-only">Segment </span>

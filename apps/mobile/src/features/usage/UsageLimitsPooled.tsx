@@ -1,7 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
-import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  normalizeProviderAccentColor,
+  providerAccentForegroundColor,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,
   collectExternalUsageLinks,
@@ -121,10 +124,12 @@ function PaceGap({
 function AccountSegment({
   remaining,
   color,
+  solid,
   refillPercent,
 }: {
   readonly remaining: number;
   readonly color: string;
+  readonly solid: boolean;
   readonly refillPercent: number;
 }) {
   const patternId = useId().replace(/:/g, "");
@@ -156,9 +161,92 @@ function AccountSegment({
               fill={`url(#${patternId})`}
             />
           ) : null}
-          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={0.35} />
+          <Rect width={`${remaining}%`} height="100%" fill={color} opacity={solid ? 1 : 0.35} />
         </Svg>
       ) : null}
+    </View>
+  );
+}
+
+function SegmentLabel({
+  account,
+  remaining,
+  resetsIn,
+  credits,
+  index,
+  inlineLabels,
+  inlineReset,
+  inlineName,
+  ink,
+}: {
+  readonly account: LimitAccount;
+  readonly remaining: number;
+  readonly resetsIn: string | undefined;
+  readonly credits: number;
+  readonly index: number;
+  readonly inlineLabels: boolean;
+  readonly inlineReset: boolean;
+  readonly inlineName: boolean;
+  readonly ink?: string;
+}) {
+  const inkStyle = ink ? { color: ink } : undefined;
+  // The ink copy keeps the chip's layout, hidden, so the name truncates at the same width.
+  return inlineLabels ? (
+    <View
+      pointerEvents="none"
+      className="absolute inset-0 flex-row items-center justify-between gap-2 overflow-hidden rounded-md px-2"
+    >
+      <View className="min-w-0 shrink flex-row items-center gap-1.5">
+        {account.email ? <AccountChip email={account.email} /> : null}
+        {account.email && !(account.displayName && inlineName) ? null : (
+          <Text
+            numberOfLines={1}
+            className="min-w-0 shrink text-xs font-t3-medium text-foreground"
+            style={inkStyle}
+          >
+            {accountName(account)}
+          </Text>
+        )}
+        <Text className="text-sm font-t3-bold tabular-nums text-foreground" style={inkStyle}>
+          {remaining}%
+        </Text>
+      </View>
+      {inlineReset && (resetsIn || credits) ? (
+        <View
+          className="shrink-0 flex-row items-center gap-1 rounded bg-grouped-card/85 px-1.5 py-0.5"
+          style={ink ? { opacity: 0 } : undefined}
+        >
+          {resetsIn ? (
+            <>
+              <SymbolView
+                name="arrow.clockwise"
+                size={11}
+                tintColorClassName="accent-foreground-muted"
+              />
+              <Text className="text-xs tabular-nums text-foreground-muted">{resetsIn}</Text>
+            </>
+          ) : null}
+          {credits ? (
+            <>
+              <SymbolView name="ticket" size={12} tintColorClassName="accent-icon" />
+              <Text className="text-xs font-t3-medium tabular-nums text-foreground">{credits}</Text>
+            </>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  ) : (
+    <View
+      pointerEvents="none"
+      className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
+    >
+      <Text
+        numberOfLines={1}
+        className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
+        style={inkStyle}
+      >
+        {index + 1}
+      </Text>
     </View>
   );
 }
@@ -184,6 +272,7 @@ function PoolWindowCard({
   const [barWidth, setBarWidth] = useState(0);
   // Each segment needs room for its account, percent and reset to label itself.
   const segmentWidth = barWidth / Math.max(pool.columns.length, 1);
+  const [cellWidths, setCellWidths] = useState<Readonly<Record<string, number>>>({});
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
@@ -240,6 +329,18 @@ function PoolWindowCard({
         const timeLeft = paceRemainingPercent(window, now);
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now)?.replace("resets in ", "");
+        const remaining = remainingPercent(window);
+        const accent = normalizeProviderAccentColor(account.accentColor);
+        const labelProps = {
+          account,
+          remaining,
+          resetsIn,
+          credits,
+          index,
+          inlineLabels,
+          inlineReset,
+          inlineName,
+        };
         return (
           <Pressable
             key={account.key}
@@ -248,74 +349,37 @@ function PoolWindowCard({
             accessibilityHint="Show account details"
             onPress={() => openAccount(account)}
             className={wide ? "h-9 min-w-0 flex-1 rounded-md" : "h-7 min-w-0 flex-1 rounded-md"}
+            onLayout={(event) => {
+              const { width } = event.nativeEvent.layout;
+              setCellWidths((previous) =>
+                previous[account.key] === width ? previous : { ...previous, [account.key]: width },
+              );
+            }}
           >
             <PaceGap timeLeft={timeLeft}>
               <View className="absolute inset-0 rounded-md bg-subtle" />
               <View className="absolute inset-0 overflow-hidden rounded-md">
                 <AccountSegment
-                  remaining={remainingPercent(window)}
-                  color={normalizeProviderAccentColor(account.accentColor) ?? color}
+                  remaining={remaining}
+                  color={accent ?? color}
+                  solid={accent !== undefined}
                   refillPercent={window.resetsAt ? member.refillPercent : 0}
                 />
               </View>
             </PaceGap>
-            {inlineLabels ? (
+            <SegmentLabel {...labelProps} />
+            {accent && cellWidths[account.key] ? (
+              // Text crossing a full-strength fill takes the badge's foreground, clipped to the fill.
               <View
                 pointerEvents="none"
-                className="absolute inset-0 flex-row items-center justify-between gap-2 overflow-hidden rounded-md px-2"
+                className="absolute inset-y-0 left-0 overflow-hidden"
+                style={{ width: `${remaining}%` }}
               >
-                <View className="min-w-0 shrink flex-row items-center gap-1.5">
-                  {account.email ? <AccountChip email={account.email} /> : null}
-                  {account.email && !(account.displayName && inlineName) ? null : (
-                    <Text
-                      numberOfLines={1}
-                      className="min-w-0 shrink text-xs font-t3-medium text-foreground"
-                    >
-                      {accountName(account)}
-                    </Text>
-                  )}
-                  <Text className="text-sm font-t3-bold tabular-nums text-foreground">
-                    {remainingPercent(window)}%
-                  </Text>
+                <View className="h-full" style={{ width: cellWidths[account.key] }}>
+                  <SegmentLabel {...labelProps} ink={providerAccentForegroundColor(accent)} />
                 </View>
-                {inlineReset && (resetsIn || credits) ? (
-                  <View className="shrink-0 flex-row items-center gap-1 rounded bg-grouped-card/85 px-1.5 py-0.5">
-                    {resetsIn ? (
-                      <>
-                        <SymbolView
-                          name="arrow.clockwise"
-                          size={11}
-                          tintColorClassName="accent-foreground-muted"
-                        />
-                        <Text className="text-xs tabular-nums text-foreground-muted">
-                          {resetsIn}
-                        </Text>
-                      </>
-                    ) : null}
-                    {credits ? (
-                      <>
-                        <SymbolView name="ticket" size={12} tintColorClassName="accent-icon" />
-                        <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                          {credits}
-                        </Text>
-                      </>
-                    ) : null}
-                  </View>
-                ) : null}
               </View>
-            ) : (
-              <View
-                pointerEvents="none"
-                className="absolute inset-0 items-center justify-center overflow-hidden rounded-md"
-              >
-                <Text
-                  numberOfLines={1}
-                  className="max-w-full shrink text-xs font-t3-medium tabular-nums text-foreground"
-                >
-                  {index + 1}
-                </Text>
-              </View>
-            )}
+            ) : null}
           </Pressable>
         );
       })}
@@ -325,7 +389,8 @@ function PoolWindowCard({
     <View>
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
-        const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
+        const segmentAccent = normalizeProviderAccentColor(account.accentColor);
+        const segmentColor = segmentAccent ?? color;
         const credits = account.limits.resetCredits?.availableCount ?? 0;
         const resetsIn = formatResetsIn(window, now);
         return (
@@ -341,9 +406,16 @@ function PoolWindowCard({
               <View
                 pointerEvents="none"
                 className="absolute inset-0"
-                style={{ backgroundColor: segmentColor, opacity: 0.35 }}
+                style={{ backgroundColor: segmentColor, opacity: segmentAccent ? 1 : 0.35 }}
               />
-              <Text className="text-xs font-t3-medium tabular-nums text-foreground">
+              <Text
+                className="text-xs font-t3-medium tabular-nums text-foreground"
+                style={
+                  segmentAccent
+                    ? { color: providerAccentForegroundColor(segmentAccent) }
+                    : undefined
+                }
+              >
                 {index + 1}
               </Text>
             </View>
