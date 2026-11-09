@@ -3616,7 +3616,7 @@ describe("PiAdapterV2", () => {
     (runtimeState) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
-        const { runtime } = yield* openRuntime(fake);
+        const { runtime, takeEvent } = yield* openRuntime(fake);
         const threadInput = {
           threadId: THREAD_ID,
           modelSelection: modelSelection("default"),
@@ -3627,7 +3627,12 @@ describe("PiAdapterV2", () => {
           runtimeState === "warm"
             ? yield* runtime.ensureThread(threadInput)
             : yield* (yield* openRuntime(yield* makeFakePi)).runtime.ensureThread(threadInput);
+        if (runtimeState === "warm")
+          yield* takeEvent((event) => event.type === "provider_thread.updated");
         if (runtimeState === "vetoed") fake.vetoNextSwitch();
+        const forkFile = "/fake/rollback-fork.jsonl";
+        if (runtimeState === "fresh") fake.queueState({ sessionFile: FAKE_SESSION_FILE });
+        fake.queueState({ sessionFile: forkFile });
         const result = yield* runtime
           .rollbackThread({
             providerThread: persisted,
@@ -3666,8 +3671,20 @@ describe("PiAdapterV2", () => {
         assert.equal(result._tag, "Success");
         if (result._tag === "Success") {
           assert.equal(result.success.providerThread.id, persisted.id);
-          assert.equal(result.success.providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+          assert.equal(result.success.providerThread.nativeThreadRef?.nativeId, forkFile);
         }
+        const updated = yield* takeEvent((event) => event.type === "provider_thread.updated");
+        assert.equal(
+          updated.type === "provider_thread.updated"
+            ? updated.providerThread.nativeThreadRef?.nativeId
+            : undefined,
+          forkFile,
+        );
+        assert.isFalse(
+          fake
+            .allRequests()
+            .some((request) => request.type === "prompt" || request.type === "new_session"),
+        );
         assert.deepEqual(
           sessionRequests,
           runtimeState === "fresh"

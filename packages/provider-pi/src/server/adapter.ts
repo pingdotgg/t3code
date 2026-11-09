@@ -3139,7 +3139,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         rollbackThread: Effect.fn("PiAdapter.rollbackThread")(
           function* (rollbackInput) {
             // Rollback can open a fresh runtime (e.g. after a restart); resume the persisted session first.
-            // Unpublished: rollback returns the thread, and a late update would carry the pre-fork session.
+            // Unpublished: rollback returns the thread for the service to persist.
             if (threadState === null && rollbackInput.providerThread.nativeThreadRef != null)
               yield* registerThread(
                 {
