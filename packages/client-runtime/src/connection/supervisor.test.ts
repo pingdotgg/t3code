@@ -1807,6 +1807,76 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect("keeps reporting a refused route after moving to a better route", () =>
+    Effect.gen(function* () {
+      const loopbackTarget = new BearerConnectionTarget({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        connectionId: "bearer:loopback",
+      });
+      const entry: ConnectionCatalogEntry = {
+        target: loopbackTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: loopbackTarget.connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "http://127.0.0.1:3773/",
+            wsBaseUrl: "ws://127.0.0.1:3773/",
+          }),
+        ),
+        alternateRoutes: [LAN_ROUTE, { target: RELAY_TARGET, profile: Option.none() }],
+        enabled: true,
+      };
+      const lanReachable = yield* Ref.make(false);
+      const checkRoute = (route: ConnectionRoute) =>
+        connectionRouteId(route.target) === LAN_TARGET.connectionId
+          ? Ref.get(lanReachable).pipe(
+              Effect.map((reachable): ConnectionDriver.RouteCheck =>
+                reachable ? "answered" : "silent",
+              ),
+            )
+          : Effect.succeed<ConnectionDriver.RouteCheck>(
+              route.target._tag === "BearerConnectionTarget" ? "answered" : "unchecked",
+            );
+      const prepare = (target: ConnectionTarget) =>
+        connectionRouteId(target) === loopbackTarget.connectionId
+          ? Effect.fail(hostRefusal())
+          : Effect.succeed(preparedFor(target));
+      const harness = yield* makeHarness({
+        checkRoute,
+        preflight: (route) =>
+          ConnectionDriver.preflightRoute(checkRoute(route), prepare(route.target)),
+        prepare: (_attempt, target) => prepare(target),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(entry, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const overRelay = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 1,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(overRelay.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
+
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("network-changed");
+      const overLan = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(
+        connectionRouteId(
+          Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target,
+        ),
+      ).toBe(LAN_TARGET.connectionId);
+      expect(overLan.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
+    }),
+  );
+
   it.effect("tries every route when none answers the reachability check", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
