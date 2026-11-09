@@ -95,11 +95,10 @@ export function PullRequestMergeControls(props: {
   const canEnableAutoMergeAction =
     !stackOwnsMerge && permissions.canWrite && canPerformPullRequestAction(pr, "enable-auto-merge");
   const canDisableAutoMergeAction =
-    !stackOwnsMerge &&
-    permissions.canWrite &&
-    canPerformPullRequestAction(pr, "disable-auto-merge");
+    permissions.canWrite && canPerformPullRequestAction(pr, "disable-auto-merge");
   const canEnableAutoMerge = !busy && canMergeSingle && canEnableAutoMergeAction;
   const canDisableAutoMerge = !busy && canDisableAutoMergeAction;
+  const autoMergeArmed = pr.state === "open" && pr.autoMergeEnabled === true;
   const detailChecksState = pullRequestChecksState(pr.checks);
   // List rollups can omit workflows awaiting approval. Only refreshed detail can clear those.
   const checksState =
@@ -129,7 +128,7 @@ export function PullRequestMergeControls(props: {
     canMergeSingle,
     state: pr.state,
     primaryAction,
-    canMerge: canPerformPullRequestAction(pr, "merge"),
+    canMerge: permissions.canWrite && canPerformPullRequestAction(pr, "merge"),
     isDraft: pr.isDraft,
     conflicting: pr.mergeability === "conflicting",
     hasMergeMethod: methods.length > 0,
@@ -137,7 +136,7 @@ export function PullRequestMergeControls(props: {
   const showsAutoMerge = pullRequestShowsAutoMerge({
     canMergeSingle,
     state: pr.state,
-    autoMergeArmed: primaryAction === "auto-merge-armed",
+    autoMergeArmed,
     canDisableAutoMerge,
     canEnableAutoMerge,
     primaryAction,
@@ -341,7 +340,7 @@ export function PullRequestMergeControls(props: {
                 ...(showsMergeNow
                   ? [
                       {
-                        id: "merge",
+                        id: "merge-now",
                         title: "Merge now",
                         image: PullRequestGlyph.merged,
                       },
@@ -350,14 +349,8 @@ export function PullRequestMergeControls(props: {
                 ...(showsAutoMerge
                   ? [
                       {
-                        id:
-                          primaryAction === "auto-merge-armed"
-                            ? "disable-auto-merge"
-                            : "enable-auto-merge",
-                        title:
-                          primaryAction === "auto-merge-armed"
-                            ? "Disable auto-merge"
-                            : "Enable auto-merge",
+                        id: autoMergeArmed ? "disable-auto-merge" : "enable-auto-merge",
+                        title: autoMergeArmed ? "Disable auto-merge" : "Enable auto-merge",
                         image: "clock",
                       },
                     ]
@@ -369,7 +362,7 @@ export function PullRequestMergeControls(props: {
           if (selected) {
             setSelectedMethod(selected);
             savePreferences({ pullRequestMergeMethod: selected });
-          } else if (id === "merge" && showsMergeNow) confirm("merge");
+          } else if (id === "merge-now" && showsMergeNow) confirm("merge");
           else if (id === "enable-auto-merge" && canEnableAutoMerge) confirm("enable-auto-merge");
           else if (id === "disable-auto-merge" && canDisableAutoMerge)
             confirm("disable-auto-merge");

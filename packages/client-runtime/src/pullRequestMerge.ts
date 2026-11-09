@@ -104,16 +104,16 @@ export function pullRequestShowsAutoMerge(input: {
   readonly conflicting: boolean;
   readonly hasMergeMethod: boolean;
 }): boolean {
+  if (input.state !== "open") return false;
+  // Disabling stays available on stacks and conflicting PRs; enabling does not.
+  if (input.autoMergeArmed) return input.canDisableAutoMerge;
   return (
     input.canMergeSingle &&
-    input.state === "open" &&
-    ((input.autoMergeArmed && input.canDisableAutoMerge) ||
-      (!input.autoMergeArmed &&
-        input.primaryAction !== "enable-auto-merge" &&
-        !input.isDraft &&
-        !input.conflicting &&
-        input.canEnableAutoMerge &&
-        input.hasMergeMethod))
+    input.primaryAction !== "enable-auto-merge" &&
+    !input.isDraft &&
+    !input.conflicting &&
+    input.canEnableAutoMerge &&
+    input.hasMergeMethod
   );
 }
 

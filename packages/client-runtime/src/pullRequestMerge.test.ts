@@ -132,6 +132,30 @@ describe("pull request merge menu visibility", () => {
       }),
     ).toBe(true);
   });
+
+  it("keeps disable available on stacks and conflicting armed pull requests", () => {
+    expect(
+      pullRequestShowsAutoMerge({
+        ...open,
+        canMergeSingle: false,
+        conflicting: true,
+        autoMergeArmed: true,
+        canDisableAutoMerge: true,
+        canEnableAutoMerge: false,
+        primaryAction: "resolve",
+      }),
+    ).toBe(true);
+    expect(
+      pullRequestShowsAutoMerge({
+        ...open,
+        canMergeSingle: false,
+        autoMergeArmed: false,
+        canDisableAutoMerge: false,
+        canEnableAutoMerge: true,
+        primaryAction: "merge",
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("auto-merge labels", () => {
