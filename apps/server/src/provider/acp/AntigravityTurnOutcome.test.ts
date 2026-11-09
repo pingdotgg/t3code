@@ -32,6 +32,13 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// The harness renders a gateway failure with its HTTP status line in place of a gRPC status.
+const BAD_GATEWAY_ERROR = Buffer.concat([
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+  ),
+  Buffer.from("\nThe model is currently unreachable."),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -127,6 +134,17 @@ describe("watchAntigravityPromptOutcome", () => {
           message: "Request contains an invalid argument.",
           code: "INVALID_ARGUMENT",
           retryable: false,
+        },
+      );
+      assert.deepInclude(
+        yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, BAD_GATEWAY_ERROR],
+        ]),
+        {
+          class: "provider_error",
+          message: "Bad Gateway: Failed to connect to backend API",
+          retryable: true,
         },
       );
       // A completed tool keeps its usage, and the turn still fails.

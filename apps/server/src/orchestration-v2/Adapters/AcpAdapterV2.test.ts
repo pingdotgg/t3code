@@ -521,6 +521,7 @@ const isProviderAdapterProtocolError = Schema.is(ProviderAdapter.ProviderAdapter
 const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   readonly environment: (runtimeOrdinal: number) => Readonly<Record<string, string>>;
   readonly runtimeMode?: "full-access" | "approval-required";
+  readonly watchPromptOutcome?: AcpAdapterV2Flavor["watchPromptOutcome"];
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -532,6 +533,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       driver: ACP_TEST_DRIVER,
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
+      ...(input.watchPromptOutcome === undefined
+        ? {}
+        : { watchPromptOutcome: input.watchPromptOutcome }),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* path.fromFileUrl(
@@ -4136,6 +4140,27 @@ describe("AcpAdapterV2", () => {
       assert.include(silent?.failure?.message, "15 minutes");
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("fails a silent prompt with the failure its outcome check recorded", () =>
+    Effect.gen(function* () {
+      const badGateway = {
+        class: "provider_error",
+        message: "Bad Gateway: Failed to connect to backend API",
+        code: "502 Bad Gateway",
+        retryable: true,
+      } as const;
+      // The agent logs the upstream error and leaves session/prompt open.
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+        watchPromptOutcome: () => Effect.succeed(() => Effect.succeed(badGateway)),
+      });
+      yield* harness.startTurn(1);
+      yield* TestClock.adjust("15 minutes");
+      const [silent] = yield* harness.terminals(1);
+      assert.equal(silent?.status, "failed");
+      assert.deepEqual(silent?.failure, badGateway);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
