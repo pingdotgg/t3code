@@ -1077,7 +1077,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // A socket-only open that fails retries over HTTP, which tells a
         // missing thread apart from a failure, before showing an error.
         onDefect: Effect.fn("EnvironmentThreadState.onDefect")(function* () {
-          if (yield* failedSocketOnlyOpen) return yield* Queue.offer(httpRetries, undefined);
+          if (yield* failedSocketOnlyOpen) {
+            yield* Ref.set(socketOnlyOpen, false);
+            return yield* Queue.offer(httpRetries, undefined);
+          }
           yield* setStreamError("Could not synchronize the thread.");
         }),
         onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
