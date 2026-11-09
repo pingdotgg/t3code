@@ -421,9 +421,11 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           );
         }
         if (update.sessionUpdate === "config_option_update") {
+          const modelOption = findModelConfigOption(update.configOptions);
+          const hasAdvertisedModels = modelOption !== undefined && modelOption.options.length > 1;
           return Ref.set(configOptionsRef, update.configOptions).pipe(
             Effect.andThen(
-              findModelConfigOption(update.configOptions) !== undefined
+              hasAdvertisedModels
                 ? Deferred.succeed(modelsAdvertised, undefined).pipe(Effect.asVoid)
                 : Effect.void,
             ),
@@ -446,13 +448,18 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         (started.sessionSetupResult.models?.availableModels != null &&
           started.sessionSetupResult.models.availableModels.length > 1);
 
-      if (!hasInitialModels) {
-        yield* Deferred.await(modelsAdvertised).pipe(
-          Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
-        );
-      }
-      yield* Deferred.await(commandsAdvertised).pipe(
-        Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+      yield* Effect.all(
+        [
+          hasInitialModels
+            ? Effect.void
+            : Deferred.await(modelsAdvertised).pipe(
+                Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+              ),
+          Deferred.await(commandsAdvertised).pipe(
+            Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+          ),
+        ],
+        { concurrency: "unbounded" },
       );
 
       const latestConfigOptions =
