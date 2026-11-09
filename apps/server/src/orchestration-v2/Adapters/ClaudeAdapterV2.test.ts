@@ -3895,6 +3895,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       expected: ["assistant_message"],
     },
     {
+      name: "a not-checked caveat after the last card stays visible",
+      tools: ["mcp__t3-code__quiz_card"],
+      replies: [
+        "That's wrong, and it's the similarity-to-original idea. Partial credit does exist in CW2, but it comes from how close a measured value is to a physical limit, not from how much the layout differs from the original. A distance check like decoupling placement is a graded tolerance: full credit at or under an ideal distance, falling credit up to a limit, and a fail past it. An agent that puts the capacitor closer than the original fix did is not penalised for differing, because the original has no special status. It is just one board that happens to pass. Here is the same idea in a new setting.",
+      ],
+      texts: [
+        "That's wrong, and it's the similarity-to-original idea. Partial credit does exist in CW2, but it comes from how close a measured value is to a physical limit, not from how much the layout differs from the original.\n\nI haven't checked the placement check's code, so I'm treating the distance check as a graded tolerance because that's the design the verifier skill describes. It gives full credit at or under an ideal distance, falling credit up to a limit, and a fail past it.\n\nAn agent that puts the capacitor closer than the original fix did isn't penalised for differing. The original fix has no special status. It's just one board that happens to pass.",
+      ],
+      expected: ["assistant_message"],
+    },
+    {
       name: "trailing copy after the last card is reasoning",
       tools: ["mcp__t3-code__quiz_card"],
       replies: [

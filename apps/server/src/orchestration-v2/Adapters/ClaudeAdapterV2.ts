@@ -2099,7 +2099,6 @@ function cardReplyCoversLead(
   block: { readonly name: string; readonly input: unknown },
   text: string,
 ) {
-  if (!isLessonCardTool(block.name)) return false;
   const reply = (block.input as { readonly reply?: unknown } | null)?.reply;
   if (typeof reply !== "string") return false;
   const opening = /^\s*(.*?[.!?])(?=\s|$)/su.exec(text)?.[1] ?? text;
@@ -7944,7 +7943,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* reasoningDeltas.complete({
             turnId: context.nativeTurnId,
             itemId,
-            finalText: context.assistant.heldText.map((item) => item.text).join("\n"),
+            finalText: joined,
             emitEmpty: false,
           });
           context.assistant.heldText = [];

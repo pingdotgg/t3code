@@ -68,8 +68,7 @@ export function replyCoverage(text: string, reply: string): number {
   const tokens = (value: string) =>
     [...value.toLocaleLowerCase().matchAll(/[\p{L}\p{N}]+(?:['.][\p{L}\p{N}]+)*/gu)]
       .map(([token]) => token)
-      .filter((token) => token.length >= 4 || /\d/u.test(token))
-      .map((token) => (/\d/u.test(token) ? token : token.replace(/s$/u, "")));
+      .filter((token) => token.length >= 4 || /\d/u.test(token));
   const replyTokens = new Set(tokens(reply));
   const textTokens = tokens(text);
   return (

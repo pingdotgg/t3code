@@ -2282,14 +2282,16 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
       testCase.id.startsWith("learn-") ||
       testCase.setup.sideChat !== undefined ||
       testCase.setup.sideChatOpening !== undefined;
-    const opening = (value: string) =>
-      /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1]?.replace(/\s+/gu, " ").toLowerCase() ?? "";
-    const repeats = (use: typeof ToolUse.Type, text: string) => {
+    const opening = (value: string) => /^\s*(.*?[.!?])(?=\s|$)/su.exec(value)?.[1] ?? value;
+    // Mirrors the adapter's cardReplyRepeats, plus cardReplyCoversLead for lesson lead text.
+    const repeats = (use: typeof ToolUse.Type, text: string, lead = false) => {
       const reply = isRecord(use.input) ? use.input.reply : undefined;
       if (typeof reply !== "string") return false;
       if (reply.replace(/\s+/gu, " ").trim().includes(text.replace(/\s+/gu, " ").trim()))
         return true;
-      return replyCoverage(text, reply) >= 0.6 && replyCoverage(opening(text), reply) >= 0.5;
+      return (
+        lead && replyCoverage(text, reply) >= 0.6 && replyCoverage(opening(text), reply) >= 0.5
+      );
     };
     const texts: Array<string> = [];
     for (const [index, block] of response.content.entries()) {
@@ -2306,7 +2308,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
         const isT3Mcp = block.name.startsWith("mcp__t3-code__");
         // The adapter keeps short narration before a non-T3 tool as a Thought (APP-108).
         if (isT3Mcp || held.join("").length > 300) {
-          texts.push(...(isCard ? held.filter((text) => !repeats(block, text)) : held));
+          texts.push(...(isCard ? held.filter((text) => !repeats(block, text, true)) : held));
         }
         if (isCard) {
           sample.lessonCardSeen = true;
