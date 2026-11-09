@@ -571,9 +571,13 @@ export function extractAntigravityBackgroundTaskId(toolCall: AcpToolCallState): 
   const outputText = extractAntigravityToolOutputText(toolCall);
   if (outputText !== undefined) {
     const match =
-      /running as a background task with task id:\s*([^\s\r\n]+)/i.exec(outputText) ??
-      /scheduled task with (?:task )?id:\s*([^\s\r\n]+)/i.exec(outputText) ??
-      /background task with task id:\s*([^\s\r\n]+)/i.exec(outputText);
+      /(?:^|\n)(?:Tool is )?running as a background task with task id:\s*([^\s\r\n]+)/i.exec(
+        outputText,
+      ) ??
+      /(?:^|\n)(?:Scheduled|Tool scheduled) task with (?:task )?id:\s*([^\s\r\n]+)/i.exec(
+        outputText,
+      ) ??
+      /(?:^|\n)(?:Tool )?background task with task id:\s*([^\s\r\n]+)/i.exec(outputText);
     if (match?.[1]) {
       // Strip only trailing punctuation such as quotes, commas, dots
       return match[1].replace(/["',.]+$/, "").trim();
@@ -613,11 +617,13 @@ export function extractAntigravityBackgroundTaskCompletion(
   const action = typeof rawInput?.Action === "string" ? rawInput.Action.toLowerCase() : "";
 
   if (action === "kill" || /kill/i.test(title)) {
-    if (toolCall.status === "completed" || /cancelled|killed/i.test(outputText)) {
-      const taskId =
-        taskIdFromInput ??
-        /Task "([^"]+)"\s+(?:cancelled|killed)/i.exec(outputText)?.[1] ??
-        /Task id "([^"]+)"\s+(?:was canceled|finished)/i.exec(outputText)?.[1];
+    const killMatch =
+      /(?:^|\n)Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(outputText) ??
+      /(?:^|\n)Task id "([^"]+)"\s+was canceled\b/i.exec(outputText);
+    const hasSuccessfulKillNotice = killMatch !== null;
+    const isExplicitKillError = /(?:failed|error|not found|no task)/i.test(outputText);
+    if ((toolCall.status === "completed" && !isExplicitKillError) || hasSuccessfulKillNotice) {
+      const taskId = taskIdFromInput ?? killMatch?.[1];
       if (taskId) {
         return [
           {
@@ -685,13 +691,24 @@ export function extractAntigravityBackgroundToolMutation(text: string): Readonly
   if (taskFinishedMatch?.[1] && taskFinishedMatch[2]) {
     const taskId = taskFinishedMatch[1].replace(/["',.]+$/, "").trim();
     const kind = taskFinishedMatch[2].toLowerCase();
-    const hasFailedExitCode = /command exited with code\s+([1-9]\d*)/i.test(text);
-    const status: "completed" | "failed" =
-      kind === "failed" || hasFailedExitCode ? "failed" : "completed";
+    let status: "completed" | "failed";
+    if (kind === "was canceled") {
+      status = "completed";
+    } else if (kind === "failed") {
+      status = "failed";
+    } else {
+      const resultPrefix = text.slice(taskFinishedMatch.index + taskFinishedMatch[0].length);
+      const outputIdx = resultPrefix.search(/(?:^|\n)Output:/i);
+      const header = outputIdx !== -1 ? resultPrefix.slice(0, outputIdx) : resultPrefix;
+      const hasFailedExitCode =
+        /(?:^|\n)(?:The command exited with code\s+([1-9]\d*)|Exit code:\s*([1-9]\d*)|Status:\s*FAILED)/i.test(
+          header,
+        );
+      status = hasFailedExitCode ? "failed" : "completed";
+    }
     results.push({ taskId, status, appendOutput: text });
     return results;
   }
-
   const taskCancelledMatch = /(?:^|\n)Task "([^"]+)"\s+(?:cancelled|killed)\b/i.exec(text);
   if (taskCancelledMatch?.[1]) {
     results.push({

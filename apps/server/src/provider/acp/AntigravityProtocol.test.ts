@@ -689,6 +689,19 @@ describe("Antigravity background tasks", () => {
       { taskId: "task-123", status: "completed", appendOutput: 'Task "task-123" cancelled.' },
     ]);
 
+    // manage_task kill failed with error does not mark completed
+    expect(
+      extractAntigravityBackgroundTaskCompletion({
+        toolCallId: "call-kill-failed",
+        title: "manage_task",
+        status: "completed",
+        data: {
+          rawInput: { Action: "kill", TaskId: "task-123" },
+          rawOutput: "Error: Task not found",
+        },
+      }),
+    ).toEqual([]);
+
     // manage_task status shows completed
     expect(
       extractAntigravityBackgroundTaskCompletion({
@@ -774,10 +787,23 @@ describe("Antigravity background tasks", () => {
       },
     ]);
 
-    // Task was canceled
+    // Task was canceled even if inner output mentions exit codes
     expect(
       extractAntigravityBackgroundToolMutation(
-        'Task id "task-xyz" was canceled with result:\nStep was canceled: context canceled by manage_task',
+        'Task id "task-xyz" was canceled with result:\nStep was canceled: context canceled by manage_task\nOutput:\nThe command exited with code 1.',
+      ),
+    ).toEqual([
+      {
+        taskId: "task-xyz",
+        status: "completed",
+        appendOutput: expect.stringContaining("task-xyz"),
+      },
+    ]);
+
+    // Task finished with exit 0 even if inner command output prints exit codes
+    expect(
+      extractAntigravityBackgroundToolMutation(
+        'Task id "task-xyz" finished with result:\nThe command exited with code 0.\nOutput:\nNote: previous sub-command exited with code 1\nDone.',
       ),
     ).toEqual([
       {

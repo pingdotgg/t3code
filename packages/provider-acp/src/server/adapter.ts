@@ -5510,7 +5510,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? ("failed" as const)
                           : ("completed" as const);
                     if (flavor.backgroundNoticesAreTerminal === true) {
-                      yield* clearAwaitingBackgroundHydration(context, mutation.taskId);
+                      context.awaitingBackgroundHydration.delete(mutation.taskId);
                     } else if (nextStatus !== "inProgress") {
                       yield* markAwaitingBackgroundHydration(context, mutation.taskId);
                       nextStatus = "inProgress";
