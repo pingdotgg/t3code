@@ -147,6 +147,13 @@ jobs:
           pod --version
           fastlane --version | tail -1
 
+      - name: Install Apple WWDR intermediate
+        # Without it the distribution identity is not valid and EAS's import check fails.
+        run: |
+          curl -fsSL https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer -o "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+          sudo security add-certificates -k /Library/Keychains/System.keychain "$RUNNER_TEMP/AppleWWDRCAG3.cer" || true
+          security find-certificate -c "Apple Worldwide Developer Relations" /Library/Keychains/System.keychain | grep -m1 labl
+
       - name: Pull production environment variables
         working-directory: apps/mobile
         run: eas env:pull production --non-interactive
