@@ -167,6 +167,36 @@ describe("Codex App Server stderr excerpt", () => {
       excerpt: "Missing OpenAI API key.",
     },
     {
+      name: "launcher exit summary after a DNS failure",
+      stderr: [
+        "Starting provider",
+        'проверить токен LLM: Get "https://llm-gateway.example/api/models": dial tcp: lookup llm-gateway.example: no such host',
+        "не удалось отправить метрики на сервер: no such host",
+        "Ошибка: ошибка запуска плагина: exit status 1",
+      ].join("\n"),
+      excerpt:
+        'проверить токен LLM: Get "https://llm-gateway.example/api/models": dial tcp: lookup llm-gateway.example: no such host | не удалось отправить метрики на сервер: no such host | Ошибка: ошибка запуска плагина: exit status 1',
+    },
+    {
+      name: "labelled launcher exit summary after an authentication failure",
+      stderr: [
+        'oauth2: "invalid_request" "Errors.OIDCSession.RefreshTokenInvalid"',
+        "Error: provider launcher exited with code 1.",
+      ].join("\n"),
+      excerpt:
+        'oauth2: "invalid_request" "Errors.OIDCSession.RefreshTokenInvalid" | Error: provider launcher exited with code 1.',
+    },
+    {
+      name: "launcher summary alone",
+      stderr: "Error: command failed with exit code 1\n",
+      excerpt: "Error: command failed with exit code 1",
+    },
+    {
+      name: "launcher diagnostics remain bounded",
+      stderr: `${"x".repeat(1_000)}\nError: launcher exited with code 1\n`,
+      excerpt: `${"x".repeat(511)}…`,
+    },
+    {
       name: "ANSI color, carriage returns and repeated whitespace",
       stderr: "\u001b[31m  Error:\t  config.toml   is invalid \u001b[0m\r\n",
       excerpt: "Error: config.toml is invalid",
