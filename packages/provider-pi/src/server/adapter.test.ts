@@ -2524,6 +2524,14 @@ describe("PiAdapterV2", () => {
           runtimePolicy,
         })
         .pipe(Effect.flatMap(persistForkSource));
+      // Native Pi tolerates malformed live lines; ordinary forks must keep that behavior.
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sourceFile = source.nativeThreadRef!.nativeId!;
+      yield* fileSystem.writeFileString(
+        sourceFile,
+        `${(yield* fileSystem.readFileString(sourceFile)).replace('"id":"source"', '"id":"source","parentSession":"/missing/ancestor.jsonl"')}broken-json\n`,
+      );
+      fake.queueEntries(UNCAPTURED_TURN_TREE);
       const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
         id: ProviderTurnId.make(`turn-${ordinal}`),
         providerThreadId: source.id,
@@ -2629,9 +2637,13 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect.each([false, true])(
-    "natively forks a continued session with terminal target=%s",
-    (terminal) =>
+  it.effect.each([
+    { terminal: true, strong: false },
+    { terminal: false, strong: false },
+    { terminal: false, strong: true },
+  ])(
+    "natively forks a continued session with terminal=$terminal strong=$strong",
+    ({ terminal, strong }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
         const forkFake = yield* makeFakePi;
@@ -2678,7 +2690,19 @@ describe("PiAdapterV2", () => {
             strength: "strong" as const,
           },
         };
-        const turns = uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 });
+        const turns = uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 }).map(
+          (turn) =>
+            strong && turn.ordinal === 2
+              ? {
+                  ...turn,
+                  nativeTurnRef: {
+                    driver: PI_PROVIDER,
+                    nativeId: "u2",
+                    strength: "strong" as const,
+                  },
+                }
+              : turn,
+        );
         const forkAtFirst = () =>
           runtime.forkThread({
             sourceProviderThread: source,
@@ -2750,11 +2774,20 @@ describe("PiAdapterV2", () => {
           assert.deepEqual(yield* sessionFiles, before);
         }
 
-        // A missing or unreadable previous session fails before any fork process starts.
+        // Invalid or unreadable ancestors fail before spawn and keep their bytes intact.
         const spawnedArgs = forkFake.lastSpawn().args;
         for (const previous of [
           null,
           "not a session line\n",
+          before[0]!.trimEnd(),
+          ...[TURN_ONE_ENTRIES[0]!, TURN_ONE_ENTRIES[1]!].flatMap((entry) =>
+            [undefined, null].map((content) =>
+              before[0]!.replace(
+                encodeJsonLine(entry),
+                encodeJsonLine({ ...entry, message: { ...entry.message, content } }),
+              ),
+            ),
+          ),
           `${encodeJsonLine({ type: "session", id: "corrupt", timestamp: DateTime.formatIso(at(0)) })}\n${encodeJsonLine({ id: "u1" })}\n`,
           `${before[0]}broken-json\n`,
           `${before[0]}${encodeJsonLine(sessionMessage("broken", "missing", "assistant", 20))}\n`,
@@ -2766,7 +2799,23 @@ describe("PiAdapterV2", () => {
           else yield* fileSystem.writeFileString(previousFile, previous);
           const failed = yield* forkAtFirst().pipe(Effect.result);
           assert.equal(failed._tag, "Failure");
+          if (failed._tag === "Failure") {
+            const detail = String(failed.failure.cause);
+            if (previous === null) assert.include(detail, "NotFound");
+            assert.include(
+              detail,
+              previous === null
+                ? "Cannot read Pi session"
+                : previous.includes('"type":"session","id":"cycle"')
+                  ? "not in the fork source"
+                  : "Invalid Pi session history",
+            );
+            if (previous === null || !previous.includes('"type":"session","id":"cycle"'))
+              assert.include(detail, previousFile);
+          }
           assert.strictEqual(forkFake.lastSpawn().args, spawnedArgs);
+          if (previous !== null)
+            assert.equal(yield* fileSystem.readFileString(previousFile), previous);
         }
         yield* fileSystem.remove(sourceFile);
         assert.equal((yield* forkAtFirst().pipe(Effect.result))._tag, "Failure");

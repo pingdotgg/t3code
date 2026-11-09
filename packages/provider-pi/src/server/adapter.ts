@@ -1649,20 +1649,43 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         sourceFile: string,
         entryId: string,
       ) {
-        const visited = new Set<string>();
-        let file: string | undefined = sourceFile;
+        const headerLine = yield* fileSystem.stream(sourceFile).pipe(
+          Stream.decodeText(),
+          Stream.splitLines,
+          Stream.runHead,
+          Effect.mapError((cause) =>
+            protocolError(`Cannot read Pi session ${sourceFile}: ${cause.reason._tag}`, cause),
+          ),
+        );
+        const header = Option.getOrUndefined(
+          decodePiSessionFileLine(Option.getOrElse(headerLine, () => "")),
+        );
+        const parent = recordField(header, "parentSession");
+        if (parent === undefined) return sourceFile;
+        if (typeof parent !== "string" || parent.length === 0)
+          return yield* protocolError(`Invalid Pi session ancestry in ${sourceFile}`);
+        const live = piSessionListing(yield* request({ type: "get_entries" }));
+        if (live === null) return yield* protocolError("Invalid live Pi session tree");
+        if (live.entries.get(entryId)?.isUserMessage) return sourceFile;
+        const visited = new Set<string>([sourceFile]);
+        let file: string | undefined = parent;
         while (file !== undefined && !visited.has(file)) {
           visited.add(file);
-          const session: PiSessionFile | null = yield* fileSystem.readFileString(file).pipe(
-            Effect.map(piSessionFile),
-            Effect.orElseSucceed(() => null),
-          );
-          if (session === null) break;
+          const text = yield* fileSystem
+            .readFileString(file)
+            .pipe(
+              Effect.mapError((cause) =>
+                protocolError(`Cannot read Pi session ${file}: ${cause.reason._tag}`, cause),
+              ),
+            );
+          const session: PiSessionFile | null = piSessionFile(text);
+          if (session === null)
+            return yield* protocolError(`Invalid Pi session history in ${file}`);
           if (session.entries.get(entryId)?.isUserMessage) return file;
           file = session.parentSession;
         }
         return yield* protocolError(
-          `Pi entry ${entryId} is not in the fork source session or a session it continued`,
+          `Pi entry ${entryId} is not in the fork source session ${sourceFile} or a session it continued`,
         );
       });
 
@@ -3443,6 +3466,8 @@ interface PiSessionFile {
 
 // Recovery must not let Pi's tolerant loader silently discard corrupt historical evidence.
 function piSessionFile(text: string): PiSessionFile | null {
+  // Pi repairs an unterminated final line in place, even during CLI --fork.
+  if (!text.endsWith("\n")) return null;
   const lines = text.split("\n").filter((line) => line.trim().length > 0);
   const header = Option.getOrUndefined(decodePiSessionFileLine(lines[0] ?? ""));
   const parentSession = recordField(header, "parentSession");
@@ -3460,6 +3485,17 @@ function piSessionFile(text: string): PiSessionFile | null {
     const decoded = Option.getOrUndefined(decodePiSessionFileLine(line));
     const type = recordString(decoded, "type");
     if (type === undefined || type === "session") return null;
+    if (type === "message") {
+      const message = recordField(decoded, "message");
+      const role = recordString(message, "role");
+      const content = recordField(message, "content");
+      if (
+        (role === "user" || role === "assistant") &&
+        typeof content !== "string" &&
+        !Array.isArray(content)
+      )
+        return null;
+    }
     rawEntries.push(decoded);
   }
   const entries = piSessionEntries(rawEntries);
@@ -3569,7 +3605,7 @@ function piForkBoundary(input: {
   return { type: "uncaptured", turn: boundary, target, stopAt };
 }
 
-/** CLI --fork retains the whole tree; only keep it intact when it proves the target is its end. */
+/** Ancestor-only shortcut: keep CLI --fork intact when the tree proves the target is its end. */
 function piTerminalForkTarget(
   data: unknown,
   boundary: Extract<PiForkBoundary, { type: "uncaptured" }>,
