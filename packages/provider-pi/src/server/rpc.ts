@@ -58,9 +58,6 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-/** T3's model slug for a Pi model; Pi provider and model IDs may both contain `/`. */
-export const piModelSlug = (provider: string, modelId: string) => `${provider}/${modelId}`;
-
 function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
@@ -83,9 +80,7 @@ export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
   const matches = (Array.isArray(listed) ? listed : []).flatMap((model) => {
     const provider = piRecordString(model, "provider");
     const modelId = piRecordString(model, "id");
-    return provider !== undefined &&
-      modelId !== undefined &&
-      piModelSlug(provider, modelId) === slug
+    return provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug
       ? [{ provider, modelId }]
       : [];
   });

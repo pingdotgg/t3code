@@ -21,7 +21,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import {
   makePiRpcConnection,
-  piModelSlug,
   PiRpcError,
   PiRpcTimeoutError,
   piRecordField as recordField,
@@ -117,7 +116,7 @@ function parseDiscoveredModels(
         new PiRpcError({ operation: "get_available_models", detail: "Invalid model identity" }),
       );
     }
-    const slug = piModelSlug(provider, id);
+    const slug = `${provider}/${id}`;
     if (seen.has(slug)) continue;
     seen.add(slug);
     parsed.push({

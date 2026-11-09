@@ -59,7 +59,6 @@ import {
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import {
   makePiRpcConnection,
-  piModelSlug,
   setPiModel,
   piRecordField as recordField,
   piRecordNumber as recordNumber,
@@ -743,7 +742,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         const id = recordString(model, "id");
         const capacity = nonNegativeInteger(model, "contextWindow");
         if (provider !== undefined && id !== undefined && capacity !== undefined && capacity > 0) {
-          modelContextWindows.set(piModelSlug(provider, id), capacity);
+          modelContextWindows.set(`${provider}/${id}`, capacity);
           return capacity;
         }
         return null;
