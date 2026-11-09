@@ -8803,13 +8803,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const rows = yield* sql<PayloadRow>`
         WITH tasks AS (
           SELECT task.child_thread_id, task.subagent_id, task.status, task.updated_at, task.started_at,
-            json_extract(payload_json, '$.remoteChild') AS remote_child,
-            json_extract(payload_json, '$.title') AS title,
-            json_extract(payload_json, '$.providerInstanceId') AS provider_instance_id,
+            CASE WHEN child_thread_id IS NULL
+              THEN json_extract(payload_json, '$.remoteChild') END AS remote_child,
+            CASE WHEN child_thread_id IS NULL
+              THEN json_extract(payload_json, '$.title') END AS title,
+            task.provider_instance_id,
             ROW_NUMBER() OVER (
               PARTITION BY json_array(child_thread_id,
-                json_extract(payload_json, '$.remoteChild.environmentId'),
-                json_extract(payload_json, '$.remoteChild.threadId'))
+                CASE WHEN child_thread_id IS NULL
+                  THEN json_extract(payload_json, '$.remoteChild.environmentId') END,
+                CASE WHEN child_thread_id IS NULL
+                  THEN json_extract(payload_json, '$.remoteChild.threadId') END)
               ORDER BY status IN ('pending', 'running', 'waiting') DESC,
                 updated_at DESC, subagent_id DESC
             ) AS rank

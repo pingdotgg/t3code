@@ -36,6 +36,7 @@ import {
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2PreviousAgent,
+  type OrchestrationV2PreviousAgentsPage,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
   type ServerProvider,
@@ -163,6 +164,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
     readonly total: number;
     readonly failedCount: number;
     readonly cursor: number;
+    readonly pending: boolean;
     readonly onPrevious: (() => void) | undefined;
     readonly onNext: (() => void) | undefined;
   };
@@ -208,18 +210,20 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
         </ThreadDetailsControl>
       ) : null}
       {expanded ? (
-        <ThreadLineageRowList
-          hiddenCount={hiddenCount}
-          onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
-        >
-          {props.children(visibleRows)}
+        <>
+          <ThreadLineageRowList
+            hiddenCount={hiddenCount}
+            onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+          >
+            {props.children(visibleRows)}
+          </ThreadLineageRowList>
           {props.pagination && props.pagination.total > THREAD_LINEAGE_PAGE_COUNT ? (
-            <li className="flex items-center justify-between">
+            <div className="flex items-center justify-between">
               <ThreadDetailsControl
                 part="icon"
                 aria-label="Previous page"
                 onClick={props.pagination.onPrevious}
-                disabled={!props.pagination.onPrevious}
+                disabled={props.pagination.pending || !props.pagination.onPrevious}
               >
                 <ChevronLeftIcon aria-hidden />
               </ThreadDetailsControl>
@@ -231,13 +235,13 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
                 part="icon"
                 aria-label="Next page"
                 onClick={props.pagination.onNext}
-                disabled={!props.pagination.onNext}
+                disabled={props.pagination.pending || !props.pagination.onNext}
               >
                 <ChevronRightIcon aria-hidden />
               </ThreadDetailsControl>
-            </li>
+            </div>
           ) : null}
-        </ThreadLineageRowList>
+        </>
       ) : null}
     </div>
   );
@@ -525,11 +529,20 @@ export function ThreadRelationshipsPanel(props: {
             .map((thread) => `${thread.id}:${thread.activityRunStatus}:${thread.status}`)
             .join(","),
         ].join(";");
-  const [historyPage, setHistoryPage] = useState({ key: "", cursor: 0 });
-  const historyKey = `${scopedThreadKey(ref)}:${historyRevision}`;
-  const historyCursor = historyPage.key === historyKey ? historyPage.cursor : 0;
+  const historyKey = scopedThreadKey(ref);
+  const historyEnabled = props.showLineage && !hidingAnywhere;
+  const [historyPage, setHistoryPage] = useState<{
+    readonly key: string;
+    readonly cursor: number;
+    readonly answered: {
+      readonly cursor: number;
+      readonly page: OrchestrationV2PreviousAgentsPage;
+    } | null;
+  }>({ key: historyKey, cursor: 0, answered: null });
+  const scopedHistory = historyPage.key === historyKey ? historyPage : null;
+  const historyCursor = scopedHistory?.cursor ?? 0;
   const previousAgents = useEnvironmentQuery(
-    props.showLineage && !hidingAnywhere
+    historyEnabled
       ? orchestrationEnvironment.previousAgents({
           environmentId: props.environmentId,
           input: {
@@ -540,12 +553,58 @@ export function ThreadRelationshipsPanel(props: {
         })
       : null,
   );
+  const answeredPage =
+    previousAgents.isSuccess && !previousAgents.isPending ? previousAgents.data : null;
+  const lastCursor =
+    answeredPage === null || answeredPage.total === 0
+      ? 0
+      : Math.floor((answeredPage.total - 1) / THREAD_LINEAGE_PAGE_COUNT) *
+        THREAD_LINEAGE_PAGE_COUNT;
+  const clampedCursor = answeredPage === null ? historyCursor : Math.min(historyCursor, lastCursor);
+  if (
+    answeredPage !== null &&
+    (scopedHistory === null ||
+      historyCursor !== clampedCursor ||
+      scopedHistory.answered?.page !== answeredPage ||
+      scopedHistory.answered.cursor !== historyCursor)
+  ) {
+    setHistoryPage({
+      key: historyKey,
+      cursor: clampedCursor,
+      answered:
+        clampedCursor === historyCursor
+          ? { cursor: historyCursor, page: answeredPage }
+          : (scopedHistory?.answered ?? null),
+    });
+  }
+  const historyFailed = previousAgents.error !== null && !previousAgents.isPending;
+  const shownHistory =
+    !historyEnabled || historyFailed
+      ? null
+      : answeredPage !== null && clampedCursor === historyCursor
+        ? { cursor: historyCursor, page: answeredPage }
+        : (scopedHistory?.answered ?? null);
+  const historyPending =
+    previousAgents.isPending ||
+    (shownHistory !== null && shownHistory.cursor !== historyCursor) ||
+    clampedCursor !== historyCursor;
   const refreshPreviousAgents = previousAgents.refresh;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the historical read when streamed tasks change state.
+  const historyRequestKey = historyEnabled ? `${historyKey}:${historyCursor}` : null;
+  const historyReadUnder = useRef<{ key: string | null; revision: string | null } | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh a mounted external query only when its streamed status revision changes.
   useEffect(() => {
-    if (historyRevision === null) return;
-    refreshPreviousAgents();
-  }, [refreshPreviousAgents, historyRevision]);
+    const previous = historyReadUnder.current;
+    historyReadUnder.current = { key: historyRequestKey, revision: historyRevision };
+    if (
+      historyRequestKey !== null &&
+      historyRevision !== null &&
+      previous?.key === historyRequestKey &&
+      previous.revision !== null &&
+      previous.revision !== historyRevision
+    ) {
+      refreshPreviousAgents();
+    }
+  }, [historyRequestKey, historyRevision, refreshPreviousAgents]);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -678,32 +737,38 @@ export function ThreadRelationshipsPanel(props: {
     {
       id: "previous",
       label: "Previous agents",
-      rows: previousAgents.data?.agents.map((history) => ({ history })) ?? [
+      rows: shownHistory?.page.agents.map((history) => ({ history })) ?? [
         ...previous,
         ...remotePrevious,
       ],
       expanded: false,
-      partialCount: previousAgents.data === null,
-      ...(previousAgents.data === null
+      partialCount: shownHistory === null,
+      ...(shownHistory === null
         ? {}
         : {
             pagination: {
-              total: previousAgents.data.total,
-              failedCount: previousAgents.data.failedCount,
-              cursor: historyCursor,
+              total: shownHistory.page.total,
+              failedCount: shownHistory.page.failedCount,
+              cursor: shownHistory.cursor,
+              pending: historyPending,
               onPrevious:
-                historyCursor === 0
+                shownHistory.cursor === 0
                   ? undefined
                   : () =>
                       setHistoryPage({
                         key: historyKey,
-                        cursor: Math.max(0, historyCursor - THREAD_LINEAGE_PAGE_COUNT),
+                        cursor: Math.max(0, shownHistory.cursor - THREAD_LINEAGE_PAGE_COUNT),
+                        answered: shownHistory,
                       }),
               onNext:
-                previousAgents.data.nextCursor === null
+                shownHistory.page.nextCursor === null
                   ? undefined
                   : () =>
-                      setHistoryPage({ key: historyKey, cursor: previousAgents.data!.nextCursor! }),
+                      setHistoryPage({
+                        key: historyKey,
+                        cursor: shownHistory.page.nextCursor!,
+                        answered: shownHistory,
+                      }),
             },
           }),
     },
@@ -721,7 +786,7 @@ export function ThreadRelationshipsPanel(props: {
     (related.length > 0 ||
       active.length > 0 ||
       previous.length > 0 ||
-      (previousAgents.data?.total ?? 0) > 0 ||
+      (shownHistory?.page.total ?? 0) > 0 ||
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
