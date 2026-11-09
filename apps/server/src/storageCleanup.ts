@@ -791,6 +791,21 @@ const make = Effect.gen(function* () {
     return changed === undefined ? null : reason(changed.file);
   });
 
+  // A worktree can outlive its project moving to another clone. Git removes a
+  // worktree through the repository that registered it, not through the
+  // project's current checkout, so resolve the owning repository first.
+  const worktreeRepository = Effect.fn("StorageCleanup.worktreeRepository")(function* (
+    worktreePath: string,
+  ) {
+    const commonDir = yield* git.execute({
+      operation: "StorageCleanup.worktreeRepository",
+      cwd: worktreePath,
+      args: ["rev-parse", "--git-common-dir"],
+    });
+    const resolved = path.resolve(worktreePath, commonDir.stdout.trim());
+    return path.basename(resolved) === ".git" ? path.dirname(resolved) : resolved;
+  });
+
   const localChangesReason = Effect.fn("StorageCleanup.localChangesReason")(function* (
     cwd: string,
     rules: WorktreeCleanupRules,
@@ -1444,14 +1459,15 @@ const make = Effect.gen(function* () {
               const changes = yield* localChangesReason(worktreePath, settings);
               if (changes !== null) return keep(changes);
             }
+            const repository = yield* worktreeRepository(worktreePath);
             yield* removeLinkedWorktree({
               operation: "StorageCleanup.cleanupGit",
-              cwd: project.workspaceRoot,
+              cwd: repository,
               worktreePath,
               // Git requires force for submodules; recursive checks above cannot make removal atomic.
               force: submodules.force,
               execute: git.execute,
-              run: (args) => cleanupGit(project.workspaceRoot, [...args], "git worktree remove"),
+              run: (args) => cleanupGit(repository, [...args], "git worktree remove"),
             });
             entries.push({ ...entry, outcome: "removed", reason: sentence(removalReason), bytes });
             yield* gitManager.invalidateStatus(project.workspaceRoot);
