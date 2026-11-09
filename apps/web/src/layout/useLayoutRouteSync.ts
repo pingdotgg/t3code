@@ -126,7 +126,7 @@ export function useLayoutRouteSync(
       ? (store.getDraftIdByRef(threadTarget.threadRef) ?? null)
       : null,
   );
-  const newTabRequest = useLayoutStore((state) => state.newTabRequest);
+  const newTabRequest = useLayoutStore((state) => state.newTabRequest?.request ?? null);
   const { newTabPosition } = useLayoutBehavior();
   const newTab: RouteNewTab | null =
     newTabRequest === null
