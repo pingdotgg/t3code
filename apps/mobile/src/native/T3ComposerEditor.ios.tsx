@@ -240,7 +240,6 @@ export function ComposerEditor({
   // stale caret or stale text mid-typing.
   /* oxlint-disable react/refs -- Native controlled edits must reconcile against the last acknowledged native event before sending the next payload. */
   const resetGeneration = readResetGeneration();
-  renderedDraftRef.current = { value: props.value, resetGeneration };
   // Native restarts its revision at a reset's stamp, so stamp it at the latest acknowledged event.
   const controlledEventCount =
     resetGeneration > nativeResetGenerationRef.current
@@ -325,36 +324,39 @@ export function ComposerEditor({
     setMostRecentEventCount(acknowledgedEventCount);
     forceNativeEventRender((sequence) => sequence + 1);
   };
-  useImperativeHandle(ref, () => ({
-    focus: () => settleViewCommand(nativeRef.current?.focus()),
-    blur: () => settleViewCommand(nativeRef.current?.blur()),
-    setSelection: (nextSelection) =>
-      settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
-    // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
-    // event can reach JS after the tap's handler has already read the draft.
-    flushPendingInput: async () => {
-      const state = await Promise.resolve()
-        .then(() => nativeRef.current?.readState())
-        .catch(() => undefined);
-      // Acknowledging past a paste JS has not received yet would get the paste rejected.
-      if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
-      // A parent that dropped an acknowledged edit is stamped behind it, so native keeps showing that text.
-      if (
-        state.eventCount === mostRecentEventCountRef.current &&
-        controlledEventCount < mostRecentEventCount &&
-        state.value !== props.value &&
-        // The parent may have edited, reset or switched the draft while native was read.
-        renderedDraftRef.current.value === props.value &&
-        renderedDraftRef.current.resetGeneration === resetGeneration &&
-        readResetGeneration() === resetGeneration
-      ) {
-        onChangeText(state.value);
-        onSelectionChange?.(state.selection);
-        return;
-      }
-      applyNativeChange(state);
-    },
-  }));
+  useImperativeHandle(ref, () => {
+    renderedDraftRef.current = { value: props.value, resetGeneration };
+    return {
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
+      setSelection: (nextSelection) =>
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
+      // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
+      // event can reach JS after the tap's handler has already read the draft.
+      flushPendingInput: async () => {
+        const state = await Promise.resolve()
+          .then(() => nativeRef.current?.readState())
+          .catch(() => undefined);
+        // Acknowledging past a paste JS has not received yet would get the paste rejected.
+        if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
+        // A parent that dropped an acknowledged edit is stamped behind it, so native keeps showing that text.
+        if (
+          state.eventCount === mostRecentEventCountRef.current &&
+          controlledEventCount < mostRecentEventCount &&
+          state.value !== props.value &&
+          // The parent may have edited, reset or switched the draft while native was read.
+          renderedDraftRef.current.value === props.value &&
+          renderedDraftRef.current.resetGeneration === resetGeneration &&
+          readResetGeneration() === resetGeneration
+        ) {
+          onChangeText(state.value);
+          onSelectionChange?.(state.selection);
+          return;
+        }
+        applyNativeChange(state);
+      },
+    };
+  });
   const themeJson = JSON.stringify(createNativeComposerTheme(theme));
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   return (
