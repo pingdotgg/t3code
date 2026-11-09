@@ -82,6 +82,11 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
       readonly expectedEnvironmentId: EnvironmentId;
       readonly rejectedAccessToken?: string;
     }) => Effect.Effect<AuthorizedRemoteHttpEnvironment, ConnectionAttemptError>;
+    /** Lets the next direct authorization of this address skip its own descriptor read. */
+    readonly rememberCheckedDescriptor: (
+      httpBaseUrl: string,
+      descriptor: ExecutionEnvironmentDescriptor,
+    ) => Effect.Effect<void>;
     /**
      * Renews a live socket's token before it expires, so the server moves the
      * socket to the new session instead of closing it. Runs until interrupted.
@@ -95,6 +100,7 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
 
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
+const CHECKED_DESCRIPTOR_TTL_MS = 5_000;
 
 function mapDpopSocketError(error: RemoteEnvironmentAuthError | ConnectionAttemptError) {
   return error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
@@ -135,6 +141,13 @@ export const make = Effect.gen(function* () {
     }
   >();
 
+  // A host check that just answered hands its descriptor to the reconnect it
+  // triggers, once, so the reconnect skips a round trip.
+  const checkedDescriptors = new Map<
+    string,
+    { readonly descriptor: ExecutionEnvironmentDescriptor; readonly at: number }
+  >();
+
   /**
    * A saved LAN address can belong to another machine on a different network.
    */
@@ -144,9 +157,15 @@ export const make = Effect.gen(function* () {
       readonly httpBaseUrl: string;
       readonly connectionMethod: ClientConnectionMethod;
     }) {
-      const descriptor = yield* fetchDescriptor(input.httpBaseUrl, input.connectionMethod).pipe(
-        Effect.provideService(HttpClient.HttpClient, httpClient),
-      );
+      const checked = checkedDescriptors.get(input.httpBaseUrl);
+      checkedDescriptors.delete(input.httpBaseUrl);
+      const descriptor =
+        checked !== undefined &&
+        (yield* Clock.currentTimeMillis) - checked.at <= CHECKED_DESCRIPTOR_TTL_MS
+          ? checked.descriptor
+          : yield* fetchDescriptor(input.httpBaseUrl, input.connectionMethod).pipe(
+              Effect.provideService(HttpClient.HttpClient, httpClient),
+            );
       if (descriptor.environmentId !== input.expectedEnvironmentId) {
         return yield* environmentMismatchError({
           expected: input.expectedEnvironmentId,
@@ -527,6 +546,10 @@ export const make = Effect.gen(function* () {
 
   return RemoteEnvironmentAuthorization.of({
     authorizeBearer,
+    // Untraced: it runs on every live session's host check.
+    rememberCheckedDescriptor: Effect.fnUntraced(function* (httpBaseUrl, descriptor) {
+      checkedDescriptors.set(httpBaseUrl, { descriptor, at: yield* Clock.currentTimeMillis });
+    }),
     authorizeDpop: Effect.fn("environment.authorization")(function (input) {
       return authorizeDpop(input);
     }),

@@ -317,6 +317,49 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reuses a descriptor a host check just read, once and only while fresh", () =>
+    Effect.gen(function* () {
+      const descriptor = {
+        ...DESCRIPTOR,
+        orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
+      };
+      const harness = yield* makeHarness({
+        responses: [
+          websocketTicket("first-ticket"),
+          Response.json(descriptor),
+          websocketTicket("second-ticket"),
+          Response.json(descriptor),
+          websocketTicket("third-ticket"),
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorize = remote.authorizeBearer({
+          expectedEnvironmentId: ENVIRONMENT_ID,
+          httpBaseUrl: ENDPOINT.httpBaseUrl,
+          wsBaseUrl: ENDPOINT.wsBaseUrl,
+          bearerToken: "bearer-token",
+          connectionMethod: "direct",
+        });
+        yield* remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, descriptor as never);
+        yield* authorize;
+        yield* authorize;
+        yield* remote.rememberCheckedDescriptor(ENDPOINT.httpBaseUrl, descriptor as never);
+        yield* TestClock.adjust("6 seconds");
+        yield* authorize;
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(harness.fetch.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
+        "/api/auth/websocket-ticket/rpc",
+        "/.well-known/t3/environment",
+        "/api/auth/websocket-ticket/rpc",
+      ]);
+    }),
+  );
+
   it.effect("blocks a warm direct bearer prepare when the environment changes identity", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
