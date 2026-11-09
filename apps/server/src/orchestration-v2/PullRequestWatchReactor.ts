@@ -350,6 +350,7 @@ export const make = Effect.gen(function* () {
         if (tail === undefined) {
           const comments = new Map<string, PullRequestComment>();
           const cursors = new Set<string>();
+          let hidden = 0;
           while (cursor !== null) {
             if (cursors.has(cursor)) return null;
             cursors.add(cursor);
@@ -366,9 +367,10 @@ export const make = Effect.gen(function* () {
                 reviewState: null,
               });
             }
+            hidden += page.hiddenCount ?? 0;
             cursor = page.nextCursor;
           }
-          if (thread.comments.length + comments.size < count) return null;
+          if (thread.comments.length + comments.size + hidden < count) return null;
           tail = { count, comments: [...comments.values()] };
         }
         tails.set(thread.id, tail);

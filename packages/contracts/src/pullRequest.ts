@@ -857,6 +857,8 @@ export type PullRequestThreadCommentsInput = typeof PullRequestThreadCommentsInp
 export const PullRequestThreadCommentsResult = Schema.Struct({
   comments: Schema.Array(PullRequestThreadComment),
   nextCursor: Schema.NullOr(TrimmedNonEmptyString),
+  // Comments the host hid that this page left out; the thread's `commentCount` still counts them.
+  hiddenCount: Schema.optional(NonNegativeInt),
 });
 export type PullRequestThreadCommentsResult = typeof PullRequestThreadCommentsResult.Type;
 
