@@ -26,6 +26,8 @@ const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRU
 const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
+// Pi reports the first; OmO (Senpi 2026.11.5-1) reports the bracketed form.
+const BUILTIN_TOOL_SEARCH_PATHS = new Set(["builtin:tool-search", "<builtin:tool-search>"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
@@ -337,7 +339,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // it keeps the name, and cannot discover deferred tools either.
   const hasBuiltinToolSearch = () =>
     typeof pi.getAllTools === "function" &&
-    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.sourceInfo?.path === "builtin:tool-search");
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && BUILTIN_TOOL_SEARCH_PATHS.has(tool.sourceInfo?.path));
 
   const readOnlyMcpTools = new Set<string>();
   const isReadOnlyMcpTool = (name: string) => {
