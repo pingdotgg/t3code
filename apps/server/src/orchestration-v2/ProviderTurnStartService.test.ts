@@ -1355,6 +1355,47 @@ effectIt.effect.each([
   }),
 );
 
+effectIt.effect.each([
+  { text: "Continue", line: true },
+  { text: "/goal ship it", line: false },
+  { text: "Continue", restartContinuation: true, line: false },
+])("tells the model the working folder changed: %j", ({ text, line, restartContinuation }) =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text,
+      previousTurn: { runStatus: "completed", turnStatus: "completed" },
+    });
+    const projection = harness.projection();
+    const [previous, current] = projection.runs;
+    harness.setProjection({
+      ...projection,
+      runs: [
+        { ...previous!, cwd: "/tmp/folder-a" },
+        restartContinuation ? { ...current!, restartContinuationOfRunId: previous!.id } : current!,
+      ],
+      attempts: [
+        ...projection.attempts,
+        { ...projection.attempts[0]!, id: previous!.activeAttemptId!, runId: previous!.id },
+      ],
+    });
+    harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
+
+    yield* harness.start;
+    const turn = harness.startRootRun.mock.calls[0]![0];
+    yield* turn.session.startTurn(turn as never);
+
+    expect(harness.startTurn.mock.calls.map(([sent]) => sent.message.text)).toEqual([
+      withInlineContext(
+        line
+          ? 'The working folder changed from "/tmp/folder-a" to "/tmp/native-account-command".'
+          : "",
+        text,
+      ),
+    ]);
+    expect(harness.projection().messages.at(-1)?.text).toBe(text);
+  }),
+);
+
 effectIt.effect("does not start another turn when abandoned-turn cleanup fails", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({

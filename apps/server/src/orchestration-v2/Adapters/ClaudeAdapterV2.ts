@@ -1394,12 +1394,18 @@ export const layerQueryRunner: Layer.Layer<
               ),
             ),
             offer: (message, onQueued) =>
-              Effect.uninterruptibleMask((restore) =>
-                restore(Queue.offer(promptQueue, message)).pipe(
-                  Effect.tap(() => Effect.sync(() => onQueued?.())),
-                ),
-              ).pipe(
-                Effect.asVoid,
+              // Queue and report in one step: Claude can read the prompt as soon as it is queued.
+              Effect.suspend(() => {
+                if (!Queue.offerUnsafe(promptQueue, message))
+                  return Effect.fail(
+                    queryRunnerError(
+                      new Error("Claude prompt queue closed before the prompt was queued."),
+                      "offer",
+                    ),
+                  );
+                onQueued?.();
+                return Effect.void;
+              }).pipe(
                 Effect.tap(() =>
                   logProtocolEvent({
                     direction: "outgoing",
@@ -4396,6 +4402,7 @@ interface ActiveClaudeTurnContext {
   readonly promptUuid: string | null;
   promptEcho: "pending" | "confirmed";
   promptStarted: boolean;
+  accepted: boolean;
   nativeWakeStarted: boolean;
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
@@ -8163,7 +8170,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     },
                   ),
                 },
-              }),
+              }).pipe(Effect.when(Effect.succeed(input.context.accepted))),
               // Emit the roster before root settlement so writeFinalRunEvents preserves it.
               Effect.gen(function* () {
                 const nativeThreadId =
@@ -8377,8 +8384,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
           const current = yield* Ref.get(activeTurn);
-          // A replacement query can reuse the native thread id; only this query's turn is ours.
-          const context = closedQuery.lastTurn;
+          // A replacement query can reuse the native thread id; only this query's turn is ours. A
+          // prompt still awaiting acceptance can only be attached to the live query, this one.
+          const context = current?.accepted === false ? current : closedQuery.lastTurn;
           if (context === null) return;
           const interrupted =
             closedQuery.stopping || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
@@ -8405,7 +8413,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Preserve buffered outcomes before Stop clears the wake buffer.
           yield* endSubagentsOfClosedQuery({
             closedQuery,
-            context,
+            context: closedQuery.lastTurn ?? context,
             subagents,
             buffered,
             interrupted,
@@ -11319,14 +11327,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptUuid,
               promptEcho: isClaudeProviderContinuationTurn(turnInput) ? "confirmed" : "pending",
               promptStarted: false,
+              accepted: userMessage === null,
               nativeWakeStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
               executedModel: undefined,
             };
+            const releaseTurn = Ref.update(activeTurn, (current) =>
+              current === context ? null : current,
+            );
             const attachTurn = Effect.gen(function* () {
-              querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
+              if (
+                (yield* Ref.get(queryContext))?.query !== querySession.query ||
+                querySession.stopping
+              ) {
+                yield* releaseTurn;
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: "Claude provider query ended before the turn could start.",
+                });
+              }
               if (
                 !isClaudeProviderContinuationTurn(turnInput) &&
                 permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy) ===
@@ -11372,7 +11393,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   },
                 });
               }
-              yield* emitProviderEvent({
+            });
+            const recordRunningTurn = Effect.sync(() => {
+              // A turn that settled before its offer returned keeps its terminal record last: one
+              // step, so a query exit cannot settle the turn between the check and the record.
+              if (
+                Ref.getUnsafe(activeTurn) !== context ||
+                Ref.getUnsafe(queryContext) !== querySession
+              )
+                return;
+              Queue.offerUnsafe(events, {
                 type: "provider_turn.updated",
                 driver: CLAUDE_PROVIDER,
                 providerTurn: providerTurnPayload({
@@ -11385,16 +11415,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (userMessage !== null) {
               yield* attachTurn;
               yield* startUserTurnForWakeReports(nativeThreadId);
+              const accept = () => {
+                context.accepted = true;
+                querySession.lastTurn = context;
+                pdfReservation.commit();
+              };
               yield* Effect.uninterruptibleMask((restore) =>
-                restore(
-                  querySession.query.offer(userMessage, () => {
-                    pdfReservation.commit();
-                  }),
-                ).pipe(
-                  Effect.tap(() =>
-                    Effect.sync(() => {
-                      pdfReservation.commit();
-                    }),
+                restore(querySession.query.offer(userMessage, accept)).pipe(
+                  Effect.tap(() => Effect.sync(accept)),
+                  Effect.onExit(() =>
+                    context.accepted
+                      ? sdkMessageLock.withPermits(1)(recordRunningTurn)
+                      : releaseTurn,
                   ),
                 ),
               );
@@ -11403,16 +11435,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Transcript reads suspend replay; hold SDK frames until the buffer is applied to preserve order.
             yield* sdkMessageLock.withPermits(1)(
               Effect.gen(function* () {
-                if (
-                  (yield* Ref.get(queryContext))?.query !== querySession.query ||
-                  querySession.stopping
-                ) {
-                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CLAUDE_PROVIDER,
-                    detail: "Claude provider query ended before the continuation could start.",
-                  });
-                }
                 yield* attachTurn;
+                querySession.lastTurn = context;
+                yield* recordRunningTurn;
                 const drained = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
                 yield* releaseContinuationRequest(nativeThreadId);
                 const wakeAbsorbed = (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
