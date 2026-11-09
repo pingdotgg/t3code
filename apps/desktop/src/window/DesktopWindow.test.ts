@@ -1049,7 +1049,11 @@ describe("DesktopWindow", () => {
           0,
         );
         const settings = yield* DesktopClientSettings.DesktopClientSettings;
-        yield* settings.set({ ...DEFAULT_CLIENT_SETTINGS, layoutThreeFingerSwipe: true });
+        yield* settings.set({
+          ...DEFAULT_CLIENT_SETTINGS,
+          layoutThreeFingerSwipe: true,
+          scrollingWorkspacesEnabled: true,
+        });
         history.canGoBack.mockReturnValue(true);
         history.canGoForward.mockReturnValue(true);
         for (const direction of ["left", "right", "up", "down"]) {
@@ -1061,6 +1065,13 @@ describe("DesktopWindow", () => {
         }
         assert.equal(history.goBack.mock.calls.length, 1);
         assert.equal(history.goForward.mock.calls.length, 1);
+        yield* settings.set({ ...DEFAULT_CLIENT_SETTINGS, layoutThreeFingerSwipe: true });
+        fakeWindow.send.mockClear();
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "left")));
+        yield* Effect.promise(() => Promise.resolve(swipe({}, "right")));
+        assert.equal(history.goBack.mock.calls.length, 2);
+        assert.equal(history.goForward.mock.calls.length, 2);
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
