@@ -104,6 +104,36 @@ describe("assistant citation navigation", () => {
     expect(router.state.location.state.assistantCitationActivation).toBe(activation);
     expect(router.history.length).toBe(2);
   });
+
+  it("keeps quotes from forks on their own thread", () => {
+    const forkShell = { lineage: { ...sideChatShell.lineage, sideChat: false } };
+
+    expect(assistantCitationNavigation(sideChatCitation, forkShell).params.threadId).toBe(
+      sideChatCitation.threadId,
+    );
+  });
+
+  it("leaves an unrelated route alone", async () => {
+    resetRightPanels();
+    const router = createCitationRouter("/environment-one/thread-other");
+    await router.navigate({
+      ...assistantCitationNavigation(sideChatCitation, null),
+      params: { environmentId: citation.environmentId, threadId: ThreadId.make("thread-other") },
+    });
+    await revealAtRoute(router);
+
+    expect(router.state.location.pathname).toBe("/environment-one/thread-other");
+    expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+  });
+
+  it("ignores a reveal for a side chat the location no longer quotes", async () => {
+    resetRightPanels();
+    const router = createCitationRouter("/environment-one/thread-parent");
+    await router.navigate(assistantCitationNavigation(sideChatCitation, sideChatShell));
+    await revealAtRoute(router, ThreadId.make("side-chat-two"));
+
+    expect(useRightPanelStore.getState().byThreadKey).toEqual({});
+  });
 });
 
 const parentThreadId = ThreadId.make("thread-parent");
@@ -122,11 +152,15 @@ function resetRightPanels() {
 }
 
 /** What the route-level ChatView does once the side chat shell is known. */
-function revealAtRoute(router: ReturnType<typeof createCitationRouter>) {
+function revealAtRoute(
+  router: ReturnType<typeof createCitationRouter>,
+  sideChatThreadId = sideChatCitation.threadId,
+) {
   const { pathname, state } = router.state.location;
   return revealSideChatCitation(
     router,
     scopeThreadRef(citation.environmentId, ThreadId.make(pathname.split("/").at(-1) ?? "")),
+    sideChatThreadId,
     parentThreadId,
     state.assistantCitationActivation ?? state.__TSR_key ?? "",
   );

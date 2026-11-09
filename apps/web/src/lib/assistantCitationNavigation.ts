@@ -93,6 +93,7 @@ export function assistantCitationNavigation(
 export function revealSideChatCitation(
   router: Pick<AnyRouter, "navigate" | "state">,
   routeThreadRef: ScopedThreadRef,
+  sideChatThreadId: ThreadId,
   parentThreadId: ThreadId,
   activation: string,
 ) {
@@ -100,6 +101,7 @@ export function revealSideChatCitation(
   const citation = assistantCitationFromLocation(location.href);
   if (
     citation === null ||
+    citation.threadId !== sideChatThreadId ||
     citation.environmentId !== routeThreadRef.environmentId ||
     (routeThreadRef.threadId !== parentThreadId && routeThreadRef.threadId !== citation.threadId)
   ) {
@@ -132,14 +134,23 @@ export function useSideChatCitationReveal(
   const parentThreadId = sideChatParentId(useQuietThreadShell(sourceRef));
   const environmentId = routeThreadRef?.environmentId;
   const threadId = routeThreadRef?.threadId;
+  const sideChatThreadId = sourceRef?.threadId;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- moves a side chat quote's router location and parent right panel once per activation, including after its shell loads
   useEffect(() => {
-    if (environmentId === undefined || threadId === undefined || parentThreadId === null) return;
+    if (
+      environmentId === undefined ||
+      threadId === undefined ||
+      sideChatThreadId === undefined ||
+      parentThreadId === null
+    ) {
+      return;
+    }
     void revealSideChatCitation(
       router,
       scopeThreadRef(environmentId, threadId),
+      sideChatThreadId,
       parentThreadId,
       activation,
     );
-  }, [router, environmentId, threadId, parentThreadId, activation]);
+  }, [router, environmentId, threadId, sideChatThreadId, parentThreadId, activation]);
 }
