@@ -1446,7 +1446,7 @@ function ImportStep({
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-6">
           <Spinner size="lg" tone="muted" />
           <p className="text-center text-sm text-muted-foreground">
-            Looking for projects from Claude Code and Codex…
+            Looking for projects from your agents…
           </p>
         </div>
         <div className="flex justify-end">
@@ -1461,7 +1461,7 @@ function ImportStep({
   return (
     <StepShell
       title="Import your projects"
-      description="Import projects and conversations from Claude Code and Codex on your selected computers."
+      description="Import projects and conversations from your agents on your selected computers."
     >
       {candidates.length > 0 ? (
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
@@ -1522,9 +1522,7 @@ function ImportStep({
                     </Button>
                   </div>
                 ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
-                  </p>
+                  <p className="py-2 text-sm text-muted-foreground">No existing projects found.</p>
                 ) : null}
                 {scan.data?.truncated ? (
                   <p className="text-xs text-muted-foreground" role="status">
