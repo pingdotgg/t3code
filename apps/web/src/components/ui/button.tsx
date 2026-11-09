@@ -65,14 +65,14 @@ const buttonVariants = cva(
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground [:hover,[data-pressed]]:surface-ghost-hover [:hover,[data-pressed]]:text-destructive-foreground",
         // Floats over content: a solid round chip.
         floating:
-          "bg-background [--control-icon-color:var(--contrast-muted-foreground)] rounded-full border-border/60 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-border",
+          "surface-floating [--control-icon-color:var(--contrast-muted-foreground)] rounded-full text-foreground before:rounded-full [:hover,[data-pressed]]:surface-floating-hover",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         "media-close":
-          "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white shadow-sm ring-1 ring-white/20 [:hover,[data-pressed]]:bg-black/80 focus-visible:outline-white",
+          "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white surface-media-control [:hover,[data-pressed]]:bg-black/80 focus-visible:outline-white",
         "media-navigation":
           "[--control-icon-color:currentColor] absolute top-1/2 z-20 -translate-y-1/2 border-transparent text-white/90 [:hover,[data-pressed]]:bg-white/10 [:hover,[data-pressed]]:text-white focus-visible:outline-white",
         overlay: "border-transparent bg-black/70 text-white/65 [:hover,[data-pressed]]:bg-black/90",
-        pill: "surface-pill [--pill-fill:var(--ss-default-pill-fill)] [--pill-foreground:var(--ss-default-pill-foreground)] [--pill-icon:var(--ss-default-pill-icon)] [--pill-rim:var(--ss-default-pill-rim,var(--ss-default-raised-rim))] [--pill-shadow:var(--ss-default-pill-shadow)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
+        pill: "surface-neutral-pill text-foreground [:hover,[data-pressed]]:surface-raised-hover",
         // Secondary: the raised recipe.
         secondary:
           "surface-raised focus-visible:[--surface-rim:var(--surface-fill)] text-foreground [:hover,[data-pressed]]:surface-raised-hover",
