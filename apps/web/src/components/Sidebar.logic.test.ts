@@ -1495,32 +1495,109 @@ describe("resolveSidebarRouteReveal", () => {
   const hiddenKey = "environment-test:thread-test";
   const findThread = (key: string) => (key === hiddenKey ? hidden : undefined);
 
-  it("widens the scope for a newly opened thread the scope hides", () => {
-    expect(
-      resolveSidebarRouteReveal({
-        reveal: { observedKey: "environment-test:other", pendingKey: null },
-        routeKey: hiddenKey,
-        isSearching: false,
-        scopedProjectKeys,
-        delegatedUnderParent: new Set(),
-        findThread,
-      }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: true });
+  const owningGroup = {
+    projectKey: "github.com/example/project-b",
+    memberProjectRefs: [{ environmentId: hidden.environmentId, projectId: hidden.projectId }],
+  };
+
+  it.each([
+    {
+      behavior: "show-all" as const,
+      groups: [owningGroup],
+      scope: scopedProjectKeys,
+      expectedKeys: [],
+    },
+    {
+      behavior: "switch-project" as const,
+      groups: [owningGroup],
+      scope: scopedProjectKeys,
+      expectedKeys: [owningGroup.projectKey],
+    },
+    { behavior: "switch-project" as const, groups: [], scope: scopedProjectKeys, expectedKeys: [] },
+    { behavior: "switch-project" as const, groups: [owningGroup], scope: null, expectedKeys: null },
+    {
+      behavior: "switch-project" as const,
+      groups: [owningGroup],
+      scope: new Set([`${hidden.environmentId}:${hidden.projectId}`]),
+      expectedKeys: null,
+    },
+  ])(
+    "resolves a newly opened thread with $behavior and $expectedKeys",
+    ({ behavior, groups, scope, expectedKeys }) => {
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: "environment-test:other", pendingKey: null },
+          routeKey: hiddenKey,
+          isSearching: false,
+          scopedProjectKeys: scope,
+          projectGroups: groups,
+          projectFilterRevealBehavior: behavior,
+          delegatedUnderParent: new Set(),
+          findThread,
+        }),
+      ).toEqual({ pendingKey: hiddenKey, revealedProjectScopeKeys: expectedKeys });
+    },
+  );
+
+  it("switches to the owning project group when a draft's first shell arrives", () => {
+    const reveal = { observedKey: null, pendingKey: null };
+    const projectGroups = [
+      {
+        projectKey: "same-id-on-another-machine",
+        memberProjectRefs: [
+          { environmentId: EnvironmentId.make("another-machine"), projectId: hidden.projectId },
+        ],
+      },
+      {
+        projectKey: "github.com/example/project-b",
+        memberProjectRefs: [
+          { environmentId: hidden.environmentId, projectId: hidden.projectId },
+          { environmentId: EnvironmentId.make("remote"), projectId: ProjectId.make("remote-b") },
+        ],
+      },
+    ];
+    const input = {
+      reveal,
+      routeKey: hiddenKey,
+      isSearching: false,
+      scopedProjectKeys,
+      delegatedUnderParent: new Set<string>(),
+      projectGroups,
+      projectFilterRevealBehavior: "switch-project" as const,
+    };
+    expect(resolveSidebarRouteReveal({ ...input, findThread: () => undefined })).toEqual({
+      pendingKey: hiddenKey,
+      revealedProjectScopeKeys: null,
+    });
+    expect(resolveSidebarRouteReveal({ ...input, findThread })).toEqual({
+      pendingKey: hiddenKey,
+      revealedProjectScopeKeys: ["github.com/example/project-b"],
+    });
+    completeSidebarRouteReveal(reveal);
+    expect(resolveSidebarRouteReveal({ ...input, findThread })).toEqual({
+      pendingKey: null,
+      revealedProjectScopeKeys: null,
+    });
   });
 
-  it("never widens for a thread whose reveal already completed", () => {
-    // A remount's once-per-mount scroll must keep the scope the user chose.
-    expect(
-      resolveSidebarRouteReveal({
-        reveal: { observedKey: hiddenKey, pendingKey: null },
-        routeKey: hiddenKey,
-        isSearching: false,
-        scopedProjectKeys,
-        delegatedUnderParent: new Set(),
-        findThread,
-      }),
-    ).toEqual({ pendingKey: null, widensScope: false });
-  });
+  it.each(["show-all", "switch-project"] as const)(
+    "keeps a completed reveal scoped with %s",
+    (behavior) => {
+      // A remount's once-per-mount scroll must keep the scope the user chose.
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: hiddenKey, pendingKey: null },
+          routeKey: hiddenKey,
+          isSearching: false,
+          scopedProjectKeys,
+          projectGroups: [],
+          projectFilterRevealBehavior: behavior,
+          delegatedUnderParent: new Set(),
+          findThread,
+        }),
+      ).toEqual({ pendingKey: null, revealedProjectScopeKeys: null });
+    },
+  );
 
   it("widens again for a thread reopened before the thread between them listed its row", () => {
     // The user scoped away from the open thread, then went to a thread whose row
@@ -1532,25 +1609,32 @@ describe("resolveSidebarRouteReveal", () => {
         routeKey,
         isSearching: false,
         scopedProjectKeys,
+        projectGroups: [],
+        projectFilterRevealBehavior: "show-all",
         delegatedUnderParent: new Set(),
         findThread,
       });
     resolve("environment-test:unlisted");
-    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, widensScope: true });
+    expect(resolve(hiddenKey)).toEqual({ pendingKey: hiddenKey, revealedProjectScopeKeys: [] });
   });
 
-  it("holds a pending reveal without widening while searching", () => {
-    expect(
-      resolveSidebarRouteReveal({
-        reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
-        routeKey: hiddenKey,
-        isSearching: true,
-        scopedProjectKeys,
-        delegatedUnderParent: new Set(),
-        findThread,
-      }),
-    ).toEqual({ pendingKey: hiddenKey, widensScope: false });
-  });
+  it.each(["show-all", "switch-project"] as const)(
+    "holds a pending reveal while searching with %s",
+    (behavior) => {
+      expect(
+        resolveSidebarRouteReveal({
+          reveal: { observedKey: hiddenKey, pendingKey: hiddenKey },
+          routeKey: hiddenKey,
+          isSearching: true,
+          scopedProjectKeys,
+          projectGroups: [],
+          projectFilterRevealBehavior: behavior,
+          delegatedUnderParent: new Set(),
+          findThread,
+        }),
+      ).toEqual({ pendingKey: hiddenKey, revealedProjectScopeKeys: null });
+    },
+  );
 });
 
 describe("sidebarFolderExpansionKeys", () => {

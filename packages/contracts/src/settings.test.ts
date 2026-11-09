@@ -303,6 +303,19 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings sidebar project filter reveal", () => {
+  it("keeps the existing reveal default for older settings and persists the opt-in", () => {
+    expect(decodeClientSettings({}).sidebarProjectFilterRevealBehavior).toBe("show-all");
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("sidebarProjectFilterRevealBehavior");
+    const patch = decodeClientSettingsPatch({
+      sidebarProjectFilterRevealBehavior: "switch-project",
+    });
+    expect(
+      encodeClientSettings(decodeClientSettings(patch)).sidebarProjectFilterRevealBehavior,
+    ).toBe("switch-project");
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");
