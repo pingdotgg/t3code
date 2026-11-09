@@ -78,7 +78,7 @@ export function GitRemoteSheet(props: GitRemoteSheetProps) {
             {...(action
               ? {
                   footer:
-                    "This repository has several remotes and none is named origin. The branch will track the one you choose.",
+                    "This repository has several remotes and the branch has none chosen yet. It will track the one you pick.",
                 }
               : {})}
           >

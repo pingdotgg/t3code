@@ -666,6 +666,25 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
+  // The checkout's provider follows origin, but a branch's change requests live on the host
+  // of the remote it was pushed to, which can differ when a repository mixes hosts.
+  const branchSourceControlProvider = Effect.fn("GitManager.branchSourceControlProvider")(
+    function* (cwd: string, remoteName: string | null) {
+      const fallback = yield* sourceControlProvider(cwd);
+      const remoteUrl = remoteName
+        ? yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`)
+        : null;
+      const provider = remoteUrl ? sourceControlDefinitions.recognizeRemote(remoteUrl) : null;
+      if (!remoteName || !remoteUrl || !provider || provider.kind === fallback.kind) {
+        return fallback;
+      }
+      const handle = yield* sourceControlProviders.resolveHandle({
+        cwd,
+        context: { provider, remoteName, remoteUrl },
+      });
+      return handle.provider;
+    },
+  );
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
     cwd: string,
   ) {
@@ -1146,7 +1165,7 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.isRepo
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* resolveHostingProvider(cwd, details.branch, details.pushRemote ?? null)
       : null;
 
     return {
@@ -1505,13 +1524,13 @@ export const make = Effect.gen(function* () {
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
+    pushRemote: string | null,
   ) {
     const preferredRemoteName =
-      branch === null
+      pushRemote ??
+      (branch === null
         ? "origin"
-        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.pushRemote`)) ??
-          (yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ??
-          "origin");
+        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin"));
     const remoteUrl =
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
@@ -1891,9 +1910,10 @@ export const make = Effect.gen(function* () {
       | "headRepositoryNameWithOwner"
       | "headRepositoryOwnerLogin"
       | "isCrossRepository"
+      | "remoteName"
     >,
   ) {
-    const provider = yield* sourceControlProvider(cwd);
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
     const probe = headBranchProbe(provider, headContext.headSelectors, "open");
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
@@ -1925,7 +1945,7 @@ export const make = Effect.gen(function* () {
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
-    const provider = yield* sourceControlProvider(cwd);
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
     const probe = headBranchProbe(provider, headContext.headSelectors, "all");
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
@@ -2086,7 +2106,10 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const defaultFromProvider = yield* sourceControlProvider(cwd).pipe(
+    const defaultFromProvider = yield* branchSourceControlProvider(
+      cwd,
+      headContext.remoteName,
+    ).pipe(
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
       Effect.orElseSucceed(() => null),
     );
@@ -2328,8 +2351,6 @@ export const make = Effect.gen(function* () {
     threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
   ) {
-    const provider = yield* sourceControlProvider(cwd);
-    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -2351,6 +2372,8 @@ export const make = Effect.gen(function* () {
       branch,
       upstreamRef: details.upstreamRef,
     });
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
+    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {

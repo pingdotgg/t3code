@@ -332,12 +332,12 @@ export function requiresDefaultBranchConfirmation(
  */
 export function pushRemoteChoicesFor(
   input: GitActionRequestInput,
-  gitStatus: Pick<VcsStatusResult, "hasUpstream" | "pushRemote" | "pushRemoteChoices"> | null,
+  gitStatus: Pick<VcsStatusResult, "pushRemote" | "pushRemoteChoices"> | null,
 ): ReadonlyArray<string> | null {
   if (input.action === "commit" || input.pushRemote || !gitStatus?.pushRemoteChoices) return null;
   // A new feature branch starts without the current branch's selection.
   if (input.featureBranch) return gitStatus.pushRemoteChoices;
-  return gitStatus.hasUpstream || gitStatus.pushRemote ? null : gitStatus.pushRemoteChoices;
+  return gitStatus.pushRemote ? null : gitStatus.pushRemoteChoices;
 }
 
 export function resolveDefaultBranchActionDialogCopy(input: {

@@ -345,6 +345,25 @@ const initRepoWithCommit = (
     return { initialBranch };
   });
 
+/** Remotes `fork` and `upstream` (holding the initial branch), no origin, on `feature/remote`. */
+const makeForkWorkflowRepo = Effect.gen(function* () {
+  const driver = yield* GitVcsDriver.GitVcsDriver;
+  const cwd = yield* makeTmpDir();
+  const forkRemote = yield* makeTmpDir("git-remote-");
+  const upstreamRemote = yield* makeTmpDir("git-remote-");
+  const { initialBranch } = yield* initRepoWithCommit(cwd);
+  yield* git(forkRemote, ["init", "--bare"]);
+  yield* git(upstreamRemote, ["init", "--bare"]);
+  yield* git(cwd, ["remote", "add", "fork", forkRemote]);
+  yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
+  yield* git(cwd, ["push", "upstream", initialBranch]);
+  yield* git(cwd, ["checkout", "-b", "feature/remote"]);
+  yield* writeTextFile(cwd, "feature.txt", "feature\n");
+  yield* git(cwd, ["add", "-A"]);
+  yield* driver.commit(cwd, "Add feature", "");
+  return { cwd, initialBranch };
+});
+
 it.effect.each(["root", "nested", "worktree"] as const)(
   "skips clean filters while the %s index is locked and resumes after unlock",
   (location) =>
@@ -6812,21 +6831,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     it.effect("asks which remote to push to when several remotes have no origin", () =>
       Effect.gen(function* () {
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeTmpDir();
-        const forkRemote = yield* makeTmpDir("git-remote-");
-        const upstreamRemote = yield* makeTmpDir("git-remote-");
-        yield* initRepoWithCommit(cwd);
-        yield* git(forkRemote, ["init", "--bare"]);
-        yield* git(upstreamRemote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
-        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
-        yield* git(cwd, ["checkout", "-b", "feature/remote"]);
-        yield* writeTextFile(cwd, "feature.txt", "feature\n");
-        yield* git(cwd, ["add", "-A"]);
-        yield* driver.commit(cwd, "Add feature", "");
+        const { cwd } = yield* makeForkWorkflowRepo;
 
         const status = yield* driver.statusDetailsLocal(cwd);
-        assert.isTrue(status.hasOriginRemote);
         assert.deepEqual(status.pushRemoteChoices, ["fork", "upstream"]);
         const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
         assert.include(refused.message, "Choose which remote");
@@ -6842,21 +6849,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("asks for a push remote while the upstream is only the branch's base", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const { cwd, initialBranch } = yield* makeForkWorkflowRepo;
+        yield* git(cwd, ["branch", "--set-upstream-to", `upstream/${initialBranch}`]);
+
+        const status = yield* driver.statusDetailsLocal(cwd);
+        assert.isTrue(status.hasUpstream);
+        assert.isUndefined(status.pushRemote);
+        const refused = yield* driver.pushCurrentBranch(cwd, null).pipe(Effect.flip);
+        assert.include(refused.message, "Choose which remote");
+
+        yield* driver.pushCurrentBranch(cwd, null, { remoteName: "fork" });
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "--abbrev-ref", "@{upstream}"]),
+          "fork/feature/remote",
+        );
+        assert.equal(
+          yield* git(cwd, ["config", "branch.feature/remote.t3-merge-base-ref"]),
+          `refs/remotes/upstream/${initialBranch}`,
+        );
+      }),
+    );
+
     it.effect("selecting a push remote moves the branch's tracking to it", () =>
       Effect.gen(function* () {
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeTmpDir();
-        const forkRemote = yield* makeTmpDir("git-remote-");
-        const upstreamRemote = yield* makeTmpDir("git-remote-");
-        yield* initRepoWithCommit(cwd);
-        yield* git(forkRemote, ["init", "--bare"]);
-        yield* git(upstreamRemote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "fork", forkRemote]);
-        yield* git(cwd, ["remote", "add", "upstream", upstreamRemote]);
-        yield* git(cwd, ["checkout", "-b", "feature/remote"]);
-        yield* writeTextFile(cwd, "feature.txt", "feature\n");
-        yield* git(cwd, ["add", "-A"]);
-        yield* driver.commit(cwd, "Add feature", "");
+        const { cwd } = yield* makeForkWorkflowRepo;
         const refName = "feature/remote";
 
         const unset = yield* driver.statusDetailsLocal(cwd);

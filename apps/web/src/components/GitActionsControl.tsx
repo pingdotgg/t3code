@@ -970,8 +970,8 @@ function PushRemoteDialog({
         <DialogHeader>
           <DialogTitle>Push to which remote?</DialogTitle>
           <DialogDescription>
-            This repository has several remotes and none is named origin. The branch will track the
-            one you choose.
+            This repository has several remotes and the branch has none chosen yet. It will track
+            the one you pick.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

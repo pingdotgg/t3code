@@ -402,7 +402,8 @@ function parseUpstreamRefByFirstSeparator(
   };
 }
 
-// Differently named upstreams are bases, not publish targets; pushing HEAD there would write features to shared branches.
+// Differently named upstreams are bases, not publish targets: pushing HEAD there would write
+// features to shared branches.
 function isUpstreamPublishTarget(
   branch: string,
   upstream: { upstreamRef: string; branchName: string },
@@ -1587,9 +1588,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }),
     },
   );
-  // Repo-wide, so cached per common dir: which remotes exist, and the ones to ask between when
-  // git would have to guess (see `pushRemoteChoices`). Per-branch config is read by
-  // `resolveStatusPushRemote`.
+  // Repo-wide, so cached per common dir; per-branch config is read by `resolveStatusPushRemote`.
   const readStatusRemotes = (cwd: string, gitArgs: ReadonlyArray<string> = []) =>
     Effect.all(
       [
@@ -1859,6 +1858,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   // Mirrors where `pushCurrentBranch` sends this branch; undefined while the choice is unclear.
+  // Publishing retargets the upstream, so a branch tracking its base keeps that base first.
+  const preserveUpstreamAsBase = Effect.fn("preserveUpstreamAsBase")(function* (
+    cwd: string,
+    branch: string,
+    upstream: { upstreamRef: string; branchName: string },
+  ) {
+    if ((yield* readBranchBase(cwd, branch)) !== null) return;
+    yield* writeConfigValue({ cwd, key: branchBaseConfigKey(branch), value: upstream.branchName });
+    if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
+      yield* writeConfigValue({
+        cwd,
+        key: `branch.${branch}.t3-merge-base-ref`,
+        value: `refs/remotes/${upstream.upstreamRef}`,
+      });
+    }
+  });
+
   const resolveStatusPushRemote = Effect.fn("resolveStatusPushRemote")(function* (
     cwd: string,
     refName: string,
@@ -1885,7 +1901,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return (
       branchPushRemote ||
       defaultPushRemote ||
-      (remoteNames.includes("origin") ? "origin" : upstream?.remoteName)
+      (remoteNames.includes("origin") ? "origin" : undefined)
     );
   });
 
@@ -2799,9 +2815,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         upstream,
       };
     }
-    const publishRemoteName = yield* resolvePushRemoteName(cwd, branch).pipe(
-      Effect.orElseSucceed(() => null),
-    );
+    const publishRemoteName = yield* resolvePushRemoteName(cwd, branch);
     const branchName = yield* resolvePublishBranchName(cwd, branch);
     return {
       remoteName: publishRemoteName ?? upstream.remoteName,
@@ -2893,6 +2907,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const requestedRemoteName = options?.remoteName?.trim() || null;
     if (requestedRemoteName) {
       const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+      const currentUpstream = details.hasUpstream
+        ? yield* resolveCurrentUpstream(cwd).pipe(Effect.orElseSucceed(() => null))
+        : null;
+      if (currentUpstream && !isUpstreamPublishTarget(branch, currentUpstream)) {
+        yield* preserveUpstreamAsBase(cwd, branch, currentUpstream);
+      }
       yield* runGit(
         "GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote",
         cwd,
@@ -2966,21 +2986,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
     if (destination?.publishes) {
       const { remoteName, branchName: publishBranch, upstream } = destination;
-      // Publishing retargets the upstream, so preserve its comparison base first.
-      if (upstream && (yield* readBranchBase(cwd, branch)) === null) {
-        yield* writeConfigValue({
-          cwd,
-          key: branchBaseConfigKey(branch),
-          value: upstream.branchName,
-        });
-        if (!(yield* readConfigValue(cwd, `branch.${branch}.t3-merge-base-ref`))) {
-          yield* writeConfigValue({
-            cwd,
-            key: `branch.${branch}.t3-merge-base-ref`,
-            value: `refs/remotes/${upstream.upstreamRef}`,
-          });
-        }
-      }
+      if (upstream) yield* preserveUpstreamAsBase(cwd, branch, upstream);
       yield* runGit(
         upstream
           ? "GitVcsDriver.pushCurrentBranch.pushOwnBranch"
@@ -5409,7 +5415,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* withListRefsInvalidation(input.cwd, createBranch(input));
     }),
     writeConfigValue,
-    setPushRemote,
+    setPushRemote: Effect.fnUntraced(function* (input) {
+      return yield* withListRefsInvalidation(input.cwd, setPushRemote(input));
+    }),
     removeWorktree: Effect.fnUntraced(function* (input) {
       return yield* withListRefsInvalidation(input.cwd, removeWorktree(input));
     }),

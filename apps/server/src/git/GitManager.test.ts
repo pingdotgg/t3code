@@ -599,6 +599,8 @@ function preparePullRequestThread(
 function makeManager(input?: {
   providerScenario?: FakeProviderScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
+  /** Served when a caller resolves the provider for a specific remote. */
+  remoteSourceControlProvider?: SourceControlProvider["Service"];
   textGeneration?: Partial<FakeGitTextGeneration>;
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
@@ -696,7 +698,11 @@ function makeManager(input?: {
         SourceControlProviderRegistry.SourceControlProviderRegistry.of({
           resolveLink: (input) => provider.resolveLink?.(input),
           get: () => Effect.succeed(provider),
-          resolveHandle: () => Effect.succeed({ provider, context: null }),
+          resolveHandle: (request) =>
+            Effect.succeed({
+              provider: (request.context && input?.remoteSourceControlProvider) || provider,
+              context: null,
+            }),
           resolve: () => Effect.succeed(provider),
           discover: Effect.succeed([]),
         }),
@@ -945,24 +951,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect("status detects the host from the branch's push remote before its first push", () =>
+  it.effect.each([
+    { label: "the branch's push remote", key: "branch.feature/status-push-remote-host.pushRemote" },
+    { label: "the repository's default push remote", key: "remote.pushDefault" },
+  ])("status detects the host from $label before the first push", ({ key }) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-push-remote-host"]);
       yield* runGit(repoDir, ["remote", "add", "hub", "https://github.com/acme/repo.git"]);
       yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
-      yield* runGit(repoDir, [
-        "config",
-        "branch.feature/status-push-remote-host.pushRemote",
-        "lab",
-      ]);
+      yield* runGit(repoDir, ["config", key, "lab"]);
 
       const { manager } = yield* makeManager();
 
       const status = yield* manager.status({ cwd: repoDir });
 
       expect(status.sourceControlProvider?.kind).toBe("gitlab");
+    }),
+  );
+
+  it.effect("status finds the PR on the host of the remote the branch is pushed to", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/status-mixed-hosts"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "hub", "https://github.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["remote", "add", "lab", "https://gitlab.com/acme/repo.git"]);
+      yield* runGit(repoDir, ["config", "remote.lab.pushurl", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "lab", "feature/status-mixed-hosts"]);
+
+      const gitlab = createFakeSourceControlProvider({
+        kind: "gitlab",
+        prListSequence: [
+          [
+            {
+              number: 21,
+              title: "Mixed hosts",
+              url: "https://gitlab.com/acme/repo/-/merge_requests/21",
+              baseRefName: "main",
+              headRefName: "feature/status-mixed-hosts",
+              isCrossRepository: true,
+              headRepositoryNameWithOwner: "acme/repo",
+              headRepositoryOwnerLogin: "acme",
+            },
+          ],
+        ],
+      });
+      const { manager } = yield* makeManager({ remoteSourceControlProvider: gitlab.service });
+
+      const status = yield* manager.status({ cwd: repoDir });
+
+      expect(status.pr?.url).toBe("https://gitlab.com/acme/repo/-/merge_requests/21");
     }),
   );
 

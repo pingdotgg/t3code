@@ -98,27 +98,22 @@ describe("git action copy", () => {
 
 describe("pushRemoteChoicesFor", () => {
   const choices = ["fork", "upstream"];
-  const unclear = { hasUpstream: false, pushRemoteChoices: choices };
+  const unclear = { pushRemoteChoices: choices };
 
-  it("asks before the first push of a branch when the remote is unclear", () => {
+  it("asks before a push when the remote is unclear", () => {
     expect(pushRemoteChoicesFor({ action: "commit_push_pr" }, unclear)).toEqual(choices);
     expect(pushRemoteChoicesFor({ action: "commit" }, unclear)).toBeNull();
     expect(pushRemoteChoicesFor({ action: "push", pushRemote: "fork" }, unclear)).toBeNull();
-    expect(pushRemoteChoicesFor({ action: "push" }, { hasUpstream: false })).toBeNull();
+    expect(pushRemoteChoicesFor({ action: "push" }, {})).toBeNull();
     expect(pushRemoteChoicesFor({ action: "push" }, { ...unclear, pushRemote: "fork" })).toBeNull();
+  });
+
+  it("asks for a new feature branch even when the current branch has a push remote", () => {
     expect(
       pushRemoteChoicesFor(
         { action: "commit_push", featureBranch: true },
         { ...unclear, pushRemote: "fork" },
       ),
     ).toEqual(choices);
-  });
-
-  it("asks for a new feature branch even when the current branch tracks a remote", () => {
-    const tracking = { ...unclear, hasUpstream: true };
-    expect(pushRemoteChoicesFor({ action: "push" }, tracking)).toBeNull();
-    expect(pushRemoteChoicesFor({ action: "commit_push", featureBranch: true }, tracking)).toEqual(
-      choices,
-    );
   });
 });
