@@ -12,7 +12,7 @@ import {
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -22,6 +22,7 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
+import { groupUsageWindows } from "./threadDetailsUsage.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const PACE_LABEL: Record<LimitPace, string> = {
@@ -75,7 +76,18 @@ export function ThreadDetailsUsage({
             tooltip={<span className="text-foreground">{notice}</span>}
           />
         ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+          groupUsageWindows(limits.windows).map((group) => (
+            <Fragment key={group.title ?? ""}>
+              {group.title ? (
+                <div className="col-span-3 truncate px-2.5 pt-1.5 text-2xs font-medium text-muted-foreground/70 first:pt-0">
+                  {group.title}
+                </div>
+              ) : null}
+              {group.rows.map((row) => (
+                <LimitRow key={row.window.id} label={row.label} window={row.window} now={now} />
+              ))}
+            </Fragment>
+          ))
         )}
       </div>
     </ThreadDetailsSection>
@@ -139,9 +151,11 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
 }
 
 function LimitRow({
+  label,
   window,
   now,
 }: {
+  readonly label: string;
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
@@ -151,11 +165,15 @@ function LimitRow({
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
-      label={window.label}
+      label={label}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
-      value={`${left}%`}
-      ariaValue={`${left}% left`}
+      // An empty window says when it comes back; "0%" alone is not actionable.
+      value={
+        left === 0 && window.resetsAt && resetsAt > now
+          ? `back in ${formatDuration(resetsAt - now)}`
+          : `${left}% left`
+      }
       tooltip={
         <>
           <span className="text-foreground">
