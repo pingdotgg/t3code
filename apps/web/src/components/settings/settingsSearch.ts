@@ -589,7 +589,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "speech-recording-cue",
     title: "Sound cue",
     to: "/settings/voice",
-    searchTerms: ["speech voice dictation stt recording start audio feedback beep click chime"],
+    searchTerms: [
+      "speech voice dictation stt recording start audio feedback beep click chime tone classic signature soft wood warm synth thock",
+    ],
   },
   {
     id: "speech-language",

@@ -67,8 +67,9 @@ sees the recording, which runs in T3 Code itself.
 are down, and **Toggle** always needs a second press. Change the chord itself in
 [Keybindings settings](./keybindings.md).
 
-On web and desktop, turn on **Sound cue** in Voice settings to hear a short click
-when recording starts. It is off by default.
+On web and desktop, turn on **Sound cue** in Voice settings to hear a short sound
+when recording starts, and pick the sound you like next to the switch. It is off
+by default.
 
 ## Improve recognition
 

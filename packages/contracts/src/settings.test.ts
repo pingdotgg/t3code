@@ -597,6 +597,11 @@ describe("voice settings", () => {
     expect(decodeClientSettingsPatch({ speechRecordingCue: true })).toEqual({
       speechRecordingCue: true,
     });
+    expect(decodeClientSettings({}).speechRecordingCueSound).toBe("classic");
+    expect(decodeClientSettingsPatch({ speechRecordingCueSound: "thock" })).toEqual({
+      speechRecordingCueSound: "thock",
+    });
+    expect(() => decodeClientSettingsPatch({ speechRecordingCueSound: "shutter" })).toThrow();
     expect(DEFAULT_SERVER_SETTINGS.speechProjectCustomWords).toEqual([]);
     expect(PROJECT_SCOPED_SERVER_SETTING_KEYS).toContain("speechProjectCustomWords");
   });

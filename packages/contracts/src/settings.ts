@@ -219,6 +219,17 @@ export type SnapShotShortcut = typeof SnapShotShortcut.Type;
 export const SnapShotSound = Schema.Literals(["soft-pop", "camera-shutter"]);
 export type SnapShotSound = typeof SnapShotSound.Type;
 const DEFAULT_SNAP_SHOT_SOUND: SnapShotSound = "soft-pop";
+export const SpeechRecordingCueSound = Schema.Literals([
+  "classic",
+  "signature",
+  "click",
+  "soft",
+  "wood",
+  "analog",
+  "thock",
+]);
+export type SpeechRecordingCueSound = typeof SpeechRecordingCueSound.Type;
+const DEFAULT_SPEECH_RECORDING_CUE_SOUND: SpeechRecordingCueSound = "classic";
 
 export type SnapShotModifierPairShortcut = Extract<SnapShotShortcut, { readonly kind: string }>;
 
@@ -655,6 +666,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   speechCorrectionWord: SpeechCorrectionCue.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   speechRecordingCue: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  speechRecordingCueSound: SpeechRecordingCueSound.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SPEECH_RECORDING_CUE_SOUND)),
+  ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -2030,6 +2044,7 @@ export const ClientSettingsPatch = Schema.Struct({
   speechPostProcessingPrompt: Schema.optionalKey(SpeechPostProcessingPromptSettings),
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
   speechRecordingCue: Schema.optionalKey(Schema.Boolean),
+  speechRecordingCueSound: Schema.optionalKey(SpeechRecordingCueSound),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

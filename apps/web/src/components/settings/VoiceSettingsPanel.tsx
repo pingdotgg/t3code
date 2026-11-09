@@ -20,6 +20,7 @@ import {
   type SpeechAcceleration,
   type SpeechCustomWords,
   type SpeechModelUnloadTimeout,
+  SpeechRecordingCueSound,
   type VoiceShortcutMode,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -44,7 +45,7 @@ import {
   chooseTranscriptCleanup,
   useCleanupGrant,
 } from "../../speech/voiceConsent";
-import { playRecordingCue } from "../../speech/recordingCue";
+import { playRecordingCue, RECORDING_CUE_SOUNDS } from "../../speech/recordingCue";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { runtime } from "../../lib/runtime";
 import {
@@ -1218,16 +1219,44 @@ export function VoiceSettingsPanel() {
         <SettingsRow
           {...searchableSetting("speech-recording-cue")}
           title="Sound cue"
-          description="Play a short click when recording starts."
+          description="Play a short sound when recording starts."
           control={
-            <Switch
-              aria-label="Sound cue"
-              checked={settings.speechRecordingCue}
-              onCheckedChange={(checked) => {
-                if (checked) playRecordingCue();
-                void updateClientSettings({ speechRecordingCue: checked });
-              }}
-            />
+            <div className="flex items-center gap-2">
+              <Select
+                value={settings.speechRecordingCueSound}
+                disabled={!settings.speechRecordingCue}
+                onValueChange={(value) => {
+                  const sound = SpeechRecordingCueSound.literals.find(
+                    (literal) => literal === value,
+                  );
+                  if (!sound) return;
+                  // Choosing a sound previews it, matching the Snap Shot sound picker.
+                  playRecordingCue(sound);
+                  void updateClientSettings({ speechRecordingCueSound: sound });
+                }}
+              >
+                <SelectTrigger size="sm" aria-label="Recording cue sound" className="w-32">
+                  <SelectValue>
+                    {RECORDING_CUE_SOUNDS[settings.speechRecordingCueSound].label}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {SpeechRecordingCueSound.literals.map((sound) => (
+                    <SelectItem key={sound} value={sound}>
+                      {RECORDING_CUE_SOUNDS[sound].label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Switch
+                aria-label="Sound cue"
+                checked={settings.speechRecordingCue}
+                onCheckedChange={(checked) => {
+                  if (checked) playRecordingCue(settings.speechRecordingCueSound);
+                  void updateClientSettings({ speechRecordingCue: checked });
+                }}
+              />
+            </div>
           }
         />
       </SettingsSection>
