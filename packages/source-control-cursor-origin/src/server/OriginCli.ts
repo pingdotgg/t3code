@@ -14,7 +14,6 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import { Agent } from "@effect/platform-node/Undici";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { parseGitRemoteHost } from "@t3tools/source-control-core/shared/definition";
@@ -489,22 +488,9 @@ const make = Effect.gen(function* () {
 
 /**
  * Origin answers from a few hundred milliseconds away, so a new TLS connection doubles a request.
- * Undici's default drops an idle connection after four seconds, which a person reading a pull
- * request always outlasts; Origin keeps one open for minutes, and HTTP/2 carries a detail's
- * parallel reads on it at once.
+ * A keep-alive agent holds idle connections until Origin closes them. Undici would add HTTP/2, but
+ * the single-executable CLI cannot resolve its static import.
  */
-const httpClientLayer = NodeHttpClient.layerUndiciNoDispatcher.pipe(
-  Layer.provide(
-    Layer.effect(NodeHttpClient.Dispatcher)(
-      Effect.acquireRelease(
-        Effect.sync(
-          () =>
-            new Agent({ allowH2: true, keepAliveTimeout: 300_000, keepAliveMaxTimeout: 300_000 }),
-        ),
-        (agent) => Effect.promise(() => agent.destroy()),
-      ),
-    ),
-  ),
-);
+const httpClientLayer = NodeHttpClient.layerNodeHttpOptions({ keepAlive: true });
 
 export const layer = Layer.effect(OriginCli, make).pipe(Layer.provide(httpClientLayer));
