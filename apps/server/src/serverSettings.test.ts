@@ -1723,8 +1723,23 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           provider: SecretProviderId.make("personal"),
           reference: "op://Private/Expo/token",
         };
+        const simlockReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Simlock/token",
+        };
+        const antigravityReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Gemini/key",
+        };
+        const openCodeReference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/OpenCode/password",
+        };
+        const antigravity = ProviderInstanceId.make("antigravity");
+        const openCode = ProviderInstanceId.make("opencode");
         const hub = UsageLimitSourceId.make("hub");
         const withUsage = yield* serverSettings.updateSettings({
+          cloudSpeechCredentials: { openai: usageReference, xai: "literal-fixture" },
           usageLimitSources: {
             [hub]: {
               kind: "cliproxy",
@@ -1744,18 +1759,52 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
               maxConcurrentSessions: 2,
             },
           ],
+          simlockDeviceHosts: [
+            {
+              kind: "simlock",
+              id: "pool",
+              label: "Device pool",
+              gatewayUrl: "https://simlock.test:4700",
+              agentToken: simlockReference,
+              maxLeases: 2,
+              maxLeaseMinutes: 60,
+            },
+          ],
+          providerInstances: {
+            [antigravity]: {
+              driver: ProviderDriverKind.make("antigravity"),
+              config: { authMethod: "gemini-api-key", apiKey: antigravityReference },
+            },
+            [openCode]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverUrl: "http://127.0.0.1:4096", serverPassword: openCodeReference },
+            },
+          },
         });
         const legacy = ServerSettingsModule.redactServerSettingsForClient(withUsage, {
           secretReferences: false,
         });
         assert.notInclude(JSON.stringify(legacy), "op://");
+        assert.deepEqual(legacy.cloudSpeechCredentials, {
+          openai: SECRET_REDACTED,
+          xai: SECRET_REDACTED,
+          openrouter: "",
+        });
         assert.equal(legacy.sourceControlHosts.bitbucket?.accessToken, SECRET_REDACTED);
         assert.equal(legacy.usageLimitSources[hub]?.managementKey, SECRET_REDACTED);
         assert.equal(legacy.easDeviceHosts[0]?.accessToken, SECRET_REDACTED);
+        assert.equal(legacy.simlockDeviceHosts[0]?.agentToken, SECRET_REDACTED);
+        const configOf = (settings: ServerSettings, id: ProviderInstanceId) =>
+          settings.providerInstances[id]?.config as Record<string, unknown> | undefined;
+        assert.equal(configOf(legacy, antigravity)?.apiKey, SECRET_REDACTED);
+        assert.equal(configOf(legacy, openCode)?.serverPassword, SECRET_REDACTED);
         const echoed = yield* serverSettings.updateSettings({
+          cloudSpeechCredentials: legacy.cloudSpeechCredentials,
           sourceControlHosts: legacy.sourceControlHosts,
           usageLimitSources: legacy.usageLimitSources,
           easDeviceHosts: legacy.easDeviceHosts,
+          simlockDeviceHosts: legacy.simlockDeviceHosts,
+          providerInstances: legacy.providerInstances,
         });
         assert.deepEqual(echoed.sourceControlHosts.bitbucket?.accessToken, reference);
         assert.deepEqual(echoed.sourceControlHosts.github?.tokens, {
@@ -1763,16 +1812,110 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
           "ghe.acme.test": "ghp_ghe",
         });
         assert.deepEqual(echoed.usageLimitSources[hub]?.managementKey, usageReference);
+        assert.deepEqual(echoed.cloudSpeechCredentials, {
+          openai: usageReference,
+          xai: "literal-fixture",
+          openrouter: "",
+        });
         assert.deepEqual(echoed.easDeviceHosts[0]?.accessToken, easReference);
+        assert.deepEqual(echoed.simlockDeviceHosts[0]?.agentToken, simlockReference);
+        assert.deepEqual(configOf(echoed, antigravity)?.apiKey, antigravityReference);
+        assert.deepEqual(configOf(echoed, openCode)?.serverPassword, openCodeReference);
         assert.isTrue(Option.isSome(yield* stored("github", "tokens", "ghe.acme.test")));
       }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+  );
+
+  it.effect("removing a secret provider unsets every field that read from it", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const personal = (reference: string) => ({
+        provider: SecretProviderId.make("personal"),
+        reference: `op://Private/${reference}`,
+      });
+      const work = { provider: SecretProviderId.make("work"), reference: "op://Work/token" };
+      const instanceId = ProviderInstanceId.make("antigravity_refs");
+      const hub = UsageLimitSourceId.make("hub");
+      yield* decodeServerSettingsPatch({
+        secretProviders: {
+          personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+          work: { kind: "one_password", label: "Work", config: { account: "work" } },
+        },
+      }).pipe(Effect.flatMap(service.updateSettings));
+      yield* service.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("antigravity"),
+            environment: [
+              { name: "API_TOKEN", value: personal("Antigravity/env"), sensitive: true },
+              { name: "WORK_TOKEN", value: work, sensitive: true },
+              { name: "PLAIN", value: "kept", sensitive: false },
+            ],
+          },
+        },
+        sourceControlHosts: {
+          bitbucket: { accessToken: personal("Bitbucket/token") },
+          github: { tokens: { "github.com": personal("GitHub/token"), "ghe.acme.test": work } },
+        },
+        cloudSpeechCredentials: { openai: personal("Voice/key"), xai: work },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: personal("Hub/key"),
+            enabled: true,
+          },
+        },
+        easDeviceHosts: [
+          {
+            kind: "eas",
+            id: "eas",
+            label: "EAS Simulator",
+            accessToken: personal("Expo/token"),
+            maxSessionMinutes: 30,
+            idleMinutes: 10,
+            maxConcurrentSessions: 2,
+          },
+        ],
+      });
+
+      // An older client's save echoes a reference it cannot decode as the redacted marker.
+      const removed = yield* service.updateSettings({
+        secretProviders: { [SecretProviderId.make("personal")]: null },
+        usageLimitSources: {
+          [hub]: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            managementKey: SECRET_REDACTED,
+            enabled: true,
+          },
+        },
+      });
+      assert.notInclude(JSON.stringify(removed), "op://Private");
+      assert.deepEqual(removed.providerInstances[instanceId]?.environment, [
+        { name: "WORK_TOKEN", value: work, sensitive: true },
+        { name: "PLAIN", value: "kept", sensitive: false },
+      ]);
+      assert.equal(removed.sourceControlHosts.bitbucket?.accessToken, "");
+      assert.deepEqual(removed.sourceControlHosts.github?.tokens, {
+        "github.com": "",
+        "ghe.acme.test": work,
+      });
+      assert.equal(removed.usageLimitSources[hub]?.managementKey, "");
+      assert.deepEqual(removed.cloudSpeechCredentials, { openai: "", xai: work, openrouter: "" });
+      assert.equal(removed.easDeviceHosts[0]?.accessToken, "");
+      assert.deepEqual(Object.keys(removed.secretProviders), ["work"]);
+    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("knows every strictly decoded field that can hold a secret reference", () =>
     Effect.sync(() => {
       // Shipped clients decode these as strings. Each must be covered by the older-client case above.
       assert.deepEqual(strictSecretReferencePaths(ServerSettings.ast), [
+        "cloudSpeechCredentials.openai",
+        "cloudSpeechCredentials.xai",
+        "cloudSpeechCredentials.openrouter",
         "easDeviceHosts.[].accessToken",
+        "simlockDeviceHosts.[].agentToken",
         "usageLimitSources.*.managementKey",
       ]);
     }),
@@ -2782,6 +2925,36 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
         );
         const restored = yield* withPolicy(undefined, (service) => service.getSettings);
         assert.equal(restored.providerInstances[claudeId]?.environment?.[0]?.value, token.value);
+
+        // Removing a secret provider still clears a hidden variable that read from it.
+        const reference = {
+          provider: SecretProviderId.make("personal"),
+          reference: "op://Private/Anthropic/key",
+        };
+        yield* withPolicy(undefined, (service) =>
+          decodeServerSettingsPatch({
+            secretProviders: {
+              personal: { kind: "one_password", label: "Personal", config: { account: "my" } },
+            },
+          }).pipe(
+            Effect.flatMap(service.updateSettings),
+            Effect.andThen(
+              service.updateProviderInstance({
+                operation: "upsert",
+                instanceId: claudeId,
+                instance: {
+                  driver: claude,
+                  environment: [{ name: token.name, value: reference, sensitive: true }],
+                },
+              }),
+            ),
+          ),
+        );
+        yield* withPolicy(policy, (service) =>
+          service.updateSettings({ secretProviders: { [reference.provider]: null } }),
+        );
+        const cleared = yield* withPolicy(undefined, (service) => service.getSettings);
+        assert.notInclude(JSON.stringify(cleared), "op://Private");
       }).pipe(Effect.provide(shared));
     });
 

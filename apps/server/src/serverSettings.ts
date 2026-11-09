@@ -65,6 +65,7 @@ import {
 import {
   mapSettingsSecrets,
   mapSettingsSecretValues,
+  withoutRemovedSecretProviderReferences,
   SECRET_REDACTED,
   type SettingsSecret,
 } from "./settingsSecrets.ts";
@@ -1196,7 +1197,9 @@ const make = Effect.gen(function* () {
             cause: parseFailure.value,
           });
         }
-        const updated = yield* update(current);
+        // An older client echoes a reference as the redacted marker; restore it before vetting so
+        // a removed provider's reference is cleared below rather than restored by persistence.
+        const updated = withEchoedSecretReferences(current, yield* update(current));
         // Vet before secrets: a variable the policy hides from clients is not one they removed.
         const vetted = managed.vetWrite(current, yield* normalizeServerSettings(updated), patch);
         if (vetted._tag === "Locked") {
@@ -1225,7 +1228,11 @@ const make = Effect.gen(function* () {
             managedBy: managedPolicy?.organization,
           });
         }
-        const persisted = yield* persistSettingsSecrets(current, vettedProviders.settings);
+        // After vetting, which can keep stored variables a policy hides from clients.
+        const persisted = yield* persistSettingsSecrets(
+          current,
+          withoutRemovedSecretProviderReferences(current, vettedProviders.settings),
+        );
         const next = yield* normalizeServerSettings(persisted.settings);
         const materializedNext = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
