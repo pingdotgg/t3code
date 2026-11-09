@@ -2503,92 +2503,98 @@ describe("PiAdapterV2", () => {
   );
 
   it.effect.each([
-    { historical: false, label: "the latest turn" },
-    { historical: true, label: "a historical turn" },
-  ])("natively forks $label into an independent session", ({ historical }) =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const forkFake = yield* makeFakePi;
-      const forkFile = "/fake/forked.jsonl";
-      const { runtime, takeEvent } = yield* openRuntime(
-        fake,
-        "default",
-        THREAD_ID,
-        SESSION_ID,
-        forkFake,
-      );
-      const source = yield* runtime
-        .ensureThread({
-          threadId: THREAD_ID,
-          modelSelection: modelSelection("default"),
-          runtimePolicy,
-        })
-        .pipe(Effect.flatMap(persistForkSource));
-      // Native Pi tolerates malformed live lines; ordinary forks must keep that behavior.
-      const fileSystem = yield* FileSystem.FileSystem;
-      const sourceFile = source.nativeThreadRef!.nativeId!;
-      yield* fileSystem.writeFileString(
-        sourceFile,
-        `${(yield* fileSystem.readFileString(sourceFile)).replace('"id":"source"', '"id":"source","parentSession":"/missing/ancestor.jsonl"')}broken-json\n`,
-      );
-      fake.queueEntries(UNCAPTURED_TURN_TREE);
-      const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
-        id: ProviderTurnId.make(`turn-${ordinal}`),
-        providerThreadId: source.id,
-        nodeId: NodeId.make(`node-${ordinal}`),
-        runAttemptId: null,
-        nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
-        ordinal,
-        status: "completed",
-        startedAt: null,
-        completedAt: null,
-      });
-      forkFake.queueState({ sessionFile: forkFile });
-      fake.queueState({ sessionFile: forkFile });
-      const target = ThreadId.make("fork-target");
-      const forked = yield* runtime.forkThread({
-        sourceProviderThread: source,
-        sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
-        providerTurnId: turn(1).id,
-        targetThreadId: target,
-      });
-      assert.equal(forked.appThreadId, target);
-      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
-      assert.notEqual(forked.id, source.id);
-      const args = forkFake.lastSpawn().args;
-      assert.equal(args[args.indexOf("--fork") + 1], source.nativeThreadRef?.nativeId);
-      assert.include(args, "--no-extensions");
-      assert.include(args, "--no-tools");
-      assert.include(args, "--offline");
-      assert.notInclude(args, "--no-session");
-      assert.deepEqual(
-        forkFake
-          .allRequests()
-          .filter((request) => request.type === "fork")
-          .map((request) => request.entryId),
-        historical ? ["u2"] : [],
-      );
-      assert.isFalse(
-        fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
-      );
-      const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
-      yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
-      yield* fake.emit({ type: "agent_start" });
-      yield* fake.emit({ type: "agent_settled" });
-      const updated = yield* takeEvent(
-        (event) =>
-          event.type === "provider_thread.updated" && event.providerThread.appThreadId === target,
-      );
-      assert.isTrue(
-        updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
-      );
-      yield* takeEvent((event) => event.type === "turn.terminal");
-      yield* runtime.resumeThread({ providerThread: adopted });
-      assert.equal(
-        fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath,
-        forkFile,
-      );
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+    { historical: false, label: "the latest turn", copiedAncestor: false },
+    { historical: true, label: "a historical turn", copiedAncestor: false },
+    { historical: true, label: "a historical turn", copiedAncestor: true },
+  ])(
+    "natively forks $label into an independent session copiedAncestor=$copiedAncestor",
+    ({ historical, copiedAncestor }) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const forkFake = yield* makeFakePi;
+        const forkFile = "/fake/forked.jsonl";
+        const { runtime, takeEvent } = yield* openRuntime(
+          fake,
+          "default",
+          THREAD_ID,
+          SESSION_ID,
+          forkFake,
+        );
+        const { runtime: sourceRuntime } = yield* openRuntime(yield* makeFakePi);
+        const source = yield* sourceRuntime
+          .ensureThread({
+            threadId: THREAD_ID,
+            modelSelection: modelSelection("default"),
+            runtimePolicy,
+          })
+          .pipe(Effect.flatMap(persistForkSource));
+        // Native Pi tolerates malformed live lines; ordinary forks must keep that behavior.
+        const fileSystem = yield* FileSystem.FileSystem;
+        const sourceFile = source.nativeThreadRef!.nativeId!;
+        const ancestorFile = `${sourceFile}.ancestor`;
+        const sourceText = yield* fileSystem.readFileString(sourceFile);
+        if (copiedAncestor) yield* fileSystem.writeFileString(ancestorFile, sourceText);
+        yield* fileSystem.writeFileString(
+          sourceFile,
+          `${sourceText.replace('"id":"source"', `"id":"source","parentSession":${JSON.stringify(ancestorFile)}`)}broken-json\n`,
+        );
+        const turn = (ordinal: number): OrchestrationV2ProviderTurn => ({
+          id: ProviderTurnId.make(`turn-${ordinal}`),
+          providerThreadId: source.id,
+          nodeId: NodeId.make(`node-${ordinal}`),
+          runAttemptId: null,
+          nativeTurnRef: { driver: PI_PROVIDER, nativeId: `u${ordinal}`, strength: "strong" },
+          ordinal,
+          status: "completed",
+          startedAt: null,
+          completedAt: null,
+        });
+        forkFake.queueState({ sessionFile: forkFile });
+        fake.queueState({ sessionFile: forkFile });
+        const target = ThreadId.make("fork-target");
+        const forked = yield* runtime.forkThread({
+          sourceProviderThread: source,
+          sourceProviderTurns: historical ? [turn(1), turn(2)] : [turn(1)],
+          providerTurnId: turn(1).id,
+          targetThreadId: target,
+        });
+        assert.equal(forked.appThreadId, target);
+        assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+        assert.notEqual(forked.id, source.id);
+        const args = forkFake.lastSpawn().args;
+        assert.equal(args[args.indexOf("--fork") + 1], source.nativeThreadRef?.nativeId);
+        assert.include(args, "--no-extensions");
+        assert.include(args, "--no-tools");
+        assert.include(args, "--offline");
+        assert.notInclude(args, "--no-session");
+        assert.deepEqual(
+          forkFake
+            .allRequests()
+            .filter((request) => request.type === "fork")
+            .map((request) => request.entryId),
+          historical ? ["u2"] : [],
+        );
+        assert.isFalse(
+          fake.allRequests().some((request) => request.type === "fork" || request.type === "clone"),
+        );
+        const adopted = { ...forked, id: ProviderThreadId.make("pending-fork-row") };
+        yield* startTurn(runtime, adopted, "default", [], "Continue", undefined, 1, target);
+        yield* fake.emit({ type: "agent_start" });
+        yield* fake.emit({ type: "agent_settled" });
+        const updated = yield* takeEvent(
+          (event) =>
+            event.type === "provider_thread.updated" && event.providerThread.appThreadId === target,
+        );
+        assert.isTrue(
+          updated.type === "provider_thread.updated" && updated.providerThread.id === adopted.id,
+        );
+        yield* takeEvent((event) => event.type === "turn.terminal");
+        yield* runtime.resumeThread({ providerThread: adopted });
+        assert.equal(
+          fake.allRequests().findLast((request) => request.type === "switch_session")?.sessionPath,
+          forkFile,
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("natively forks before a turn whose start entry was never captured", () =>
@@ -2646,12 +2652,43 @@ describe("PiAdapterV2", () => {
     ({ terminal, strong }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakePi;
-        const forkFake = yield* makeFakePi;
+        const native = yield* makeFakePi;
         const fileSystem = yield* FileSystem.FileSystem;
         const dir = yield* fileSystem.makeTempDirectoryScoped();
         const forkFile = `${dir}/forked.jsonl`;
         const previousFile = `${dir}/previous.jsonl`;
         const sourceFile = `${dir}/source.jsonl`;
+        let spawnedSource: string | undefined;
+        let spawnedText: string | undefined;
+        let mutateAtSpawn = true;
+        const forkFake = {
+          ...native,
+          spawner: ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              assert.isTrue(ChildProcess.isStandardCommand(command));
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* native.spawner.spawn(command);
+              const source = command.args[command.args.indexOf("--fork") + 1];
+              if (typeof source !== "string") return yield* Effect.die("Missing fork source");
+              spawnedSource = source;
+              if (mutateAtSpawn) {
+                mutateAtSpawn = false;
+                yield* fileSystem.writeFileString(
+                  previousFile,
+                  `${yield* fileSystem.readFileString(previousFile)}broken-json`,
+                );
+              }
+              spawnedText = yield* fileSystem.readFileString(spawnedSource);
+              yield* fileSystem.writeFileString(
+                forkFile,
+                `${encodeJsonLine({ type: "session", id: "fork", parentSession: spawnedSource })}\n${spawnedText.slice(spawnedText.indexOf("\n") + 1)}`,
+              );
+              native.queueState({ sessionFile: forkFile });
+              native.queueState({ sessionFile: forkFile });
+              return yield* native.spawner.spawn(command);
+            }),
+          ),
+        };
         const writeSession = (
           file: string,
           entries: ReadonlyArray<unknown>,
@@ -2718,12 +2755,19 @@ describe("PiAdapterV2", () => {
         forkFake.queueEntries(
           terminal ? { entries: TURN_ONE_ENTRIES, leafId: "a1b" } : UNCAPTURED_TURN_TREE,
         );
-        forkFake.queueState({ sessionFile: forkFile });
         fake.queueState({ sessionFile: forkFile });
         const forked = yield* forkAtFirst();
         assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
         const args = forkFake.lastSpawn().args;
-        assert.equal(args[args.indexOf("--fork") + 1], previousFile);
+        assert.notEqual(args[args.indexOf("--fork") + 1], previousFile);
+        assert.equal(spawnedText, before[0]);
+        assert.isFalse(yield* fileSystem.exists(spawnedSource!));
+        assert.equal(yield* fileSystem.readFileString(previousFile), `${before[0]}broken-json`);
+        assert.include(
+          yield* fileSystem.readFileString(forkFile),
+          `"parentSession":${JSON.stringify(previousFile)}`,
+        );
+        yield* fileSystem.writeFileString(previousFile, before[0]!);
         assert.deepEqual(
           forkFake
             .allRequests()
@@ -2780,12 +2824,21 @@ describe("PiAdapterV2", () => {
           null,
           "not a session line\n",
           before[0]!.trimEnd(),
-          ...[TURN_ONE_ENTRIES[0]!, TURN_ONE_ENTRIES[1]!].flatMap((entry) =>
+          ...[
+            TURN_ONE_ENTRIES[0]!,
+            TURN_ONE_ENTRIES[1]!,
+            {
+              ...sessionMessage("tool", "a1b", "assistant", 50),
+              message: { role: "toolResult", content: [] },
+            },
+          ].flatMap((entry) =>
             [undefined, null].map((content) =>
-              before[0]!.replace(
-                encodeJsonLine(entry),
-                encodeJsonLine({ ...entry, message: { ...entry.message, content } }),
-              ),
+              entry.id === "tool"
+                ? `${before[0]}${encodeJsonLine({ ...entry, message: { ...entry.message, content } })}\n`
+                : before[0]!.replace(
+                    encodeJsonLine(entry),
+                    encodeJsonLine({ ...entry, message: { ...entry.message, content } }),
+                  ),
             ),
           ),
           `${encodeJsonLine({ type: "session", id: "corrupt", timestamp: DateTime.formatIso(at(0)) })}\n${encodeJsonLine({ id: "u1" })}\n`,

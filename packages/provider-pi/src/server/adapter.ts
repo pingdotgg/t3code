@@ -1649,24 +1649,32 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         sourceFile: string,
         entryId: string,
       ) {
-        const headerLine = yield* fileSystem.stream(sourceFile).pipe(
+        let parent: unknown;
+        let firstLine = true;
+        const found = yield* fileSystem.stream(sourceFile).pipe(
           Stream.decodeText(),
           Stream.splitLines,
+          Stream.filter((line) => {
+            const entry = Option.getOrUndefined(decodePiSessionFileLine(line));
+            if (firstLine) {
+              firstLine = false;
+              parent = recordField(entry, "parentSession");
+              if (parent === undefined) return true;
+            }
+            return (
+              recordString(entry, "id") === entryId &&
+              recordString(entry, "type") === "message" &&
+              recordString(recordField(entry, "message"), "role") === "user"
+            );
+          }),
           Stream.runHead,
           Effect.mapError((cause) =>
             protocolError(`Cannot read Pi session ${sourceFile}: ${cause.reason._tag}`, cause),
           ),
         );
-        const header = Option.getOrUndefined(
-          decodePiSessionFileLine(Option.getOrElse(headerLine, () => "")),
-        );
-        const parent = recordField(header, "parentSession");
-        if (parent === undefined) return sourceFile;
+        if (Option.isSome(found) || parent === undefined) return { file: sourceFile };
         if (typeof parent !== "string" || parent.length === 0)
           return yield* protocolError(`Invalid Pi session ancestry in ${sourceFile}`);
-        const live = piSessionListing(yield* request({ type: "get_entries" }));
-        if (live === null) return yield* protocolError("Invalid live Pi session tree");
-        if (live.entries.get(entryId)?.isUserMessage) return sourceFile;
         const visited = new Set<string>([sourceFile]);
         let file: string | undefined = parent;
         while (file !== undefined && !visited.has(file)) {
@@ -1681,7 +1689,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           const session: PiSessionFile | null = piSessionFile(text);
           if (session === null)
             return yield* protocolError(`Invalid Pi session history in ${file}`);
-          if (session.entries.get(entryId)?.isUserMessage) return file;
+          if (session.entries.get(entryId)?.isUserMessage) return { file, text };
           file = session.parentSession;
         }
         return yield* protocolError(
@@ -3337,8 +3345,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 : boundary.type === "uncaptured"
                   ? boundary.stopAt
                   : null;
-            const forkSourceFile =
-              anchor === null ? sourceFile : yield* forkSourceFileFor(sourceFile, anchor);
+            const forkSource =
+              anchor === null ? { file: sourceFile } : yield* forkSourceFileFor(sourceFile, anchor);
+            const forkSourceFile = forkSource.file;
             // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
             // switch_session/clone alone would retain the source cwd.
             const forkLaunch = buildPiRpcLaunch({
@@ -3352,43 +3361,92 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             });
             const nativeId = yield* Effect.scoped(
               Effect.gen(function* () {
-                const forkConnection = yield* makePiRpcConnection({
-                  command: options.settings.binaryPath || "pi",
-                  args: [...forkLaunch.args, "--fork", forkSourceFile],
-                  cwd,
-                  env: forkLaunch.env,
-                });
-                yield* Stream.fromQueue(forkConnection.events).pipe(
-                  Stream.runDrain,
-                  Effect.ignore,
-                  Effect.forkScoped,
+                let nativeSourceFile = forkSourceFile;
+                if ("text" in forkSource) {
+                  const directory = yield* fileSystem.makeTempDirectoryScoped();
+                  nativeSourceFile = `${directory}/source.jsonl`;
+                  yield* fileSystem.writeFileString(nativeSourceFile, forkSource.text);
+                }
+                const forkResult = yield* Effect.scoped(
+                  Effect.gen(function* () {
+                    const forkConnection = yield* makePiRpcConnection({
+                      command: options.settings.binaryPath || "pi",
+                      args: [...forkLaunch.args, "--fork", nativeSourceFile],
+                      cwd,
+                      env: forkLaunch.env,
+                    });
+                    yield* Stream.fromQueue(forkConnection.events).pipe(
+                      Stream.runDrain,
+                      Effect.ignore,
+                      Effect.forkScoped,
+                    );
+                    const initialFile =
+                      nativeSourceFile === forkSourceFile
+                        ? undefined
+                        : recordString(
+                            yield* forkConnection.request({ type: "get_state" }),
+                            "sessionFile",
+                          );
+                    if (
+                      nativeSourceFile !== forkSourceFile &&
+                      (initialFile === undefined ||
+                        initialFile === nativeSourceFile ||
+                        initialFile === sourceFile ||
+                        initialFile === forkSourceFile)
+                    )
+                      return yield* protocolError(
+                        "Pi fork did not create a distinct initial session file",
+                      );
+                    const entries =
+                      boundary.type === "uncaptured"
+                        ? yield* forkConnection.request({ type: "get_entries" })
+                        : undefined;
+                    const beforeEntry =
+                      boundary.type === "nothing" ||
+                      (boundary.type === "uncaptured" &&
+                        forkSourceFile !== sourceFile &&
+                        piTerminalForkTarget(entries, boundary))
+                        ? null
+                        : yield* piForkEntry(boundary, source.createdAt, Effect.succeed(entries));
+                    if (beforeEntry !== null) {
+                      const result = yield* forkConnection.request({
+                        type: "fork",
+                        entryId: beforeEntry,
+                      });
+                      if (recordField(result, "cancelled") === true) {
+                        return yield* protocolError("A Pi extension cancelled the session fork");
+                      }
+                    }
+                    const state = yield* forkConnection.request({ type: "get_state" });
+                    const file = recordString(state, "sessionFile");
+                    if (
+                      file === undefined ||
+                      file === sourceFile ||
+                      file === forkSourceFile ||
+                      file === nativeSourceFile
+                    ) {
+                      return yield* protocolError("Pi fork did not create a distinct session file");
+                    }
+                    return { file, initialFile };
+                  }),
                 );
-                const entries =
-                  boundary.type === "uncaptured"
-                    ? yield* forkConnection.request({ type: "get_entries" })
-                    : undefined;
-                const beforeEntry =
-                  boundary.type === "nothing" ||
-                  (boundary.type === "uncaptured" &&
-                    forkSourceFile !== sourceFile &&
-                    piTerminalForkTarget(entries, boundary))
-                    ? null
-                    : yield* piForkEntry(boundary, source.createdAt, Effect.succeed(entries));
-                if (beforeEntry !== null) {
-                  const result = yield* forkConnection.request({
-                    type: "fork",
-                    entryId: beforeEntry,
+                // Pi records the CLI input path as provenance; keep the real ancestor after cleanup.
+                if (forkResult.initialFile !== undefined) {
+                  const text = yield* fileSystem.readFileString(forkResult.initialFile);
+                  const end = text.indexOf("\n");
+                  const header = Option.getOrUndefined(decodePiSessionFileLine(text.slice(0, end)));
+                  if (!Predicate.isObject(header) || header.parentSession !== nativeSourceFile)
+                    return yield* protocolError("Pi fork lost its source session provenance");
+                  const updatedHeader = yield* encodePiSessionFileLine({
+                    ...header,
+                    parentSession: forkSourceFile,
                   });
-                  if (recordField(result, "cancelled") === true) {
-                    return yield* protocolError("A Pi extension cancelled the session fork");
-                  }
+                  yield* fileSystem.writeFileString(
+                    forkResult.initialFile,
+                    `${updatedHeader}${text.slice(end)}`,
+                  );
                 }
-                const state = yield* forkConnection.request({ type: "get_state" });
-                const file = recordString(state, "sessionFile");
-                if (file === undefined || file === sourceFile || file === forkSourceFile) {
-                  return yield* protocolError("Pi fork did not create a distinct session file");
-                }
-                return file;
+                return forkResult.file;
               }),
             ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
             const now = yield* DateTime.now;
@@ -3458,6 +3516,7 @@ interface PiSessionListing {
 }
 
 const decodePiSessionFileLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
+const encodePiSessionFileLine = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 interface PiSessionFile {
   readonly parentSession: string | undefined;
@@ -3490,7 +3549,7 @@ function piSessionFile(text: string): PiSessionFile | null {
       const role = recordString(message, "role");
       const content = recordField(message, "content");
       if (
-        (role === "user" || role === "assistant") &&
+        (role === "user" || role === "assistant" || role === "toolResult") &&
         typeof content !== "string" &&
         !Array.isArray(content)
       )
