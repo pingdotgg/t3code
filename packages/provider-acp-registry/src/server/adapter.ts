@@ -223,8 +223,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(registryAgentId === "factory-droid"
       ? {
           extractElicitationForm: extractDroidElicitationForm,
-          // Droid wakes itself with root-session output after a background Task ends.
+          // Droid wakes itself with root-session output after a background Task ends; with
+          // no prompt in flight, that continuation settles after the quiet window.
           enablePostSettleContinuation: true,
+          deferFinalizeForBackgroundWork: true,
         }
       : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.

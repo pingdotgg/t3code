@@ -17,6 +17,7 @@ import { pendingBackgroundTurnItems } from "@t3tools/shared/orchestrationV2Pendi
 import { resolveSelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRuntime";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -275,7 +276,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled && agentId === "claude-acp") {
+  if (continuationEnabled) {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -2175,6 +2176,11 @@ describe("AcpRegistryAdapterV2", () => {
       )).at(-1);
       if (answer?.type !== "message.updated") throw new Error("Missing late answer");
       assert.equal(answer.message.runId, session.turnInput(2).runId);
+      const continuationTerminal = yield* Effect.forkScoped(session.terminal);
+      yield* TestClock.adjust("3 seconds");
+      const settled = yield* Fiber.join(continuationTerminal);
+      assert.equal(settled.runOrdinal, 2);
+      assert.equal(settled.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
