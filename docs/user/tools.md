@@ -74,10 +74,13 @@ support URL servers only get command servers. Pi isn't supported yet.
 ## Presets
 
 A preset is a named set of skills and MCP servers that one thread turns on or off together, such as
-a browser server and its testing skills. Create presets on the **Presets** tab; every project on
-the environment shares them.
+a browser server and its testing skills. Settings hold the defaults for every thread; presets
+change them for one thread.
 
-Once an environment has a preset, the composer shows a **Tools** menu with a switch for each one.
+Presets live in the composer's **Tools** menu: a switch for each preset, **New preset…** and
+**Edit preset**. Every project on the environment shares them, and making or changing one needs
+permission to change settings.
+
 Turning a preset on gives that thread its skills and servers even where settings have them off;
 turning it off takes them away for that thread. Where two presets share a tool and one is on, the
 tool stays on. A new thread starts with the presets you picked in its composer, and threads it

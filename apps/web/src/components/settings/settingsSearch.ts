@@ -842,7 +842,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/tools",
     scope: "project-defaults",
     searchTerms: [
-      "agent skills SKILL.md disable enable hide turn off slash commands .agents claude codex cursor install add npx skills github repo update remove scripts conflict",
+      "agent skills SKILL.md disable enable hide turn off slash commands .agents claude codex cursor install add npx skills github repo update remove scripts conflict presets",
     ],
   },
   {
@@ -852,15 +852,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       "model context protocol mcp add server command url stdio http headers env tools agents",
-    ],
-  },
-  {
-    id: "tools-presets",
-    title: "Tool presets",
-    to: "/settings/tools",
-    scope: "project-defaults",
-    searchTerms: [
-      "preset group bundle set skills mcp servers turn on off together thread composer tools menu",
     ],
   },
   {

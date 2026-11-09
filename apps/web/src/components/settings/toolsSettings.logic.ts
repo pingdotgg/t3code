@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
 
-export type ToolsTab = "skills" | "mcp" | "presets";
+export type ToolsTab = "skills" | "mcp";
 
 /**
  * `tab` picks the tab; `skill` is the skill whose page is open on the Skills
@@ -24,8 +24,7 @@ export function validateToolsSearch(raw: Record<string, unknown>): {
   skill?: string;
   server?: string;
 } {
-  const tab =
-    raw.tab === "mcp" || raw.tab === "skills" || raw.tab === "presets" ? raw.tab : undefined;
+  const tab = raw.tab === "mcp" || raw.tab === "skills" ? raw.tab : undefined;
   const skill =
     (tab === undefined || tab === "skills") && typeof raw.skill === "string" && raw.skill.length > 0
       ? raw.skill
@@ -341,9 +340,18 @@ export interface SkillAgent {
   readonly enabled: boolean;
 }
 
+/**
+ * The enabled agents a skill can be missing from. One that lists no skills at
+ * all has no skill support to compare, so it would mark every row.
+ */
 export function skillAgents(providers: ReadonlyArray<ServerProvider>): ReadonlyArray<SkillAgent> {
   return providers
-    .filter((provider) => provider.enabled)
+    .filter(
+      (provider) =>
+        provider.enabled &&
+        (provider.skills.length > 0 ||
+          (provider.workspaceSnapshots ?? []).some((snapshot) => snapshot.skills.length > 0)),
+    )
     .map((provider) => ({
       instanceId: provider.instanceId,
       driverKind: provider.driver,
@@ -355,7 +363,7 @@ export function skillAgents(providers: ReadonlyArray<ServerProvider>): ReadonlyA
 
 /** Which enabled agents load a skill, and which don't. */
 export interface SkillAvailability {
-  /** Every enabled agent loads it, so the row shows one mark instead of every icon. */
+  /** Every enabled agent loads it, so the row shows no agent at all. */
   readonly everyone: boolean;
   readonly agents: ReadonlyArray<SkillAgent>;
   readonly missing: ReadonlyArray<SkillAgent>;

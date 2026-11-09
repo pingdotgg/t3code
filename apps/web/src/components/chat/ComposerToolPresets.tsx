@@ -1,18 +1,19 @@
-import type {
-  EnvironmentId,
-  ProjectId,
-  ScopedThreadRef,
-  ThreadToolPresets,
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type ProjectId,
+  type ScopedThreadRef,
+  type ThreadToolPresets,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { toolPresetState, withThreadToolPreset } from "@t3tools/shared/agentTools";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { useNavigate } from "@tanstack/react-router";
-import { BlocksIcon } from "lucide-react";
-import { memo } from "react";
+import { BlocksIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { memo, useState } from "react";
 
 import { type DraftId, useComposerDraftStore } from "../../composerDraftStore";
 import { serverEnvironment } from "../../state/server";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import type { ThreadShell } from "../../types";
@@ -24,11 +25,15 @@ import {
   MenuItem,
   MenuPopup,
   MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
   MenuTrigger,
 } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
+import { ToolPresetDialog } from "./ToolPresetDialog";
 import { useComposerMenuState } from "./useComposerMenuState";
 
 export interface ComposerToolPreset {
@@ -44,16 +49,28 @@ export interface ComposerToolPresets {
   /** Why the switches can't change right now, if they can't. */
   readonly disabledReason: string | null;
   readonly onToggle: (name: string, on: boolean) => void;
+  /** Whether this connection may create, change and delete presets. */
+  readonly canEdit: boolean;
+  /** Opens the editor for a preset, or for a new one with null. */
+  readonly onEdit: (name: string | null) => void;
+  /** The open editor's preset, null for a new one; undefined when it is closed. */
+  readonly editing: string | null | undefined;
+  readonly onEditClose: () => void;
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId | null;
+  readonly cwd: string | null;
 }
 
 /**
  * The environment's tool presets as one thread has them. A server thread's
  * switch is saved at once and reaches its next message; a new thread's waits
- * in its draft until it starts. Null when the environment has no presets.
+ * in its draft until it starts. Presets are made and changed here too, so
+ * Settings only holds the defaults. Null when there is nothing to show.
  */
 export function useComposerToolPresets(input: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId | null;
+  readonly cwd: string | null;
   readonly routeKind: "server" | "draft";
   readonly routeThreadRef: ScopedThreadRef;
   readonly draftId: DraftId | null;
@@ -61,6 +78,11 @@ export function useComposerToolPresets(input: {
   readonly running: boolean;
 }): ComposerToolPresets | null {
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(input.environmentId));
+  const canEdit = useEnvironmentsWithScope(
+    [{ environmentId: input.environmentId }],
+    AuthSettingsWriteScope,
+  ).has(input.environmentId);
+  const [editing, setEditing] = useState<string | null | undefined>(undefined);
   const draftSwitches = useComposerDraftStore((store) =>
     input.routeKind === "draft" && input.draftId
       ? store.getDraftSession(input.draftId)?.toolPresets
@@ -72,7 +94,7 @@ export function useComposerToolPresets(input: {
   });
   const presets = settings?.toolPresets ?? {};
   const names = Object.keys(presets).toSorted((left, right) => left.localeCompare(right));
-  if (!settings || names.length === 0) return null;
+  if (!settings || (names.length === 0 && !canEdit)) return null;
   const isServerThread = input.routeKind === "server" && input.threadShell !== null;
   const switches: ThreadToolPresets | undefined = isServerThread
     ? input.threadShell?.toolPresets
@@ -102,16 +124,29 @@ export function useComposerToolPresets(input: {
         setDraftThreadContext(input.draftId, { toolPresets: next });
       }
     },
+    canEdit,
+    onEdit: setEditing,
+    editing,
+    onEditClose: () => setEditing(undefined),
+    environmentId: input.environmentId,
+    projectId: input.projectId,
+    cwd: input.cwd,
   };
 }
 
 /** The presets as switches, for the chip's menu or the overflow menu. */
 export function ComposerToolPresetsSection({ toolPresets }: { toolPresets: ComposerToolPresets }) {
-  const navigate = useNavigate();
+  const composerFloatingLayerProps = useComposerMenuProps();
   return (
     <>
       <MenuGroup>
         <MenuGroupLabel>Tool presets</MenuGroupLabel>
+        {toolPresets.presets.length === 0 ? (
+          <p className="max-w-64 px-2 py-1 text-muted-foreground text-xs">
+            Group skills and MCP servers you use together, then turn them on or off for a thread
+            here.
+          </p>
+        ) : null}
         {toolPresets.presets.map((preset) => (
           <MenuCheckboxItem
             key={preset.name}
@@ -132,17 +167,38 @@ export function ComposerToolPresetsSection({ toolPresets }: { toolPresets: Compo
           {toolPresets.disabledReason}
         </p>
       ) : null}
-      <MenuSeparator />
-      <MenuItem
-        onClick={() => void navigate({ to: "/settings/tools", search: { tab: "presets" } })}
-      >
-        Manage presets…
-      </MenuItem>
+      {toolPresets.canEdit ? (
+        <>
+          <MenuSeparator />
+          <MenuItem onClick={() => toolPresets.onEdit(null)}>
+            <PlusIcon aria-hidden />
+            New preset…
+          </MenuItem>
+          {toolPresets.presets.length > 0 ? (
+            <MenuSub>
+              <MenuSubTrigger>
+                <PencilIcon aria-hidden />
+                Edit preset
+              </MenuSubTrigger>
+              <MenuSubPopup {...composerFloatingLayerProps}>
+                {toolPresets.presets.map((preset) => (
+                  <MenuItem key={preset.name} onClick={() => toolPresets.onEdit(preset.name)}>
+                    <span className="block max-w-48 truncate">{preset.name}</span>
+                  </MenuItem>
+                ))}
+              </MenuSubPopup>
+            </MenuSub>
+          ) : null}
+        </>
+      ) : null}
     </>
   );
 }
 
-/** The composer's Tools chip: which presets this thread has on. */
+/**
+ * The composer's Tools chip: an icon until a preset is on, then the preset's
+ * name. It also holds the preset editor, which either menu opens.
+ */
 export const ComposerToolPresetsControl = memo(function ComposerToolPresetsControl(props: {
   toolPresets: ComposerToolPresets;
   size?: "sm" | "xs";
@@ -151,38 +207,54 @@ export const ComposerToolPresetsControl = memo(function ComposerToolPresetsContr
   const size = props.size ?? "sm";
   const composerFloatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useComposerMenuState(props.hidden);
-  const on = props.toolPresets.presets.filter((preset) => preset.on);
-  const label = on.length === 1 ? on[0]!.name : on.length > 1 ? `${on.length} presets` : "Tools";
+  const { toolPresets } = props;
+  const on = toolPresets.presets.filter((preset) => preset.on);
+  const label = on.length === 1 ? on[0]!.name : on.length > 1 ? `${on.length} presets` : null;
   const tooltip =
     on.length === 0
-      ? "Tool presets: none on for this thread"
+      ? "Tool presets"
       : `Tool presets on for this thread: ${on.map((preset) => preset.name).join(", ")}`;
   return (
-    <Menu open={open} onOpenChange={setOpen}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <ComposerControl
-                  size={size}
-                  className="shrink-0 whitespace-nowrap"
-                  aria-label={tooltip}
-                />
-              }
-            />
-          }
-        >
-          <ComposerControlIcon icon={BlocksIcon} size={size} />
-          <span data-composer-control-label className="max-w-32 truncate">
-            {label}
-          </span>
-        </TooltipTrigger>
-        <TooltipPopup side="top">{tooltip}</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="start" {...composerFloatingLayerProps}>
-        <ComposerToolPresetsSection toolPresets={props.toolPresets} />
-      </MenuPopup>
-    </Menu>
+    <>
+      <Menu open={open} onOpenChange={setOpen}>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <ComposerControl
+                    size={size}
+                    className="shrink-0 whitespace-nowrap"
+                    aria-label={tooltip}
+                  />
+                }
+              />
+            }
+          >
+            <ComposerControlIcon icon={BlocksIcon} size={size} />
+            {label !== null ? (
+              <span data-composer-control-label className="max-w-32 truncate">
+                {label}
+              </span>
+            ) : null}
+          </TooltipTrigger>
+          <TooltipPopup side="top">{tooltip}</TooltipPopup>
+        </Tooltip>
+        <MenuPopup align="start" {...composerFloatingLayerProps}>
+          <ComposerToolPresetsSection toolPresets={toolPresets} />
+        </MenuPopup>
+      </Menu>
+      {toolPresets.editing !== undefined ? (
+        <ToolPresetDialog
+          // A new editor for each preset, so its form starts from that preset.
+          key={toolPresets.editing ?? ""}
+          environmentId={toolPresets.environmentId}
+          projectId={toolPresets.projectId}
+          cwd={toolPresets.cwd}
+          name={toolPresets.editing}
+          onClose={toolPresets.onEditClose}
+        />
+      ) : null}
+    </>
   );
 });

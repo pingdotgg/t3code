@@ -58,7 +58,6 @@ import { McpServerDetail } from "./McpServerDetail";
 import { McpServerDialog } from "./McpServerDialog";
 import { SettingsGroup } from "./SettingsGroup";
 import { SkillDetail } from "./SkillDetail";
-import { ToolPresetsPanel } from "./ToolPresets";
 import {
   type SkillEnvironment,
   useCheckoutScans,
@@ -206,75 +205,21 @@ export function ToolsSettings({
       value={[tab]}
       onValueChange={(next) => {
         const value = next[0];
-        if (value === "skills" || value === "mcp" || value === "presets") onTabChange(value);
+        if (value === "skills" || value === "mcp") onTabChange(value);
       }}
     >
       <Toggle value="skills">Skills</Toggle>
       <Toggle value="mcp">MCP servers</Toggle>
-      <Toggle value="presets">Presets</Toggle>
     </ToggleGroup>
   );
   return (
     <SettingsPageContainer>
-      {tab === "presets" ? (
-        <PresetsTab tabs={tabs} />
-      ) : tab === "mcp" ? (
+      {tab === "mcp" ? (
         <McpServersPanel tabs={tabs} openName={server ?? null} onOpen={onOpenServer} />
       ) : (
         <SkillsPanel tabs={tabs} openName={skill ?? null} onOpen={onOpenSkill} />
       )}
     </SettingsPageContainer>
-  );
-}
-
-// ── Presets ──────────────────────────────────────────────────────────
-
-/** The Presets tab, listing the skills and servers of the environment shown. */
-function PresetsTab({ tabs }: { tabs: ReactNode }) {
-  const { scope, target, connectedEnvironments } = useSettingsScope();
-  const targets = useToolsTargets();
-  const persist = usePersistToolsPatch();
-  const canWrite = useScopedSettingsWriteAllowed();
-  const environmentId = target?.environmentId ?? null;
-  const shown = targets.find((candidate) => candidate.environmentId === environmentId) ?? null;
-  const connected = connectedEnvironments.find(
-    (environment) => environment.environmentId === environmentId,
-  );
-  const environments: ReadonlyArray<SkillEnvironment> =
-    shown === null || connected === undefined
-      ? []
-      : [
-          {
-            environmentId: shown.environmentId,
-            label: connected.label,
-            serverConfig: connected.serverConfig,
-            cwd: shown.cwd,
-          },
-        ];
-  const providers = useEnvironmentProviders(environments)[0]?.providers ?? EMPTY_PROVIDERS;
-  const settings = connected?.serverConfig?.settings;
-  const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
-  const projectId = isProjectScope ? (shown?.projectId ?? null) : null;
-  const servers = listMcpServerRows({
-    environment: settings?.mcpServers ?? {},
-    project:
-      projectId === null ? null : (settings?.projectSettingsOverrides[projectId]?.mcpServers ?? {}),
-  });
-  return (
-    <ToolPresetsPanel
-      tabs={tabs}
-      presets={settings?.toolPresets ?? {}}
-      skills={collectSkillRows(providers, shown?.cwd ?? null).map((row) => ({
-        name: row.name,
-        detail: row.description ?? "",
-      }))}
-      servers={servers.map((row) => ({
-        name: row.name,
-        detail: mcpServerTransportSummary(row.config.transport),
-      }))}
-      canWrite={canWrite && targets.length > 0}
-      onWrite={(toolPresets) => persist(() => ({ toolPresets }))}
-    />
   );
 }
 
@@ -771,6 +716,8 @@ function SkillsPanel({
           <p className="px-3 text-xs text-muted-foreground sm:px-4">
             Turning a skill off hides it from Claude, Codex and OpenCode, and from the composer's
             skill menu. Other agents may still load it on their own. Changes apply to new sessions.
+            For one thread, turn a set of skills and servers on or off with a tool preset in the
+            composer's Tools menu.
           </p>
         </>
       )}
@@ -1075,7 +1022,9 @@ function McpServersPanel({
             <p className="px-3 text-xs text-muted-foreground sm:px-4">
               Servers you add here are given to Claude, Codex, Cursor, OpenCode, Grok and other ACP
               agents. Pi isn't supported yet. Changes apply to new sessions; use Restart agent
-              session to pick them up in an open thread. Open a server to see its tools.
+              session to pick them up in an open thread. Open a server to see its tools. For one
+              thread, turn a set of skills and servers on or off with a tool preset in the
+              composer's Tools menu.
             </p>
           )}
         </>

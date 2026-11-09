@@ -270,10 +270,15 @@ describe("skill row details", () => {
 });
 
 describe("skill availability and attention", () => {
+  const listed: ServerProvider["skills"] = [
+    { name: "review", path: "/home/me/.agents/skills/review/SKILL.md", enabled: true },
+  ];
   const agents = skillAgents([
-    provider("claudeAgent", [], { displayName: "Claude" }),
-    provider("codex", [], { displayName: "Codex" }),
-    provider("cursor", [], { displayName: "Cursor", enabled: false }),
+    provider("claudeAgent", listed, { displayName: "Claude" }),
+    provider("codex", listed, { displayName: "Codex" }),
+    provider("cursor", listed, { displayName: "Cursor", enabled: false }),
+    // Lists no skills at all, so it can't be missing one.
+    provider("replay", [], { displayName: "Replay" }),
   ]);
   const ref = (instanceId: string) => ({
     instanceId: ProviderInstanceId.make(instanceId),

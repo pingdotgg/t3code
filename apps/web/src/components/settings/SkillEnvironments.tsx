@@ -67,7 +67,7 @@ const checkoutScans = Atom.family((key: string) =>
  * them when the agent's own list changes. True while a first scan runs.
  */
 export function useCheckoutScans(
-  environments: ReadonlyArray<SkillEnvironment>,
+  environments: ReadonlyArray<Pick<SkillEnvironment, "environmentId" | "cwd">>,
   environmentProviders: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly providers: ReadonlyArray<ServerProvider>;

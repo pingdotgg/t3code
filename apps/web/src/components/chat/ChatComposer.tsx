@@ -2344,6 +2344,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const toolPresets = useComposerToolPresets({
     environmentId,
     projectId: activeProjectId,
+    cwd: gitCwd,
     routeKind,
     routeThreadRef,
     draftId,

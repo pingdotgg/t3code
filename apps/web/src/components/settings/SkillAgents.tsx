@@ -1,5 +1,3 @@
-import { SparklesIcon } from "lucide-react";
-
 import { shouldShowInstanceBadge } from "../../providerInstances";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -30,8 +28,8 @@ export function SkillAgentIcon({
 }
 
 /**
- * Who loads a skill: one mark when every enabled agent does, otherwise the
- * agents that do. A tight run of icons, so a row stays on one line.
+ * The agents that don't load a skill, dimmed; nothing when every enabled agent
+ * does. A tight run of icons, so a row stays on one line.
  */
 export function SkillAgents({
   value,
@@ -40,20 +38,16 @@ export function SkillAgents({
   value: SkillAvailability;
   agents: ReadonlyArray<SkillAgent>;
 }) {
+  if (value.everyone || value.missing.length === 0) return null;
   const label = availabilityNote(value);
-  if (!value.everyone && value.agents.length === 0) return null;
   return (
     <Tooltip>
       <TooltipTrigger
         render={<span role="img" aria-label={label} className="flex shrink-0 items-center gap-1" />}
       >
-        {value.everyone ? (
-          <SparklesIcon className="size-4 text-muted-foreground" />
-        ) : (
-          value.agents.map((agent) => (
-            <SkillAgentIcon key={agent.instanceId} agent={agent} agents={agents} />
-          ))
-        )}
+        {value.missing.map((agent) => (
+          <SkillAgentIcon key={agent.instanceId} agent={agent} agents={agents} active={false} />
+        ))}
       </TooltipTrigger>
       <TooltipPopup>{label}</TooltipPopup>
     </Tooltip>
