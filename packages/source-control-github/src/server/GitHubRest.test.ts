@@ -363,7 +363,7 @@ describe("GitHubRest", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["", "unavailable"])(
+  it.effect.each(["", "unavailable", "unset behind a gh wrapper that prints a line"])(
     "keeps the existing HTTP client when gh's socket is %s",
     (config) => {
       const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -379,15 +379,19 @@ describe("GitHubRest", () => {
       const host = TestSourceControlHost.layer({
         process: {
           run: () =>
-            config === ""
-              ? Effect.succeed(TestSourceControlHost.processOutput("\n"))
-              : Effect.fail(
+            config === "unavailable"
+              ? Effect.fail(
                   new VcsProcessTimeoutError({
                     operation: "GitHubHttpClient.config",
                     command: "gh",
                     cwd: "/",
                     timeoutMs: 10_000,
                   }),
+                )
+              : Effect.succeed(
+                  TestSourceControlHost.processOutput(
+                    config === "" ? "\n" : "hello from wrapper\n",
+                  ),
                 ),
         },
       });
