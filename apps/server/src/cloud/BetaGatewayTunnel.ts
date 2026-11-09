@@ -18,6 +18,22 @@ const GATEWAY_PROTOCOL = "t3-connect-v1";
 /** The gateway closes with this code when the relay does not grant the connector token. */
 const CREDENTIAL_REJECTED_CLOSE_CODE = 4401;
 
+export interface BetaGatewayConnection {
+  readonly gatewayUrl: string;
+  readonly connectorToken: string;
+  /** This server's own HTTP listener. */
+  readonly origin: { readonly host: string; readonly port: number };
+  readonly onReadyChange: (ready: boolean) => Effect.Effect<void>;
+}
+
+export class BetaGatewayConnector extends Context.Service<
+  BetaGatewayConnector,
+  {
+    /** Keeps this server attached to the gateway. Returns once the gateway rejects the token. */
+    readonly run: (input: BetaGatewayConnection) => Effect.Effect<void>;
+  }
+>()("t3/cloud/BetaGatewayTunnel/BetaGatewayConnector") {}
+
 // yamux framing (github.com/libp2p/go-yamux), the gateway's multiplexer.
 const HEADER_BYTES = 12;
 const TYPE_DATA = 0;
@@ -270,14 +286,6 @@ export function makeTunnelSession(options: {
   };
 }
 
-export interface BetaGatewayConnection {
-  readonly gatewayUrl: string;
-  readonly connectorToken: string;
-  /** This server's own HTTP listener. */
-  readonly origin: { readonly host: string; readonly port: number };
-  readonly onReadyChange: (ready: boolean) => Effect.Effect<void>;
-}
-
 const KEEPALIVE_INTERVAL = Duration.seconds(30);
 const ADMISSION_TIMEOUT = Duration.seconds(10);
 const RECONNECT_MIN_MS = 1_000;
@@ -355,48 +363,48 @@ const connectOnce = Effect.fn("BetaGatewayConnector.connect")(function* (
   }).pipe(
     Effect.scoped,
     Effect.matchEffect({
-      onFailure: (error) =>
-        isCredentialRejection(error)
-          ? Effect.succeed("rejected" as const)
-          : Effect.logInfo("T3 Connect beta gateway connection ended", {
-              reason: Socket.isSocketError(error) ? error.reason.message : error,
-            }).pipe(Effect.as("disconnected" as const)),
+      onFailure: (error) => {
+        if (isCredentialRejection(error)) return Effect.succeed("rejected" as const);
+        // Socket error messages carry peer and platform text; log only the kind and close code.
+        const annotations = Socket.isSocketError(error)
+          ? {
+              reason: error.reason._tag,
+              ...(error.reason._tag === "SocketCloseError" ? { closeCode: error.reason.code } : {}),
+            }
+          : { reason: error };
+        return Effect.logInfo("T3 Connect beta gateway connection ended", annotations).pipe(
+          Effect.as("disconnected" as const),
+        );
+      },
       onSuccess: () => Effect.succeed("disconnected" as const),
     }),
   );
 });
 
-export class BetaGatewayConnector extends Context.Service<
-  BetaGatewayConnector,
-  {
-    /** Keeps this server attached to the gateway. Returns once the gateway rejects the token. */
-    readonly run: (input: BetaGatewayConnection) => Effect.Effect<void>;
-  }
->()("t3/cloud/BetaGatewayTunnel/BetaGatewayConnector") {}
-
-export const layer = Layer.effect(
-  BetaGatewayConnector,
-  Effect.gen(function* () {
-    const makeWebSocket = yield* Socket.WebSocketConstructor;
-    // Lives as long as the link; each connection attempt gets its own span.
-    const run = Effect.fnUntraced(function* (input: BetaGatewayConnection) {
-      let delayMs = RECONNECT_MIN_MS;
-      while (true) {
-        const startedAt = yield* Clock.currentTimeMillis;
-        const outcome = yield* connectOnce(input).pipe(
-          Effect.provideService(Socket.WebSocketConstructor, makeWebSocket),
-        );
-        yield* input.onReadyChange(false);
-        if (outcome === "rejected") return;
-        if ((yield* Clock.currentTimeMillis) - startedAt >= STABLE_CONNECTION_MS) {
-          delayMs = RECONNECT_MIN_MS;
-        }
-        // Jitter spreads the reconnects after a gateway restart.
-        const jitterMs = yield* Random.nextIntBetween(0, delayMs);
-        yield* Effect.sleep(Duration.millis(delayMs / 2 + jitterMs / 2));
-        delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+const make = Effect.gen(function* () {
+  const makeWebSocket = yield* Socket.WebSocketConstructor;
+  // Lives as long as the link; each connection attempt gets its own span.
+  const run = Effect.fnUntraced(function* (input: BetaGatewayConnection) {
+    let delayMs = RECONNECT_MIN_MS;
+    while (true) {
+      const startedAt = yield* Clock.currentTimeMillis;
+      const outcome = yield* connectOnce(input).pipe(
+        Effect.provideService(Socket.WebSocketConstructor, makeWebSocket),
+      );
+      yield* input.onReadyChange(false);
+      if (outcome === "rejected") return;
+      if ((yield* Clock.currentTimeMillis) - startedAt >= STABLE_CONNECTION_MS) {
+        delayMs = RECONNECT_MIN_MS;
       }
-    });
-    return BetaGatewayConnector.of({ run });
-  }),
-).pipe(Layer.provide(NodeSocket.layerWebSocketConstructor));
+      // Jitter spreads the reconnects after a gateway restart.
+      const jitterMs = yield* Random.nextIntBetween(0, delayMs);
+      yield* Effect.sleep(Duration.millis(delayMs / 2 + jitterMs / 2));
+      delayMs = Math.min(delayMs * 2, RECONNECT_MAX_MS);
+    }
+  });
+  return BetaGatewayConnector.of({ run });
+});
+
+export const layer = Layer.effect(BetaGatewayConnector, make).pipe(
+  Layer.provide(NodeSocket.layerWebSocketConstructor),
+);

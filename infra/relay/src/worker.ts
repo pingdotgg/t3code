@@ -372,7 +372,7 @@ export const layer = Api.make(
           AgentActivityRows.layer,
           Devices.layer,
           layerHookInbox,
-          BetaGatewayLinks.layer,
+          BetaGatewayLinks.layer.pipe(Layer.provide(layerHookInbox)),
         ),
       ),
       Layer.provideMerge(EnvironmentCredentials.layer),

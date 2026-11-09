@@ -18,6 +18,7 @@ import * as SqlError from "effect/sql/SqlError";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
+import * as HookInbox from "../hooks/HookInbox.ts";
 import { isManagedEndpointHostname } from "../deploymentConfig.ts";
 import {
   relayEnvironmentLinks as linksTable,
@@ -36,7 +37,17 @@ export class BetaGatewayUnavailable extends Schema.TaggedError<BetaGatewayUnavai
 
 export class BetaGatewayPersistenceError extends Schema.TaggedError<BetaGatewayPersistenceError>()(
   "BetaGatewayPersistenceError",
-  { cause: Schema.Defect() },
+  {
+    operation: Schema.Literals([
+      "hash-token",
+      "finish-retirement",
+      "revoke",
+      "enroll",
+      "authorize",
+      "find-hook-endpoint",
+    ]),
+    cause: Schema.Defect(),
+  },
 ) {}
 
 export class BetaGatewayLinks extends Context.Service<
@@ -72,6 +83,13 @@ export class BetaGatewayLinks extends Context.Service<
       readonly attemptId?: string;
       readonly endpointKey?: string;
     }) => Effect.Effect<string | null, BetaGatewayPersistenceError>;
+    /** Revokes the link, retires its held webhooks, then frees its endpoint key. Safe to retry. */
+    readonly unlink: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly attemptId?: string;
+      readonly endpointKey?: string;
+    }) => Effect.Effect<void, BetaGatewayPersistenceError | HookInbox.HookInboxError>;
     readonly authorizeBetaConnectors: (
       hashes: ReadonlyArray<string>,
     ) => Effect.Effect<
@@ -95,7 +113,6 @@ export const offersBetaGateway = (
   userId: string,
 ) => config.betaGatewayDomain !== undefined && config.betaGatewayTesters?.has(userId) === true;
 
-const persistenceError = (cause: unknown) => new BetaGatewayPersistenceError({ cause });
 const activeBetaLink = and(
   eq(linksTable.endpointProviderKind, "t3_relay"),
   eq(linksTable.managedTunnelsEnabled, true),
@@ -109,31 +126,41 @@ const make = Effect.gen(function* () {
   const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
   const random = yield* SecureRandom.SecureRandom;
   const digest = yield* Digest.Digest;
+  const inbox = yield* HookInbox.HookInbox;
   const hash = (value: string) =>
-    digest
-      .digest(Digest.sha256, new TextEncoder().encode(value))
-      .pipe(Effect.map(Hex.encode), Effect.mapError(persistenceError));
+    digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(
+      Effect.map(Hex.encode),
+      Effect.mapError(
+        (cause) => new BetaGatewayPersistenceError({ operation: "hash-token", cause }),
+      ),
+    );
   const cancellationScope = (userId: string, environmentId: string) =>
     hash(JSON.stringify(["cancel-beta-enrollment", userId, environmentId])).pipe(
       Effect.map((value) => `beta:${value}`),
     );
 
-  return BetaGatewayLinks.of({
-    finishBetaRetirement: Effect.fn("relay.beta_links.finish_retirement")(function* (input) {
-      yield* db
-        .update(linksTable)
-        .set({ betaConnectorHash: null })
-        .where(
-          and(
-            eq(linksTable.userId, input.userId),
-            eq(linksTable.environmentId, input.environmentId),
-            eq(linksTable.betaEndpointKey, input.endpointKey),
-            isNotNull(linksTable.revokedAt),
-          ),
-        )
-        .pipe(Effect.mapError(persistenceError));
-    }),
-    revoke: Effect.fn("relay.beta_links.revoke")(function* (input) {
+  const finishBetaRetirement: BetaGatewayLinks["Service"]["finishBetaRetirement"] = Effect.fn(
+    "relay.beta_links.finish_retirement",
+  )(function* (input) {
+    yield* db
+      .update(linksTable)
+      .set({ betaConnectorHash: null })
+      .where(
+        and(
+          eq(linksTable.userId, input.userId),
+          eq(linksTable.environmentId, input.environmentId),
+          eq(linksTable.betaEndpointKey, input.endpointKey),
+          isNotNull(linksTable.revokedAt),
+        ),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) => new BetaGatewayPersistenceError({ operation: "finish-retirement", cause }),
+        ),
+      );
+  });
+  const revoke: BetaGatewayLinks["Service"]["revoke"] = Effect.fn("relay.beta_links.revoke")(
+    function* (input) {
       const thumbprint =
         input.attemptId && config.betaGatewayDomain
           ? yield* cancellationScope(input.userId, input.environmentId)
@@ -183,7 +210,27 @@ const make = Effect.gen(function* () {
             return link.key;
           }),
         )
-        .pipe(Effect.mapError(persistenceError));
+        .pipe(
+          Effect.mapError(
+            (cause) => new BetaGatewayPersistenceError({ operation: "revoke", cause }),
+          ),
+        );
+    },
+  );
+
+  return BetaGatewayLinks.of({
+    finishBetaRetirement,
+    revoke,
+    unlink: Effect.fn("relay.beta_links.unlink")(function* (input) {
+      const endpointKey = yield* revoke(input);
+      if (!endpointKey) return;
+      // Retire held webhooks before the key is freed, so none reach a later link with it.
+      yield* inbox.clear({ endpointKey, retire: true });
+      yield* finishBetaRetirement({
+        userId: input.userId,
+        environmentId: input.environmentId,
+        endpointKey,
+      });
     }),
     enroll: Effect.fn("relay.beta_links.enroll")(function* (input) {
       const { userId, proof, request } = input;
@@ -202,7 +249,13 @@ const make = Effect.gen(function* () {
       const connectorHash = yield* hash(connectorToken);
       const thumbprint = yield* cancellationScope(userId, environmentId);
       const write = Effect.gen(function* () {
-        yield* db.execute(tunnelAccountLock(userId)).pipe(Effect.mapError(persistenceError));
+        yield* db
+          .execute(tunnelAccountLock(userId))
+          .pipe(
+            Effect.mapError(
+              (cause) => new BetaGatewayPersistenceError({ operation: "enroll", cause }),
+            ),
+          );
         const [cancelled] = yield* db
           .select({ jti: relayDpopProofs.jti })
           .from(relayDpopProofs)
@@ -210,7 +263,11 @@ const make = Effect.gen(function* () {
             and(eq(relayDpopProofs.thumbprint, thumbprint), eq(relayDpopProofs.jti, proof.jti)),
           )
           .limit(1)
-          .pipe(Effect.mapError(persistenceError));
+          .pipe(
+            Effect.mapError(
+              (cause) => new BetaGatewayPersistenceError({ operation: "enroll", cause }),
+            ),
+          );
         if (
           cancelled ||
           (yield* DateTime.now).epochMilliseconds >=
@@ -228,7 +285,11 @@ const make = Effect.gen(function* () {
             ),
           )
           .limit(1)
-          .pipe(Effect.mapError(persistenceError));
+          .pipe(
+            Effect.mapError(
+              (cause) => new BetaGatewayPersistenceError({ operation: "enroll", cause }),
+            ),
+          );
         if (classic)
           return yield* new EnvironmentLinks.BetaGatewayLinkConflict({ userId, environmentId });
         // Unlink takes a row lock. An enrollment that observed the old key must finish before unlink can retire it.
@@ -244,7 +305,11 @@ const make = Effect.gen(function* () {
           .from(linksTable)
           .where(and(eq(linksTable.userId, userId), eq(linksTable.environmentId, environmentId)))
           .for("update")
-          .pipe(Effect.mapError(persistenceError));
+          .pipe(
+            Effect.mapError(
+              (cause) => new BetaGatewayPersistenceError({ operation: "enroll", cause }),
+            ),
+          );
         const active = record?.revokedAt === null ? record : undefined;
         if (
           active &&
@@ -267,7 +332,11 @@ const make = Effect.gen(function* () {
               ne(linksTable.environmentId, environmentId),
             ),
           )
-          .pipe(Effect.mapError(persistenceError));
+          .pipe(
+            Effect.mapError(
+              (cause) => new BetaGatewayPersistenceError({ operation: "enroll", cause }),
+            ),
+          );
         if (usage && usage.slots >= BETA_GATEWAY_LINK_LIMIT) {
           return yield* new ManagedTunnelLimitExceeded({
             userId,
@@ -303,7 +372,9 @@ const make = Effect.gen(function* () {
         .withTransaction(write)
         .pipe(
           Effect.mapError((error) =>
-            SqlError.isSqlError(error) ? persistenceError(error) : error,
+            SqlError.isSqlError(error)
+              ? new BetaGatewayPersistenceError({ operation: "enroll", cause: error })
+              : error,
           ),
         );
     }),
@@ -318,7 +389,11 @@ const make = Effect.gen(function* () {
         })
         .from(linksTable)
         .where(and(activeBetaLink, inArray(linksTable.betaConnectorHash, hashes)))
-        .pipe(Effect.mapError(persistenceError));
+        .pipe(
+          Effect.mapError(
+            (cause) => new BetaGatewayPersistenceError({ operation: "authorize", cause }),
+          ),
+        );
       return rows.flatMap(({ hash, key, ...stored }) => {
         const endpoint = betaGatewayEndpoint(config.betaGatewayDomain, key, stored);
         return hash && endpoint
@@ -344,7 +419,11 @@ const make = Effect.gen(function* () {
           ),
         )
         .limit(1)
-        .pipe(Effect.mapError(persistenceError));
+        .pipe(
+          Effect.mapError(
+            (cause) => new BetaGatewayPersistenceError({ operation: "find-hook-endpoint", cause }),
+          ),
+        );
       return row ? { ...row, ...endpoint } : null;
     }),
   });

@@ -20,6 +20,7 @@ import * as Result from "effect/Result";
 
 import * as RelayConfiguration from "../Config.ts";
 import * as RelayDb from "../db.ts";
+import * as HookInbox from "../hooks/HookInbox.ts";
 import * as BetaGatewayLinks from "./BetaGatewayLinks.ts";
 import * as EnvironmentCredentials from "./EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
@@ -63,30 +64,37 @@ const testDb = Layer.unwrap(
   }),
 ).pipe(Layer.provide(NodeServices.layer));
 
-const services = BetaGatewayLinks.layer.pipe(
-  Layer.provideMerge(
-    Layer.mergeAll(EnvironmentCredentials.layer, EnvironmentLinks.layer, ManagedTunnelLimits.layer),
-  ),
-  Layer.provideMerge(testDb),
-  Layer.provide(Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false })),
-  Layer.provide(
-    RelayConfiguration.layer({
-      relayIssuer: "https://relay.example.test",
-      apns: null,
-      clerkSecretKey: Redacted.make("secret"),
-      clerkPublishableKey: "pub",
-      clerkJwtAudience: "relay",
-      apnsDeliveryJobSigningSecret: Redacted.make("job"),
-      cloudMintPrivateKey: Redacted.make("private"),
-      cloudMintPublicKey: "pub",
-      managedEndpointBaseDomain: undefined,
-      betaGatewayDomain: betaDomain,
-      betaGatewayTesters: new Set(["user", "other"]),
-      managedEndpointNamespace: "test",
-    }),
-  ),
-  Layer.provideMerge(NodeCrypto.layer),
-);
+const servicesWith = (clearInbox: HookInbox.HookInbox["Service"]["clear"]) =>
+  BetaGatewayLinks.layer.pipe(
+    Layer.provide(Layer.mock(HookInbox.HookInbox, { clear: clearInbox })),
+    Layer.provideMerge(
+      Layer.mergeAll(
+        EnvironmentCredentials.layer,
+        EnvironmentLinks.layer,
+        ManagedTunnelLimits.layer,
+      ),
+    ),
+    Layer.provideMerge(testDb),
+    Layer.provide(Layer.mock(T3ChatAccounts.T3ChatAccounts, { available: false })),
+    Layer.provide(
+      RelayConfiguration.layer({
+        relayIssuer: "https://relay.example.test",
+        apns: null,
+        clerkSecretKey: Redacted.make("secret"),
+        clerkPublishableKey: "pub",
+        clerkJwtAudience: "relay",
+        apnsDeliveryJobSigningSecret: Redacted.make("job"),
+        cloudMintPrivateKey: Redacted.make("private"),
+        cloudMintPublicKey: "pub",
+        managedEndpointBaseDomain: undefined,
+        betaGatewayDomain: betaDomain,
+        betaGatewayTesters: new Set(["user", "other"]),
+        managedEndpointNamespace: "test",
+      }),
+    ),
+    Layer.provideMerge(NodeCrypto.layer),
+  );
+const services = servicesWith(() => Effect.die("unused hook inbox"));
 
 const enrollment = (userId: string, id: string) => {
   const environmentId = EnvironmentId.make(id);
@@ -128,6 +136,46 @@ const enrollment = (userId: string, id: string) => {
 };
 
 describe("beta gateway links", () => {
+  it.effect("keeps a beta endpoint reserved until unlink retires its held webhooks", () => {
+    let inboxDown = true;
+    const cleared: Array<Parameters<HookInbox.HookInbox["Service"]["clear"]>[0]> = [];
+    return Effect.gen(function* () {
+      const beta = yield* BetaGatewayLinks.BetaGatewayLinks;
+      const admitted = yield* beta.enroll(enrollment("user", "retiring"));
+      const key = { userId: "user", environmentId: admitted.environmentId };
+      const endpointKey = new URL(admitted.endpoint.httpBaseUrl).hostname.split(".")[0]!;
+      const moved = enrollment("user", admitted.environmentId);
+      moved.proof.environmentPublicKey = "another-host";
+
+      expect((yield* Effect.flip(beta.unlink({ ...key, endpointKey })))._tag).toBe(
+        "HookInboxError",
+      );
+      expect((yield* Effect.flip(beta.enroll(moved)))._tag).toBe("BetaGatewayLinkConflict");
+
+      inboxDown = false;
+      yield* beta.unlink({ ...key, endpointKey });
+      expect(cleared).toEqual([{ endpointKey, retire: true }]);
+      expect((yield* beta.enroll(moved)).endpoint.httpBaseUrl).not.toBe(
+        admitted.endpoint.httpBaseUrl,
+      );
+    }).pipe(
+      Effect.provide(
+        servicesWith((input) =>
+          inboxDown
+            ? Effect.fail(
+                new HookInbox.HookInboxError({
+                  operation: "clear",
+                  endpointKey: input.endpointKey,
+                  cause: new Error("inbox unavailable"),
+                }),
+              )
+            : Effect.sync(() => {
+                cleared.push(input);
+              }),
+        ),
+      ),
+    );
+  });
   it.effect("an unlink ahead of a delayed enrollment cancels only that signed attempt", () =>
     Effect.gen(function* () {
       const beta = yield* BetaGatewayLinks.BetaGatewayLinks;

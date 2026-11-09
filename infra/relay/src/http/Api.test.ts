@@ -583,7 +583,7 @@ function layerRelayUnlinkTest(input?: {
   readonly clearInbox?: HookInbox.HookInbox["Service"]["clear"];
 }) {
   return Layer.mergeAll(
-    Layer.mock(BetaGatewayLinks.BetaGatewayLinks, { finishBetaRetirement: () => Effect.void }),
+    Layer.mock(BetaGatewayLinks.BetaGatewayLinks, {}),
     Layer.mock(HookInbox.HookInbox, {
       clear: input?.clearInbox ?? (() => Effect.void),
     }),

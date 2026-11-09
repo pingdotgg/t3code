@@ -567,16 +567,11 @@ export const unlinkEnvironmentRecord = Effect.fn("relay.api.client.unlinkEnviron
       : yield* links.getForUser({ ...key, includeRetiringBeta: true });
     if (input.betaAttemptId || link?.endpoint.providerKind === "t3_relay") {
       const beta = yield* BetaGatewayLinks.BetaGatewayLinks;
-      const endpointKey = yield* beta.revoke({
+      yield* beta.unlink({
         ...key,
         ...(input.betaAttemptId ? { attemptId: input.betaAttemptId } : {}),
         ...(link?.betaEndpointKey ? { endpointKey: link.betaEndpointKey } : {}),
       });
-      if (endpointKey) {
-        const inbox = yield* HookInbox.HookInbox;
-        yield* inbox.clear({ endpointKey, retire: true });
-        yield* beta.finishBetaRetirement({ ...key, endpointKey });
-      }
       return true;
     }
     const unlinked =
