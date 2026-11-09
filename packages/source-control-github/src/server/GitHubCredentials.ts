@@ -33,6 +33,8 @@ export const GH_PROCESS_CONCURRENCY = { key: "gh", limit: 4 } as const;
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
 
+const isCliToken = Schema.is(Schema.String.check(Schema.isPattern(/^[\x21-\x7e]+$/)));
+
 export const GitHubCredentialSource = Schema.Literals(["settings", "app", "env", "gh"]);
 export type GitHubCredentialSource = typeof GitHubCredentialSource.Type;
 
@@ -183,6 +185,14 @@ export const make = Effect.gen(function* () {
         Effect.filterOrFail(
           (token) => token !== "",
           () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
+        ),
+        Effect.filterOrFail(
+          isCliToken,
+          () =>
+            new GitHubCliFailedError({
+              host,
+              cause: new Error("GitHub CLI returned malformed credential output."),
+            }),
         ),
       );
 

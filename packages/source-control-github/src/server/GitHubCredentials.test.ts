@@ -1,6 +1,8 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Cause from "effect/Cause";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import { HttpClient } from "effect/http";
@@ -30,6 +32,7 @@ function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
+  stdout?: () => string,
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
@@ -47,7 +50,8 @@ function harness(
       }
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
-        stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+        stdout:
+          stdout?.() ?? (input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n"),
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -131,6 +135,47 @@ describe("GitHubCredentials", () => {
       ]);
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "rejects malformed gh output without exposing it or falling back to another account",
+    () => {
+      const token = "FAKE_SENTINEL_NOT_A_CREDENTIAL-._~+/=";
+      let stdout = "";
+      const { layer, calls } = harness({ "github.com": { account: "work" } }, [], {}, () => stdout);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        for (const malformed of [
+          `wrapper banner\n${token}\n`,
+          `wrapper banner\r\n${token}\r\n`,
+          `${token} second-token`,
+          `${token}\tsecond-token`,
+          `${token}\u0000`,
+          `${token}\u007f`,
+        ]) {
+          stdout = malformed;
+          const exit = yield* Effect.exit(credentials.get("github.com"));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Exit.findErrorOption(exit)).toMatchObject({
+              value: { _tag: "GitHubCliFailedError" },
+            });
+            expect(JSON.stringify(exit)).not.toContain(token);
+            expect(Cause.pretty(exit.cause)).not.toContain(token);
+          }
+        }
+        expect(calls).toHaveLength(6);
+        expect(calls.every((args) => args.includes("--user"))).toBe(true);
+
+        for (const ending of ["", "\n", "\r\n"]) {
+          stdout = token + ending;
+          const credential = yield* credentials.get("github.com");
+          expect(Redacted.value(credential.token)).toBe(token);
+          expect(credential.source).toBe("gh");
+          yield* credentials.invalidate("github.com");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("uses a token saved in Settings before GH_TOKEN and gh", () => {
     vi.stubEnv("GH_TOKEN", "env-token");
