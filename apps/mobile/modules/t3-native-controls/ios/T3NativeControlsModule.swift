@@ -127,8 +127,8 @@ public final class T3NativeControlsModule: Module {
     }.runOnQueue(.main)
 
     // Photos names the asset itself, so iOS ignores the Android display name.
-    AsyncFunction("saveImageToLibrary") { (url: URL, mimeType: String, _: String, promise: Promise) in
-      Self.saveImageToLibrary(url: url, mimeType: mimeType, promise: promise)
+    AsyncFunction("saveImageToLibrary") { (url: URL, mimeType: String, name: String, promise: Promise) in
+      Self.saveImageToLibrary(url: url, mimeType: mimeType, name: name, promise: promise)
     }
   }
 
@@ -304,7 +304,7 @@ public final class T3NativeControlsModule: Module {
     if filePresentation?.identifier == identifier { filePresentation?.dismiss() }
   }
 
-  private static func saveImageToLibrary(url: URL, mimeType: String, promise: Promise) {
+  private static func saveImageToLibrary(url: URL, mimeType: String, name: String, promise: Promise) {
     PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
       guard status == .authorized || status == .limited else {
         promise.reject(NSError(
@@ -317,6 +317,7 @@ public final class T3NativeControlsModule: Module {
       PHPhotoLibrary.shared().performChanges({
         let options = PHAssetResourceCreationOptions()
         options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
+        options.originalFilename = name
         PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
       }, completionHandler: { saved, error in
         if saved {
