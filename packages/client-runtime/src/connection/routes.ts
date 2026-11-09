@@ -406,6 +406,13 @@ export function credentialConnectionId(connectionId: string): string {
     : connectionId;
 }
 
+/** Whether connecting over `route` needs a credential from T3 Connect, whatever network it uses. */
+export function authorizesThroughConnect(route: ConnectionRoute): boolean {
+  if (route.target._tag === "RelayConnectionTarget") return true;
+  const profile = Option.getOrNull(route.profile);
+  return profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect";
+}
+
 export function isLearned(route: ConnectionRoute): boolean {
   const profile = Option.getOrNull(route.profile);
   return profile?._tag === "BearerConnectionProfile" && profile.learned === true;

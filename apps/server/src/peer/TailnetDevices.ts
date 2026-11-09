@@ -51,6 +51,7 @@ import type * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as SessionStore from "../auth/SessionStore.ts";
+import * as ServerConfig from "../config.ts";
 import * as DirectEndpoints from "../environment/DirectEndpoints.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as DevicePolicy from "./DevicePolicy.ts";
@@ -220,6 +221,7 @@ const make = Effect.gen(function* () {
   const identity = yield* TailnetIdentity.TailnetIdentity;
   const policy = yield* DevicePolicy.DevicePolicy;
   const sessions = yield* SessionStore.SessionStore;
+  const { devUrl } = yield* ServerConfig.ServerConfig;
   const pending = yield* Ref.make<ReadonlyMap<string, PendingChallenge>>(new Map());
   const handshakes = yield* Semaphore.make(HANDSHAKE_CONCURRENCY);
 
@@ -227,7 +229,7 @@ const make = Effect.gen(function* () {
 
   /** Pushes this device's policy and settings to every linked device right away. */
   const push = Effect.gen(function* () {
-    const current = yield* links.list.pipe(Effect.orElseSucceed(() => []));
+    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       current.filter((link) => link.origin === "tailnet"),
       syncWith,
@@ -264,9 +266,12 @@ const make = Effect.gen(function* () {
     },
   );
 
-  /** Linked environments is on, and so is linking tailnet devices automatically. */
+  /**
+   * Linked environments is on, and so is linking tailnet devices automatically. Never on a dev
+   * server: each worktree has a fresh environment that would join every one of my devices.
+   */
   const enabled = Effect.all([links.enabled, settings]).pipe(
-    Effect.map(([linksOn, current]) => linksOn && current.autoLink),
+    Effect.map(([linksOn, current]) => devUrl === undefined && linksOn && current.autoLink),
   );
 
   const readDevices = sql<DeviceRow>`SELECT * FROM tailnet_devices`.pipe(
@@ -920,7 +925,7 @@ const make = Effect.gen(function* () {
       ),
     );
     // Gossip first: a linked device may know addresses the scan cannot guess.
-    const current = yield* links.list.pipe(Effect.orElseSucceed(() => []));
+    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       current.filter((link) => link.origin === "tailnet"),
       syncWith,
@@ -929,10 +934,18 @@ const make = Effect.gen(function* () {
     for (const device of yield* knownDescriptors) {
       if (device.environmentId !== self) toLink.add(device.environmentId);
     }
+    // Probing and gossip can take a while; a pairing that ran out meanwhile has expired.
+    const checkedAt = yield* DateTime.now;
     for (const environmentId of toLink) {
       const link = current.find((candidate) => candidate.environmentId === environmentId);
       // A pairing-code link is the user's choice; only tailnet links are made or renewed here.
-      if (link !== undefined && link.origin === "paired" && link.status !== "expired") continue;
+      if (
+        link !== undefined &&
+        link.origin === "paired" &&
+        DateTime.isGreaterThan(link.expiresAt, checkedAt)
+      ) {
+        continue;
+      }
       if (yield* hasUsableLink(environmentId)) continue;
       if ((yield* policy.accessFor(environmentId)) === "revoked") continue;
       yield* refresh(environmentId);

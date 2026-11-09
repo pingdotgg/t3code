@@ -16,9 +16,19 @@ export interface TransportProgress {
   readonly pendingBytes: number;
   /** Bytes the kernel has accepted so far. */
   readonly bytesWritten: number;
+  /** Bytes received from the client so far. */
+  readonly bytesRead: number;
 }
 
 export type ClientUnresponsiveReason = "client-silent" | "send-stalled";
+
+export interface ClientUnresponsive {
+  readonly reason: ClientUnresponsiveReason;
+  readonly silentForMs: number;
+  /** Raw bytes received since the last handled message; framing and buffering also count. */
+  readonly bytesReadWhileSilent: number;
+  readonly pendingBytes: number;
+}
 
 /** Suspended phones keep TCP alive with a zero window, hiding stale sockets from TCP/RPC checks.
  * awaitUnresponsive lets callers reset after CLIENT_SILENCE_LIMIT without inbound traffic
@@ -29,36 +39,49 @@ export const make = Effect.fn("wsClientLiveness.make")(function* (
   const clock = yield* Clock.Clock;
   let lastHeardAt = clock.currentTimeMillisUnsafe();
   let lastProgressAt = lastHeardAt;
-  let lastBytesWritten = readProgress().bytesWritten;
+  const initial = readProgress();
+  let lastBytesWritten = initial.bytesWritten;
+  let bytesReadWhenHeard = initial.bytesRead;
 
   const observe = (protocol: RpcServer.Protocol["Service"]): RpcServer.Protocol["Service"] => ({
     ...protocol,
     run: (write) =>
       protocol.run((clientId, message) => {
         lastHeardAt = clock.currentTimeMillisUnsafe();
+        bytesReadWhenHeard = readProgress().bytesRead;
         return write(clientId, message);
       }),
   });
 
   const silenceMs = Duration.toMillis(CLIENT_SILENCE_LIMIT);
   const stallMs = Duration.toMillis(SEND_STALL_LIMIT);
-  const check = Effect.sync((): ClientUnresponsiveReason | undefined => {
+  const check = Effect.sync((): ClientUnresponsive | undefined => {
     const now = clock.currentTimeMillisUnsafe();
-    const { pendingBytes, bytesWritten } = readProgress();
+    const { pendingBytes, bytesWritten, bytesRead } = readProgress();
     if (pendingBytes === 0 || bytesWritten !== lastBytesWritten) {
       lastProgressAt = now;
       lastBytesWritten = bytesWritten;
     }
-    if (now - lastHeardAt >= silenceMs) return "client-silent";
-    if (now - lastProgressAt >= stallMs) return "send-stalled";
-    return undefined;
+    const reason: ClientUnresponsiveReason | undefined =
+      now - lastHeardAt >= silenceMs
+        ? "client-silent"
+        : now - lastProgressAt >= stallMs
+          ? "send-stalled"
+          : undefined;
+    if (reason === undefined) return undefined;
+    return {
+      reason,
+      silentForMs: now - lastHeardAt,
+      bytesReadWhileSilent: bytesRead - bytesReadWhenHeard,
+      pendingBytes,
+    };
   });
 
   const awaitUnresponsive = Effect.gen(function* () {
     while (true) {
       yield* Effect.sleep(CHECK_INTERVAL);
-      const reason = yield* check;
-      if (reason !== undefined) return reason;
+      const unresponsive = yield* check;
+      if (unresponsive !== undefined) return unresponsive;
     }
   });
 

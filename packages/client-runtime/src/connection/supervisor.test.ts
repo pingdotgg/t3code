@@ -149,6 +149,19 @@ function awaitState(
   );
 }
 
+/** The supervisor appends to its log just after publishing the state, so wait on the log itself. */
+function awaitTrouble(
+  supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+  count = 1,
+) {
+  return SubscriptionRef.changes(supervisor.log!).pipe(
+    Stream.map((log) => connectionTroubleSince(log, -1)),
+    Stream.filter((trouble) => trouble.length >= count),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
+
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
   readonly prepare?: (
@@ -641,11 +654,16 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.closeLatestSession();
-      yield* awaitState(
+      const lost = yield* awaitState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
       );
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+      // The screen shows no failure for a lost session, but the log says what ended it.
+      expect(lost.lastFailure).toBeNull();
+      expect(yield* awaitTrouble(supervisor)).toEqual([
+        expect.objectContaining({ kind: "lost", reason: "transport", detail: "Session closed." }),
+      ]);
 
       yield* TestClock.adjust("250 millis");
       yield* awaitState(
@@ -679,6 +697,13 @@ describe("EnvironmentSupervisor", () => {
       const lost = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
       // A short outage is still reported as reconnecting.
       expect(presentConnectionState(lost).phase).toBe("reconnecting");
+      // The loss names what ended the session; the failed retries after it name their own cause.
+      yield* TestClock.adjust("3 seconds");
+      const trouble = yield* awaitTrouble(supervisor, 2);
+      expect(trouble.map(({ kind, detail }) => ({ kind, detail }))).toEqual([
+        { kind: "lost", detail: "Session closed." },
+        { kind: "failed", detail: "Tunnel is down." },
+      ]);
 
       // Retries land at most 16 seconds apart this early, so one falls past the grace period.
       yield* TestClock.adjust("60 seconds");
@@ -1320,6 +1345,14 @@ describe("EnvironmentSupervisor", () => {
       expect(reconnecting.attempt).toBe(1);
       expect(reconnecting.lastFailure).toBeNull();
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      // Reconnecting at once still logs what ended the session.
+      expect(yield* awaitTrouble(supervisor)).toEqual([
+        expect.objectContaining({
+          kind: "lost",
+          reason: "transport",
+          detail: "The live session is stale.",
+        }),
+      ]);
 
       yield* Deferred.succeed(allowReconnect, undefined);
       yield* awaitState(
@@ -1822,6 +1855,200 @@ describe("EnvironmentSupervisor routes", () => {
       yield* TestClock.adjust("2500 millis");
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       expect(attempted).toEqual(["RelayConnectionTarget", "BearerConnectionTarget"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not hold a late-answering direct route behind a stalled T3 Connect", () =>
+    Effect.gen(function* () {
+      const checkingDirect = yield* Deferred.make<void>();
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingDirect, undefined).pipe(
+                Effect.andThen(Effect.sleep("700 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        // Signed in, but T3 Connect never finishes authorizing (expired or unlinked account).
+        prepare: (_attempt, target) => {
+          attempted.push(target._tag);
+          return target._tag === "RelayConnectionTarget"
+            ? Effect.never
+            : Effect.succeed(preparedFor(target));
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingDirect);
+      yield* TestClock.adjust("31 seconds");
+      const state = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "backoff",
+      );
+      expect(state.phase).toBe("connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      expect(attempted).toEqual(["RelayConnectionTarget", "BearerConnectionTarget"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("returns to T3 Connect when the late direct route refuses this device", () =>
+    Effect.gen(function* () {
+      const checkingDirect = yield* Deferred.make<void>();
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Deferred.succeed(checkingDirect, undefined).pipe(
+                Effect.andThen(Effect.sleep("700 millis")),
+                Effect.as("answered" as const),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) => {
+          attempted.push(target._tag);
+          return target._tag === "RelayConnectionTarget"
+            ? Effect.sleep("2 seconds").pipe(Effect.as(preparedFor(target)))
+            : Effect.fail(blocked("This device's pairing was revoked."));
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* Deferred.await(checkingDirect);
+      yield* TestClock.adjust("5 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
+      expect(attempted).toEqual([
+        "RelayConnectionTarget",
+        "BearerConnectionTarget",
+        "RelayConnectionTarget",
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  // A LAN address learned over T3 Connect, ahead of a paired Tailscale address.
+  const connectLanTarget = new BearerConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+    connectionId: "learned:connect-lan",
+  });
+  const pairedTailnetTarget = new BearerConnectionTarget({
+    environmentId: TARGET.environmentId,
+    label: TARGET.label,
+    connectionId: "bearer:tailnet",
+  });
+  const CONNECT_LAN_THEN_PAIRED_TAILNET_ENTRY: ConnectionCatalogEntry = {
+    target: connectLanTarget,
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId: connectLanTarget.connectionId,
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl: "http://192.168.1.10:3773/",
+        wsBaseUrl: "ws://192.168.1.10:3773/",
+        learned: true,
+        authorization: "t3-connect",
+      }),
+    ),
+    alternateRoutes: [
+      {
+        target: pairedTailnetTarget,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            connectionId: pairedTailnetTarget.connectionId,
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            httpBaseUrl: "http://100.100.1.2:3773/",
+            wsBaseUrl: "ws://100.100.1.2:3773/",
+            network: "tailscale",
+          }),
+        ),
+      },
+      { target: RELAY_TARGET, profile: Option.none() },
+    ],
+    enabled: true,
+  };
+  const connectedRouteId = (supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"]) =>
+    SubscriptionRef.get(supervisor.prepared).pipe(
+      Effect.map((prepared) => connectionRouteId(Option.getOrThrow(prepared).target)),
+    );
+
+  it.effect("moves to a paired route when a route authorized through T3 Connect stalls", () =>
+    Effect.gen(function* () {
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "RelayConnectionTarget" ? "unchecked" : "answered"),
+        // The LAN answers, but its credential comes from a T3 Connect exchange that never ends.
+        prepare: (_attempt, target) => {
+          attempted.push(connectionRouteId(target));
+          return connectionRouteId(target) === pairedTailnetTarget.connectionId
+            ? Effect.succeed(preparedFor(target))
+            : Effect.never;
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(CONNECT_LAN_THEN_PAIRED_TAILNET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* TestClock.adjust("46 seconds");
+      const state = yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" || state.phase === "backoff",
+      );
+      expect(state.phase).toBe("connected");
+      expect(yield* connectedRouteId(supervisor)).toBe(pairedTailnetTarget.connectionId);
+      expect(attempted).toEqual([connectLanTarget.connectionId, pairedTailnetTarget.connectionId]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("closes the socket of a T3 Connect-authorized route it moves away from", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "RelayConnectionTarget" ? "unchecked" : "answered"),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        // The first socket, over the Connect-authorized LAN route, never synchronizes.
+        ready: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(CONNECT_LAN_THEN_PAIRED_TAILNET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* TestClock.adjust("6 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* connectedRouteId(supervisor)).toBe(pairedTailnetTarget.connectionId);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a route authorized through T3 Connect that is only a little slow", () =>
+    Effect.gen(function* () {
+      const attempted: string[] = [];
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          Effect.succeed(route.target._tag === "RelayConnectionTarget" ? "unchecked" : "answered"),
+        prepare: (_attempt, target) => {
+          attempted.push(connectionRouteId(target));
+          return Effect.sleep("2 seconds").pipe(Effect.as(preparedFor(target)));
+        },
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(CONNECT_LAN_THEN_PAIRED_TAILNET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* TestClock.adjust("3 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* connectedRouteId(supervisor)).toBe(connectLanTarget.connectionId);
+      expect(attempted).toEqual([connectLanTarget.connectionId]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
