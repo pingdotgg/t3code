@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEditableFocused } from "./lib/editableFocus";
 
 export interface ShortcutModifierState {
@@ -68,6 +68,70 @@ export function useShortcutModifierState(ignoreEditable = false): ShortcutModifi
   }, [ignoreEditable]);
 
   return state;
+}
+
+// Modifiers count as held once unchanged this long, so a quick chord never shows hints.
+const MODIFIERS_HELD_AFTER_MS = 200;
+
+let sharedModifiers = EMPTY_SHORTCUT_MODIFIER_STATE;
+let sharedModifiersHeld = false;
+let heldTimer: ReturnType<typeof setTimeout> | undefined;
+const modifierListeners = new Set<() => void>();
+
+function notifyModifierListeners(): void {
+  for (const listener of modifierListeners) listener();
+}
+
+function setSharedModifiers(next: ShortcutModifierState): void {
+  if (areShortcutModifierStatesEqual(sharedModifiers, next)) return;
+  sharedModifiers = next;
+  sharedModifiersHeld = false;
+  clearTimeout(heldTimer);
+  if (!areShortcutModifierStatesEqual(next, EMPTY_SHORTCUT_MODIFIER_STATE)) {
+    heldTimer = setTimeout(() => {
+      sharedModifiersHeld = true;
+      notifyModifierListeners();
+    }, MODIFIERS_HELD_AFTER_MS);
+  }
+  notifyModifierListeners();
+}
+
+const onSharedKeyboardEvent = (event: KeyboardEvent) =>
+  setSharedModifiers(shortcutModifierStateAfterKeyboardEvent(sharedModifiers, event));
+// Dictation tools can omit Meta keyup after synthetic paste, leaving jump hints stuck.
+const onSharedResetEvent = () => setSharedModifiers(EMPTY_SHORTCUT_MODIFIER_STATE);
+
+function subscribeToModifiers(listener: () => void): () => void {
+  if (modifierListeners.size === 0) {
+    window.addEventListener("keydown", onSharedKeyboardEvent, true);
+    window.addEventListener("keyup", onSharedKeyboardEvent, true);
+    window.addEventListener("paste", onSharedResetEvent, true);
+    window.addEventListener("blur", onSharedResetEvent);
+  }
+  modifierListeners.add(listener);
+  return () => {
+    modifierListeners.delete(listener);
+    if (modifierListeners.size > 0) return;
+    window.removeEventListener("keydown", onSharedKeyboardEvent, true);
+    window.removeEventListener("keyup", onSharedKeyboardEvent, true);
+    window.removeEventListener("paste", onSharedResetEvent, true);
+    window.removeEventListener("blur", onSharedResetEvent);
+    clearTimeout(heldTimer);
+    sharedModifiers = EMPTY_SHORTCUT_MODIFIER_STATE;
+    sharedModifiersHeld = false;
+  };
+}
+
+/**
+ * A primitive derived from the pressed modifiers, re-rendering only when it changes.
+ * `held` turns true once the modifiers have stayed unchanged for a moment.
+ */
+export function useShortcutModifierSelector<T extends string | number | boolean | null>(
+  select: (modifiers: ShortcutModifierState, held: boolean) => T,
+): T {
+  return useSyncExternalStore(subscribeToModifiers, () =>
+    select(sharedModifiers, sharedModifiersHeld),
+  );
 }
 
 function normalizeModifierKey(key: string): keyof ShortcutModifierState | null {

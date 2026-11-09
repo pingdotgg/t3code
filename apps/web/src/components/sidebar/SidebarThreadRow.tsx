@@ -1,5 +1,4 @@
 import { useAtomMount } from "@effect/atom-react";
-import { useSidebarJumpHints } from "./SidebarJumpHints";
 import { formatModelSlugName } from "@t3tools/shared/model";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
@@ -1003,8 +1002,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
   // Pinned cards already show the clickable unpin glyph in this row.
   const showPinButton = props.pinningSupported && canOperateThread && !props.isPinned;
   const snoozeMenuOpen = snoozeMenuOpenRaw && showSnoozeButton;
-  const showJumpHints = useSidebarJumpHints();
-  const jumpHintLabel = snoozeMenuOpen || !showJumpHints ? null : props.jumpLabel;
+  const jumpHintLabel = snoozeMenuOpen ? null : props.jumpLabel;
   const handlePrClick = (event: ReactMouseEvent<HTMLElement>, targetUrl?: string) => {
     const url = targetUrl ?? pr?.url ?? currentLinkedPr?.url;
     if (!url) return;

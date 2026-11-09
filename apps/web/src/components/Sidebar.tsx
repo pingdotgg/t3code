@@ -1,4 +1,3 @@
-import { SidebarJumpHints } from "./sidebar/SidebarJumpHints";
 import { attachSidebarTree } from "../lib/sidebarTree";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
@@ -101,10 +100,12 @@ import { isElectron } from "../env";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
+  shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
+import { useShortcutModifierSelector } from "../shortcutModifierState";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -137,6 +138,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
+import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -1175,6 +1177,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     keys: ReadonlySet<string>;
   } | null>(null);
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
+  const terminalFocused = useTerminalFocus();
   const openAddProjectCommandPalette = () => openCommandPalette({ open: "add-project" });
   const routeThreadRef = resolveActiveThreadRouteRef(routeTarget, routeDraftThread);
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
@@ -3128,6 +3131,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     threadByKey,
   ]);
 
+  // Reads held modifiers outside render state so a quick chord like Mod+K never re-renders the list.
+  const showJumpHints = useShortcutModifierSelector(
+    (shortcutModifiers, held) =>
+      held &&
+      shouldShowThreadJumpHintsForModifiers(shortcutModifiers, keybindings, {
+        platform: navigator.platform,
+        context: {
+          terminalFocus: terminalFocused,
+          terminalOpen: routeTerminalOpen,
+          modelPickerOpen: isModelPickerOpen(),
+          isWeb: !isElectron,
+          isDesktop: isElectron,
+        },
+      }),
+  );
+
   const handleNewThreadClick = () => {
     if (isMobile) setOpenMobile(false);
     // With no current or open project, such as when every project is archived, pick one.
@@ -3145,7 +3164,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     shortcutLabelForCommand(keybindings, "chat.new") ??
     shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
-    <SidebarJumpHints keybindings={keybindings} terminalOpen={routeTerminalOpen}>
+    <>
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}
@@ -3569,7 +3588,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             isRouteThread={routeThreadKey === threadKey}
                             isOnScreen={onScreenThreadKeys.has(threadKey)}
                             openPullRequestsInRightPanel={routeThreadRef !== null}
-                            jumpLabel={jumpLabelByKey.get(threadKey) ?? null}
+                            jumpLabel={
+                              showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null
+                            }
                             currentEnvironmentId={primaryEnvironmentId}
                             environmentLabel={
                               environmentLabelById.get(thread.environmentId) ?? null
@@ -3846,6 +3867,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         </SidebarGroup>
       </SidebarContent>
       <SidebarChromeFooter />
-    </SidebarJumpHints>
+    </>
   );
 }
