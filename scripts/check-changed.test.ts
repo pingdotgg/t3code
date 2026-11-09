@@ -48,6 +48,28 @@ describe("check:changed", () => {
     assert.deepStrictEqual(decide(["docs/user/install.md"], packages, false).affected, []);
   });
 
+  it("packages Linux arm64 only for packaging and release runner library changes", () => {
+    const packages = readWorkspace();
+    const packs = (file: string) => decide([file], packages, true).outputs.linux_arm64_package;
+    for (const file of [
+      ".github/workflows/release-desktop.yml",
+      ".github/workflows/ci.yml",
+      "scripts/prepare-server-compile-cache.cjs",
+      "scripts/build-desktop-artifact.ts",
+      "apps/desktop/package.json",
+    ]) {
+      assert.isTrue(packs(file), file);
+    }
+    for (const file of [
+      "scripts/build-desktop-artifact.test.ts",
+      "apps/desktop/src/main.ts",
+      ".github/workflows/release.yml",
+      "package.json",
+    ]) {
+      assert.isFalse(packs(file), file);
+    }
+  });
+
   it.effect(
     "keeps weighted steps within the budget, in order, and serial steps one at a time",
     () =>

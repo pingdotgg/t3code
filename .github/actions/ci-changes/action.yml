@@ -19,6 +19,8 @@ outputs:
     value: ${{ steps.detect.outputs.release_smoke }}
   mobile_native:
     value: ${{ steps.detect.outputs.mobile_native }}
+  linux_arm64_package:
+    value: ${{ steps.detect.outputs.linux_arm64_package }}
 runs:
   using: composite
   steps:

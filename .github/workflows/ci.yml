@@ -34,6 +34,7 @@ jobs:
       rust: ${{ steps.detect.outputs.rust }}
       release_smoke: ${{ steps.detect.outputs.release_smoke }}
       mobile_native: ${{ steps.detect.outputs.mobile_native }}
+      linux_arm64_package: ${{ steps.detect.outputs.linux_arm64_package }}
     steps:
       # Only the package manifests the script reads to build the dependency graph.
       # Depth 2 brings the base commit the change is diffed against.
@@ -590,6 +591,93 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
+  # Release packages Linux arm64 on native hardware, where packaged Electron prepares server
+  # bytecode and must load every GTK and NSS library the runner provides. Packaging and runner
+  # library changes package the same unsigned app here and open it. Nothing is signed or uploaded.
+  linux_arm64_package:
+    permissions:
+      contents: read
+      id-token: write
+    name: Linux arm64 Package
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.linux_arm64_package != 'false' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404-arm
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      # Release's keys, read-only, so most runs skip the Rust builds.
+      - name: Restore resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: native/resource-monitor/target/aarch64-unknown-linux-gnu/release/t3-resource-monitor
+          key: resource-monitor-aarch64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Restore Linux capture helpers
+        id: capture_helper_cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            native/kde-snap-shot/target/aarch64-unknown-linux-gnu/release/t3-kde-snap-shot
+            native/hyprland-snap-shot/target/aarch64-unknown-linux-gnu/release/t3-hyprland-snap-shot
+          key: linux-capture-helpers-aarch64-unknown-linux-gnu-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || steps.capture_helper_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
+
+      # Runs release-desktop.yml's own step so this job and release install the same packages.
+      # Release keeps it inline: stable releases check out an older commit than the workflow.
+      - name: Install Linux desktop build libraries
+        run: |
+          awk '/- name: Install Linux desktop build libraries/ { step = 1 }
+            step && /^        run: \|$/ { body = 1; next }
+            body && /^ *$/ { print ""; next }
+            body && !/^          / { exit }
+            body { print substr($0, 11) }' .github/workflows/release-desktop.yml > "$RUNNER_TEMP/linux-libraries.sh"
+          grep -q 'apt-get install' "$RUNNER_TEMP/linux-libraries.sh"
+          bash -euo pipefail "$RUNNER_TEMP/linux-libraries.sh"
+
+      # afterPack runs the packaged Electron here, the step that fails without its libraries.
+      - name: Package unsigned Linux arm64 app
+        env:
+          T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
+          T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
+        run: vp run dist:desktop:artifact --platform linux --target dir --arch arm64 --output-dir "$RUNNER_TEMP/linux-arm64-package"
+
+      - name: Open the seeded thread in the packaged app
+        id: launch_check
+        timeout-minutes: 4
+        run: |
+          sudo apt-get install -y xvfb
+          xvfb-run -a node scripts/smoke-desktop-app.ts \
+            --executable "$RUNNER_TEMP/linux-arm64-package/linux-arm64-unpacked/t3code" \
+            --artifacts-dir "$RUNNER_TEMP/linux-arm64-launch-check"
+
+      - name: Upload launch check
+        if: ${{ failure() && steps.launch_check.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-arm64-launch-check
+          path: ${{ runner.temp }}/linux-arm64-launch-check
+          if-no-files-found: ignore
+
   # Branch protection requires this job by its name, `Check`. It fails when any
   # other job fails, is cancelled, or is skipped without a reason, so splitting
   # or resharding jobs needs no ruleset change. Add every new job to `needs`.
@@ -609,6 +697,7 @@ jobs:
         rust,
         mobile_native_static_analysis,
         release_smoke,
+        linux_arm64_package,
       ]
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
