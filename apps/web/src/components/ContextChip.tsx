@@ -27,6 +27,7 @@ const contextChipVariants = cva(
         "pr-merged": "[--context-chip-accent:var(--merged-foreground)]",
         "pr-closed": "[--context-chip-accent:var(--error-foreground)]",
         skill: "[--context-chip-accent:var(--merged-foreground)]",
+        model: "[--context-chip-accent:var(--context-chip-model)]",
         thread: "[--context-chip-accent:var(--info-foreground)]",
         environment: "[--context-chip-accent:var(--info-foreground)]",
         "doc-pdf": "[--context-chip-accent:var(--context-chip-doc-pdf)]",
