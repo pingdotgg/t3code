@@ -999,6 +999,24 @@ describe("review decisions", () => {
       }),
   );
 
+  it.effect("asks a host for its version once across checkouts of its projects", () =>
+    Effect.gen(function* () {
+      const versionReads: Array<string> = [];
+      const provider = yield* providerWith(() => Effect.succeed(new Map()), {
+        supportsGraphqlList: (input) =>
+          Effect.sync(() => {
+            versionReads.push(input.cwd);
+            return true;
+          }),
+      });
+
+      yield* provider.listChangeRequests({ ...listing, cwd: "/a", repository: "acme/web" });
+      yield* provider.listChangeRequests({ ...listing, cwd: "/b", repository: "acme/docs" });
+
+      expect(versionReads).toHaveLength(1);
+    }),
+  );
+
   it.effect.each([
     {
       failure: "a failed read",
