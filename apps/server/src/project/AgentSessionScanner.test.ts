@@ -822,7 +822,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("skips linked git worktrees and reports the origin of real checkouts", () =>
+    it.effect("folds linked git worktrees into their checkout and reports real origins", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const fileSystem = yield* FileSystem.FileSystem;
@@ -870,7 +870,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const result = yield* runScan({ claudeHomePath, codexHomePath });
 
         expect(
-          result.candidates.map((candidate) => ({ path: candidate.path, git: candidate.git })),
+          result.candidates.map((candidate) => ({
+            path: candidate.path,
+            git: candidate.git,
+            threadCount: candidate.threadCount,
+          })),
         ).toEqual([
           {
             path: submodule,
@@ -878,12 +882,14 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
               remoteKey: "gitlab.com/pingdotgg/libs/vendor",
               repository: "pingdotgg/libs/vendor",
             },
+            threadCount: 1,
           },
-          { path: noRemote, git: { remoteKey: null, repository: null } },
-          { path: plain, git: null },
+          { path: noRemote, git: { remoteKey: null, repository: null }, threadCount: 1 },
+          { path: plain, git: null, threadCount: 1 },
           {
             path: repo,
             git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+            threadCount: 2,
           },
         ]);
       }),
@@ -993,13 +999,20 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
         const symlinkCwd = path.join(linkParent, "innocent-project");
         yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
+        // The server may know its state dir only by a symlinked path.
+        const configBaseDirAlias = path.join(linkParent, "state");
+        yield* fileSystem.symlink(configBaseDir, configBaseDirAlias);
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
           contents: claudeSessionLine(symlinkCwd),
           mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
         });
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          configBaseDir: configBaseDirAlias,
+        });
 
         expect(result.candidates).toEqual([]);
       }),
@@ -1090,6 +1103,111 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   });
 
   describe("recentThreads", () => {
+    it.effect("binds sessions from the root's linked worktrees to that worktree and branch", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const repo = yield* makeTempDir("t3code-workspace-repo-");
+        // Git reports real paths; `/var` is a symlink on macOS.
+        const worktrees = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-workspace-worktrees-"),
+        );
+        const gitIn = (cwd: string, ...args: ReadonlyArray<string>) =>
+          NodeChildProcess.execFileSync("git", ["-C", cwd, ...args], {
+            stdio: "ignore",
+            env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+          });
+        const git = (...args: ReadonlyArray<string>) => gitIn(repo, ...args);
+        git("init", "-q", "-b", "main");
+        git(
+          "-c",
+          "user.email=t@t",
+          "-c",
+          "user.name=t",
+          "commit",
+          "-q",
+          "--allow-empty",
+          "-m",
+          "i",
+        );
+        const feature = path.join(worktrees, "feature");
+        const detached = path.join(worktrees, "detached");
+        const pruned = path.join(worktrees, "pruned");
+        const locked = path.join(worktrees, "locked");
+        const switched = path.join(worktrees, "switched");
+        const managed = path.join(configBaseDir, "worktrees", "repo", "sandbox");
+        git("worktree", "add", "-q", "-b", "agent/feature", feature);
+        git("worktree", "add", "-q", "--detach", detached);
+        git("worktree", "add", "-q", "-b", "agent/pruned", pruned);
+        git("worktree", "add", "-q", "-b", "agent/locked", locked);
+        git("worktree", "lock", locked);
+        git("worktree", "add", "-q", "-b", "agent/before", switched);
+        gitIn(switched, "checkout", "-q", "-b", "agent/after");
+        git("worktree", "add", "-q", "-b", "t3/sandbox", managed);
+        yield* fileSystem.remove(pruned, { recursive: true });
+        yield* fileSystem.remove(locked, { recursive: true });
+
+        const sessions = { root: repo, feature, detached, pruned, locked, switched, managed };
+        for (const [index, [sessionId, cwd]] of Object.entries(sessions).entries()) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", `-${sessionId}`, `${sessionId}.jsonl`),
+            contents: `${JSON.stringify({
+              type: "user",
+              cwd,
+              sessionId,
+              message: { role: "user", content: `Work in ${sessionId}` },
+            })}\n`,
+            mtimeMs: nowMs - (index + 1) * 1_000,
+          });
+        }
+        const bindings = (
+          workspaceRoot: string,
+          processRunner?: Layer.Layer<ProcessRunner.ProcessRunner>,
+        ) =>
+          runRecentThreads({
+            claudeHomePath,
+            codexHomePath,
+            configBaseDir,
+            workspaceRoot,
+            ...(processRunner === undefined ? {} : { processRunner }),
+          }).pipe(
+            Effect.map((threads) =>
+              threads.map(({ providerSessionId, worktree }) => ({ providerSessionId, worktree })),
+            ),
+          );
+
+        const expected = [
+          { providerSessionId: "root", worktree: null },
+          { providerSessionId: "feature", worktree: { path: feature, branch: "agent/feature" } },
+          { providerSessionId: "switched", worktree: { path: switched, branch: "agent/after" } },
+        ];
+        expect(yield* bindings(repo)).toEqual(expected);
+        // Git before 2.36 rejects `worktree list -z`.
+        const legacyGit = Layer.effect(
+          ProcessRunner.ProcessRunner,
+          Effect.gen(function* () {
+            const runner = yield* ProcessRunner.ProcessRunner;
+            return ProcessRunner.ProcessRunner.of({
+              run: (input) =>
+                input.command === "git" && input.args.includes("-z")
+                  ? runner.run({ ...input, args: ["-C", repo, "worktree", "list", "--bogus"] })
+                  : runner.run(input),
+            });
+          }),
+        ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(NodeServices.layer));
+        expect(yield* bindings(repo, legacyGit)).toEqual(expected);
+        // A linked worktree as the root keeps only its own sessions.
+        expect(yield* bindings(feature)).toEqual([
+          { providerSessionId: "feature", worktree: null },
+        ]);
+      }),
+    );
+
     it.effect("imports recent Claude, Codex, and Pi sessions for the selected project only", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

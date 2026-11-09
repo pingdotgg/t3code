@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
+  type AgentSessionImportSource,
   type AgentSessionSource,
   type ServerSettingsError,
   EventId,
@@ -82,6 +83,7 @@ function candidate(
         { role: "user" as const, text: "Fix it", createdAt: timestamp },
         { role: "assistant" as const, text: "Fixed", createdAt: timestamp },
       ],
+      worktree: null as AgentSessionScanner.AgentSessionThread["worktree"],
     },
   } satisfies AgentSessionScanner.AgentSessionRecentThread;
 }
@@ -181,6 +183,7 @@ const makeImporter = Effect.fn(function* (
   const events = yield* EventStore.EventStoreV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const published: Array<ApplicationStoredEvent> = [];
+  const completedSources: Array<ReadonlyArray<AgentSessionImportSource>> = [];
   const withTransaction: typeof sql.withTransaction = (effect) =>
     beforeTransaction.pipe(Effect.andThen(sql.withTransaction(effect)));
   const importSql = new Proxy(sql, {
@@ -218,7 +221,10 @@ const makeImporter = Effect.fn(function* (
             yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository,
           ),
           Layer.mock(AgentSessionScanner.AgentSessionScanner)({
-            recentThreads: () => Stream.fromIterable(candidates),
+            recentThreads: (_workspaceRoot, completed = []) => {
+              completedSources.push(completed);
+              return Stream.fromIterable(candidates);
+            },
           }),
           Layer.mock(ProjectService.ProjectService)({
             getById: () =>
@@ -248,7 +254,7 @@ const makeImporter = Effect.fn(function* (
     ),
   );
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
-  return { run: importer.importRecentAgentThreads({ projectId }), published };
+  return { run: importer.importRecentAgentThreads({ projectId }), published, completedSources };
 });
 
 it.effect(
@@ -275,6 +281,8 @@ it.effect(
       const before = yield* Effect.forEach(owners, (id) =>
         projections.getThreadRecords(id, ["providerThreads"]),
       );
+      const inWorktree = candidate(CODEX_MODEL_SELECTION, "in-worktree");
+      inWorktree.thread.worktree = { path: "/workspace/project-worktrees/swc", branch: "swc" };
       const otherInstance = candidate(
         { ...CLAUDE_MODEL_SELECTION, instanceId: ProviderInstanceId.make("claude-other") },
         archived.source.providerSessionId,
@@ -291,9 +299,10 @@ it.effect(
         otherInstance,
         unowned,
         unownedPi,
+        inWorktree,
       ]);
 
-      expect(yield* importer.run).toEqual({ importedCount: 3, skippedCount: 0 });
+      expect(yield* importer.run).toEqual({ importedCount: 4, skippedCount: 0 });
       for (const source of [active, archived, deleted, ownedPi]) {
         const threadId = importId(source);
         expect(yield* Effect.option(projections.getThread(threadId))).toEqual(Option.none());
@@ -311,8 +320,15 @@ it.effect(
             "event" in stored ? [stored.event.threadId] : [],
           ),
         ),
-      ).toEqual(new Set([importId(otherInstance), importId(unowned), importId(unownedPi)]));
-      for (const source of [otherInstance, unowned, unownedPi]) {
+      ).toEqual(
+        new Set([
+          importId(otherInstance),
+          importId(unowned),
+          importId(unownedPi),
+          importId(inWorktree),
+        ]),
+      );
+      for (const source of [otherInstance, unowned, unownedPi, inWorktree]) {
         const threadId = importId(source);
         const records = yield* projections.getThreadRecords(threadId, [
           "messages",
@@ -336,15 +352,22 @@ it.effect(
         expect(records.thread.historyOrigin).toBe("v1_import");
         expect(records.thread.activeProviderThreadId).toBe(records.providerThreads[0]?.id);
         expect(records.providerThreads[0]?.nativeThreadRef?.nativeId).toBe(nativeId(source));
+        expect(records.thread).toMatchObject({
+          branch: source.thread.worktree?.branch ?? null,
+          worktreePath: source.thread.worktree?.path ?? null,
+        });
         expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
           providerInstanceId: source.source.providerInstanceId,
           resumeCursor:
             source.source.provider === "claudeAgent"
               ? { threadId, resume: source.source.providerSessionId }
               : { threadId: nativeId(source) },
-          runtimePayload: { importedTranscripts: [source.source] },
+          runtimePayload: { cwd: "/workspace/project", importedTranscripts: [source.source] },
         });
       }
+      // Worktree threads count as this project's imports, so the next run does not reread them.
+      yield* importer.run;
+      expect(importer.completedSources[1]).toContainEqual(inWorktree.source);
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

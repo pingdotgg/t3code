@@ -185,6 +185,7 @@ export interface AgentSessionThread {
   readonly providerSessionId: string;
   readonly title: string;
   readonly model: string | null;
+  readonly worktree: { readonly path: string; readonly branch: string } | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly messages: ReadonlyArray<AgentSessionThreadMessage>;
@@ -632,6 +633,7 @@ function parseAgentSessionRecords(
     providerSessionId,
     title: claudeFields.customTitle ?? title ?? derivedTitle ?? "Imported thread",
     model,
+    worktree: null,
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
@@ -790,6 +792,14 @@ export const make = Effect.gen(function* () {
     path.join(homeDir, "Documents", "Codex"),
   ];
 
+  const realOrSelf = (target: string) =>
+    fileSystem.realPath(target).pipe(Effect.orElseSucceed(() => target));
+  // Git reports real paths, so a symlinked state dir must match by its target too.
+  const stateDirs = [
+    { base: baseDir, worktrees: worktreesDir },
+    { base: yield* realOrSelf(baseDir), worktrees: yield* realOrSelf(worktreesDir) },
+  ];
+
   const isExcludedProjectPath = (candidatePath: string) =>
     excludedProjectRoots.has(normalizeProjectPathForComparison(candidatePath)) ||
     excludedProjectAncestors.some((ancestor) =>
@@ -797,10 +807,12 @@ export const make = Effect.gen(function* () {
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
-      normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
-    ) ||
-    isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
+    stateDirs.some(
+      ({ base, worktrees }) =>
+        normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+          normalizeForWorktreeMatch(base, foldWorktreeCase),
+        ) || isT3ManagedWorktree(candidatePath, worktrees, foldWorktreeCase),
+    );
 
   const listDirectory = (directory: string) =>
     fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
@@ -876,7 +888,11 @@ export const make = Effect.gen(function* () {
   ) {
     type GitIdentity =
       | { readonly _tag: "Repository"; readonly git: AgentSessionProjectGit | null }
-      | { readonly _tag: "Worktree" }
+      | {
+          readonly _tag: "Worktree";
+          readonly mainCheckout: string | null;
+          readonly git: AgentSessionProjectGit | null;
+        }
       | { readonly _tag: "NotGit" };
     const identities = new Map<string, GitIdentity>();
     const repositories: Array<{ directory: string; gitDir: string; linkedWorktree: boolean }> = [];
@@ -909,8 +925,9 @@ export const make = Effect.gen(function* () {
     );
     for (const { directory, gitDir } of linkedWorktrees) {
       const commonDir = (commonDirTexts.get(path.join(gitDir, "commondir")) ?? "").trim();
-      if (commonDir.length === 0) identities.set(directory, { _tag: "Worktree" });
-      else
+      if (commonDir.length === 0) {
+        identities.set(directory, { _tag: "Worktree", mainCheckout: null, git: null });
+      } else
         repositories.push({
           directory,
           gitDir: path.resolve(gitDir, commonDir),
@@ -923,20 +940,23 @@ export const make = Effect.gen(function* () {
     );
     for (const { directory, gitDir, linkedWorktree } of repositories) {
       const configText = configTexts.get(path.join(gitDir, "config")) ?? "";
+      const originUrl = parseOriginUrlFromGitConfig(configText);
+      const git: AgentSessionProjectGit = {
+        remoteKey:
+          originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
+        repository: repositoryPathFromRemoteUrl(originUrl),
+      };
       // Bare repositories have no main checkout, so offer their linked worktrees independently.
       if (linkedWorktree && !isBareGitConfig(configText)) {
-        identities.set(directory, { _tag: "Worktree" });
+        identities.set(directory, {
+          _tag: "Worktree",
+          // Only a common dir named .git sits inside its main checkout.
+          mainCheckout: path.basename(gitDir) === ".git" ? path.dirname(gitDir) : null,
+          git,
+        });
         continue;
       }
-      const originUrl = parseOriginUrlFromGitConfig(configText);
-      identities.set(directory, {
-        _tag: "Repository",
-        git: {
-          remoteKey:
-            originUrl === null ? null : sourceControlDefinitions.repositoryKeyFromRemote(originUrl),
-          repository: repositoryPathFromRemoteUrl(originUrl),
-        },
-      });
+      identities.set(directory, { _tag: "Repository", git });
     }
     return identities;
   });
@@ -1563,8 +1583,14 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const directoryKeys = new Map<string, string>();
-    const gitIdentities = new Map<string, AgentSessionProjectGit | null>();
+    const directoryProjects = new Map<
+      string,
+      {
+        readonly key: string;
+        readonly path: string;
+        readonly git: AgentSessionProjectGit | null;
+      } | null
+    >();
 
     for (const candidate of raw) {
       const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
@@ -1572,27 +1598,47 @@ export const make = Effect.gen(function* () {
       const resolved = path.resolve(expanded);
       const stats = directories.get(resolved);
       if (stats === undefined || Option.isNone(stats)) continue;
-      let key = directoryKeys.get(resolved);
-      if (key === undefined) {
+      let project = directoryProjects.get(resolved);
+      if (project === undefined) {
         const gitIdentity = directoryGitIdentities.get(resolved);
-        if (gitIdentity === undefined || gitIdentity._tag === "Worktree") {
-          key = "";
+        if (gitIdentity === undefined) {
+          project = null;
+        } else if (gitIdentity._tag === "Worktree") {
+          // A linked worktree counts toward its main checkout, whose import binds it back.
+          const { mainCheckout } = gitIdentity;
+          const mainStats =
+            mainCheckout === null || isExcludedProjectPath(mainCheckout)
+              ? Option.none()
+              : yield* statOption(mainCheckout);
+          project =
+            mainCheckout !== null &&
+            Option.isSome(mainStats) &&
+            mainStats.value.type === "Directory"
+              ? {
+                  key: yield* directoryIdentity(mainCheckout, mainStats.value),
+                  path: mainCheckout,
+                  git: gitIdentity.git,
+                }
+              : null;
         } else {
-          key = yield* directoryIdentity(resolved, stats.value);
-          gitIdentities.set(key, gitIdentity._tag === "Repository" ? gitIdentity.git : null);
+          project = {
+            key: yield* directoryIdentity(resolved, stats.value),
+            path: resolved,
+            git: gitIdentity._tag === "Repository" ? gitIdentity.git : null,
+          };
         }
-        directoryKeys.set(resolved, key);
+        directoryProjects.set(resolved, project);
       }
-      if (key === "") continue;
+      if (project === null) continue;
 
-      const existing = merged.get(key);
+      const existing = merged.get(project.key);
       if (!existing) {
-        merged.set(key, {
-          path: resolved,
+        merged.set(project.key, {
+          path: project.path,
           sources: [candidate.source],
           threadCount: candidate.threadCount,
           lastActiveAtMs: candidate.lastActiveAtMs,
-          git: gitIdentities.get(key) ?? null,
+          git: project.git,
         });
         continue;
       }
@@ -1656,6 +1702,82 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  /**
+   * The root's linked worktrees that have a branch, by directory identity. Their
+   * sessions import bound to them, so they resume there rather than in the root.
+   * Git owns the list: worktree HEADs can live in a reftable instead of files.
+   */
+  const listLinkedWorktrees = Effect.fn("AgentSessionScanner.listLinkedWorktrees")(function* (
+    root: string,
+    rootIdentity: string,
+  ) {
+    const worktrees = new Map<string, NonNullable<AgentSessionThread["worktree"]>>();
+    const listWorktrees = (args: ReadonlyArray<string>) =>
+      processRunner
+        .run({
+          command: "git",
+          args: ["-C", root, "worktree", "list", "--porcelain", ...args],
+          timeout: GIT_FILE_READ_DEADLINE,
+          timeoutBehavior: "timedOutResult",
+          maxOutputBytes: MAX_GIT_FILE_BYTES,
+          outputMode: "truncate",
+        })
+        .pipe(Effect.option);
+    let listed = yield* listWorktrees(["-z"]);
+    // Pre-2.36 Git rejects -z; its line output uses blank lines between records.
+    if (Option.isSome(listed) && listed.value.code !== 0 && !listed.value.timedOut) {
+      listed = (yield* listWorktrees([])).pipe(
+        Option.map((result) => ({ ...result, stdout: result.stdout.replaceAll("\n", "\0") })),
+      );
+    }
+    if (Option.isNone(listed) || listed.value.code !== 0 || listed.value.timedOut) {
+      return worktrees;
+    }
+    // The last element is the empty tail, or a record the output cap cut short.
+    const records = listed.value.stdout
+      .split("\0\0")
+      .slice(0, -1)
+      .map((record) => record.split("\0"));
+    const recordPath = (fields: ReadonlyArray<string>) => {
+      const field = fields.find((entry) => entry.startsWith("worktree "));
+      return field === undefined ? null : path.resolve(root, field.slice("worktree ".length));
+    };
+    const [main = [], ...linked] = records;
+    // Git lists the main worktree first. A root that is a linked worktree, a
+    // subdirectory or a bare repository must not take its siblings' sessions.
+    const mainPath = recordPath(main);
+    if (
+      mainPath === null ||
+      main.includes("bare") ||
+      (yield* directoryIdentity(mainPath)) !== rootIdentity
+    ) {
+      return worktrees;
+    }
+    for (const fields of linked) {
+      const worktreePath = recordPath(fields);
+      const branch = fields
+        .find((field) => field.startsWith("branch refs/heads/"))
+        ?.slice("branch refs/heads/".length);
+      // Detached ones have no branch to bind, and T3's own are not imports. Git leaves
+      // a locked worktree whose directory is gone unmarked, so check the directory too.
+      if (
+        worktreePath === null ||
+        branch === undefined ||
+        fields.some((field) => field.startsWith("prunable")) ||
+        isExcludedProjectPath(worktreePath)
+      ) {
+        continue;
+      }
+      const stats = yield* statOption(worktreePath);
+      if (Option.isNone(stats) || stats.value.type !== "Directory") continue;
+      worktrees.set(yield* directoryIdentity(worktreePath, stats.value), {
+        path: worktreePath,
+        branch,
+      });
+    }
+    return worktrees;
+  });
+
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
@@ -1666,6 +1788,7 @@ export const make = Effect.gen(function* () {
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
+    const linkedWorktrees = yield* listLinkedWorktrees(root, rootIdentity);
 
     const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
@@ -1677,8 +1800,8 @@ export const make = Effect.gen(function* () {
     for (const candidate of candidates) {
       const expanded = expandHomePath(candidate.cwd.trim(), homeDir);
       if (!path.isAbsolute(expanded)) continue;
-      const resolved = path.resolve(expanded);
-      if ((yield* directoryIdentity(resolved)) !== rootIdentity) continue;
+      const identity = yield* directoryIdentity(path.resolve(expanded));
+      if (identity !== rootIdentity && !linkedWorktrees.has(identity)) continue;
 
       for (const transcript of candidate.transcripts) {
         if (
@@ -1805,10 +1928,12 @@ export const make = Effect.gen(function* () {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
           const expandedCwd = expandHomePath(snapshot.cwd.value.trim(), homeDir);
-          if (
-            !path.isAbsolute(expandedCwd) ||
-            (yield* directoryIdentity(path.resolve(expandedCwd))) !== rootIdentity
-          ) {
+          if (!path.isAbsolute(expandedCwd)) {
+            return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
+          }
+          const cwdIdentity = yield* directoryIdentity(path.resolve(expandedCwd));
+          const worktree = linkedWorktrees.get(cwdIdentity) ?? null;
+          if (cwdIdentity !== rootIdentity && worktree === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
 
@@ -1857,8 +1982,7 @@ export const make = Effect.gen(function* () {
           importedSessions.add(sessionKey);
           return Option.some<AgentSessionRecentThread>({
             _tag: "Importable",
-            thread:
-              savedTitle === undefined ? parsedThread : { ...parsedThread, title: savedTitle },
+            thread: { ...parsedThread, worktree, title: savedTitle ?? parsedThread.title },
             source,
           });
         }).pipe(importReadLock.withPermits(1)),
