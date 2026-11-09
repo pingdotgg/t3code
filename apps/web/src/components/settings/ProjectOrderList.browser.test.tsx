@@ -60,6 +60,15 @@ describe("ProjectOrderList", () => {
     expect(useUiStateStore.getState().projectOrder).toEqual(["b", "a-local", "a-remote", "g"]);
   });
 
+  it("reorders projects below the pinned divider", async () => {
+    setup([group("pinned", ["p"], true), group("alpha", ["a"]), group("beta", ["b"])]);
+    await using _screen = await render(<ProjectOrderList />);
+
+    await moveDown("alpha");
+
+    expect(useUiStateStore.getState().projectOrder).toEqual(["p", "b", "a"]);
+  });
+
   it("leaves the order alone when a drop crosses the pinned line", async () => {
     setup([group("pinned", ["p"], true), group("beta", ["b"])]);
     await using _screen = await render(<ProjectOrderList />);
