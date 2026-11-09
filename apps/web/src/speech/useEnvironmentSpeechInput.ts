@@ -41,7 +41,7 @@ import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
 import { bindAudioGrant, readCleanupGrant, useAudioChoice } from "./voiceConsent";
-import { playRecordingCue } from "./recordingCue";
+import { playRecordingCue, preloadRecordingCue } from "./recordingCue";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const WAITING_STATE: VoiceInputState = { phase: "preparing", error: null, errorAction: null };
@@ -395,8 +395,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       onStateChange: (value) => {
         if (disposed) return;
         if (value.phase === "error") pendingSubmissionRef.current = null;
-        if (value.phase === "recording" && latestRef.current.clientSettings.speechRecordingCue)
-          playRecordingCue();
+        const { speechRecordingCue, speechRecordingCueSound } = latestRef.current.clientSettings;
+        if (speechRecordingCue && value.phase === "preparing")
+          preloadRecordingCue(speechRecordingCueSound);
+        if (speechRecordingCue && value.phase === "recording")
+          playRecordingCue(speechRecordingCueSound);
         setControllerState({ prepared, grantId, value });
         if (value.phase !== "recording" && value.phase !== "transcribing") setPreview(null);
       },
