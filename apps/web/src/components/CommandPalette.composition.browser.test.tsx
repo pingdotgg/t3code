@@ -2,10 +2,21 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import type { FilesystemBrowseResult } from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
+
+const browseState = vi.hoisted(() => ({
+  platform: "linux",
+  result: undefined as FilesystemBrowseResult | undefined,
+}));
+
+function setup() {
+  browseState.platform = "linux";
+  browseState.result = undefined;
+}
 
 vi.mock("@effect/atom-react", async (original) => ({
   ...(await original<typeof import("@effect/atom-react")>()),
@@ -54,7 +65,10 @@ vi.mock("../state/environments", async (original) => ({
         connection: { phase: "connected" },
         entry: { target: { _tag: "PrimaryConnectionTarget" } },
         serverConfig: {
-          environment: { platform: { os: "linux" }, capabilities: { projectCloneTracking: true } },
+          environment: {
+            platform: { os: browseState.platform },
+            capabilities: { projectCloneTracking: true },
+          },
           settings: { addProjectBaseDirectory: "/workspace/" },
         },
       },
@@ -93,7 +107,7 @@ vi.mock("../state/filesystem", async (original) => ({
 }));
 vi.mock("../state/query", async (original) => ({
   ...(await original<typeof import("../state/query")>()),
-  useEnvironmentQuery: () => ({ data: undefined, isLoading: false }),
+  useEnvironmentQuery: () => ({ data: browseState.result, isLoading: false }),
 }));
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
@@ -105,6 +119,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
     { isComposing: true, keyCode: 13 },
     { isComposing: false, keyCode: 229 },
   ])("keeps Enter in the input during composition: %j", async (composition) => {
+    setup();
     await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
     await act(() => openCommandPalette({ open: "add-project" }));
     await page.getByText(step === "folder" ? "Local folder" : "Git URL", { exact: true }).click();
@@ -135,6 +150,7 @@ describe.each(["repository", "folder", "destination"] as const)("add-project %s"
 });
 
 it("keeps the caret in place when an edit briefly makes the folder path not a path", async () => {
+  setup();
   await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
   await act(() => openCommandPalette({ open: "add-project" }));
   await page.getByText("Local folder", { exact: true }).click();
@@ -146,4 +162,41 @@ it("keeps the caret in place when an edit briefly makes the folder path not a pa
   await expect.element(input()).toHaveValue("/workspace/project");
   await userEvent.keyboard("w");
   await expect.element(input()).toHaveValue("/wworkspace/project");
+});
+
+it.each([
+  { label: "C:", path: "C:\\Projects", otherDrive: "D:" },
+  { label: "d:", path: "d:/Projects", otherDrive: "C:" },
+])("filters Drives by $label and navigates for $path", async ({ label, path, otherDrive }) => {
+  setup();
+  browseState.platform = "windows";
+  browseState.result = {
+    parentPath: "/",
+    entries: [
+      { name: "C:", fullPath: "C:\\" },
+      { name: "D:", fullPath: "D:\\" },
+    ],
+  };
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette({ open: "add-project" }));
+  await page.getByText("Local folder", { exact: true }).click();
+  await page.getByRole("option", { name: "Drives", exact: true }).click();
+  const input = () => page.getByRole("combobox");
+  await input().fill(label.slice(0, 1));
+  await userEvent.keyboard(":");
+
+  await expect.element(input()).toHaveValue(label);
+  await expect
+    .element(page.getByRole("option", { name: new RegExp(`^${label}`, "i") }))
+    .toBeVisible();
+  await expect
+    .element(page.getByRole("option", { name: new RegExp(`^${otherDrive}`) }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(page.getByRole("option", { name: "Drives", exact: true }))
+    .not.toBeInTheDocument();
+
+  await input().fill(path);
+  await expect.element(input()).toHaveValue(path);
+  await expect.element(page.getByRole("option", { name: "Drives", exact: true })).toBeVisible();
 });

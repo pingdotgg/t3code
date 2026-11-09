@@ -966,7 +966,11 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     clearTypedHighlight();
     const resolvedQuery = canBrowsePaths ? resolvePastedPath(query, nextQuery) : nextQuery;
-    if (isDriveList && !isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform)) {
+    if (
+      isDriveList &&
+      (/^[a-z]:$/i.test(resolvedQuery) ||
+        !isFilesystemBrowseQuery(resolvedQuery, browseEnvironmentPlatform))
+    ) {
       dispatchSearch({ type: "query", query: resolvedQuery });
       return;
     }
