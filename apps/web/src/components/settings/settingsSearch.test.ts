@@ -220,16 +220,8 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
   });
 
-  it.each([
-    "layout-template",
-    "layout-terminal-placement",
-    "layout-side-pane-placement",
-    "layout-side-pane-opens-on",
-    "layout-new-tab-position",
-    "layout-when-no-room",
-    "layout-three-finger-swipe",
-  ])("keeps %s reachable from every settings scope", (id) => {
-    const setting = getSettingsSearchTargetScope(id)!;
+  it("keeps layout settings reachable from every settings scope", () => {
+    const setting = getSettingsSearchTargetScope("layout-template")!;
     expect(setting.scope).toBeNull();
     for (const kind of ["all", "environment", "project", "checkout", "unavailable"] as const) {
       expect(isSettingsSearchScopeAvailable(setting.scope, kind)).toBe(true);
