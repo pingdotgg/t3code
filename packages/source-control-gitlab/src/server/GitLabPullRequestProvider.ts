@@ -17,7 +17,6 @@ import type { GitLabDiffRefs, GitLabMergeRequestListState } from "./gitLabMergeR
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
-  type ProviderBatchedChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
   type PullRequestProviderApi,
@@ -322,84 +321,62 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("listChangeRequests")),
       ),
 
-    listChangeRequestsAcross: Effect.fn("GitLabPullRequestProvider.listChangeRequestsAcross")(
-      function* (input) {
-        // Each project's own cursor knows which rows at the boundary second it already sent.
-        if (input.cursor !== undefined) {
-          return { items: [], truncated: false, unresolved: input.repositories };
-        }
-        const failed = fail("listChangeRequestsAcross");
-        if (!(yield* supportsGraphqlList(input).pipe(Effect.mapError(failed)))) {
-          return yield* new PullRequestProviderError({
-            provider: SourceControlProviderKind.make("gitlab"),
-            operation: "listChangeRequestsAcross",
-            reason: "failed",
-            detail: "This GitLab version lists one project at a time.",
-          });
-        }
-        const chunks: Array<ReadonlyArray<string>> = [];
-        for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
-          chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
-        }
-        const pages = (yield* Effect.forEach(
-          chunks,
-          (repositories) =>
-            cli
-              .listMergeRequestsInProjects({
-                cwd: input.cwd,
-                host: input.host,
-                repositories,
-                state: input.state,
-                involvement: input.involvement,
-                viewer: input.viewer,
-                first: Math.min(
-                  input.limit,
-                  Math.max(MIN_ROWS_PER_PROJECT, Math.floor(ROWS_PER_READ / repositories.length)),
-                ),
-                query: input.query,
-                filters: input.filters,
-              })
-              .pipe(
-                // Left out, its projects come back unresolved and the caller reads each alone.
-                Effect.catchIf(
-                  (error) => !isAccountFailure(error),
-                  (error) =>
-                    Effect.logWarning("GitLab merge request list across projects failed", {
-                      host: input.host,
-                      reason: error._tag,
-                    }).pipe(Effect.as([])),
-                ),
+    listChangeRequestsInRepositories: Effect.fn(
+      "GitLabPullRequestProvider.listChangeRequestsInRepositories",
+    )(function* (input) {
+      const failed = fail("listChangeRequestsInRepositories");
+      if (!(yield* supportsGraphqlList(input).pipe(Effect.mapError(failed)))) {
+        return yield* new PullRequestProviderError({
+          provider: SourceControlProviderKind.make("gitlab"),
+          operation: "listChangeRequestsInRepositories",
+          reason: "failed",
+          detail: "This GitLab version lists one project at a time.",
+        });
+      }
+      const chunks: Array<ReadonlyArray<string>> = [];
+      for (let start = 0; start < input.repositories.length; start += PROJECTS_PER_READ) {
+        chunks.push(input.repositories.slice(start, start + PROJECTS_PER_READ));
+      }
+      const pages = yield* Effect.forEach(
+        chunks,
+        (repositories) =>
+          cli
+            .listMergeRequestsInProjects({
+              cwd: input.cwd,
+              host: input.host,
+              repositories,
+              state: input.state,
+              involvement: input.involvement,
+              viewer: input.viewer,
+              first: Math.min(
+                input.limit,
+                Math.max(MIN_ROWS_PER_PROJECT, Math.floor(ROWS_PER_READ / repositories.length)),
               ),
-          { concurrency: PROJECT_READ_CONCURRENCY },
-        ).pipe(Effect.mapError(failed))).flat();
-
-        // A project with more rows than it sent may have some newer than another project's
-        // oldest, so rows older than the newest such cut are left to the next page.
-        let cut: string | null = null;
-        for (const { page } of pages) {
-          if (!page.hasNextPage) continue;
-          const oldest = page.items.at(-1)?.updatedAt;
-          if (oldest !== undefined && (cut === null || oldest > cut)) cut = oldest;
-        }
-        const complete = pages
-          .flatMap(({ repository, page }) =>
-            page.items.map((item): ProviderBatchedChangeRequest => ({
-              ...withListState(item, page.states),
-              repository,
-            })),
-          )
-          .filter((item) => cut === null || item.updatedAt >= cut)
-          .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-        const answered = new Set(pages.map(({ repository }) => repository.trim().toLowerCase()));
-        return {
-          items: complete.slice(0, input.limit),
-          truncated: complete.length > input.limit || pages.some(({ page }) => page.hasNextPage),
-          unresolved: input.repositories.filter(
-            (repository) => !answered.has(repository.trim().toLowerCase()),
-          ),
-        };
-      },
-    ),
+              query: input.query,
+              filters: input.filters,
+            })
+            .pipe(
+              // Left out, its projects are read on their own.
+              Effect.catchIf(
+                (error) => !isAccountFailure(error),
+                (error) =>
+                  Effect.logWarning("GitLab merge request list across projects failed", {
+                    host: input.host,
+                    reason: error._tag,
+                  }).pipe(Effect.as([])),
+              ),
+            ),
+        { concurrency: PROJECT_READ_CONCURRENCY },
+      ).pipe(Effect.mapError(failed));
+      return pages.flat().map(({ repository, batch: { listStates: states, ...batch } }) => ({
+        repository,
+        page: {
+          ...batch,
+          items: batch.items.map((item) => withListState(item, states ?? new Map())),
+          continues: true,
+        },
+      }));
+    }),
 
     getFileStats: (input) =>
       cli.getMergeRequestFileStats(input).pipe(Effect.mapError(fail("getFileStats"))),

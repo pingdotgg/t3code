@@ -2358,10 +2358,14 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
   }),
 );
 
-it.effect("lists many GitLab projects on one host in a few glab reads, not one per project", () =>
+const gitLabWithGlab = (
+  graphql: (request: {
+    readonly query: string;
+    readonly variables: Record<string, unknown>;
+  }) => unknown,
+  reads: Array<string>,
+) =>
   Effect.gen(function* () {
-    const reads: Array<string> = [];
-    const emptyPage = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] };
     const gitlab = yield* GitLabDriver.driver.make.pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -2379,22 +2383,12 @@ it.effect("lists many GitLab projects on one host in a few glab reads, not one p
                   return Effect.succeed(TestSourceControlHost.processOutput("[]"));
                 }
                 const request = JSON.parse(input.stdin ?? "{}") as {
-                  readonly query?: string;
-                  readonly variables?: { readonly fullPaths?: ReadonlyArray<string> };
+                  readonly query: string;
+                  readonly variables: Record<string, unknown>;
                 };
-                const data = request.query?.includes("version")
+                const data = request.query.includes("version")
                   ? { metadata: { version: "19.6.0" } }
-                  : {
-                      metadata: { enterprise: false },
-                      project: { mergeRequests: emptyPage },
-                      projects: {
-                        pageInfo: emptyPage.pageInfo,
-                        nodes: (request.variables?.fullPaths ?? []).map((fullPath) => ({
-                          fullPath,
-                          mergeRequests: emptyPage,
-                        })),
-                      },
-                    };
+                  : graphql(request);
                 return Effect.succeed(
                   TestSourceControlHost.processOutput(JSON.stringify({ data })),
                 );
@@ -2409,16 +2403,39 @@ it.effect("lists many GitLab projects on one host in a few glab reads, not one p
       ),
     );
     assert.isNotNull(gitlab.pullRequests);
-    const projects = Array.from({ length: 60 }, (_, index) =>
-      project({
-        id: `p${index}`,
-        title: `project ${index}`,
-        workspaceRoot: `/w/${index}`,
-        repository: `gitlab-org/project-${index}`,
-        provider: "gitlab",
+    return gitlab.pullRequests;
+  });
+
+const gitLabProject = (index: number, repository: string) =>
+  project({
+    id: `p${index}`,
+    title: repository,
+    workspaceRoot: `/w/${index}`,
+    repository,
+    provider: "gitlab",
+  });
+
+it.effect("lists many GitLab projects on one host in a few glab reads, not one per project", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const emptyPage = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] };
+    const gitlab = yield* gitLabWithGlab(
+      ({ variables }) => ({
+        metadata: { enterprise: false },
+        project: { mergeRequests: emptyPage },
+        projects: {
+          nodes: ((variables.fullPaths ?? []) as ReadonlyArray<string>).map((fullPath) => ({
+            fullPath,
+            mergeRequests: emptyPage,
+          })),
+        },
       }),
+      reads,
     );
-    const service = yield* makeService({ projects, providers: [gitlab.pullRequests] });
+    const projects = Array.from({ length: 60 }, (_, index) =>
+      gitLabProject(index, `gitlab-org/project-${index}`),
+    );
+    const service = yield* makeService({ projects, providers: [gitlab] });
 
     const result = yield* service.list({ state: "open", involvement: "all" });
 
@@ -2426,6 +2443,93 @@ it.effect("lists many GitLab projects on one host in a few glab reads, not one p
     // GitLab takes at most 50 project paths per GraphQL request; one read per project is what
     // got gitlab.com to answer HTTP 429 on a large workspace. One more read is the version probe.
     expect(reads.length).toBeLessThanOrEqual(projects.length / 10 + 1);
+  }),
+);
+
+it.effect("continues GitLab projects read together by each project's own GraphQL cursor", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const afters: Array<unknown> = [];
+    // Newest first; the newest 10 of acme/big are approved and filtered out below.
+    const mergeRequests: Record<string, ReadonlyArray<number>> = {
+      "acme/big": Array.from({ length: 41 }, (_, index) => 41 - index),
+      "acme/small": [3, 2, 1],
+    };
+    const node = (repository: string, iid: number) => {
+      const approved = repository === "acme/big" && iid > 31;
+      return {
+        iid: String(iid),
+        title: `${repository}!${iid}`,
+        webUrl: `https://gitlab.com/${repository}/-/merge_requests/${iid}`,
+        state: "opened",
+        createdAt: "2026-07-01T00:00:00Z",
+        updatedAt: `2026-07-01T${String(iid).padStart(2, "0")}:00:00Z`,
+        sourceBranch: `b${iid}`,
+        targetBranch: "main",
+        approved,
+        approvedBy: { nodes: approved ? [{ username: "lead" }] : [] },
+      };
+    };
+    const pageOf = (repository: string, after: unknown, first: number) => {
+      const offset = after === null || after === undefined ? 0 : Number(String(after).slice(1));
+      const iids = mergeRequests[repository]!.slice(offset, offset + first);
+      const end = offset + iids.length;
+      return {
+        pageInfo: { hasNextPage: end < mergeRequests[repository]!.length, endCursor: `c${end}` },
+        nodes: iids.map((iid) => node(repository, iid)),
+      };
+    };
+    const gitlab = yield* gitLabWithGlab(({ query, variables }) => {
+      const first = variables.first as number;
+      if (query.includes("projects(")) {
+        return {
+          metadata: { enterprise: false },
+          projects: {
+            nodes: (variables.fullPaths as ReadonlyArray<string>).map((fullPath) => ({
+              fullPath,
+              mergeRequests: pageOf(fullPath, null, first),
+            })),
+          },
+        };
+      }
+      afters.push(variables.after);
+      return {
+        metadata: { enterprise: false },
+        project: {
+          mergeRequests: pageOf(variables.fullPath as string, variables.after, first),
+        },
+      };
+    }, reads);
+    const service = yield* makeService({
+      projects: [gitLabProject(0, "acme/big"), gitLabProject(1, "acme/small")],
+      providers: [gitlab],
+    });
+
+    const listed: Array<string> = [];
+    let page = yield* service.list({ state: "open", limit: 20, filters: { review: "none" } });
+    listed.push(...page.entries.map((entry) => entry.title));
+    const firstCursors = Object.keys(page.nextCursors);
+    while (Object.keys(page.nextCursors).length > 0) {
+      page = yield* service.list({
+        state: "open",
+        limit: 20,
+        filters: { review: "none" },
+        cursors: page.nextCursors,
+      });
+      listed.push(...page.entries.map((entry) => entry.title));
+    }
+
+    expect(listed.toSorted()).toEqual(
+      [
+        ...Array.from({ length: 31 }, (_, index) => `acme/big!${index + 1}`),
+        "acme/small!1",
+        "acme/small!2",
+        "acme/small!3",
+      ].toSorted(),
+    );
+    expect(firstCursors).toEqual(["gitlab.com acme/big"]);
+    expect(afters).toEqual(["c20", "c40"]);
+    expect(reads.filter((path) => path.includes("merge_requests"))).toEqual([]);
   }),
 );
 

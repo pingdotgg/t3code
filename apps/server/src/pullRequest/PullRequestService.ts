@@ -89,6 +89,7 @@ import * as SourceControlRateLimit from "@t3tools/source-control-core/server/Sou
 import {
   type ProviderChangeRequest,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestPage,
   type ProviderDiffFilePaths,
   type ProviderFilterOptionPage,
   type ProviderListCursor,
@@ -538,6 +539,14 @@ function withRateLimitBackoff(
       ? {}
       : {
           listChangeRequestsAcross: wrap("listChangeRequestsAcross", api.listChangeRequestsAcross),
+        }),
+    ...(api.listChangeRequestsInRepositories === undefined
+      ? {}
+      : {
+          listChangeRequestsInRepositories: wrap(
+            "listChangeRequestsInRepositories",
+            api.listChangeRequestsInRepositories,
+          ),
         }),
     ...(api.listChangeRequestStats === undefined
       ? {}
@@ -1358,6 +1367,37 @@ export const make = Effect.gen(function* () {
     const cursorOf = (project: SupportedProject): ListCursor | undefined =>
       continuation?.get(project.cursorKey);
 
+    const pageBatch = (
+      project: SupportedProject,
+      cursor: ListCursor | undefined,
+      page: ProviderChangeRequestPage,
+      observedAt: number,
+    ): RepositoryBatch => {
+      const viewer = viewers[project.host]!;
+      // The boundary instant was asked for inclusively, so the rows already sent at it
+      // come back with the slice. Dropping them here rather than asking for strictly
+      // older is what keeps their neighbours at the same instant from being skipped.
+      const items =
+        cursor === undefined
+          ? page.items
+          : page.items.filter(
+              (item) =>
+                item.updatedAt !== cursor.updatedBefore || !cursor.seenAt.includes(item.number),
+            );
+      return {
+        key: project.cursorKey,
+        entries: items
+          .filter((item) => matchesRowFilters(item, input.filters, viewer))
+          .map((item) => toEntry({ project, item, viewer, observedAt })),
+        errors: [],
+        truncated: page.truncated,
+        nextCursor:
+          page.continues && page.truncated
+            ? nextListCursor(cursor, page.items, items, page.cursorAdvance, page.resumeAfter)
+            : null,
+      };
+    };
+
     const readSlice = (
       project: SupportedProject,
       cursor: ListCursor | undefined,
@@ -1389,37 +1429,9 @@ export const make = Effect.gen(function* () {
           })
           .pipe(
             observeRead,
-            Effect.map(({ value: page, observedAt }): RepositoryBatch => {
-              // The boundary instant was asked for inclusively, so the rows already sent at it
-              // come back with the slice. Dropping them here rather than asking for strictly
-              // older is what keeps their neighbours at the same instant from being skipped.
-              const items =
-                cursor === undefined
-                  ? page.items
-                  : page.items.filter(
-                      (item) =>
-                        item.updatedAt !== cursor.updatedBefore ||
-                        !cursor.seenAt.includes(item.number),
-                    );
-              return {
-                key,
-                entries: items
-                  .filter((item) => matchesRowFilters(item, input.filters, viewer))
-                  .map((item) => toEntry({ project, item, viewer, observedAt })),
-                errors: [],
-                truncated: page.truncated,
-                nextCursor:
-                  page.continues && page.truncated
-                    ? nextListCursor(
-                        cursor,
-                        page.items,
-                        items,
-                        page.cursorAdvance,
-                        page.resumeAfter,
-                      )
-                    : null,
-              };
-            }),
+            Effect.map(({ value: page, observedAt }) =>
+              pageBatch(project, cursor, page, observedAt),
+            ),
             Effect.catch((error): Effect.Effect<RepositoryBatch> =>
               Effect.succeed({
                 key,
@@ -1544,11 +1556,60 @@ export const make = Effect.gen(function* () {
       );
     };
 
+    // A first page read together is not topped up by `fill`; its next page is.
+    const readFirstPages = (
+      chunk: ReadonlyArray<SupportedProject>,
+    ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
+      const first = chunk[0]!;
+      const readInRepositories = first.api.listChangeRequestsInRepositories!;
+      const separately = () =>
+        Effect.forEach(chunk, readRepository, { concurrency: REPOSITORY_CONCURRENCY });
+      return readInRepositories({
+        cwd: first.project.workspaceRoot,
+        host: first.host,
+        repositories: chunk.map((project) => project.repository),
+        state: input.state,
+        involvement,
+        viewer: viewers[first.host]!,
+        limit,
+        query: input.query,
+        filters: input.filters,
+      }).pipe(
+        observeRead,
+        Effect.flatMap(({ value: answered, observedAt }) => {
+          const pages = new Map(
+            answered.map(({ repository, page }) => [repository.trim().toLowerCase(), page]),
+          );
+          return Effect.forEach(
+            chunk,
+            (project) => {
+              const page = pages.get(project.repository.trim().toLowerCase());
+              return page === undefined
+                ? readRepository(project)
+                : Effect.succeed(pageBatch(project, undefined, page, observedAt));
+            },
+            { concurrency: REPOSITORY_CONCURRENCY },
+          );
+        }),
+        Effect.catch(separately),
+      );
+    };
+
     const together = new Map<string, Array<SupportedProject>>();
+    const firstPages = new Map<string, Array<SupportedProject>>();
     const separate: Array<SupportedProject> = [];
     for (const project of readable) {
       if (project.api.listChangeRequestsAcross === undefined) {
-        separate.push(project);
+        if (
+          project.api.listChangeRequestsInRepositories === undefined ||
+          cursorOf(project) !== undefined
+        ) {
+          separate.push(project);
+          continue;
+        }
+        const group = firstPages.get(project.host);
+        if (group === undefined) firstPages.set(project.host, [project]);
+        else group.push(project);
         continue;
       }
       const key = `${project.host}\n${cursorOf(project)?.updatedBefore ?? ""}`;
@@ -1562,6 +1623,11 @@ export const make = Effect.gen(function* () {
     for (const group of together.values()) {
       for (let start = 0; start < group.length; start += REPOSITORY_SEARCH_CHUNK) {
         reads.push(readTogether(group.slice(start, start + REPOSITORY_SEARCH_CHUNK)));
+      }
+    }
+    for (const group of firstPages.values()) {
+      for (let start = 0; start < group.length; start += REPOSITORY_SEARCH_CHUNK) {
+        reads.push(readFirstPages(group.slice(start, start + REPOSITORY_SEARCH_CHUNK)));
       }
     }
     const batches = (yield* Effect.all(reads, { concurrency: REPOSITORY_CONCURRENCY })).flat();

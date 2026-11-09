@@ -83,7 +83,7 @@ import {
   type GitLabMergeRequestDetail,
   type GitLabMergeRequestListItem,
   type GitLabMergeRequestListState,
-  type GitLabProjectMergeRequestGraphqlPage,
+  type GitLabMergeRequestGraphqlPage,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
 import type {
@@ -372,8 +372,9 @@ export class GitLabPullRequestCli extends Context.Service<
     }) => Effect.Effect<GitLabMergeRequestListBatch, GitLabPullRequestCliError>;
 
     /**
-     * One GraphQL read of each project's newest `first` merge requests. Projects the reader cannot
-     * see, or that do not exist, are absent from the answer. Needs `supportsGraphqlList`.
+     * One GraphQL read of each project's first page of `first` merge requests, as
+     * `listMergeRequests` reads it. Projects the reader cannot see, or that do not exist, are
+     * absent from the answer. Needs `supportsGraphqlList`.
      */
     readonly listMergeRequestsInProjects: (input: {
       readonly cwd: string;
@@ -386,7 +387,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly query?: string | undefined;
       readonly filters?: PullRequestListFilters | undefined;
     }) => Effect.Effect<
-      ReadonlyArray<GitLabProjectMergeRequestGraphqlPage>,
+      ReadonlyArray<{ readonly repository: string; readonly batch: GitLabMergeRequestListBatch }>,
       GitLabPullRequestCliError
     >;
 
@@ -847,7 +848,7 @@ function graphqlProjectsListQuery(
     nodes {
       fullPath
       mergeRequests(${usages}) {
-        pageInfo { hasNextPage }
+        pageInfo { hasNextPage endCursor }
         nodes { ${LIST_ITEM_GRAPHQL_FIELDS} }
       }
     }
@@ -863,6 +864,26 @@ function graphqlProjectsListQuery(
 
 /** The list cursor carries GitLab's own position only when it fits the cursor's alphabet. */
 const RESUME_AFTER_PATTERN = /^[\w.:~+-]{1,128}$/u;
+
+function resumeAfterOf(endCursor: string | null): string | undefined {
+  return endCursor !== null && RESUME_AFTER_PATTERN.test(endCursor) ? endCursor : undefined;
+}
+
+function graphqlListBatch(input: {
+  readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
+  readonly states: ReadonlyMap<number, GitLabMergeRequestListState>;
+  readonly cursorAdvance: number;
+  readonly page: GitLabMergeRequestGraphqlPage;
+}): GitLabMergeRequestListBatch {
+  const resumeAfter = resumeAfterOf(input.page.endCursor);
+  return {
+    items: input.items,
+    truncated: input.page.hasNextPage,
+    cursorAdvance: input.cursorAdvance,
+    ...(resumeAfter === undefined ? {} : { resumeAfter }),
+    listStates: input.states,
+  };
+}
 
 function diffCursorPage(cursor: string): number | null {
   return /^[1-9][0-9]{0,6}$/.test(cursor) ? Number(cursor) : null;
@@ -1711,10 +1732,7 @@ export const make = Effect.gen(function* () {
         const collected = [...input.collected, ...page.items];
         const states = new Map([...input.states, ...page.states]);
         const cursorAdvance = input.cursorAdvance + page.rawCount;
-        const resumeAfter =
-          page.endCursor !== null && RESUME_AFTER_PATTERN.test(page.endCursor)
-            ? page.endCursor
-            : undefined;
+        const resumeAfter = resumeAfterOf(page.endCursor);
         if (
           page.hasNextPage &&
           resumeAfter !== undefined &&
@@ -1730,13 +1748,7 @@ export const make = Effect.gen(function* () {
             reads: input.reads - 1,
           });
         }
-        return Effect.succeed({
-          items: collected,
-          truncated: page.hasNextPage,
-          cursorAdvance,
-          ...(resumeAfter === undefined ? {} : { resumeAfter }),
-          listStates: states,
-        });
+        return Effect.succeed(graphqlListBatch({ items: collected, states, cursorAdvance, page }));
       }),
     );
 
@@ -2050,9 +2062,24 @@ export const make = Effect.gen(function* () {
           cwd: input.cwd,
           host: input.host,
           operation: "listMergeRequestsInProjects",
-          ...graphqlProjectsListQuery(input),
+          ...graphqlProjectsListQuery({
+            ...input,
+            first: Math.max(1, Math.min(input.first, MAX_PAGE_SIZE)),
+          }),
           decode: decodeMergeRequestGraphqlProjectsListJson,
-        }),
+        }).pipe(
+          Effect.map((projects) =>
+            projects.map(({ repository, page }) => ({
+              repository,
+              batch: graphqlListBatch({
+                items: page.items,
+                states: page.states,
+                cursorAdvance: page.rawCount,
+                page,
+              }),
+            })),
+          ),
+        ),
     ),
 
     supportsGraphqlList: Effect.fn("GitLabPullRequestCli.supportsGraphqlList")((input) =>
