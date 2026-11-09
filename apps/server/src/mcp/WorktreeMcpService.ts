@@ -509,12 +509,55 @@ const make = Effect.gen(function* () {
     const exists = yield* fileSystem
       .exists(worktreePath)
       .pipe(asOperationFailed("Unable to check the worktree folder"));
-    // Subagent threads can share the parent's checkout.
-    const sharedWith = (yield* threadManagement
-      .listProjectThreads({ projectId: project.id, includeSubagents: true })
-      .pipe(asOperationFailed("Unable to list the project's threads"))).filter(
-      (thread) => thread.worktreePath === worktreePath && thread.id !== scope.thread.threadId,
+    // Subagents, side chats, and archived threads can share the checkout.
+    const sharing = yield* threadManagement
+      .getShellSnapshot({ worktreePath })
+      .pipe(asOperationFailed("Unable to list threads using the worktree"));
+    const sharedWith = [...sharing.threads, ...sharing.archivedThreads].filter(
+      (thread) => thread.id !== scope.thread.threadId,
     ).length;
+
+    // Commits `revision` reaches that no remote and no other local branch does; null when it does not resolve.
+    const countUnpushed = (cwd: string, revision: string, ownBranch: string | null) =>
+      gitDriver
+        .execute({
+          operation: "WorktreeMcpService.countUnpushedCommits",
+          cwd,
+          args: [
+            "rev-list",
+            "--count",
+            revision,
+            "--not",
+            ...(ownBranch === null ? [] : [`--exclude=${ownBranch}`]),
+            "--branches",
+            "--remotes",
+          ],
+          allowNonZeroExit: true,
+        })
+        .pipe(
+          asOperationFailed("Unable to count unpushed commits"),
+          Effect.flatMap((result) => {
+            if (result.exitCode !== 0) return Effect.succeed(null);
+            const output = result.stdout.trim();
+            return /^\d+$/.test(output)
+              ? Effect.succeed(Number(output))
+              : Effect.fail(
+                  failure(
+                    "operation_failed",
+                    "Unable to count unpushed commits: unexpected output.",
+                  ),
+                );
+          }),
+        );
+    const refuseUnpushed = (count: number | null, where: string) =>
+      count !== null && count > 0
+        ? Effect.fail(
+            failure(
+              "unsaved_work",
+              `${where} has ${count} commit${count === 1 ? "" : "s"} on no remote or other branch. Push them, or pass force: true to discard them.`,
+            ),
+          )
+        : Effect.void;
 
     let branch = projection.thread.branch;
     if (exists && sharedWith === 0) {
@@ -529,32 +572,19 @@ const make = Effect.gen(function* () {
         );
       }
       if (!force) {
-        // Commits only this checkout reaches: on no remote and no other local branch.
-        const unpushed = yield* gitDriver
-          .execute({
-            operation: "WorktreeMcpService.countUnpushedCommits",
-            cwd: worktreePath,
-            args: [
-              "rev-list",
-              "--count",
-              "HEAD",
-              "--not",
-              ...(status.refName === null ? [] : [`--exclude=${status.refName}`]),
-              "--branches",
-              "--remotes",
-            ],
-          })
-          .pipe(
-            Effect.map((result) => Number.parseInt(result.stdout.trim(), 10)),
-            asOperationFailed("Unable to count unpushed commits"),
-          );
-        if (unpushed > 0) {
-          return yield* failure(
-            "unsaved_work",
-            `Worktree '${worktreePath}' has ${unpushed} commit${unpushed === 1 ? "" : "s"} on no remote or other branch. Push them, or pass force: true to discard them.`,
-          );
-        }
+        yield* refuseUnpushed(
+          yield* countUnpushed(worktreePath, "HEAD", status.refName),
+          `Worktree '${worktreePath}'`,
+        );
       }
+    }
+
+    // The branch can hold commits HEAD does not: a detached HEAD, or a folder already gone.
+    let deleteBranch = input.deleteBranch === true && branch !== null && sharedWith === 0;
+    if (deleteBranch && branch !== null && !force) {
+      const unpushed = yield* countUnpushed(projectCwd, `refs/heads/${branch}`, branch);
+      if (unpushed === null) deleteBranch = false;
+      yield* refuseUnpushed(unpushed, `Branch '${branch}'`);
     }
 
     const commandId = yield* random.uuidV4().pipe(
@@ -596,7 +626,7 @@ const make = Effect.gen(function* () {
             branch,
             providerSessionIds: projection.providerSessions.map((session) => session.id),
             force,
-            deleteBranch: input.deleteBranch === true,
+            deleteBranch,
           }).pipe(Effect.forkDetach);
         }
         const result: WorktreeMcpReleaseResult = {

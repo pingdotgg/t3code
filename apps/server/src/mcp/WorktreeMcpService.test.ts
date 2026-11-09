@@ -295,16 +295,22 @@ const makeHarness = (options: HarnessOptions = {}) => {
         Layer.mock(ThreadManagementService.ThreadManagementService)({
           dispatch,
           getThreadRecords,
-          listProjectThreads: () =>
-            Effect.succeed(
-              (options.otherThreadWorktreePaths ?? []).map(
-                (worktreePath, index) =>
-                  ({
-                    id: ThreadId.make(`thread-sharing-${index}`),
-                    worktreePath,
-                  }) as OrchestrationV2ThreadShell,
+          getShellSnapshot: (input) =>
+            Effect.succeed({
+              schemaVersion: 1,
+              snapshotSequence: 1,
+              threads: (options.otherThreadWorktreePaths ?? []).flatMap((worktreePath, index) =>
+                worktreePath === input?.worktreePath
+                  ? [
+                      {
+                        id: ThreadId.make(`thread-sharing-${index}`),
+                        worktreePath,
+                      } as OrchestrationV2ThreadShell,
+                    ]
+                  : [],
               ),
-            ),
+              archivedThreads: [],
+            }),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
           getById,
@@ -733,49 +739,58 @@ describe("t3_worktree_release", () => {
     Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
 
+  // A repository with a pushed main and a worktree on `feature/done` holding one unpushed commit.
+  const makeReleaseRepo = Effect.fn("makeReleaseRepo")(function* (prefix: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix });
+    const cwd = `${directory}/repo`;
+    const remote = `${directory}/remote.git`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "release-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "main"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    yield* command(cwd, ["commit", "--allow-empty", "-m", "base"]);
+    yield* command(cwd, ["init", "--bare", remote]);
+    yield* command(cwd, ["remote", "add", "origin", remote]);
+    yield* command(cwd, ["push", "-u", "origin", "main"]);
+    yield* command(cwd, ["worktree", "add", "-b", "feature/done", worktreePath]);
+    yield* command(worktreePath, ["commit", "--allow-empty", "-m", "work"]);
+
+    const branchDeleted = yield* Deferred.make<void>();
+    const removed = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      thread: { worktreePath, branch: "feature/done" },
+      project: { workspaceRoot: cwd },
+      gitDriver: { execute: git.execute },
+      git: {
+        localStatus: () =>
+          Effect.succeed({
+            isRepo: true,
+            hasPrimaryRemote: true,
+            isDefaultRef: false,
+            refName: "feature/done",
+            hasWorkingTreeChanges: false,
+            workingTree: { files: [], insertions: 0, deletions: 0 },
+          }),
+        removeWorktree: (input) =>
+          git.removeWorktree(input).pipe(Effect.ensuring(Deferred.succeed(removed, undefined))),
+        deleteLocalBranch: (input) =>
+          git
+            .deleteLocalBranch(input)
+            .pipe(Effect.ensuring(Deferred.succeed(branchDeleted, undefined))),
+      },
+    });
+    return { fs, cwd, worktreePath, command, harness, branchDeleted, removed };
+  });
+
   it.effect("refuses unpushed commits, then removes the worktree and branch once pushed", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const git = yield* GitVcsDriver.GitVcsDriver;
-      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "release-unpushed-" });
-      const cwd = `${directory}/repo`;
-      const remote = `${directory}/remote.git`;
-      const worktreePath = `${directory}/worktree`;
-      yield* fs.makeDirectory(cwd);
-      const command = (at: string, args: string[]) =>
-        git.execute({ operation: "release-test", cwd: at, args });
-      yield* command(cwd, ["init", "-b", "main"]);
-      yield* command(cwd, ["config", "user.name", "Test"]);
-      yield* command(cwd, ["config", "user.email", "test@example.test"]);
-      yield* command(cwd, ["commit", "--allow-empty", "-m", "base"]);
-      yield* command(cwd, ["init", "--bare", remote]);
-      yield* command(cwd, ["remote", "add", "origin", remote]);
-      yield* command(cwd, ["push", "-u", "origin", "main"]);
-      yield* command(cwd, ["worktree", "add", "-b", "feature/done", worktreePath]);
-      yield* command(worktreePath, ["commit", "--allow-empty", "-m", "work"]);
-
-      const branchDeleted = yield* Deferred.make<void>();
-      const harness = makeHarness({
-        thread: { worktreePath, branch: "feature/done" },
-        project: { workspaceRoot: cwd },
-        gitDriver: { execute: git.execute },
-        git: {
-          localStatus: () =>
-            Effect.succeed({
-              isRepo: true,
-              hasPrimaryRemote: true,
-              isDefaultRef: false,
-              refName: "feature/done",
-              hasWorkingTreeChanges: false,
-              workingTree: { files: [], insertions: 0, deletions: 0 },
-            }),
-          removeWorktree: git.removeWorktree,
-          deleteLocalBranch: (input) =>
-            git
-              .deleteLocalBranch(input)
-              .pipe(Effect.ensuring(Deferred.succeed(branchDeleted, undefined))),
-        },
-      });
+      const { fs, cwd, worktreePath, command, harness, branchDeleted } =
+        yield* makeReleaseRepo("release-unpushed-");
 
       const refused = yield* Effect.exit(runRelease(harness, { deleteBranch: true }));
       expectTypedFailure(refused, { _tag: "WorktreeMcpFailure", code: "unsaved_work" });
@@ -797,6 +812,47 @@ describe("t3_worktree_release", () => {
       expect(yield* fs.exists(worktreePath)).toBe(false);
       expect((yield* command(cwd, ["branch", "--list", "feature/done"])).stdout).toBe("");
     }).pipe(Effect.scoped, Effect.provide(releaseGitLayer)),
+  );
+
+  it.effect("keeps an unpushed branch whose worktree folder is already gone", () =>
+    Effect.gen(function* () {
+      const { cwd, worktreePath, command, harness, removed } =
+        yield* makeReleaseRepo("release-gone-");
+      yield* command(cwd, ["worktree", "remove", "--force", worktreePath]);
+
+      const refused = yield* Effect.exit(runRelease(harness, { deleteBranch: true }));
+      expectTypedFailure(refused, { _tag: "WorktreeMcpFailure", code: "unsaved_work" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+
+      const released = yield* runRelease(harness);
+      expect(released.removal).toBe("already-gone");
+      yield* Deferred.await(removed);
+      expect((yield* command(cwd, ["branch", "--list", "feature/done"])).stdout).not.toBe("");
+    }).pipe(Effect.scoped, Effect.provide(releaseGitLayer)),
+  );
+
+  it.effect("fails closed when git's commit count is unreadable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "release-count-" });
+      const harness = makeHarness({
+        thread: { worktreePath, branch: "feature/done" },
+        gitDriver: {
+          execute: () =>
+            Effect.succeed({
+              exitCode: 0 as GitVcsDriver.ExecuteGitResult["exitCode"],
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            }),
+        },
+      });
+
+      const exit = yield* Effect.exit(runRelease(harness));
+      expectTypedFailure(exit, { _tag: "WorktreeMcpFailure", code: "operation_failed" });
+      expect(harness.dispatch).not.toHaveBeenCalled();
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("waits for the caller's provider session to exit before removing", () =>
