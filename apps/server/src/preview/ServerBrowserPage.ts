@@ -147,15 +147,18 @@ export type PointerReporter = (
 ) => Promise<void>;
 const noPointer: PointerReporter = async () => {};
 
+/** Playwright reads a 0 ms timeout as no timeout, so a spent deadline leaves 1 ms. */
+const remaining = (deadline: number) => Math.max(1, deadline - Date.now());
+
 const targetPoint = async (
   page: Page,
   locator: Locator | null,
   input: { readonly x?: number | undefined; readonly y?: number | undefined },
-  timeout: number,
+  deadline: number,
 ) => {
   if (locator === null) return { x: input.x ?? 0, y: input.y ?? 0 };
-  await locator.scrollIntoViewIfNeeded({ timeout });
-  const box = await locator.boundingBox({ timeout });
+  await locator.scrollIntoViewIfNeeded({ timeout: remaining(deadline) });
+  const box = await locator.boundingBox({ timeout: remaining(deadline) });
   if (box) return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
   const viewport = page.viewportSize();
   return { x: (viewport?.width ?? 0) / 2, y: (viewport?.height ?? 0) / 2 };
@@ -659,10 +662,10 @@ export const click = async (
   input: PreviewAutomationClickInput,
   pointer: PointerReporter = noPointer,
 ): Promise<{ readonly x: number; readonly y: number }> => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const locator = targetLocator(page, input);
   try {
-    return await clickTarget(page, locator, input, timeout, pointer);
+    return await clickTarget(page, locator, input, deadline, pointer);
   } catch (cause) {
     throw locator === null ? cause : await namedTargetTimeout(locator, input, cause);
   }
@@ -710,16 +713,16 @@ const clickTarget = async (
   page: Page,
   locator: Locator | null,
   input: PreviewAutomationClickInput,
-  timeout: number,
+  deadline: number,
   pointer: PointerReporter,
 ) => {
-  const point = await targetPoint(page, locator, input, timeout);
+  const point = await targetPoint(page, locator, input, deadline);
   await pointer(point, "click");
   const options = { button: input.button ?? "left", clickCount: input.clickCount ?? 1 } as const;
   const clicked =
     locator === null
       ? page.mouse.click(point.x, point.y, options)
-      : locator.click({ ...options, timeout });
+      : locator.click({ ...options, timeout: remaining(deadline) });
   let onDialog = constVoid;
   const dialogOpened = new Promise<"dialog">((resolve) => {
     onDialog = () => resolve("dialog");
@@ -798,14 +801,14 @@ export const hover = async (
   input: PreviewAutomationHoverInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const locator = targetLocator(page, input);
-  await pointer(await targetPoint(page, locator, input, timeout), "move");
+  await pointer(await targetPoint(page, locator, input, deadline), "move");
   if (locator === null) {
     await page.mouse.move(input.x ?? 0, input.y ?? 0);
     return;
   }
-  await locator.hover({ timeout });
+  await locator.hover({ timeout: remaining(deadline) });
 };
 
 export const select = async (
@@ -848,16 +851,16 @@ export const drag = async (
   input: PreviewAutomationDragInput,
   pointer: PointerReporter = noPointer,
 ) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
   const source = targetLocator(page, { locator: input.source })!;
   const target = targetLocator(page, { locator: input.target })!;
-  await pointer(await targetPoint(page, source, {}, timeout), "move");
+  await pointer(await targetPoint(page, source, {}, deadline), "move");
   // Observe drag rejection immediately; an unhandled rejection during cursor movement exits the server.
-  const dragFailure = source.dragTo(target, { timeout }).then(
+  const dragFailure = source.dragTo(target, { timeout: remaining(deadline) }).then(
     () => null,
     (error: unknown) => ({ error }),
   );
-  const end = await target.boundingBox({ timeout }).catch(() => null);
+  const end = await target.boundingBox({ timeout: remaining(deadline) }).catch(() => null);
   if (end) await pointer({ x: end.x + end.width / 2, y: end.y + end.height / 2 }, "move");
   const failure = await dragFailure;
   if (failure) throw failure.error;

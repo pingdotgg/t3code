@@ -5,7 +5,16 @@ import {
   type CDPSession,
   type Page,
 } from "playwright-core";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
 import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 
@@ -414,6 +423,60 @@ describe("server browser drag", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+});
+
+describe("server browser action timeout", () => {
+  type StepOptions = { readonly timeout?: number };
+  it.each([
+    {
+      action: "click",
+      act: (page: Page) => ServerBrowserPage.click(page, { selector: "#a", timeoutMs: 9_000 }),
+      last: ["#a.click 1"],
+    },
+    {
+      action: "hover",
+      act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
+      last: ["#a.hover 1"],
+    },
+    {
+      action: "drag",
+      act: (page: Page) =>
+        ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
+      last: ["#a.dragTo 1", "#b.boundingBox 1"],
+    },
+  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const box = { x: 0, y: 0, width: 20, height: 20 };
+    const page = {
+      once: () => {},
+      off: () => {},
+      locator: (selector: string) => {
+        const record = (step: string, options: StepOptions) =>
+          steps.push(`${selector}.${step} ${options.timeout}`);
+        return {
+          // Each step that finds the target takes 5 of the 9 seconds.
+          scrollIntoViewIfNeeded: async (options: StepOptions) => {
+            record("scrollIntoViewIfNeeded", options);
+            now += 5_000;
+          },
+          boundingBox: async (options: StepOptions) => {
+            record("boundingBox", options);
+            now += 5_000;
+            return box;
+          },
+          click: async (options: StepOptions) => record("click", options),
+          hover: async (options: StepOptions) => record("hover", options),
+          dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
+        };
+      },
+    } as unknown as Page;
+
+    await act(page);
+
+    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
   });
 });
 
