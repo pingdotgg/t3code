@@ -91,7 +91,7 @@ export function BranchToolbarRemoteSelector({
             onValueChange={(remoteName: string) => void selectRemote(remoteName)}
           >
             {remotes.map((remoteName) => (
-              <MenuRadioItem key={remoteName} value={remoteName}>
+              <MenuRadioItem key={remoteName} value={remoteName} closeOnClick>
                 {remoteName}
               </MenuRadioItem>
             ))}
