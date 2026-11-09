@@ -52,20 +52,6 @@ export function DiffFileHeaderStat({
   return <DiffStatLabel font="mono" layout="inline" additions={additions} deletions={deletions} />;
 }
 
-/** Sums a parsed file's hunks, the counts Pierre would have drawn itself. */
-export function fileDiffLineStat(fileDiff: FileDiffMetadata): {
-  additions: number;
-  deletions: number;
-} {
-  let additions = 0;
-  let deletions = 0;
-  for (const hunk of fileDiff.hunks) {
-    additions += hunk.additionLines;
-    deletions += hunk.deletionLines;
-  }
-  return { additions, deletions };
-}
-
 /**
  * The full path of the header title an event went through, whether it hit Pierre's title or the
  * narrow basename. Takes the event's `composedPath()` because the title lives in a shadow root.
