@@ -2,6 +2,7 @@ import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import { TextInputWrapper } from "expo-paste-input";
 import {
@@ -23,7 +24,7 @@ import {
   contextChipPresentation,
   contextRecordFileName,
 } from "../lib/composerChipPresentation";
-import { contextChipIconUri } from "../lib/contextChipIconSource";
+import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useNativePaste } from "../lib/useNativePaste";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -42,6 +43,7 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const EMPTY_MODELS: NonNullable<ComposerEditorProps["models"]> = [];
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -110,6 +112,13 @@ interface NativeComposerEditorProps extends ViewProps {
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
 
+// A view command rejects with "Unable to find the view" when the composer's native view is
+// unmounted, which can happen while an open question hides the composer slot. There is nothing
+// to act on then.
+function settleViewCommand(command: Promise<void> | undefined): void {
+  command?.catch(() => undefined);
+}
+
 function basename(path: string): string {
   const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return separator >= 0 ? path.slice(separator + 1) : path;
@@ -118,6 +127,7 @@ function basename(path: string): string {
 export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
+  models = EMPTY_MODELS,
   selection,
   style,
   textStyle,
@@ -156,19 +166,22 @@ export function ComposerEditor({
   useImperativeHandle(
     ref,
     () => ({
-      focus: () => void nativeRef.current?.focus(),
-      blur: () => void nativeRef.current?.blur(),
+      focus: () => settleViewCommand(nativeRef.current?.focus()),
+      blur: () => settleViewCommand(nativeRef.current?.blur()),
       setSelection: (nextSelection) =>
-        void nativeRef.current?.setSelection(nextSelection.start, nextSelection.end),
+        settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
+      flushPendingInput: async () => {},
     }),
     [],
   );
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
+  const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
+      composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens).map((token) => {
+        const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -182,24 +195,40 @@ export function ComposerEditor({
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
         return {
-          type: token.type,
+          // Android taps only known token types; a model chip opens like a skill chip.
+          type: token.type === "model" ? "skill" : token.type,
           source: token.source,
           start: token.start,
           end: token.end,
-          accent: contextChipAccent(presentation.accent, theme, chipTextColor),
+          accent: contextChipAccent(
+            model ? modelChipIcon(model).accent : presentation.accent,
+            theme,
+            chipTextColor,
+          ),
           label:
             token.type === "skill"
               ? (skillLabels.get(token.value) ?? token.value)
-              : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
+              : model
+                ? model.label
+                : token.type === "context"
+                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  : basename(token.value),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          iconUri: contextChipIconUri(icon),
-          tintsIcon: icon.kind === "chip",
+          iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
+          tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
         };
       }),
     );
-  }, [props.value, tokens, props.context, skillLabels, theme, chipTextColor]);
+  }, [
+    props.value,
+    tokens,
+    props.context,
+    skillLabels,
+    modelsBySource,
+    modelTokens,
+    theme,
+    chipTextColor,
+  ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -227,6 +256,7 @@ export function ComposerEditor({
     mostRecentEventCount: controlledEventCount,
     isNativeEcho,
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes native editor event snapshots once a committed payload acknowledges them
   useEffect(() => {
     if (!acknowledgesLatestNativeEvent) return;
     nativeEventSnapshotsRef.current = pruneAcknowledgedComposerNativeEvents(
@@ -235,6 +265,7 @@ export function ComposerEditor({
     );
   }, [acknowledgesLatestNativeEvent, mostRecentEventCount, nativeEventSnapshotsRef]);
   const assumedValue = props.value;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the committed controlled payload as the native editor's assumed state
   useEffect(() => {
     // Newer native events make this payload stale; do not record it as applied.
     if (isNativeEcho || controlledEventCount !== mostRecentEventCountRef.current) return;

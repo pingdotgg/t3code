@@ -1,5 +1,3 @@
-export const HOME_HORIZONTAL_INSET = 20;
-
 export const IPAD_HOME_TITLE_OFFSET = 10;
 
 export const IOS_NAV_BAR_HEIGHT = 44;
