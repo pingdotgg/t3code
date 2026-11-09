@@ -1788,10 +1788,14 @@ export function deriveMessagesTimelineRows(input: {
   const activeCompactionRunId = compactsOnReturn
     ? runningCompactionRunId
     : (resumeCompactionEntry?.entry.runId ?? null);
-  // Zen hides open requests from the rows, so read them from every entry.
+  // Zen hides open requests from the rows, so read them from every entry. Runless work owns only
+  // the requests since its prompt.
   const activeRunUserWaits: UserWaitItem[] = [];
-  if (input.isWorking && unsettledRunId !== null) {
-    for (const entry of input.timelineEntries) {
+  if (input.isWorking && (unsettledRunId !== null || runlessWorkActive)) {
+    const fromIndex =
+      unsettledRunId === null ? lastResponseBoundaryIndex(input.timelineEntries) + 1 : 0;
+    for (let index = fromIndex; index < input.timelineEntries.length; index += 1) {
+      const entry = input.timelineEntries[index]!;
       const userWait = timelineEntryUserWait(entry);
       if (userWait !== null && timelineEntryRunId(entry) === unsettledRunId) {
         activeRunUserWaits.push(userWait);

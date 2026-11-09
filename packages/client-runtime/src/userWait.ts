@@ -1,11 +1,17 @@
-import type { OrchestrationV2TurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2TurnItem, RunId } from "@t3tools/contracts";
 import { DateTime } from "effect";
 
 export type UserWaitItem = Pick<OrchestrationV2TurnItem, "startedAt" | "completedAt">;
 
-/** A provider question or approval: while it is open, its run waits on the user instead of working. */
-export function isUserWaitItem(item: Pick<OrchestrationV2TurnItem, "type">): boolean {
-  return item.type === "user_input_request" || item.type === "approval_request";
+/**
+ * A provider question or approval: while it is open, its run waits on the user instead of working.
+ * A message-mode question does not block; its answer arrives later as a new message.
+ */
+export function isUserWaitItem(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "approval_request" ||
+    (item.type === "user_input_request" && item.responseMode !== "message")
+  );
 }
 
 /**
@@ -47,4 +53,23 @@ export function workingTimerStartedAt(
   const startMs = Date.parse(startedAt);
   const waitedMs = userWaitMs(requests, startMs, Number.POSITIVE_INFINITY);
   return waitedMs === 0 ? startedAt : DateTime.formatIso(DateTime.makeUnsafe(startMs + waitedMs));
+}
+
+/**
+ * The live working timer's start: the active run's, else provider-native runless work's, moved
+ * past the answered requests of that work.
+ */
+export function activeWorkTimerStartedAt(input: {
+  readonly runStartedAt: string | null;
+  readonly runId: RunId | null | undefined;
+  readonly runlessStartedAt: string | null;
+  readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+}): string | null {
+  const startedAt = input.runStartedAt ?? input.runlessStartedAt;
+  if (startedAt === null) return null;
+  const runId = input.runStartedAt === null ? null : input.runId;
+  return workingTimerStartedAt(
+    startedAt,
+    input.items.filter((item) => item.runId === runId && isUserWaitItem(item)),
+  );
 }

@@ -37,7 +37,7 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
-import { isUserWaitItem, workingTimerStartedAt } from "@t3tools/client-runtime/user-wait";
+import { activeWorkTimerStartedAt } from "@t3tools/client-runtime/user-wait";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
 import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
@@ -375,18 +375,15 @@ export function useThreadComposerState(input: {
     if (!selectedThreadShell) {
       return null;
     }
-    const runStartedAt = resolveThreadWorkingStartedAt({
-      latestRun: selectedThreadActivityRun,
-      runtime: selectedThreadRuntime,
+    return activeWorkTimerStartedAt({
+      runStartedAt: resolveThreadWorkingStartedAt({
+        latestRun: selectedThreadActivityRun,
+        runtime: selectedThreadRuntime,
+      }),
+      runId: selectedThreadActivityRun?.runId,
+      runlessStartedAt: runlessWorkStartedAt,
+      items: selectedThreadVisibleTurnItems.map(({ item }) => item),
     });
-    if (runStartedAt === null) return runlessWorkStartedAt;
-    const activeRunId = selectedThreadActivityRun?.runId;
-    return workingTimerStartedAt(
-      runStartedAt,
-      selectedThreadVisibleTurnItems.flatMap(({ item }) =>
-        item.runId === activeRunId && isUserWaitItem(item) ? [item] : [],
-      ),
-    );
   })();
   const runlessWorkActive = runlessWorkStartedAt !== null;
 

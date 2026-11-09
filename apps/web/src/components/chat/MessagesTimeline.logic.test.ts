@@ -2198,17 +2198,30 @@ describe("deriveMessagesTimelineRows", () => {
               prompt: "Allow touch?",
             };
       };
-      const timelineEntries = (items: ReadonlyArray<OrchestrationV2TurnItem>) =>
+      const timelineEntries = (items: ReadonlyArray<OrchestrationV2TurnItem>, runless = false) =>
         deriveTimelineEntriesFromVisibleTurnItems({
           visibleTurnItems: items.map((item, position) => ({
             position,
             visibility: "local" as const,
             sourceThreadId: threadId,
             sourceItemId: item.id,
-            item,
+            item: runless ? { ...item, runId: null } : item,
           })),
           optimisticMessages: [],
         });
+      // Provider-native subagent work has no app run.
+      const liveWork = (runless: boolean) =>
+        runless
+          ? { runlessWorkActive: true }
+          : {
+              latestRun: {
+                runId,
+                status: "running" as const,
+                startedAt: DateTime.formatIso(at(0)),
+                completedAt: null,
+              },
+              runningRunId: runId,
+            };
       const prompt = {
         ...base("prompt", 0, 0),
         type: "user_message" as const,
@@ -2258,29 +2271,91 @@ describe("deriveMessagesTimelineRows", () => {
         });
       });
 
-      it("does not show a working timer counting from the run start", () => {
-        const rows = deriveMessagesTimelineRows({
-          timelineEntries: timelineEntries([prompt, command("before", 1, 1), request(null)]),
-          ...(kind === "approval" ? { pendingApprovalRequestIds: new Set([requestId]) } : {}),
-          latestRun: {
-            runId,
-            status: "running",
-            startedAt: DateTime.formatIso(at(0)),
-            completedAt: null,
-          },
-          runningRunId: runId,
+      it.each([false, true])(
+        "does not show a working timer counting from the run start (runless: %s)",
+        (runless) => {
+          const rows = deriveMessagesTimelineRows({
+            timelineEntries: timelineEntries(
+              [prompt, command("before", 1, 1), request(null)],
+              runless,
+            ),
+            ...(kind === "approval" ? { pendingApprovalRequestIds: new Set([requestId]) } : {}),
+            ...liveWork(runless),
+            isWorking: true,
+            activeTurnStartedAt: DateTime.formatIso(at(0)),
+            turnDiffSummaries: [],
+            supportsConversationRollback: false,
+          });
+
+          expect(
+            rows.filter(
+              (row) => row.kind === "working" && row.createdAt === DateTime.formatIso(at(0)),
+            ),
+            `the ${kind} is open, yet the working row times the whole run`,
+          ).toEqual([]);
+        },
+      );
+
+      it.each([false, true])(
+        "resumes the working timer past the answered wait (runless: %s)",
+        (runless) => {
+          const rows = deriveMessagesTimelineRows({
+            timelineEntries: timelineEntries(
+              [prompt, command("before", 1, 1), request(62)],
+              runless,
+            ),
+            ...liveWork(runless),
+            isWorking: true,
+            activeTurnStartedAt: DateTime.formatIso(at(0)),
+            turnDiffSummaries: [],
+            supportsConversationRollback: false,
+          });
+
+          expect(rows.find((row) => row.kind === "working")).toMatchObject({
+            createdAt: DateTime.formatIso(at(60)),
+          });
+        },
+      );
+
+      it.runIf(kind === "question")("counts work past a question answered by message", () => {
+        const asyncQuestion = { ...request(null), responseMode: "message" as const };
+        const live = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([prompt, asyncQuestion, command("after", 3, 63)]),
+          ...liveWork(false),
           isWorking: true,
           activeTurnStartedAt: DateTime.formatIso(at(0)),
           turnDiffSummaries: [],
           supportsConversationRollback: false,
         });
+        expect(live.some((row) => row.kind === "working" && row.waitingOnUser)).toBe(false);
 
-        expect(
-          rows.filter(
-            (row) => row.kind === "working" && row.createdAt === DateTime.formatIso(at(0)),
-          ),
-          `the ${kind} is open, yet the working row times the whole run`,
-        ).toEqual([]);
+        const finished = deriveMessagesTimelineRows({
+          timelineEntries: timelineEntries([
+            prompt,
+            asyncQuestion,
+            command("after", 3, 63),
+            {
+              ...base("answer", 4, 65),
+              type: "assistant_message" as const,
+              messageId: MessageId.make("answer"),
+              text: "Done; tell me the color when you can",
+              streaming: false,
+            },
+          ]),
+          latestRun: {
+            runId,
+            status: "completed",
+            startedAt: DateTime.formatIso(at(0)),
+            completedAt: DateTime.formatIso(at(65)),
+          },
+          isWorking: false,
+          activeTurnStartedAt: null,
+          turnDiffSummaries: [],
+          supportsConversationRollback: false,
+        });
+        expect(finished.find((row) => row.kind === "turn-fold")).toMatchObject({
+          label: "Worked for 1m 5s",
+        });
       });
     },
   );

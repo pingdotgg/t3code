@@ -1,6 +1,13 @@
+import {
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+  TurnItemId,
+  type OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
 import { DateTime } from "effect";
 import { describe, expect, it } from "vite-plus/test";
-import { userWaitMs, workingTimerStartedAt } from "./userWait.ts";
+import { activeWorkTimerStartedAt, userWaitMs, workingTimerStartedAt } from "./userWait.ts";
 
 const at = (second: number) => DateTime.makeUnsafe(second * 1000);
 const request = (from: number, to: number | null) => ({
@@ -25,5 +32,48 @@ describe("workingTimerStartedAt", () => {
     expect(
       workingTimerStartedAt(DateTime.formatIso(at(0)), [request(2, 62), request(70, null)]),
     ).toBe(DateTime.formatIso(at(60)));
+  });
+});
+
+describe("activeWorkTimerStartedAt", () => {
+  const approval = (
+    id: string,
+    runId: RunId | null,
+    from: number,
+    to: number,
+  ): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make(id),
+    threadId: ThreadId.make("thread"),
+    runId,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed",
+    title: null,
+    startedAt: at(from),
+    completedAt: at(to),
+    updatedAt: at(to),
+    type: "approval_request",
+    requestId: RuntimeRequestId.make(id),
+    requestKind: "command",
+    prompt: "Allow touch?",
+  });
+
+  it("moves runless work's timer past only its own answered requests", () => {
+    expect(
+      activeWorkTimerStartedAt({
+        runStartedAt: null,
+        runId: undefined,
+        runlessStartedAt: DateTime.formatIso(at(100)),
+        items: [
+          approval("earlier-turn", null, 10, 20),
+          approval("other-run", RunId.make("run"), 101, 200),
+          approval("this-turn", null, 102, 162),
+        ],
+      }),
+    ).toBe(DateTime.formatIso(at(160)));
   });
 });
