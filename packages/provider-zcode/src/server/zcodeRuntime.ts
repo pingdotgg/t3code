@@ -8,35 +8,11 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
-
-import {
-  zcodeRecordArray,
-  zcodeRecordField,
-  zcodeRecordString,
-  type ZcodeRecord,
-} from "./zcodeProtocol.ts";
 
 const ZCODE_BASE_URL = "https://zcode.z.ai";
 
 const DEFAULT_ZCODE_BINARY = "zcode";
-
-/** The CLI filters account providers to ids present in this catalog; inventing ids breaks selection. */
-export interface ZcodeAccountProviderPush {
-  readonly builtinModelIds: ReadonlyArray<string>;
-  readonly access: { readonly type: "zhipu-account"; readonly entitled: true };
-}
-
-export interface ZcodeAccountConfigPush {
-  readonly revision: string;
-  readonly basedOnZCodeBuiltinRevision: string;
-  readonly providers: Record<string, ZcodeAccountProviderPush>;
-  readonly states: Record<
-    string,
-    { readonly availability: "available"; readonly entitled: true; readonly current: boolean }
-  >;
-}
 
 /** Wire shape of `model` in session/create and `modelSelection` in session/send. */
 export interface ZcodeModelSelection {
@@ -184,79 +160,6 @@ export function zcodeRuntimeEnvironment(
     }
   }
   return next;
-}
-
-/**
- * Builds the `provider/updateAccountConfig` params from the builtin catalog's zhipu-account
- * providers. `entitled: true` in both providers.access and states is what makes the registry
- * treat a model as executable; `current` marks the first provider so a default exists.
- */
-export function zcodeAccountConfigPush(
-  catalog: unknown,
-  revision: string,
-): ZcodeAccountConfigPush | undefined {
-  const rules = zcodeProviderRules(catalog);
-  if (rules === undefined) return undefined;
-  const providers: Record<string, ZcodeAccountProviderPush> = {};
-  const states: ZcodeAccountConfigPush["states"] = {};
-  // Real catalogs carry a numeric revision; the wire expects the string form.
-  const rawRevision = zcodeRecordField(catalog ?? {}, "revision");
-  const basedOnRevision =
-    typeof rawRevision === "string" && rawRevision.length > 0
-      ? rawRevision
-      : typeof rawRevision === "number" && Number.isFinite(rawRevision)
-        ? String(Math.trunc(rawRevision))
-        : "0";
-  for (const rule of rules) {
-    const providerId = zcodeRecordString(rule, "providerId");
-    const config = zcodeRecordField(rule, "config");
-    const access = Predicate.isObject(config) ? zcodeRecordField(config, "access") : undefined;
-    const accessType = zcodeRecordString(access ?? {}, "type");
-    const builtinModelIds = zcodeRecordStringArray(
-      Predicate.isObject(config) ? zcodeRecordField(config, "builtinModelIds") : undefined,
-    );
-    if (
-      providerId === undefined ||
-      accessType !== "zhipu-account" ||
-      builtinModelIds.length === 0
-    ) {
-      continue;
-    }
-    providers[providerId] = {
-      builtinModelIds,
-      access: { type: "zhipu-account", entitled: true },
-    };
-    states[providerId] = {
-      availability: "available",
-      entitled: true,
-      current: Object.keys(providers).length === 1,
-    };
-  }
-  if (Object.keys(providers).length === 0) return undefined;
-  return {
-    revision,
-    basedOnZCodeBuiltinRevision: basedOnRevision,
-    providers,
-    states,
-  };
-}
-
-/** providerRules sits at config.providerConfigRules.providerRules; tolerate a flattened copy. */
-function zcodeProviderRules(catalog: unknown): ReadonlyArray<ZcodeRecord> | undefined {
-  if (!Predicate.isObject(catalog)) return undefined;
-  const direct = zcodeRecordArray(catalog, "providerRules");
-  if (direct !== undefined) return direct.filter(Predicate.isObject);
-  const config = zcodeRecordField(catalog, "config");
-  if (!Predicate.isObject(config)) return undefined;
-  const nested = zcodeRecordField(config, "providerConfigRules");
-  if (!Predicate.isObject(nested)) return undefined;
-  const rules = zcodeRecordArray(nested, "providerRules");
-  return rules === undefined ? undefined : rules.filter(Predicate.isObject);
-}
-
-function zcodeRecordStringArray(value: unknown): ReadonlyArray<string> {
-  if (!Array.isArray(value)) return [];
-  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
 /**

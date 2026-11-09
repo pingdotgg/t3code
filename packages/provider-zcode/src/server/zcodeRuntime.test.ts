@@ -1,14 +1,19 @@
+// @effect-diagnostics nodeBuiltinImport:off -- tests craft the CLI's own AES-GCM store values with node crypto
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
 import {
+  resolveZcodeCredentialSecret,
+  zcodeAccountConfigPushFromLadder,
+} from "./zcodeRequestAuth.ts";
+import {
   resolveZcodeCatalogFiles,
   readZcodeAppVersion,
   resolveZcodeLaunchCommand,
-  zcodeAccountConfigPush,
   zcodeBuiltinCatalogPath,
   zcodeBundledCatalogPath,
   zcodeDataRoot,
@@ -37,15 +42,33 @@ const inlineCatalog = {
         {
           providerId: "account:zai-individual-coding-plan",
           config: {
-            access: { type: "zhipu-account", accountType: "zai" },
+            access: { type: "zhipu-account", mode: "individual-coding-plan", accountType: "zai" },
             builtinModelIds: ["GLM-5.3", "GLM-5.3-Flash"],
           },
         },
         {
           providerId: "account:zai-team-coding-plan",
           config: {
-            access: { type: "zhipu-account", accountType: "zai" },
+            access: { type: "zhipu-account", mode: "team-coding-plan", accountType: "zai" },
             builtinModelIds: ["GLM-5.3"],
+          },
+        },
+        {
+          providerId: "account:bigmodel-individual-coding-plan",
+          config: {
+            access: {
+              type: "zhipu-account",
+              mode: "individual-coding-plan",
+              accountType: "bigmodel",
+            },
+            builtinModelIds: ["GLM-5.3"],
+          },
+        },
+        {
+          providerId: "account:start-individual-coding-plan",
+          config: {
+            access: { type: "zhipu-account", mode: "individual-coding-plan", accountType: "start" },
+            builtinModelIds: ["GLM-5.3-Flash"],
           },
         },
         {
@@ -59,6 +82,18 @@ const inlineCatalog = {
       ],
     },
   },
+};
+
+/** Produces store values the CLI's fallback cipher would hold, keyed the same way. */
+const encryptZcodeCredential = (value: string, secret: string): string => {
+  const iv = NodeCrypto.randomBytes(12);
+  const cipher = NodeCrypto.createCipheriv(
+    "aes-256-gcm",
+    NodeCrypto.createHash("sha256").update(secret).digest(),
+    iv,
+  );
+  const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  return `enc:v1:${iv.toString("base64url")}.${cipher.getAuthTag().toString("base64url")}.${ciphertext.toString("base64url")}`;
 };
 
 describe("zcodePlatformDir", () => {
@@ -199,62 +234,114 @@ describe("zcodeRuntimeEnvironment", () => {
   });
 });
 
-describe("zcodeAccountConfigPush", () => {
-  it("pushes only catalog zhipu-account providers with entitled access and states", () => {
-    const push = zcodeAccountConfigPush(inlineCatalog, "t3code-test");
-    assert.isDefined(push);
-    assert.deepEqual(Object.keys(push.providers), [
-      "account:zai-individual-coding-plan",
-      "account:zai-team-coding-plan",
-    ]);
-    assert.deepEqual(push.providers["account:zai-individual-coding-plan"]!, {
-      builtinModelIds: ["GLM-5.3", "GLM-5.3-Flash"],
-      access: { type: "zhipu-account", entitled: true },
-    });
-    assert.equal(push.basedOnZCodeBuiltinRevision, "43");
-    assert.equal(push.revision, "t3code-test");
-    const states = push.states;
-    assert.equal(states["account:zai-individual-coding-plan"]!.current, true);
-    assert.equal(states["account:zai-team-coding-plan"]!.current, false);
-    assert.equal(states["account:zai-team-coding-plan"]!.availability, "available");
-    assert.equal(states["account:zai-team-coding-plan"]!.entitled, true);
-  });
+describe("zcodeAccountConfigPushFromLadder", () => {
+  it.effect(
+    "keys the push to the catalog path hash and maps the entitlement ladder onto providers and states",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "zcode-ladder-test-" });
+          const platform = yield* HostProcess.Platform;
+          const environment = { ZCODE_DATA_BASE_DIR: root, HOME: "/home/dev", USER: "dev" };
+          yield* fs.makeDirectory(`${root}/.zcode/v2`, { recursive: true });
+          yield* fs.writeFileString(
+            `${root}/.zcode/v2/setting.json`,
+            JSON.stringify({
+              providerFamilyConnectionSelections: {
+                zai: { kind: "individual-coding-plan" },
+                bigmodel: { kind: "individual-coding-plan" },
+                start: { kind: "individual-coding-plan" },
+              },
+              modelProviderFamilyModes: { bigmodel: "apiKey" },
+            }),
+          );
+          yield* fs.writeFileString(
+            `${root}/.zcode/v2/credentials.json`,
+            JSON.stringify({
+              "oauth:zai:access_token": encryptZcodeCredential(
+                "zai-login-token",
+                resolveZcodeCredentialSecret(environment, platform),
+              ),
+            }),
+          );
+          const builtinPath = `${root}/catalog/zcode-builtin.json`;
+          const push = yield* zcodeAccountConfigPushFromLadder(fs, {
+            builtinPath,
+            builtinCatalog: inlineCatalog,
+            environment,
+          });
+          assert.isDefined(push);
+          // builtinPath is absolute, so the CLI-side path.resolve is a no-op here.
+          assert.equal(
+            push!.basedOnZCodeBuiltinRevision,
+            `zcode-builtin:43:${NodeCrypto.createHash("sha256").update(builtinPath).digest("hex")}`,
+          );
+          assert.equal(push!.revision.startsWith("account:t3code:"), true);
+          assert.deepEqual(Object.keys(push!.providers), [
+            "account:zai-individual-coding-plan",
+            "account:zai-team-coding-plan",
+            "account:bigmodel-individual-coding-plan",
+            "account:start-individual-coding-plan",
+          ]);
+          // OAuth selection + decrypted login token + plan-mode rule → entitled.
+          assert.deepEqual(push!.providers["account:zai-individual-coding-plan"], {
+            builtinModelIds: ["GLM-5.3", "GLM-5.3-Flash"],
+            access: { type: "zhipu-account", entitled: true },
+          });
+          assert.deepEqual(push!.states["account:zai-individual-coding-plan"], {
+            availability: "available",
+            entitled: true,
+            current: true,
+          });
+          // Team-plan rules never entitle.
+          assert.equal(push!.states["account:zai-team-coding-plan"]!.availability, "unavailable");
+          assert.equal(push!.states["account:zai-team-coding-plan"]!.entitled, false);
+          assert.equal(push!.states["account:zai-team-coding-plan"]!.current, false);
+          // A family switched to apiKey mode is excluded even with a selection.
+          assert.equal(
+            push!.states["account:bigmodel-individual-coding-plan"]!.availability,
+            "unavailable",
+          );
+          // A selected family without a decryptable login token stays unentitled.
+          assert.equal(push!.states["account:start-individual-coding-plan"]!.entitled, false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
 
-  it("returns undefined without a usable catalog", () => {
-    assert.equal(zcodeAccountConfigPush(undefined, "r"), undefined);
-    assert.equal(zcodeAccountConfigPush({}, "r"), undefined);
-    assert.equal(
-      zcodeAccountConfigPush(
-        {
-          config: {
-            providerConfigRules: {
-              providerRules: [{ providerId: "kimi-api", config: { access: { type: "api-key" } } }],
+  it.effect("returns undefined without a usable catalog or data root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const noRules = yield* zcodeAccountConfigPushFromLadder(fs, {
+          builtinPath: "/tmp/builtin.json",
+          builtinCatalog: { config: { providerConfigRules: { providerRules: [] } } },
+          environment: { HOME: "/home/dev" },
+        });
+        assert.equal(noRules, undefined);
+        const noRoot = yield* zcodeAccountConfigPushFromLadder(fs, {
+          builtinPath: "/tmp/builtin.json",
+          builtinCatalog: inlineCatalog,
+          environment: {},
+        });
+        assert.equal(noRoot, undefined);
+        const apiOnly = yield* zcodeAccountConfigPushFromLadder(fs, {
+          builtinPath: "/tmp/builtin.json",
+          builtinCatalog: {
+            config: {
+              providerConfigRules: {
+                providerRules: [
+                  { providerId: "kimi-api", config: { access: { type: "api-key" } } },
+                ],
+              },
             },
           },
-        },
-        "r",
-      ),
-      undefined,
-    );
-  });
-
-  it("tolerates a flattened providerRules list", () => {
-    const push = zcodeAccountConfigPush(
-      {
-        revision: 7,
-        providerRules: [
-          {
-            providerId: "account:zai-start-plan",
-            config: { access: { type: "zhipu-account" }, builtinModelIds: ["GLM-5.3-Flash"] },
-          },
-        ],
-      },
-      "r",
-    );
-    assert.isDefined(push);
-    assert.equal(push.basedOnZCodeBuiltinRevision, "7");
-    assert.deepEqual(Object.keys(push.providers), ["account:zai-start-plan"]);
-  });
+          environment: { HOME: "/home/dev" },
+        });
+        assert.equal(apiOnly, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("zcodeModelSelectionFromSlug", () => {
@@ -322,11 +409,19 @@ it.layer(NodeServices.layer)("ZcodeRuntime catalog resolution", (it) => {
         assert.equal(resolved.builtinPath, `${builtinDir}/zcode-builtin.json`);
         assert.equal(resolved.bundledPath, undefined);
         assert.equal(resolved.personalPath, personalPath);
-        const push = zcodeAccountConfigPush(resolved.builtinCatalog, "r");
+        // No credentials or setting selection in this root: every rule pushes unentitled.
+        const push = yield* zcodeAccountConfigPushFromLadder(fs, {
+          builtinPath: resolved.builtinPath!,
+          builtinCatalog: resolved.builtinCatalog,
+          environment: { ZCODE_DATA_BASE_DIR: root },
+        });
         assert.deepEqual(Object.keys(push?.providers ?? {}), [
           "account:zai-individual-coding-plan",
           "account:zai-team-coding-plan",
+          "account:bigmodel-individual-coding-plan",
+          "account:start-individual-coding-plan",
         ]);
+        assert.equal(push?.states["account:zai-individual-coding-plan"]?.entitled, false);
       }),
     ),
   );

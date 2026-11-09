@@ -4,6 +4,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 
@@ -99,7 +100,17 @@ function zcodeSessionCreateResult(sessionId: string, params: ZcodeRecord): Zcode
     },
     settings: {
       mode: { current: "build" },
-      model: { available: [] },
+      model: {
+        available: [
+          {
+            ref: { providerId: "account:zai-individual-coding-plan", modelId: "GLM-5.3-Flash" },
+            label: "GLM-5.3 Flash",
+            contextWindow: 200000,
+            maxOutputTokens: 128000,
+            reasoning: { levels: ["low", "high", "max"], defaultLevel: "max" },
+          },
+        ],
+      },
       permission: { mode: "build" },
       thoughtLevel: { available: [], enabled: false },
     },
@@ -251,6 +262,19 @@ export const makeZcodeAdapterOptions = (): ZcodeAdapterV2Options => ({
   environment: {},
 });
 
+/**
+ * Request auth the adapter can drive without touching the local credential store or network:
+ * every runtime-headers request is answered with the fixed successful exchange.
+ */
+export const fakeZcodeRequestAuth =
+  (): NonNullable<ZcodeAdapterV2Options["makeRequestAuth"]> => () => ({
+    answerRuntimeHeaders: () =>
+      Effect.succeed({
+        headersApplied: true,
+        requestAuth: { apiKey: "test", apiKeyId: "k", accountScope: "a" },
+      }),
+  });
+
 /** The driver kind the package driver and the hand-built adapter options must agree on. */
 export const zcodeDriverKind: typeof ZCODE_PROVIDER = ZCODE_PROVIDER;
 
@@ -263,4 +287,6 @@ export const ZcodeAdapterTestLayer = Layer.mergeAll(
   NodeServices.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
+  // The adapter captures an HttpClient for the runtime-headers exchange; fakes never fetch.
+  FetchHttpClient.layer,
 );

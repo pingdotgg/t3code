@@ -29,12 +29,14 @@ import { ZCODE_PROVIDER, makeZcodeAdapterV2 } from "@t3tools/provider-zcode/test
 import {
   type FakeZcodeScenario,
   ZcodeAdapterTestLayer,
+  fakeZcodeRequestAuth,
   makeFakeZcodeConnection,
   makeZcodeAdapterOptions,
   zcodeDriverKind,
   zcodeServerRequest,
   zcodeSessionEvent,
 } from "./ZcodeAdapterV2.testkit.ts";
+import type { ZcodeAdapterV2Options } from "@t3tools/provider-zcode/testing";
 
 const INSTANCE_ID = ProviderInstanceId.make("zcode_frame_test");
 const THREAD_ID = ThreadId.make("thread-zcode-frame-test");
@@ -51,6 +53,7 @@ const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
 const makeTurnInput = Effect.fnUntraced(function* (
   providerThread: OrchestrationV2ProviderThread,
   text = TURN_TEXT,
+  model = MODEL_SELECTION.model,
 ): Effect.fn.Return<ProviderAdapter.ProviderAdapterV2TurnInput> {
   const now = yield* DateTime.now;
   const threadId = providerThread.appThreadId ?? THREAD_ID;
@@ -61,7 +64,7 @@ const makeTurnInput = Effect.fnUntraced(function* (
     createdBy: "user",
     creationSource: "web",
     providerInstanceId: providerThread.providerInstanceId,
-    modelSelection: MODEL_SELECTION,
+    modelSelection: { instanceId: INSTANCE_ID, model },
     runtimeMode: runtimePolicy.runtimeMode,
     interactionMode: runtimePolicy.interactionMode,
     branch: null,
@@ -95,16 +98,17 @@ const makeTurnInput = Effect.fnUntraced(function* (
       scheduledTaskId: undefined,
       senderThreadId: undefined,
     },
-    modelSelection: MODEL_SELECTION,
+    modelSelection: { instanceId: INSTANCE_ID, model },
     runtimePolicy,
   };
 });
 
-const makeHarness = Effect.fnUntraced(function* () {
+const makeHarness = Effect.fnUntraced(function* (override: Partial<ZcodeAdapterV2Options> = {}) {
   const scenario = yield* makeFakeZcodeConnection();
   const adapter = yield* makeZcodeAdapterV2({
     ...makeZcodeAdapterOptions(),
     makeConnection: () => Effect.succeed(scenario.connection),
+    ...override,
   });
   const runtime = yield* adapter.openSession({
     threadId: THREAD_ID,
@@ -158,9 +162,9 @@ const makeHarness = Effect.fnUntraced(function* () {
     allEvents,
     takeEvent,
     offerTurnEvent,
-    startTurn: (text?: string) =>
+    startTurn: (text?: string, model?: string) =>
       Effect.gen(function* () {
-        const input = yield* makeTurnInput(providerThread, text);
+        const input = yield* makeTurnInput(providerThread, text, model);
         return yield* runtime.startTurn(input);
       }),
   };
@@ -291,6 +295,54 @@ describe("ZcodeAdapterV2 (frame-driven)", () => {
       yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
       assert.deepEqual(harness.scenario.unexpectedMethods(), []);
     }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
+  );
+
+  it.effect(
+    "sends account-model turns with the advertised reasoning level and serves runtime headers",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({ makeRequestAuth: fakeZcodeRequestAuth() });
+        // "default" omits the model entirely; account slugs select per turn.
+        yield* harness.startTurn(TURN_TEXT, "account:zai-individual-coding-plan/GLM-5.3-Flash");
+        const send = requestFor(harness.scenario, "session/send");
+        assert.isDefined(send);
+        assert.deepEqual(send!.params["modelSelection"], {
+          providerId: "account:zai-individual-coding-plan",
+          modelId: "GLM-5.3-Flash",
+          options: { reasoningLevel: "max" },
+        });
+
+        // Before an account-model request the CLI asks the host for project runtime headers;
+        // the injected request auth's response must reach the wire verbatim.
+        const broker = zcodeServerRequest("interaction/requestProviderRuntimeHeaders", {
+          sessionId: harness.scenario.createdSessionId(),
+          modelSelection: {
+            providerId: "account:zai-individual-coding-plan",
+            modelId: "GLM-5.3-Flash",
+            options: { reasoningLevel: "max" },
+          },
+        });
+        yield* harness.scenario.offerEvent(broker);
+        // The first two responds are the create-time runtime preferences and MCP auth headers.
+        yield* harness.scenario.takeRespond;
+        yield* harness.scenario.takeRespond;
+        const answered = yield* harness.scenario.takeRespond;
+        assert.equal(answered.id, broker.id);
+        assert.deepEqual(answered.result, {
+          headersApplied: true,
+          requestAuth: { apiKey: "test", apiKeyId: "k", accountScope: "a" },
+        });
+
+        yield* harness.offerTurnEvent("turn.completed", {
+          response: "pong",
+          tokenCount: 3,
+          toolCallCount: 0,
+          duration: 60,
+          resultType: "success",
+        });
+        yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
+        assert.deepEqual(harness.scenario.unexpectedMethods(), []);
+      }).pipe(Effect.scoped, Effect.provide(ZcodeAdapterTestLayer)),
   );
 
   it.effect("maps shell tool lifecycle into command execution items", () =>

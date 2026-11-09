@@ -7,8 +7,8 @@ configuration.
 
 1. Install ZCode on the machine running the T3 Code server. The ZCode app installs the `zcode`
    CLI; make sure it is on that machine's `PATH`, or set its **Binary path** in provider settings.
-2. Run `zcode login` once in a terminal on that machine. Login opens a browser authorization for
-   your Z.AI account.
+2. Run `zcode login` once in a terminal on that machine. Login starts an OAuth authorization for
+   your Z.AI account, which works on headless servers too: finish it from a browser on any device.
 3. Open **Settings → Providers**, enable ZCode, and refresh it.
 
 ZCode runs on the server's machine only. A desktop ZCode app elsewhere does not share its sign-in
@@ -16,9 +16,10 @@ with T3 Code; the server's own `zcode login` is what counts.
 
 ## Models
 
-The model picker lists the GLM models your Z.AI plan offers. New threads start on `default`,
-which defers to the model your ZCode session resolves on its own. A model your account cannot
-use stops the turn with an error instead of running on another model.
+After signing in, the model picker lists the GLM models your Z.AI plan offers — no API key or
+model configuration needed. Reasoning follows each model's own default level unless you pick one.
+New threads start on `default`, which defers to the model your ZCode session resolves on its own.
+A model your account cannot use stops the turn with an error instead of running on another model.
 
 ## Permission Modes
 

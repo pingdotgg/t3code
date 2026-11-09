@@ -1,5 +1,6 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Predicate from "effect/Predicate";
 import {
   type OrchestrationV2ConversationMessage,
@@ -27,6 +28,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -63,13 +65,17 @@ import {
 } from "./zcodeProtocol.ts";
 import {
   resolveZcodeCatalogFiles,
-  zcodeAccountConfigPush,
   resolveZcodeLaunchCommand,
   zcodeModelSelectionFromSlug,
   zcodeRuntimeEnvironment,
   zcodeSpawnArgs,
   type ZcodeCatalogFileSet,
 } from "./zcodeRuntime.ts";
+import {
+  makeZcodeRequestAuth,
+  zcodeAccountConfigPushFromLadder,
+  zcodeFamilyFromProviderId,
+} from "./zcodeRequestAuth.ts";
 
 export const ZCODE_PROVIDER: ProviderDriverKind = ProviderDriverKind.make("zcode");
 const DEFAULT_ZCODE_SETTINGS = Schema.decodeSync(ZcodeSettings)({});
@@ -186,6 +192,8 @@ export interface ZcodeAdapterV2Options {
   readonly environment: NodeJS.ProcessEnv;
   /** Testkit injection point; production spawns the real `zcode app-server`. */
   readonly makeConnection?: typeof makeZcodeConnection;
+  /** Testkit injection point; production mints OAuth project tokens from the local store. */
+  readonly makeRequestAuth?: typeof makeZcodeRequestAuth;
 }
 
 function providerRef(
@@ -222,15 +230,33 @@ function contentText(content: unknown): string {
     .join("");
 }
 
-/**
- * The CLI rejects a pinned model with this registry error when its account provisioning could
- * not make any model executable — as of CLI 0.17.1 this happens for every push over this
- * protocol, while the CLI's own headless runs resolve models fine.
- */
-function isRegistryModelGapError(result: unknown): boolean {
-  if (!Predicate.isObject(result) || !Predicate.isObject(result["error"])) return false;
-  const message = zcodeRecordString(result["error"], "message") ?? "";
-  return message.includes("Provider Registry") && message.includes("Model");
+interface ZcodeAvailableModel {
+  readonly providerId: string;
+  readonly modelId: string;
+  readonly defaultReasoningLevel?: string;
+}
+
+/** Parses the create result's `settings.model.available` descriptors. */
+function parseZcodeAvailableModels(input: unknown): ReadonlyArray<ZcodeAvailableModel> {
+  if (!Array.isArray(input)) return [];
+  const out: Array<ZcodeAvailableModel> = [];
+  for (const entry of input) {
+    if (!Predicate.isObject(entry)) continue;
+    const ref = entry["ref"];
+    const providerId = zcodeRecordString(ref, "providerId");
+    const modelId = zcodeRecordString(ref, "modelId");
+    if (providerId === undefined || modelId === undefined) continue;
+    const reasoning = entry["reasoning"];
+    const defaultLevel = Predicate.isObject(reasoning)
+      ? zcodeRecordString(reasoning, "defaultLevel")
+      : undefined;
+    out.push({
+      providerId,
+      modelId,
+      ...(defaultLevel === undefined ? {} : { defaultReasoningLevel: defaultLevel }),
+    });
+  }
+  return out;
 }
 
 function toolResultOutput(result: unknown): string | undefined {
@@ -392,6 +418,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const httpClient = yield* HttpClient.HttpClient;
 
   const protocolError = (detail: string, payload?: unknown) =>
     new ProviderAdapter.ProviderAdapterProtocolError({
@@ -399,6 +426,13 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       detail,
       ...(payload === undefined ? {} : { payload }),
     });
+
+  const requestAuth = (options.makeRequestAuth ?? makeZcodeRequestAuth)({
+    fileSystem,
+    httpClient,
+    environment: options.environment,
+    clientVersion: "0.0.0",
+  });
 
   const zcodeMcpServers = (
     session: McpProviderSessionConfig | undefined,
@@ -501,6 +535,9 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
       // overtake the runtime request resolution they correlate with.
       const sessionEventPermit = yield* Semaphore.make(1);
       let threadState: ZcodeThreadState | null = null;
+      // Session models come from the CLI's own create-result advertisement; per-session, so a
+      // resume re-populates them.
+      let availableModels: ReadonlyArray<ZcodeAvailableModel> = [];
       let transportDown = false;
 
       yield* Effect.addFinalizer(() =>
@@ -1399,9 +1436,44 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
             });
             return;
           }
-          case "interaction/requestOfficialMcpAuthHeaders":
-          case "interaction/requestProviderRuntimeHeaders": {
+          case "interaction/requestOfficialMcpAuthHeaders": {
             yield* connection.respond(respondId, {});
+            return;
+          }
+          case "interaction/requestProviderRuntimeHeaders": {
+            const params = zcodeRecordField(record, "params");
+            const providerId =
+              zcodeRecordString(params ?? {}, "providerId") ??
+              zcodeRecordString(
+                zcodeRecordField(params ?? {}, "modelSelection") ?? {},
+                "providerId",
+              );
+            const family = zcodeFamilyFromProviderId(providerId);
+            if (family === undefined) {
+              yield* connection.respond(respondId, {
+                headersApplied: false,
+                errorMessage: "Unsupported ZCode account provider.",
+              });
+              return;
+            }
+            const rejectedProjectTokenFingerprint = zcodeRecordString(
+              params ?? {},
+              "rejectedProjectTokenFingerprint",
+            );
+            const answer = requestAuth.answerRuntimeHeaders({
+              family,
+              ...(rejectedProjectTokenFingerprint === undefined
+                ? {}
+                : { rejectedProjectTokenFingerprint }),
+            });
+            yield* answer.pipe(
+              Effect.flatMap((response) => connection.respond(respondId, response)),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("ZCode runtime headers answer failed.", {
+                  errorTag: causeErrorTag(cause),
+                }),
+              ),
+            );
             return;
           }
           case "interaction/requestPermission": {
@@ -1544,36 +1616,32 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         Effect.forkIn(scope),
       );
 
-      // Provisioning must precede session/create: the probe showed create resolves the model
-      // against the registry immediately. Best-effort — a rejected push surfaces honestly as a
+      // Provisioning must precede session/create: the CLI resolves models against the registry
+      // it builds from this push. Best-effort — a rejected push surfaces honestly as a
       // "Select a model" turn failure instead of failing the session open.
       const bootstrapProviderRegistry = Effect.fn("ZcodeAdapter.bootstrapProviderRegistry")(
         function* () {
-          const push =
-            catalogFiles.builtinCatalog === undefined
-              ? undefined
-              : zcodeAccountConfigPush(
-                  catalogFiles.builtinCatalog,
-                  `t3code-${input.providerSessionId}`,
-                );
-          if (push === undefined) {
+          if (catalogFiles.builtinCatalog === undefined || catalogFiles.builtinPath === undefined) {
             yield* Effect.logWarning(
               "ZCode builtin catalog unavailable; account models will report as missing.",
               { builtinPath: catalogFiles.builtinPath ?? null },
             );
             return;
           }
-          yield* request("provider/updateAccountConfig", push as unknown as ZcodeRecord).pipe(
+          const push = yield* zcodeAccountConfigPushFromLadder(fileSystem, {
+            builtinPath: catalogFiles.builtinPath,
+            builtinCatalog: catalogFiles.builtinCatalog,
+            environment: options.environment,
+          });
+          if (push === undefined) {
+            yield* Effect.logWarning(
+              "ZCode catalog declares no account providers; account models will report as missing.",
+            );
+            return;
+          }
+          yield* request("provider/updateAccountConfig", push).pipe(
             Effect.tapError((error) =>
               Effect.logWarning("ZCode account config push failed.", {
-                operation: error.operation,
-              }),
-            ),
-            Effect.ignore,
-          );
-          yield* request("provider/refreshRegistry", { reason: "t3code-session" }).pipe(
-            Effect.tapError((error) =>
-              Effect.logWarning("ZCode registry refresh failed.", {
                 operation: error.operation,
               }),
             ),
@@ -1602,31 +1670,25 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
           titleGenerationEnabled: false,
           ...(mcpServers === undefined ? {} : { mcpServers }),
         };
-        const modelSelection = zcodeModelSelectionFromSlug(threadInput.modelSelection.model);
-        if (modelSelection !== undefined) createParams["model"] = modelSelection;
-        let result = yield* request("session/create", createParams, SESSION_CREATE_TIMEOUT_MS);
-        if (
-          result !== undefined &&
-          isRegistryModelGapError(result) &&
-          modelSelection !== undefined
-        ) {
-          // CLI 0.17.1 cannot make pushed account models executable over this protocol, so the
-          // pinned model is rejected at create. Retry without it: turns then fail with the CLI's
-          // own "Select a model" error, and a CLI that fixes provisioning lights up unchanged.
-          yield* Effect.logWarning(
-            "ZCode rejected the pinned model; retrying session create without it.",
-            { providerId: modelSelection.providerId, modelId: modelSelection.modelId },
-          );
-          const fallbackParams: ZcodeRecord = { ...createParams };
-          delete fallbackParams["model"];
-          result = yield* request("session/create", fallbackParams, SESSION_CREATE_TIMEOUT_MS);
-        }
+        // The model rides on session/send instead: pinning it at create breaks whenever the
+        // CLI's registry lacks the model, while the send-time selection resolves per turn and
+        // carries the reasoning level the CLI requires.
+        const result = yield* request("session/create", createParams, SESSION_CREATE_TIMEOUT_MS);
         const resultRecord = Predicate.isObject(result) ? result : {};
         const sessionRecord = zcodeRecordField(resultRecord, "session");
         const nativeSessionId = zcodeRecordString(sessionRecord ?? {}, "sessionId");
         if (nativeSessionId === undefined) {
           return yield* protocolError("session/create returned no sessionId", result);
         }
+        availableModels = parseZcodeAvailableModels(
+          zcodeRecordField(
+            zcodeRecordField(
+              Predicate.isObject(resultRecord["settings"]) ? resultRecord["settings"] : {},
+              "model",
+            ),
+            "available",
+          ),
+        );
         yield* subscribeSession(nativeSessionId);
         return nativeSessionId;
       });
@@ -1851,7 +1913,21 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
               content,
             };
             const modelSelection = zcodeModelSelectionFromSlug(turnInput.modelSelection.model);
-            if (modelSelection !== undefined) sendParams["modelSelection"] = modelSelection;
+            if (modelSelection !== undefined) {
+              // The registry requires a reasoning level whenever the model advertises one; the
+              // CLI's own default fills the gap for T3 selections that carry none.
+              const advertised = availableModels.find(
+                (entry) =>
+                  entry.providerId === modelSelection.providerId &&
+                  entry.modelId === modelSelection.modelId,
+              );
+              const reasoningLevel =
+                modelSelection.options?.reasoningLevel ?? advertised?.defaultReasoningLevel;
+              sendParams["modelSelection"] = {
+                ...modelSelection,
+                ...(reasoningLevel === undefined ? {} : { options: { reasoningLevel } }),
+              };
+            }
             yield* sessionEventPermit.withPermits(1)(
               Effect.gen(function* () {
                 const turn = yield* installTurn(state, turnInput, nativeTurnId);
@@ -2210,6 +2286,7 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
 export type ZcodeAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
   | ProviderHost.ProviderHost;
@@ -2221,11 +2298,12 @@ export const ZcodeAdapterV2Driver: ProviderAdapterDriver<ZcodeSettings, ZcodeAda
   create: Effect.fn("ZcodeAdapterV2Driver.create")(
     function* (input: ProviderAdapterDriverCreateInput<ZcodeSettings>) {
       const hostEnvironment = yield* HostProcess.Environment;
+      const httpClient = yield* HttpClient.HttpClient;
       return yield* makeZcodeAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
-      });
+      }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
     },
     (effect, input) =>
       effect.pipe(
