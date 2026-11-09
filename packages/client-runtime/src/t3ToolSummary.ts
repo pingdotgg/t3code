@@ -321,6 +321,13 @@ export function summarizeT3ToolCalls(
         quantity(countEntities(entityIds("worktreePath")), "worktree"),
       );
       break;
+    case "worktree-release":
+      label = phrase(
+        "Released",
+        "release",
+        quantity(countEntities(entityIds("worktreePath")), "worktree"),
+      );
+      break;
     case "worktree-list":
       label = phrase("Listed", "list", `workspace branches ${times}`);
       break;
