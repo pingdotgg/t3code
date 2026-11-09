@@ -54,7 +54,7 @@ import { RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
-import { resolveMcpGate } from "./mcpGate";
+import { afterFailedCheck, resolveMcpGate } from "./mcpGate";
 import { MCP_APPS, type McpApp, mcpHandoffAction, OTHER_MCP_APP_STEPS } from "./mcpApps";
 
 const requestAtom = Atom.make<{ readonly environmentId: EnvironmentId | null } | null>(null).pipe(
@@ -241,7 +241,7 @@ function useGate(environment: EnvironmentPresentation) {
   const runCheck = useAtomCommand(checkReachability, { reportFailure: false });
   const readState = useAtomCommand(readLinkState, { reportFailure: false });
   // The gate opens on a check it ran, or on a newer one the link state reports. A failed run
-  // has no result and counts only server checks newer than `since`; null waits for a retry.
+  // counts only server checks newer than `since` (see afterFailedCheck); null waits for a retry.
   const [check, setCheck] = useState<
     | "idle"
     | "running"
@@ -282,21 +282,15 @@ function useGate(environment: EnvironmentPresentation) {
     setCheck("running");
     // A saved machine's address comes from T3 Connect's list, which can be stale.
     if (!thisMachine) void refreshDiscovery();
-    const before = readCachedCloudLinkState({ environmentId })?.reachability;
+    const prior = readCachedCloudLinkState({ environmentId });
     const result = await runCheck({ target: { environmentId } });
     controller.linkState.refresh();
     if (result._tag === "Success") {
       setCheck({ result: result.value, since: result.value.checkedAt });
       return;
     }
-    // The request failed, but the server may still have checked: a newer result counts.
-    const fresh = await readState({ target: { environmentId } });
-    const after = fresh._tag === "Success" ? fresh.value?.reachability : undefined;
-    setCheck(
-      after !== undefined && after.checkedAt > (before?.checkedAt ?? "")
-        ? { result: after, since: after.checkedAt }
-        : { result: null, since: after?.checkedAt ?? before?.checkedAt ?? null },
-    );
+    const latest = await readState({ target: { environmentId } });
+    setCheck(afterFailedCheck(prior, latest._tag === "Success" ? latest.value : null));
   };
   const turnOn = async () => {
     setConnecting(true);

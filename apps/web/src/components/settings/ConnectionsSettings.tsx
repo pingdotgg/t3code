@@ -166,22 +166,16 @@ export function ConnectionsSettings({ view }: { readonly view: "environments" | 
 }
 
 function AccessSettings() {
-  // A link that names an environment, such as the MCP wizard's, opens the page on it.
+  // A link that names an environment, such as the MCP wizard's, opens the page on it. The
+  // settings layout remounts this page when the link changes.
   const linkedEnvironmentId = useSearch({
     strict: false,
     select: (search) =>
       typeof search.machine === "string" ? EnvironmentId.make(search.machine) : null,
   });
-  // A choice in the picker holds until a link names another environment.
-  const [choice, setChoice] = useState<{
-    readonly linked: EnvironmentId | null;
-    readonly environmentId: EnvironmentId;
-  } | null>(null);
-  const { candidates, environment: accessEnvironment } = useAccessEnvironment(
-    choice !== null && choice.linked === linkedEnvironmentId
-      ? choice.environmentId
-      : linkedEnvironmentId,
-  );
+  const [selectedEnvironmentId, setSelectedEnvironmentId] = useState(linkedEnvironmentId);
+  const { candidates, environment: accessEnvironment } =
+    useAccessEnvironment(selectedEnvironmentId);
   const accessEnvironmentId = accessEnvironment?.environmentId ?? null;
   const picker =
     candidates.length > 1 && accessEnvironmentId !== null ? (
@@ -190,7 +184,7 @@ function AccessSettings() {
         <Select
           value={accessEnvironmentId}
           onValueChange={(next) => {
-            if (next !== null) setChoice({ linked: linkedEnvironmentId, environmentId: next });
+            if (next !== null) setSelectedEnvironmentId(next);
           }}
         >
           <SelectTrigger size="sm" className="w-auto max-w-72" aria-label="Environment">

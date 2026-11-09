@@ -71,3 +71,28 @@ export function resolveMcpGate(input: {
     reachability: reachability?.status === "unreachable" ? reachability : null,
   };
 }
+
+/**
+ * What a failed check request leaves: `prior` is the link state from before it, `latest` a read
+ * after it (null when unread). The server may still have checked, so a result newer than `prior`
+ * counts. Otherwise only a later server check does; with nothing read at all, only a retry does.
+ */
+export function afterFailedCheck(
+  prior: EnvironmentCloudLinkStateResult | null,
+  latest: EnvironmentCloudLinkStateResult | null,
+): { readonly result: EnvironmentConnectReachability | null; readonly since: string | null } {
+  const fresh = latest?.reachability;
+  const known = prior?.reachability;
+  if (
+    fresh !== undefined &&
+    prior !== null &&
+    (known === undefined || fresh.checkedAt > known.checkedAt)
+  ) {
+    return { result: fresh, since: fresh.checkedAt };
+  }
+  const baseline = latest ?? prior;
+  return {
+    result: null,
+    since: baseline === null ? null : (baseline.reachability?.checkedAt ?? ""),
+  };
+}

@@ -1,7 +1,7 @@
 import type { EnvironmentCloudLinkStateResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveMcpGate } from "./mcpGate";
+import { afterFailedCheck, resolveMcpGate } from "./mcpGate";
 
 const reachable = {
   status: "reachable",
@@ -129,5 +129,36 @@ describe("resolveMcpGate", () => {
     ],
   ] as const)("stays closed with %s", (_, input, kind) => {
     expect(resolveMcpGate(input).kind).toBe(kind);
+  });
+});
+
+describe("afterFailedCheck", () => {
+  const at = (checkedAt: string) => ({ ...tunnel, reachability: { ...reachable, checkedAt } });
+  const older = at("2026-11-08T00:00:00.000Z");
+  const newer = at("2026-11-08T00:01:00.000Z");
+
+  it.each([
+    [
+      "a check the server finished anyway",
+      older,
+      newer,
+      { result: newer.reachability, since: newer.reachability.checkedAt },
+    ],
+    ["no newer check", newer, newer, { result: null, since: newer.reachability.checkedAt }],
+    [
+      "nothing known before, so the read is only a baseline",
+      null,
+      newer,
+      { result: null, since: newer.reachability.checkedAt },
+    ],
+    [
+      "no read after, so the old result is the baseline",
+      older,
+      null,
+      { result: null, since: older.reachability.checkedAt },
+    ],
+    ["nothing read at all, so only a retry counts", null, null, { result: null, since: null }],
+  ] as const)("with %s", (_, prior, latest, expected) => {
+    expect(afterFailedCheck(prior, latest)).toEqual(expected);
   });
 });
