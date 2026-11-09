@@ -1,0 +1,13 @@
+# Fork commits that MT Code has caught up with.
+#
+# When the pipeline re-applies the fork onto a new MT Code release, it leaves
+# out a fork commit listed here once that release contains the upstream commit
+# named next to it. Fork commit hashes change on every rebase, so the fork
+# commit is matched by its exact subject line.
+#
+# Format: <upstream commit hash> <fork commit subject>
+# An entry whose fork commit is already gone does nothing and can be deleted.
+
+# Next-prompt suggestions: the fork carried a hand-merged copy of the then-open
+# upstream PR #28047. The suggestion buttons build on top of it and stay.
+b24959d579 feat: port upstream next-prompt suggestions (#28047)

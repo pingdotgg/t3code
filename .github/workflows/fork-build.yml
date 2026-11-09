@@ -97,7 +97,10 @@ jobs:
           echo "Rebasing $(git rev-list --count "$BASE_TAG..HEAD") commits from $BASE_TAG onto $LATEST_TAG"
           # Mid-rebase the working tree may not have our files yet, so keep the prompt aside.
           cp fork/resolve-conflicts-prompt.md "$RUNNER_TEMP/prompt.md"
-          if ! git rebase --onto "$LATEST_TAG" "$BASE_TAG" custom; then
+          cp fork/now-in-mtcode.mjs fork/now-in-mtcode.txt "$RUNNER_TEMP/"
+          # Leaves out fork commits the new release already contains (fork/now-in-mtcode.txt).
+          export GIT_SEQUENCE_EDITOR="node '$RUNNER_TEMP/now-in-mtcode.mjs' '$RUNNER_TEMP/now-in-mtcode.txt' '$LATEST_TAG'"
+          if ! git rebase -i --onto "$LATEST_TAG" "$BASE_TAG" custom; then
             npm install -g @anthropic-ai/claude-code >/dev/null
             for round in $(seq 1 40); do
               [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || break

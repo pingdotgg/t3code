@@ -12,7 +12,7 @@ The app shows the name "T3 Code". Internally it's MT Code's "munim" build, so it
 
 The [Fork sync and build](.github/workflows/fork-build.yml) workflow runs every four hours:
 
-1. If MT Code published a new `munim-v*` release, it re-applies this fork's commits on top of it. When a commit conflicts, Claude Code resolves it (see [`fork/resolve-conflicts-prompt.md`](fork/resolve-conflicts-prompt.md)); if it can't, the run stops.
+1. If MT Code published a new `munim-v*` release, it re-applies this fork's commits on top of it. Commits listed in [`fork/now-in-mtcode.txt`](fork/now-in-mtcode.txt) are left out once the release contains the upstream commit that replaces them. When a commit conflicts, Claude Code resolves it (see [`fork/resolve-conflicts-prompt.md`](fork/resolve-conflicts-prompt.md)); if it can't, the run stops.
 2. On a Windows runner it installs dependencies, runs the tests and typechecks for every file the fork's commits touch, and builds the installer.
 3. It checks that each fork feature is inside the installer ([`fork/installer-markers.txt`](fork/installer-markers.txt)), then publishes a GitHub release with the installer and `latest.yml`.
 4. Only then does the rebased branch replace `custom`.
