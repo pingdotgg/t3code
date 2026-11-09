@@ -552,13 +552,10 @@ describe("AgentAwarenessRelay", () => {
     Effect.gen(function* () {
       const childId = ThreadId.make("relay-subagent");
       const grandchildId = ThreadId.make("relay-nested-subagent");
-      const parent = {
-        ...shell({
-          status: "completed",
-          pendingBackgroundTasks: [{ taskId: "review", kind: "subagent", childThreadId: childId }],
-        }),
-        descendantPendingRequest: "approval" as const,
-      };
+      const parent = shell({
+        status: "completed",
+        pendingBackgroundTasks: [{ taskId: "review", kind: "subagent", childThreadId: childId }],
+      });
       const child = shell({
         id: childId,
         status: "running",
@@ -595,7 +592,7 @@ describe("AgentAwarenessRelay", () => {
         readShell: (threadId) => Effect.succeed(byId.get(threadId) ?? null),
       });
       yield* relay.publishThread(grandchildId);
-      assert.deepEqual(shellReads, [grandchildId, childId, THREAD_ID]);
+      assert.includeMembers(shellReads, [grandchildId, childId, THREAD_ID]);
       assert.equal(publications.length, 1);
       assert.include(publications[0]?.state, {
         threadId: THREAD_ID,

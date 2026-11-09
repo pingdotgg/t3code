@@ -708,12 +708,11 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     }
     if (sent.value === null) return;
     // Arm after send so preference reads and native Activity startup do not delay tap-frame feedback.
-    if (props.serverConfig?.environment.capabilities.agentActivityPublishing !== false) {
-      armAgentAwarenessLiveActivityForLocalWork({
-        threadTitle: props.selectedThread.title,
-        projectTitle: props.environmentLabel ?? "T3 Code",
-      });
-    }
+    armAgentAwarenessLiveActivityForLocalWork({
+      environmentId: props.environmentId,
+      threadTitle: props.selectedThread.title,
+      projectTitle: props.environmentLabel ?? "T3 Code",
+    });
   };
 
   const lockedProviderInstanceId = props.canSwitchProvider

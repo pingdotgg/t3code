@@ -86,7 +86,7 @@ export interface ProjectThreadAwarenessV2Input {
   >;
   /** The approval a live subagent below this thread is waiting on. */
   readonly pendingSubagentRequest?: SubagentRequestAwareness | null;
-  /** Approvals/input rolled up from unlisted subagents or side chats under this listed thread. */
+  /** Approvals/input rolled up from unlisted side chats under this listed thread. */
   readonly descendantPendingRequest?: AgentAwarenessDescendantPendingRequest | null;
 }
 
@@ -139,77 +139,33 @@ export function projectThreadAwarenessV2(
   };
 }
 
-const isChildRunLive = (
-  thread: Pick<ProjectThreadAwarenessV2Input["thread"], "activityRunStatus" | "status">,
-) =>
-  thread.activityRunStatus !== undefined
-    ? thread.activityRunStatus !== null
-    : thread.status === "preparing" ||
-      thread.status === "starting" ||
-      thread.status === "running" ||
-      thread.status === "waiting";
-
 function descendantRequestKind(
-  thread: Pick<
-    ProjectThreadAwarenessV2Input["thread"],
-    "pendingRuntimeRequest" | "lineage" | "activityRunStatus" | "status"
-  >,
+  thread: Pick<ProjectThreadAwarenessV2Input["thread"], "pendingRuntimeRequest" | "lineage">,
 ): AgentAwarenessDescendantPendingRequest | null {
   const kind = thread.pendingRuntimeRequest?.kind;
   if (kind === undefined || kind === "auth_refresh") return null;
-  if (thread.lineage.sideChat === true) {
-    return kind === "user_input" ? "user_input" : "approval";
-  }
-  if (thread.lineage.relationshipToParent !== "subagent" || !isChildRunLive(thread)) {
-    return null;
-  }
-  // The parent agent answers subagent questions; only approvals need a phone alert.
-  return kind === "user_input" ? null : "approval";
+  // Subagent approvals use pendingSubagentRequest / relay tracking.
+  if (thread.lineage.sideChat !== true) return null;
+  return kind === "user_input" ? "user_input" : "approval";
 }
 
 /**
  * Maps listed parents to the strongest pending request among their unlisted
- * subagent/side-chat descendants. Mirrors client-runtime rollup for mobile push.
+ * side-chat descendants. Subagent approvals stay on pendingSubagentRequest.
  */
 export function rollupListedThreadAwarenessPending(
   threads: ReadonlyArray<
-    Pick<
-      ProjectThreadAwarenessV2Input["thread"],
-      "id" | "lineage" | "pendingRuntimeRequest" | "activityRunStatus" | "status"
-    >
+    Pick<ProjectThreadAwarenessV2Input["thread"], "id" | "lineage" | "pendingRuntimeRequest">
   >,
 ): ReadonlyMap<ThreadId, AgentAwarenessDescendantPendingRequest> {
   const requests = new Map<ThreadId, AgentAwarenessDescendantPendingRequest>();
-  let byId: ReadonlyMap<ThreadId, (typeof threads)[number]> | undefined;
-  const flag = (
-    firstParentId: ThreadId | null,
-    request: AgentAwarenessDescendantPendingRequest,
-    seen: Set<ThreadId>,
-  ) => {
-    byId ??= new Map(threads.map((thread) => [thread.id, thread] as const));
-    let parentId = firstParentId;
-    while (parentId !== null && !seen.has(parentId)) {
-      seen.add(parentId);
-      if (requests.get(parentId) !== "approval") requests.set(parentId, request);
-      const parent = byId.get(parentId);
-      parentId =
-        parent?.lineage.relationshipToParent === "subagent" || parent?.lineage.sideChat === true
-          ? parent.lineage.parentThreadId
-          : null;
-    }
-  };
   for (const child of threads) {
     const request = descendantRequestKind(child);
     if (request === null) continue;
-    if (child.lineage.sideChat === true) {
-      const parentId = child.lineage.parentThreadId;
-      if (parentId !== null && requests.get(parentId) !== "approval") {
-        requests.set(parentId, request);
-      }
-      continue;
+    const parentId = child.lineage.parentThreadId;
+    if (parentId !== null && requests.get(parentId) !== "approval") {
+      requests.set(parentId, request);
     }
-    if (child.lineage.relationshipToParent !== "subagent") continue;
-    flag(child.lineage.parentThreadId, request, new Set([child.id]));
   }
   return requests;
 }

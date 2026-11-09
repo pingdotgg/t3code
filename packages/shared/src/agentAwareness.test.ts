@@ -219,7 +219,7 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "running", headline: "Working" });
   });
 
-  it("surfaces a descendant subagent approval on the listed parent", () => {
+  it("surfaces a tracked subagent approval on the listed parent", () => {
     expect(
       projectThreadAwarenessV2({
         environmentId: "env-1" as EnvironmentId,
@@ -228,12 +228,15 @@ describe("projectThreadAwarenessV2", () => {
           status: "completed",
           pendingBackgroundTasks: [{ taskId: "review", kind: "subagent" }],
         }),
-        descendantPendingRequest: "approval",
+        pendingSubagentRequest: {
+          requestId: RuntimeRequestId.make("approve-rm"),
+          updatedAt,
+        },
       }),
     ).toMatchObject({ phase: "waiting_for_approval", headline: "Needs your reply" });
   });
 
-  it("rolls nested subagent approvals up to the listed parent", () => {
+  it("does not roll subagent approvals into descendantPendingRequest", () => {
     const root = v2Thread({
       id: "root" as ThreadId,
       status: "completed",
@@ -265,6 +268,44 @@ describe("projectThreadAwarenessV2", () => {
       },
     });
     expect(rollupListedThreadAwarenessPending([root, child, grandchild]).get(root.id)).toBe(
+      undefined,
+    );
+  });
+
+  it("rolls side-chat approvals and input up to the listed parent", () => {
+    const root = v2Thread({ id: "root" as ThreadId, status: "completed" });
+    const approvalChat = v2Thread({
+      id: "side-approval" as ThreadId,
+      status: "waiting",
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "fork",
+        sideChat: true,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("approve-side"),
+        kind: "command",
+        createdAt: updatedAt,
+      },
+    });
+    const inputChat = v2Thread({
+      id: "side-input" as ThreadId,
+      status: "waiting",
+      lineage: {
+        rootThreadId: root.id,
+        parentThreadId: root.id,
+        relationshipToParent: "fork",
+        sideChat: true,
+      },
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("ask-side"),
+        kind: "user_input",
+        createdAt: updatedAt,
+      },
+    });
+    expect(rollupListedThreadAwarenessPending([root, inputChat]).get(root.id)).toBe("user_input");
+    expect(rollupListedThreadAwarenessPending([root, approvalChat, inputChat]).get(root.id)).toBe(
       "approval",
     );
   });
