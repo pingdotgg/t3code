@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import {
   joinSocketFrameParts,
-  SOCKET_FRAME_DEFLATE_QUERY_PARAM,
   SOCKET_FRAME_PARTS_QUERY_PARAM,
 } from "@t3tools/shared/socketFrameParts";
 import * as Cause from "effect/Cause";
@@ -232,7 +231,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     };
     const socketUrl = new URL(connection.socketUrl);
     socketUrl.searchParams.set(SOCKET_FRAME_PARTS_QUERY_PARAM, "1");
-    socketUrl.searchParams.set(SOCKET_FRAME_DEFLATE_QUERY_PARAM, "1");
     const layerSocket = Layer.effect(
       Socket.Socket,
       Effect.map(Effect.service(Socket.Socket), joinSocketFrameParts),
