@@ -94,7 +94,7 @@ export const makeAllocation = (rt: ManagerRuntime, connections: ManagerConnectio
   const reserveResume = Effect.fn("CloudSandboxManager.reserveResume")(function* (
     record: Store.CloudSandboxRecord,
   ) {
-    if (record.power !== "stopped") return;
+    if (record.lifecycle !== "active" || record.power !== "stopped") return;
     const { profile } = yield* resolveProfile(record.profileId);
     yield* reserveAllocation(profile, record.selection.size, record.selection.autoStopMinutes, {
       ...record,

@@ -28,7 +28,7 @@ export const makeControl = (
     requireSandbox,
     driverFor,
   } = rt;
-  const { sourceContext, connectResuming, connectUnlocked, disconnectUnlocked } = connections;
+  const { sourceContext, connectUnlocked, disconnectUnlocked } = connections;
   const { fork, release, reserveResume } = allocation;
   const executeUnlocked = Effect.fn("CloudSandboxManager.execute")(function* (
     id: ManagedCloudSandboxResourceId,
@@ -230,8 +230,14 @@ export const makeControl = (
       }
       case "connect": {
         yield* requireOwnedChild(operation.resourceId);
-        yield* reserveResume(yield* requireRecord(operation.resourceId));
-        const connected = yield* connectResuming(operation.resourceId);
+        // One critical section, so a concurrent stop or delete can't be overwritten by the reservation.
+        const connected = yield* locks.withLock(
+          operation.resourceId,
+          Effect.gen(function* () {
+            yield* reserveResume(yield* requireRecord(operation.resourceId));
+            return yield* connectUnlocked(operation.resourceId, true);
+          }),
+        );
         return {
           _tag: "connection",
           connection: connected.connection,

@@ -261,10 +261,6 @@ export const makeConnections = (rt: ManagerRuntime) => {
     (id: ManagedCloudSandboxResourceId) => locks.withLock(id, connectUnlocked(id, false)),
   );
 
-  const connectResuming = Effect.fn("CloudSandboxManager.connectResuming")(
-    (id: ManagedCloudSandboxResourceId) => locks.withLock(id, connectUnlocked(id, true)),
-  );
-
   const disconnectUnlocked = Effect.fn("CloudSandboxManager.disconnect")(function* (
     id: ManagedCloudSandboxResourceId,
   ) {
@@ -295,7 +291,6 @@ export const makeConnections = (rt: ManagerRuntime) => {
     connectRecord,
     connectUnlocked,
     connect,
-    connectResuming,
     disconnectUnlocked,
     disconnect,
     route,

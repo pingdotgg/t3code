@@ -333,6 +333,21 @@ it.effect("refuses source grants that target their own source or unrelated resou
       result: { _tag: "status", sandbox: { state: "stopped" } },
     });
     expect(f.connections()).toBe(1);
+
+    const deleting = ManagedCloudSandboxResourceId.make("deleting-child");
+    f.records.set(deleting, {
+      ...record,
+      resourceId: deleting,
+      parentResourceId: id,
+      lifecycle: "deleting",
+      power: "stopped",
+    });
+    expect(
+      (yield* manager
+        .executeSource(id, token, { _tag: "connect", resourceId: deleting })
+        .pipe(Effect.result))._tag,
+    ).toBe("Failure");
+    expect(f.records.get(deleting)).toMatchObject({ lifecycle: "deleting", power: "stopped" });
   }).pipe(Effect.scoped),
 );
 
