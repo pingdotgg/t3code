@@ -21,7 +21,10 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
@@ -161,15 +164,6 @@ const STATUS_PILL_BY_KIND: Record<
   },
 };
 
-/** Same format as the web sidebar timer: 42s, 1m 34s, 2h 5m. */
-function formatWorkingPillDuration(elapsedMs: number): string {
-  const seconds = Number.isFinite(elapsedMs) ? Math.max(0, Math.floor(elapsedMs / 1000)) : 0;
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
 /** Only this text ticks, so a running thread re-renders one Text per second, not its row. */
 function WorkingPillTimer(props: { readonly startedAt: string; readonly className: string }) {
   const startedMs = Date.parse(props.startedAt);
@@ -181,7 +175,7 @@ function WorkingPillTimer(props: { readonly startedAt: string; readonly classNam
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     >
-      {formatWorkingPillDuration(nowMs - startedMs)}
+      {formatWorkingDurationLabel(nowMs - startedMs)}
     </Text>
   );
 }
