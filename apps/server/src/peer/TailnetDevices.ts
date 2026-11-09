@@ -229,7 +229,7 @@ const make = Effect.gen(function* () {
 
   /** Pushes this device's policy and settings to every linked device right away. */
   const push = Effect.gen(function* () {
-    const current = yield* links.list.pipe(Effect.orElseSucceed(() => []));
+    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       current.filter((link) => link.origin === "tailnet"),
       syncWith,
@@ -925,7 +925,7 @@ const make = Effect.gen(function* () {
       ),
     );
     // Gossip first: a linked device may know addresses the scan cannot guess.
-    const current = yield* links.list.pipe(Effect.orElseSucceed(() => []));
+    const current = yield* links.stored.pipe(Effect.orElseSucceed(() => []));
     yield* Effect.forEach(
       current.filter((link) => link.origin === "tailnet"),
       syncWith,
@@ -934,10 +934,18 @@ const make = Effect.gen(function* () {
     for (const device of yield* knownDescriptors) {
       if (device.environmentId !== self) toLink.add(device.environmentId);
     }
+    // Probing and gossip can take a while; a pairing that ran out meanwhile has expired.
+    const checkedAt = yield* DateTime.now;
     for (const environmentId of toLink) {
       const link = current.find((candidate) => candidate.environmentId === environmentId);
       // A pairing-code link is the user's choice; only tailnet links are made or renewed here.
-      if (link !== undefined && link.origin === "paired" && link.status !== "expired") continue;
+      if (
+        link !== undefined &&
+        link.origin === "paired" &&
+        DateTime.isGreaterThan(link.expiresAt, checkedAt)
+      ) {
+        continue;
+      }
       if (yield* hasUsableLink(environmentId)) continue;
       if ((yield* policy.accessFor(environmentId)) === "revoked") continue;
       yield* refresh(environmentId);

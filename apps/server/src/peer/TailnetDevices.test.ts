@@ -13,8 +13,10 @@ import {
   type ExecutionEnvironmentDescriptor,
   TAILNET_DEVICE_CAPABILITY,
 } from "@t3tools/contracts";
-import type { Tailnet, TailnetWhois } from "@t3tools/tailscale";
+import type { Tailnet, TailnetPeer, TailnetWhois } from "@t3tools/tailscale";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,17 +63,24 @@ interface Node {
  */
 const makeTailnet = Effect.gen(function* () {
   const byOrigin = yield* Ref.make(new Map<string, Node>());
+  const peers = yield* Ref.make<
+    ReadonlyArray<{ readonly peer: TailnetPeer; readonly probe: () => ReadonlyArray<string> }>
+  >([]);
   const identityFor = (selfUserId: string) =>
     Layer.succeed(TailnetIdentity.TailnetIdentity, {
-      read: Effect.succeedSome<Tailnet>({
-        self: {
-          userId: selfUserId,
-          magicDnsName: null,
-          tailnetAddresses: [],
-          httpsServeEnabled: true,
-        },
-        peers: [],
-      }),
+      read: Ref.get(peers).pipe(
+        Effect.map((listed) =>
+          Option.some<Tailnet>({
+            self: {
+              userId: selfUserId,
+              magicDnsName: null,
+              tailnetAddresses: [],
+              httpsServeEnabled: true,
+            },
+            peers: listed.map((entry) => entry.peer),
+          }),
+        ),
+      ),
       locate: (url) => {
         const origin = URL.parse(url)?.origin;
         const node = origin === undefined ? undefined : Ref.getUnsafe(byOrigin).get(origin);
@@ -87,7 +96,10 @@ const makeTailnet = Effect.gen(function* () {
             ),
           ),
         ),
-      probeUrls: () => [],
+      probeUrls: (peer) =>
+        Ref.getUnsafe(peers)
+          .find((entry) => entry.peer.nodeName === peer.nodeName)
+          ?.probe() ?? [],
     });
   const join = (origin: string, whois: Partial<TailnetWhois> = {}) =>
     Ref.update(byOrigin, (nodes) => {
@@ -104,7 +116,24 @@ const makeTailnet = Effect.gen(function* () {
         },
       });
     });
-  return { identityFor, join };
+  /** Lists a peer in the tailnet status a scan reads; `probe` answers the addresses it tries. */
+  const announce = (nodeName: string, probe: () => ReadonlyArray<string>) =>
+    Ref.update(peers, (listed) => [
+      ...listed,
+      {
+        peer: {
+          nodeName,
+          magicDnsName: null,
+          tailnetAddresses: [],
+          userId: OWNER,
+          tags: [],
+          online: true,
+          os: null,
+        },
+        probe,
+      },
+    ]);
+  return { identityFor, join, announce };
 });
 
 type FakeTailnet = Effect.Success<typeof makeTailnet>;
@@ -129,6 +158,7 @@ const serveDeviceOn = (
   Effect.gen(function* () {
     const url = yield* Ref.make("http://127.0.0.1:0");
     const grants = yield* Ref.make(0);
+    const descriptorReads = yield* Ref.make(0);
     const context = yield* TailnetDevices.layer.pipe(
       Layer.provideMerge(PeerLinks.layer),
       Layer.provideMerge(EnvironmentAuth.layer),
@@ -173,6 +203,9 @@ const serveDeviceOn = (
           if (request.url.startsWith("/api/tailnet-devices/grant")) {
             yield* Ref.update(grants, (count) => count + 1);
           }
+          if (request.url.startsWith("/.well-known/t3/environment")) {
+            yield* Ref.update(descriptorReads, (count) => count + 1);
+          }
           return yield* httpEffect;
         }),
       { global: true },
@@ -209,6 +242,8 @@ const serveDeviceOn = (
       pairingLinks: auth.listPairingLinks(),
       /** Grants delivered to this device, each carrying a token. */
       grants,
+      /** Descriptor reads this device answered, each one a probe of it. */
+      descriptorReads,
       /** Sessions this device issued to other devices. */
       issued: auth
         .listSessions()
@@ -436,6 +471,73 @@ const threeDevices = Effect.gen(function* () {
 });
 
 const box = descriptorOf("env-box", "Box");
+
+describe("tailnet scan", () => {
+  // Stored links are listed with a reachability probe each, all at once; a scan only needs the rows.
+  it.live("probes a linked device only where it sends the link's token", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url);
+      yield* a.devices.linkIfMine({ url: b.url });
+
+      yield* Ref.set(b.descriptorReads, 0);
+      yield* a.devices.scan;
+      expect(yield* Ref.get(b.descriptorReads)).toBe(1);
+
+      yield* Ref.set(b.descriptorReads, 0);
+      yield* a.devices.updateSettings({ defaultAccess: "auto" });
+      expect(yield* Ref.get(b.descriptorReads)).toBe(1);
+    }),
+  );
+
+  it.live("renews a pairing that runs out while the scan probes", () =>
+    Effect.gen(function* () {
+      const tailnet = yield* makeTailnet;
+      const a = yield* serveDevice(laptop, tailnet);
+      const b = yield* serveDevice(studio, tailnet);
+      yield* tailnet.join(a.url);
+      yield* tailnet.join(b.url, { nodeName: "studio" });
+      yield* a.devices.linkIfMine({ url: b.url });
+      // The user paired the studio by code too, and that pairing runs out in a minute.
+      const linked = Option.getOrThrow(yield* a.links.get(studio.environmentId));
+      yield* a.links.store(
+        {
+          ...linked,
+          origin: "paired",
+          expiresAt: DateTime.add(yield* DateTime.now, { minutes: 1 }),
+        },
+        "pairing-token",
+      );
+      // Probing the studio takes two minutes on the laptop's clock.
+      const live = yield* Clock.Clock;
+      let skewMs = 0;
+      const skewed: Clock.Clock = {
+        monotonicTimeNanosUnsafe: () => live.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: live.monotonicTimeNanos,
+        sleep: (duration) => live.sleep(duration),
+        currentTimeMillisUnsafe: () => live.currentTimeMillisUnsafe() + skewMs,
+        currentTimeMillis: Effect.sync(() => live.currentTimeMillisUnsafe() + skewMs),
+        currentTimeNanosUnsafe: () => live.currentTimeNanosUnsafe() + BigInt(skewMs) * 1_000_000n,
+        currentTimeNanos: Effect.sync(
+          () => live.currentTimeNanosUnsafe() + BigInt(skewMs) * 1_000_000n,
+        ),
+      };
+      yield* tailnet.announce("studio", () => {
+        skewMs = 2 * 60_000;
+        return [b.url];
+      });
+
+      yield* a.devices.scan.pipe(Effect.provideService(Clock.Clock, skewed));
+
+      expect(Option.map(yield* a.links.get(studio.environmentId), (link) => link.origin)).toEqual(
+        Option.some("tailnet"),
+      );
+    }),
+  );
+});
 
 describe("tailnet device access", () => {
   it.live("applies a changed access level to the next request without re-linking", () =>
