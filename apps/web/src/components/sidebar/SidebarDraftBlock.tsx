@@ -10,7 +10,8 @@ import {
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useShallow } from "zustand/react/shallow";
 import { cn } from "~/lib/utils";
-import { resolveSidebarRowAccessibility } from "../Sidebar.logic";
+import { resolveSidebarRowAccessibility, setFileDragActive } from "../Sidebar.logic";
+import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -31,8 +32,15 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   onNavigate: (draftId: DraftId) => void;
   onDiscard: (draftId: DraftId) => void;
   onContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
+  onFileDrop: (draftId: DraftId, files: File[]) => void;
 }) {
-  const { composer, draftId, onContextMenu, onDiscard, onNavigate } = props;
+  const { composer, draftId, onContextMenu, onDiscard, onFileDrop, onNavigate } = props;
+  const [isFileDragOver, setIsFileDragOver] = useState(false);
+  const fileDropHandlers = makeWorkspaceFileDropHandlers({
+    setDragActive: (active) => setFileDragActive(setIsFileDragOver, active),
+    addFiles: (files) => onFileDrop(draftId, files),
+    addFolders: () => {},
+  });
   const promptPreview =
     replaceComposerContextReferences(composer.prompt, (occurrence) => occurrence.label)
       .trim()
@@ -91,7 +99,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         className={cn(
           "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left text-sidebar-foreground outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           props.isActive ? "bg-sidebar-row-active" : draftSurfaceClassName,
+          isFileDragOver && "ring-1 ring-inset ring-primary/70",
         )}
+        {...fileDropHandlers}
         onClick={handleActivate}
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
@@ -146,6 +156,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
   onDraftContextMenu: (draftId: DraftId, position: { x: number; y: number }) => void;
+  onDraftFileDrop: (draftId: DraftId, files: File[]) => void;
 }) {
   const draftThreadsByThreadKey = useComposerDraftStore((store) => store.draftThreadsByThreadKey);
   const draftsByThreadKey = useComposerDraftStore(
@@ -219,6 +230,7 @@ export const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
             onNavigate={props.onNavigateToDraft}
             onDiscard={discardComposerDraft}
             onContextMenu={props.onDraftContextMenu}
+            onFileDrop={props.onDraftFileDrop}
           />
         );
       })}

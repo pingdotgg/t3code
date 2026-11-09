@@ -1253,16 +1253,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
   });
   // Files dropped outside a thread row start a draft, in the project the New thread button would use.
+  const newThreadDropProjectRef = resolveThreadActionProjectRef({
+    activeDraftThread: newThreadContext.activeDraftThread,
+    activeThread: newThreadContext.activeThread ?? undefined,
+    defaultProjectRef: newThreadContext.defaultProjectRef,
+    handleNewThread,
+  });
   const startThreadWithFiles = useStableCallback(
     async (projectRef: ScopedProjectRef | null, files: File[]) => {
-      const target =
-        projectRef ??
-        resolveThreadActionProjectRef({
-          activeDraftThread: newThreadContext.activeDraftThread,
-          activeThread: newThreadContext.activeThread ?? undefined,
-          defaultProjectRef: newThreadContext.defaultProjectRef,
-          handleNewThread,
-        });
+      const target = projectRef ?? newThreadDropProjectRef;
       if (target === null || files.length === 0) return;
       if (isMobile) setOpenMobile(false);
       const opened = await handleNewThread(target);
@@ -1279,27 +1278,32 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     addFiles: (files) => void startThreadWithFiles(null, files),
     addFolders: () => {},
   });
-  // Thread rows and folder headers claim their own drops by preventing default first.
-  const newThreadFileDropHandlers = {
-    onDragEnter: (event: ReactDragEvent<HTMLDivElement>) => {
-      if (!event.defaultPrevented) newThreadFileDrop.onDragEnter(event);
-    },
-    onDragOver: (event: ReactDragEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) {
-        if (isNewThreadFileDragActive) setFileDragActive(setIsNewThreadFileDragActive, false);
-        return;
-      }
-      newThreadFileDrop.onDragOver(event);
-    },
-    onDragLeave: (event: ReactDragEvent<HTMLDivElement>) => newThreadFileDrop.onDragLeave(event),
-    onDrop: (event: ReactDragEvent<HTMLDivElement>) => {
-      if (event.defaultPrevented) {
-        setFileDragActive(setIsNewThreadFileDragActive, false);
-        return;
-      }
-      newThreadFileDrop.onDrop(event);
-    },
-  };
+  // Rows and folder headers claim their own drops by preventing default first. With no
+  // project to start a thread in, the zone does not offer the drop at all.
+  const newThreadFileDropHandlers =
+    newThreadDropProjectRef === null
+      ? {}
+      : {
+          onDragEnter: (event: ReactDragEvent<HTMLDivElement>) => {
+            if (!event.defaultPrevented) newThreadFileDrop.onDragEnter(event);
+          },
+          onDragOver: (event: ReactDragEvent<HTMLDivElement>) => {
+            if (event.defaultPrevented) {
+              if (isNewThreadFileDragActive) setFileDragActive(setIsNewThreadFileDragActive, false);
+              return;
+            }
+            newThreadFileDrop.onDragOver(event);
+          },
+          onDragLeave: (event: ReactDragEvent<HTMLDivElement>) =>
+            newThreadFileDrop.onDragLeave(event),
+          onDrop: (event: ReactDragEvent<HTMLDivElement>) => {
+            if (event.defaultPrevented) {
+              setFileDragActive(setIsNewThreadFileDragActive, false);
+              return;
+            }
+            newThreadFileDrop.onDrop(event);
+          },
+        };
   const handleProjectFolderContextMenu = useStableCallback(
     (group: SidebarProjectSnapshot, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -1530,6 +1534,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     void router.navigate({ to: "/draft/$draftId", params: { draftId } });
   };
+
+  const handleDraftFileDrop = useStableCallback((draftId: DraftId, files: File[]) => {
+    queuePendingFileDrop({ target: draftId, files });
+    navigateToDraft(draftId);
+  });
 
   const clearThreadSearch = () => {
     setThreadSearchQuery("");
@@ -3533,6 +3542,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             routeDraftId={routeDraftIdForRows}
                             onNavigateToDraft={navigateToDraft}
                             onDraftContextMenu={handleDraftContextMenu}
+                            onDraftFileDrop={handleDraftFileDrop}
                           />,
                         ];
                         for (const item of sidebarListItems) {
