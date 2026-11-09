@@ -347,9 +347,33 @@ describe("evaluatePullRequestWatch", () => {
       baseBranch: "main",
       headSha: null,
       report,
+      instructions: "",
     });
     assert.isTrue(text.isWellFormed());
     assert.include(text, `"${"x".repeat(196)}..."`);
+  });
+
+  it("ends the wake message with the project's watch instructions when set", () => {
+    const report = evaluatePullRequestWatch(
+      watch(),
+      detail({ mergeability: "conflicting" }),
+      noRemarks,
+    );
+    const message = (instructions: string) =>
+      pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: null,
+        report,
+        instructions,
+      }).text;
+    assert.isTrue(
+      message("Rebase onto main and push.").endsWith(
+        "\n\nThe user's instructions for pull request updates:\nRebase onto main and push.",
+      ),
+    );
+    assert.notInclude(message(""), "The user's instructions");
   });
 
   it("reports a conflict once, until the branch is clean again", () => {

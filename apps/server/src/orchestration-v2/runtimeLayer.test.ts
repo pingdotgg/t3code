@@ -3328,6 +3328,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
+              ServerSettings.layerTest(),
               NodeServices.layer,
               NodeCrypto.layer,
               Layer.mock(PullRequestService.PullRequestService)({
@@ -3457,6 +3458,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       let headSha = "ad70160aaa";
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3556,6 +3558,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       let remainingStatus: "pending" | "success" = "pending";
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3701,6 +3704,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         DateTime.add(DateTime.makeUnsafe(started.startedAt), { seconds: 1 }),
       );
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3800,6 +3804,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       let headSha = "6074dd48ff";
       let checks: PullRequestDetail["checks"] = [];
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -3904,6 +3909,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const headSha = "6074dd48ff";
       let checks: PullRequestDetail["checks"] = [];
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({
@@ -4019,6 +4025,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
         let reads = 0;
         const host = Layer.mergeAll(
+          ServerSettings.layerTest(),
           NodeServices.layer,
           NodeCrypto.layer,
           Layer.mock(PullRequestService.PullRequestService)({
@@ -4244,6 +4251,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const reactor = yield* PullRequestWatchReactor.make.pipe(
         Effect.provide(
           Layer.mergeAll(
+            ServerSettings.layerTest(),
             NodeServices.layer,
             NodeCrypto.layer,
             Layer.mock(PullRequestService.PullRequestService)({
@@ -4399,6 +4407,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       // never finishes.
       const read22 = yield* Deferred.make<void>();
       const host = Layer.mergeAll(
+        ServerSettings.layerTest(),
         NodeServices.layer,
         NodeCrypto.layer,
         Layer.mock(PullRequestService.PullRequestService)({

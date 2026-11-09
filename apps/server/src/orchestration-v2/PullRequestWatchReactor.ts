@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   MessageId,
   type OrchestrationV2Notification,
   type PullRequestActivity,
@@ -9,6 +10,7 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -32,6 +34,7 @@ import {
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -199,6 +202,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const serverSettings = yield* ServerSettings.ServerSettingsService;
   const random = yield* SecureRandom.SecureRandom;
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
@@ -559,6 +563,10 @@ export const make = Effect.gen(function* () {
       status: fingerprint?.status ?? null,
       remarks: fingerprint?.remarks ?? null,
     });
+    // Unreadable settings drop the user's instructions rather than the wake.
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+    );
     yield* eachTarget(group, (target) => {
       const report = evaluatePullRequestWatch(target.watch, detail, remarks, now);
       if (report.changes.length > 0) {
@@ -568,6 +576,8 @@ export const make = Effect.gen(function* () {
           baseBranch: detail.baseBranch,
           headSha: report.next.headSha,
           report,
+          instructions: resolveProjectSettings(settings, target.thread.projectId).settings
+            .pullRequestWatchInstructions,
         });
         // An ending watch keeps what this pass saw, so watching again starts from it.
         return (
