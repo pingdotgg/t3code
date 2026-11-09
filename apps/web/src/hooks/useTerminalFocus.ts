@@ -11,6 +11,10 @@ function subscribeToTerminalFocusChanges(listener: () => void): () => void {
   };
 }
 
-export function useTerminalFocus(): boolean {
-  return useSyncExternalStore(subscribeToTerminalFocusChanges, isTerminalFocused, () => false);
+export function useTerminalFocus(enabled = true): boolean {
+  return useSyncExternalStore(
+    subscribeToTerminalFocusChanges,
+    () => enabled && isTerminalFocused(),
+    () => false,
+  );
 }
