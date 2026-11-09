@@ -13,6 +13,7 @@ import {
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
 } from "./driver.ts";
+import { acpRegistryProbeResult, normalizeAcpRegistryLiveConfiguration } from "./probe.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const identity = {
@@ -431,4 +432,108 @@ describe("acpRegistrySnapshotReadiness", () => {
       });
     }),
   );
+
+  it("incorporates delayed live configuration in acpRegistryProbeResult when cold start initially reports a fallback model", () => {
+    const started = {
+      sessionId: "test-session",
+      initializeResult: {
+        protocolVersion: 1,
+        agentCapabilities: {
+          loadSession: true,
+          sessionCapabilities: { list: {}, resume: {}, delete: {} },
+          auth: { logout: {} },
+        },
+        authMethods: [],
+      },
+      sessionSetupResult: {
+        sessionId: "test-session",
+        models: {
+          availableModels: [{ modelId: "smodel", name: "Sonus (default)", description: null }],
+          currentModelId: "smodel",
+        },
+        configOptions: [],
+      },
+      modelConfigId: undefined,
+    };
+
+    const fallbackResult = acpRegistryProbeResult(identity.instanceId, started);
+    expect(fallbackResult.models.map((m) => m.id)).toEqual(["smodel"]);
+
+    const settledConfiguration = normalizeAcpRegistryLiveConfiguration(
+      [
+        {
+          id: "model",
+          name: "Model",
+          type: "select" as const,
+          category: "model" as const,
+          currentValue: "auto",
+          options: [
+            { value: "auto", name: "Auto" },
+            { value: "qmodel_38max", name: "Qwen3.8-Max" },
+            { value: "kmodel_latest", name: "Kimi-K3.1-Pro" },
+          ],
+        },
+      ],
+      undefined,
+      null,
+    );
+
+    const enrichedResult = acpRegistryProbeResult(
+      identity.instanceId,
+      started,
+      null,
+      undefined,
+      settledConfiguration,
+    );
+    expect(enrichedResult.models.map((m) => m.id)).toEqual([
+      "auto",
+      "qmodel_38max",
+      "kmodel_latest",
+    ]);
+    expect(enrichedResult.currentModelId).toBe("auto");
+  });
+
+  it("promotes a provisional single model snapshot into a full discovered catalog on live configuration", () => {
+    const initialProvider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "test-agent",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [{ id: "smodel", name: "Sonus", description: null }],
+          currentModelId: "smodel",
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(initialProvider.models.map((m) => m.slug)).toEqual(["smodel"]);
+
+    const settledLiveConfig = {
+      models: [
+        { id: "auto", name: "Auto", description: null },
+        { id: "qmodel_38max", name: "Qwen3.8-Max", description: null },
+        { id: "kmodel_latest", name: "Kimi-K3.1-Pro", description: null },
+      ],
+      currentModelId: "auto",
+      configOptions: [],
+    };
+
+    const updated = applyAcpRegistryLiveConfiguration(initialProvider, settledLiveConfig, []);
+    expect(updated.models.map((m) => m.slug)).toEqual(["auto", "qmodel_38max", "kmodel_latest"]);
+    expect(updated.models.find((m) => m.slug === "auto")?.isDefault).toBe(true);
+  });
 });

@@ -62,6 +62,7 @@ const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
+const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
@@ -628,13 +629,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }
       const enriched = yield* enrichProvider;
       if (enriched.status === "ready") {
+        const discoveredModels = enriched.models.filter((model) => !model.isCustom);
+        const ttlMs =
+          discoveredModels.length <= 1 ? PROBE_PROVISIONAL_TTL_MS : PROBE_SUCCESS_TTL_MS;
         yield* Ref.update(enrichmentCache, (current) =>
           current.generation === cacheState.generation
             ? {
                 ...current,
                 entry: {
                   provider: enriched,
-                  expiresAt: now + PROBE_SUCCESS_TTL_MS,
+                  expiresAt: now + ttlMs,
                 },
               }
             : current,
@@ -706,15 +710,34 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           (configuration) =>
             liveSnapshotSemaphore.withPermit(
               getSnapshot.pipe(
-                Effect.flatMap((current) =>
-                  publishSnapshot(
-                    applyAcpRegistryLiveConfiguration(
-                      current,
-                      configuration,
-                      effectiveConfig.customModels,
+                Effect.flatMap((current) => {
+                  const updated = applyAcpRegistryLiveConfiguration(
+                    current,
+                    configuration,
+                    effectiveConfig.customModels,
+                  );
+                  return Clock.currentTimeMillis.pipe(
+                    Effect.flatMap((now) =>
+                      Ref.update(enrichmentCache, (cache) => {
+                        if (cache.entry === null) return cache;
+                        const enrichedProvider = applyAcpRegistryLiveConfiguration(
+                          cache.entry.provider,
+                          configuration,
+                          effectiveConfig.customModels,
+                        );
+                        return {
+                          ...cache,
+                          entry: {
+                            ...cache.entry,
+                            provider: enrichedProvider,
+                            expiresAt: now + PROBE_SUCCESS_TTL_MS,
+                          },
+                        };
+                      }),
                     ),
-                  ),
-                ),
+                    Effect.andThen(publishSnapshot(updated)),
+                  );
+                }),
               ),
             ),
         );
