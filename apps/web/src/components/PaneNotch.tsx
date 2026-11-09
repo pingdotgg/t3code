@@ -3,6 +3,7 @@ import { useRender } from "@base-ui/react/use-render";
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useLayoutPane } from "../layout/layoutPaneContext";
 import { observeResize } from "../lib/observeResize";
 import { cn } from "../lib/utils";
 
@@ -148,6 +149,7 @@ export function PaneNotch({
   // chrome gives it the dark tokens there (index.css).
   const isMobile = useMediaQuery("max-md");
   const notchRef = useRef<HTMLDivElement>(null);
+  const { split, focused } = useLayoutPane();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the mounted notch ancestors and remove those external DOM markers on cleanup.
   useLayoutEffect(() => {
     const notch = notchRef.current;
@@ -177,6 +179,7 @@ export function PaneNotch({
         ref={notchRef}
         data-pane-notch={side === "left" ? "" : side}
         data-chrome-scope={isMobile ? undefined : ""}
+        data-pane-notch-unfocused={side === "left" && split && !focused ? "" : undefined}
         className={cn(
           "relative isolate flex min-w-0 shrink items-center gap-1 self-stretch [--type-label:0.8125rem]",
           side === "left"
