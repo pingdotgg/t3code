@@ -280,21 +280,27 @@ describe("server browser element refs", () => {
     expect(result).toBe("Ready");
   });
 
-  it.each(["", "await 0; "])(
-    "returns the result of an expression that reloads the page (prefix %j)",
-    async (prefix) => {
-      await page.route("http://preview.test/", (route) =>
-        route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
-      );
-      await page.goto("http://preview.test/");
-      const result = await ServerBrowserPage.evaluate(
-        cdp,
-        { expression: `${prefix}location.reload(); ({ clicked: true })` },
-        5_000,
-      );
-      expect(result).toEqual({ clicked: true });
-    },
-  );
+  it("still awaits the promise an async function returns", async () => {
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "(async () => { await 0; return 1 })()" },
+      5_000,
+    );
+    expect(result).toBe(1);
+  });
+
+  it("returns the result of a top-level await expression that reloads the page", async () => {
+    await page.route("http://preview.test/", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<title>Ready</title>" }),
+    );
+    await page.goto("http://preview.test/");
+    const result = await ServerBrowserPage.evaluate(
+      cdp,
+      { expression: "await 0; location.reload(); ({ clicked: true })" },
+      5_000,
+    );
+    expect(result).toEqual({ clicked: true });
+  });
 });
 
 describe("server browser snapshot screenshot", () => {
