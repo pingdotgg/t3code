@@ -228,7 +228,6 @@ function SortableProjectRow({
             {group.workspaceRoot}
           </span>
         </span>
-        <ChevronRightIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       </button>
       <ProjectPinAction
         name={group.displayName}
@@ -236,6 +235,15 @@ function SortableProjectRow({
         canPin={canPin}
         onToggle={onTogglePin}
       />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-hidden
+        className="flex shrink-0 cursor-pointer items-center text-muted-foreground"
+        onClick={onOpen}
+      >
+        <ChevronRightIcon className="size-4" />
+      </button>
     </li>
   );
 }
