@@ -353,6 +353,70 @@ export const DiscoveredLocalServerList = Schema.Struct({
 });
 export type DiscoveredLocalServerList = typeof DiscoveredLocalServerList.Type;
 
+export const NxtvironInstanceState = Schema.Literals([
+  "running",
+  "stopped",
+  "missing",
+  "unavailable",
+]);
+export type NxtvironInstanceState = typeof NxtvironInstanceState.Type;
+
+export const NxtvironInstance = Schema.Struct({
+  ref: TrimmedNonEmptyString,
+  process: TrimmedNonEmptyString,
+  id: TrimmedNonEmptyString,
+  branch: Schema.NullOr(Schema.String),
+  status: Schema.String,
+  state: NxtvironInstanceState,
+  ports: Schema.Record(Schema.String, LocalServerPort),
+  proxyHostname: Schema.NullOr(TrimmedNonEmptyString),
+  workingDir: Schema.String,
+  configPath: Schema.String,
+});
+export type NxtvironInstance = typeof NxtvironInstance.Type;
+
+export const NxtvironInstanceList = Schema.Struct({
+  available: Schema.Boolean,
+  instances: Schema.Array(NxtvironInstance),
+});
+export type NxtvironInstanceList = typeof NxtvironInstanceList.Type;
+
+export const NxtvironInstanceAction = Schema.Literals(["resume", "stop", "delete"]);
+export type NxtvironInstanceAction = typeof NxtvironInstanceAction.Type;
+
+export const nxtvironInstanceActions = (
+  state: NxtvironInstanceState,
+): ReadonlyArray<NxtvironInstanceAction> => {
+  switch (state) {
+    case "running":
+      return ["stop"];
+    case "stopped":
+      return ["resume", "delete"];
+    case "missing":
+      return ["delete"];
+    case "unavailable":
+      return [];
+  }
+};
+
+export const NxtvironInstanceActionInput = Schema.Struct({
+  ref: TrimmedNonEmptyString,
+  action: NxtvironInstanceAction,
+});
+export type NxtvironInstanceActionInput = typeof NxtvironInstanceActionInput.Type;
+
+export class NxtvironInstanceActionError extends Schema.TaggedError<NxtvironInstanceActionError>()(
+  "NxtvironInstanceActionError",
+  {
+    code: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message() {
+    return this.detail;
+  }
+}
+
 export class PreviewSessionLookupError extends Schema.TaggedError<PreviewSessionLookupError>()(
   "PreviewSessionLookupError",
   {

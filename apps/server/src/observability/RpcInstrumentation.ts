@@ -215,6 +215,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribePreviewEvents]: "preview",
   [WS_METHODS.subscribeDiscoveredLocalServers]: "preview",
   [WS_METHODS.previewStopLocalServer]: "preview",
+  [WS_METHODS.subscribeNxtvironInstances]: "preview",
+  [WS_METHODS.nxtvironInstanceAction]: "preview",
   [WS_METHODS.deviceConfigure]: "device",
   [WS_METHODS.deviceTestHost]: "device",
   [WS_METHODS.deviceEasAccount]: "device",

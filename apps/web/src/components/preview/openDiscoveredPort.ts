@@ -13,7 +13,7 @@ import { previewRuntimeFor } from "~/browser/previewRuntime";
 
 export async function openDiscoveredPort<E>(input: {
   readonly threadRef: ScopedThreadRef;
-  readonly port: DiscoveredLocalServer;
+  readonly port: Pick<DiscoveredLocalServer, "url">;
   readonly openPreview: OpenPreviewMutation<E>;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const resolvedUrl =

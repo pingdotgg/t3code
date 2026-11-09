@@ -37,6 +37,7 @@ import {
   ClientSurface,
   ClientWebDeployment,
   type DiscoveredLocalServerList,
+  type NxtvironInstanceList,
   type EditorId,
   type FileManagerRevealKind,
   type OrchestrationV2Command,
@@ -203,6 +204,7 @@ import {
 } from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
+import * as Nxtviron from "./preview/Nxtviron.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as KnownWorkspaces from "./workspace/KnownWorkspaces.ts";
@@ -1498,6 +1500,7 @@ export const layerWsRpc = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
+      const nxtvironInstances = yield* Nxtviron.NxtvironInstances;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
       const acpRegistryCatalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
@@ -3296,6 +3299,11 @@ export const layerWsRpc = (
                   }),
               );
             }),
+          ),
+        [WS_METHODS.nxtvironInstanceAction]: (input) => nxtvironInstances.act(input),
+        [WS_METHODS.subscribeNxtvironInstances]: (_input) =>
+          Stream.callback<NxtvironInstanceList>((queue) =>
+            nxtvironInstances.subscribe((list) => Queue.offer(queue, list).pipe(Effect.asVoid)),
           ),
         [WS_METHODS.subscribeServerConfig]: (input) =>
           Stream.unwrap(

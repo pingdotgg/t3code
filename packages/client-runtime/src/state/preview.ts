@@ -39,6 +39,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
       // unmounted projects stop contributing probe candidates on the server.
       idleTtlMs: 0,
     }),
+    nxtvironInstances: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:preview:nxtviron-instances",
+      tag: WS_METHODS.subscribeNxtvironInstances,
+    }),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:open",
       tag: WS_METHODS.previewOpen,
@@ -75,6 +79,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
     stopLocalServer: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:stop-local-server",
       tag: WS_METHODS.previewStopLocalServer,
+    }),
+    nxtvironInstanceAction: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:nxtviron-instance-action",
+      tag: WS_METHODS.nxtvironInstanceAction,
     }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",

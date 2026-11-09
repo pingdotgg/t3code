@@ -1,7 +1,17 @@
 import { CONFIGURED_LOCAL_SERVER_URLS_MAX_ITEMS, PREVIEW_URL_MAX_LENGTH } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { boundConfiguredLocalServerUrls } from "./portDiscoveryState";
+import { boundConfiguredLocalServerUrls, isPathWithin } from "./portDiscoveryState";
+
+describe("isPathWithin", () => {
+  it("matches the root and its descendants but not a sibling sharing its prefix", () => {
+    expect(isPathWithin("/a/foo", "/a/foo")).toBe(true);
+    expect(isPathWithin("/a/foo/apps/api", "/a/foo/")).toBe(true);
+    expect(isPathWithin("C:\\a\\foo\\api", "C:\\a\\foo")).toBe(true);
+    expect(isPathWithin("/a/foobar", "/a/foo")).toBe(false);
+    expect(isPathWithin("/a", "/a/foo")).toBe(false);
+  });
+});
 
 describe("boundConfiguredLocalServerUrls", () => {
   it("keeps subscription payloads within the discovery RPC bounds", () => {
