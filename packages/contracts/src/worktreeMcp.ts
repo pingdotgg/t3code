@@ -77,6 +77,10 @@ export type WorktreeMcpHandoffResult = typeof WorktreeMcpHandoffResult.Type;
 export const WorktreeMcpStatusResult = Schema.Struct({
   attached: Schema.Boolean,
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  missing: Schema.Boolean.annotate({
+    description:
+      "The bound folder is gone. The next turn recreates it; `t3_worktree_release` drops the binding instead.",
+  }),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   projectWorkspaceRoot: TrimmedNonEmptyString,
   defaultStartFromOrigin: Schema.Boolean.annotate({
@@ -84,6 +88,28 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;
+
+export const WorktreeMcpReleaseInput = Schema.Struct({
+  deleteBranch: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Also delete the local branch.",
+    }),
+  ),
+  force: Schema.optional(
+    Schema.Boolean.annotate({
+      description: "Discard unsaved and unpushed work.",
+    }),
+  ),
+});
+export type WorktreeMcpReleaseInput = typeof WorktreeMcpReleaseInput.Type;
+
+export const WorktreeMcpReleaseResult = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  removal: Schema.Literals(["scheduled", "already-gone", "kept-shared"]),
+  note: Schema.String,
+});
+export type WorktreeMcpReleaseResult = typeof WorktreeMcpReleaseResult.Type;
 
 export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()(
   "WorktreeMcpFailure",
@@ -93,6 +119,8 @@ export class WorktreeMcpFailure extends Schema.TaggedError<WorktreeMcpFailure>()
       "thread_not_found",
       "project_not_found",
       "already_in_worktree",
+      "not_in_worktree",
+      "unsaved_work",
       "handoff_in_progress",
       "invalid_request",
       "operation_failed",

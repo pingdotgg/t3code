@@ -6,6 +6,8 @@ import {
   VcsListRefsResult,
   WorktreeMcpHandoffInput,
   WorktreeMcpHandoffResult,
+  WorktreeMcpReleaseInput,
+  WorktreeMcpReleaseResult,
   WorktreeMcpStatusResult,
   ThreadId,
 } from "@t3tools/contracts";
@@ -40,6 +42,21 @@ const WorktreeHandoffTool = Tool.make("t3_worktree_handoff", {
   .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const WorktreeReleaseTool = Tool.make("t3_worktree_release", {
+  description:
+    "Remove THIS thread's worktree once its work is done, e.g. PR merged. Never `git worktree remove` it yourself. Moves the thread to the project root; T3 deletes the folder after the session ends. Refuses unsaved or unpushed work unless `force`. Call last in your turn.",
+  parameters: WorktreeMcpReleaseInput,
+  success: WorktreeMcpReleaseResult,
+  failure: WorktreeToolFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Release thread's git worktree")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, false)
+  .annotate(Tool.OpenWorld, false);
 
 const WorktreeStatusTool = Tool.make("t3_worktree_status", {
   description:
@@ -86,6 +103,7 @@ const WorktreeListTool = Tool.make("t3_worktree_list", {
   .annotate(Tool.Destructive, false);
 export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
+  WorktreeReleaseTool,
   WorktreeStatusTool,
   WorktreeListTool,
 );
