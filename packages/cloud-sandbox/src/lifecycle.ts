@@ -8,25 +8,28 @@ export const ensureCloudSandboxReady = Effect.fn("CloudSandbox.ensureReady")(fun
   sandboxId: string,
   allowResume = true,
 ) {
-  const initial = yield* driver.get(sandboxId);
-  if (initial.state === "ready") return initial;
-  if (initial.state === "stopped") {
-    if (!allowResume)
+  let resumed = false;
+  const poll = Effect.gen(function* () {
+    const sandbox = yield* driver.get(sandboxId);
+    if (sandbox.state === "error" || sandbox.state === "degraded")
       return yield* new CloudSandboxError({
-        reason: "configuration",
-        cause: new Error("Resuming this sandbox is not allowed."),
+        reason: "unavailable",
+        cause: new Error("Sandbox failed to start."),
       });
-    yield* driver.resume(sandboxId);
-  }
-  return yield* driver.get(sandboxId).pipe(
-    Effect.filterOrFail(
-      (sandbox) => sandbox.state !== "error" && sandbox.state !== "degraded",
-      () =>
-        new CloudSandboxError({
-          reason: "unavailable",
-          cause: new Error("Sandbox failed to start."),
-        }),
-    ),
+    // A sandbox that was still stopping on an earlier read lands here later.
+    if (sandbox.state === "stopped" && !resumed) {
+      if (!allowResume)
+        return yield* new CloudSandboxError({
+          reason: "configuration",
+          cause: new Error("Resuming this sandbox is not allowed."),
+        });
+      resumed = true;
+      yield* driver.resume(sandboxId);
+      return yield* driver.get(sandboxId);
+    }
+    return sandbox;
+  });
+  return yield* poll.pipe(
     Effect.repeat({
       schedule: Schedule.spaced("1500 millis"),
       while: (sandbox) => sandbox.state !== "ready",

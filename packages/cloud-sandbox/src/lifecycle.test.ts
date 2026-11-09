@@ -38,6 +38,33 @@ it.effect("resumes archived machines and refuses resume when disabled", () =>
   }),
 );
 
+it.effect("resumes a machine that finishes stopping while it is polled", () =>
+  Effect.gen(function* () {
+    const states = ["archiving", "archiving", "archived"];
+    let resumes = 0;
+    const httpClient = HttpClient.make((request) => {
+      if (request.url.endsWith("/resume")) {
+        resumes++;
+        states.push("idle");
+      }
+      const state = states.length > 1 ? states.shift() : states[0];
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ ok: true, sandbox: { id: "bx_23456789", name: "dev", state } }),
+        ),
+      );
+    });
+    const driver = createBoatCloudSandboxDriver(
+      createBoatApiClient({ apiKey: "boat_test", httpClient }),
+    );
+    const ready = yield* ensureCloudSandboxReady(driver, "bx_23456789").pipe(Effect.forkChild);
+    yield* TestClock.adjust("10 seconds");
+    expect((yield* Fiber.join(ready)).state).toBe("ready");
+    expect(resumes).toBe(1);
+  }),
+);
+
 it.effect(
   "extends only during active work and releases the host-owned worker on interruption",
   () =>
