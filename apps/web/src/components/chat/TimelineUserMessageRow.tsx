@@ -342,7 +342,7 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           </div>
         ) : null}
       </div>
-      {userMessageMeta && !row.continuesSteer ? (
+      {userMessageMeta ? (
         <UserMessageMeta intent={userMessageMeta.intent} label={userMessageMeta.label} />
       ) : null}
       <UserMessageProjectedStatus row={row} />
@@ -536,7 +536,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
     regularImages.length > 1 &&
     regularImages.every((image) => image.source?.kind !== "snap-shot");
   const userMessageMeta = resolveUserMessageMeta(row.message.inputIntent);
-  const steerLabelAbove = userMessageMeta !== null && !row.continuesSteer;
+  // A steer right under your previous message reads as its continuation, so only its tooltip says so.
+  const steerLabelAbove = userMessageMeta !== null && !row.groupedWithPrevious;
   // Corners that touch the bubble, a neighbouring message or the steer label tighten.
   const mediaCornerClassName = cn(
     (row.groupedWithPrevious || steerLabelAbove) && "rounded-tr-md",
@@ -823,6 +824,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         </TooltipTrigger>
         <TooltipPopup>
           {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+          {userMessageMeta && !steerLabelAbove ? (
+            <span className="block">{userMessageIntentDescription(userMessageMeta.intent)}</span>
+          ) : null}
         </TooltipPopup>
       </Tooltip>
       <div className={cn("flex items-center gap-0.5", floatActions && "flex-wrap justify-end")}>
@@ -1246,13 +1250,15 @@ function UserMessageMeta({
         <Redo2Icon aria-hidden className="size-3" />
         {label}
       </TooltipTrigger>
-      <TooltipPopup side="top">
-        {intent === "promoted_queued_to_steer"
-          ? "Originally queued, then promoted to steer the active turn"
-          : "Steered the active turn"}
-      </TooltipPopup>
+      <TooltipPopup side="top">{userMessageIntentDescription(intent)}</TooltipPopup>
     </Tooltip>
   );
+}
+
+function userMessageIntentDescription(intent: "steer" | "promoted_queued_to_steer"): string {
+  return intent === "promoted_queued_to_steer"
+    ? "Originally queued, then promoted to steer the active turn"
+    : "Steered the active turn";
 }
 
 function resolveUserMessageMeta(

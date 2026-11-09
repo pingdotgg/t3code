@@ -268,6 +268,7 @@ import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
+import { useEnvironmentDisconnectDelay } from "../../hooks/useEnvironmentDisconnectDelay";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -626,6 +627,10 @@ export function ChatComposer(props: ChatComposerProps) {
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
   } = props;
+  // The first connect after a load is not a disconnect: hold the placeholder as the banner does.
+  const environmentDisconnected = useEnvironmentDisconnectDelay(
+    environmentUnavailable === null ? null : environmentId,
+  );
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     contextWindowEntries,
     contextWindowLiveUsage,
@@ -3673,7 +3678,7 @@ export function ChatComposer(props: ChatComposerProps) {
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : environmentUnavailable !== null
+                                : environmentDisconnected
                                   ? DISCONNECTED_COMPOSER_PLACEHOLDER
                                   : "Ask anything, @tag files/folders, $use skills, or / for commands"
                     }
@@ -3684,7 +3689,7 @@ export function ChatComposer(props: ChatComposerProps) {
                       !showPlanFollowUpPrompt &&
                       !projectSelectionRequired &&
                       !showProviderUnavailable &&
-                      environmentUnavailable === null
+                      !environmentDisconnected
                         ? "Ask anything…"
                         : undefined
                     }
