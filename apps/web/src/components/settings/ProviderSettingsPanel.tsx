@@ -572,6 +572,16 @@ export function EnvironmentProviderSettings({
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const [pendingProviderOrder, setPendingProviderOrder] = useState<
+    readonly ProviderInstanceId[] | null
+  >(null);
+  if (
+    pendingProviderOrder !== null &&
+    pendingProviderOrder.length === settings.providerOrder.length &&
+    pendingProviderOrder.every((id, index) => settings.providerOrder[index] === id)
+  ) {
+    setPendingProviderOrder(null);
+  }
   const updateModelPreferences = useUpdateEnvironmentModelPreferences(environmentId);
   const toggleModelFavorite = useToggleEnvironmentModelFavorite(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
@@ -792,7 +802,11 @@ export function EnvironmentProviderSettings({
     }
   }
 
-  const orderedRows = sortByProviderOrder(rows, settings.providerOrder, (row) => row.instanceId);
+  const orderedRows = sortByProviderOrder(
+    rows,
+    pendingProviderOrder ?? settings.providerOrder,
+    (row) => row.instanceId,
+  );
   const targetInstanceMissing =
     targetInstanceId !== undefined &&
     selectedInstanceId === targetInstanceId &&
@@ -805,7 +819,13 @@ export function EnvironmentProviderSettings({
     const ids = orderedRows.map((row) => row.instanceId);
     const from = ids.indexOf(id);
     if (from === -1 || to < 0 || to >= ids.length || from === to) return;
-    updateSettings({ providerOrder: arrayMove(ids, from, to) });
+    const next = arrayMove(ids, from, to);
+    // Later moves build on this order until the server reports it or the write fails.
+    setPendingProviderOrder(next);
+    updateSettings(
+      { providerOrder: next },
+      { onFailed: () => setPendingProviderOrder((current) => (current === next ? null : current)) },
+    );
   };
   const dropProvider = (event: DragEndEvent) => {
     if (!event.over) return;
