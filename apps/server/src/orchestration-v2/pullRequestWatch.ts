@@ -56,12 +56,18 @@ export function evaluatePullRequestWatch(
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
   let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
+  // A new head without checks waits for them only where the host always reports some.
+  let checksPending = headMoved
+    ? detail.capabilities.checksAlwaysReport === true
+    : (watch.checksPending ?? true);
   // An unavailable approval read cannot establish success or that no checks exist.
   const unread = detail.checks.some((check) => check.placeholder === true);
   const checks = detail.checks.filter((check) => check.placeholder !== true);
   const failed = checks.filter(isFailedCheck);
   const awaiting = checks.filter((check) => check.status === "action-required");
   if (checks.length > 0) {
+    // A run awaiting approval waits on a person, like a review, so only running checks count.
+    checksPending = checks.some((check) => check.status === "pending");
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     if (!approvalAnnounced && awaiting.length > 0) {
@@ -154,6 +160,7 @@ export function evaluatePullRequestWatch(
     if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
+      checksPending = false;
     }
   }
 
@@ -205,6 +212,7 @@ export function evaluatePullRequestWatch(
       conflicting,
       wakes,
       checksAwaitedSince,
+      checksPending,
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };

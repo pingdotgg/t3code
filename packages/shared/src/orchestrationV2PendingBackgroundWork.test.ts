@@ -434,6 +434,31 @@ describe("derivePendingBackgroundWork kinds", () => {
       ]);
     });
 
+    it("stops a watch whose checks all finished from holding the thread, while still listing it", () => {
+      const tasks = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [{ ...link(1, {}), watch: { ...watch, passed: true, checksPending: false } }],
+      });
+      expect(tasks).toEqual([
+        {
+          taskId: "pull-request-watch:github.com/acme/app#1",
+          description: "Watching pull request #1",
+          kind: "monitor",
+        },
+      ]);
+      expect(backgroundWorkHoldsCompletion(tasks)).toBe(false);
+
+      const running = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [{ ...link(1, {}), watch: { ...watch, checksPending: true } }],
+      });
+      expect(backgroundWorkHoldsCompletion(running)).toBe(true);
+    });
+
     it("lists no watch while a run is active", () => {
       expect(
         derivePendingBackgroundWork({

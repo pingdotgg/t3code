@@ -316,7 +316,8 @@ function pullRequestWatchTasks(
             taskId: `pull-request-watch:${link.host.toLowerCase()}/${link.repository.toLowerCase()}#${link.number}`,
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
-            awaited: true as const,
+            // Once every check finished, a person moves the PR next: the watch stays on but holds nothing.
+            ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
           },
         ],
   );
