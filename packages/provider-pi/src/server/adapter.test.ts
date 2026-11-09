@@ -32,6 +32,7 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -4635,6 +4636,51 @@ describe("PiAdapterV2", () => {
       yield* fake.emit({ type: "agent_settled" });
       const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
       assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect.each([
+    {
+      name: "a streamed usage limit",
+      errorMessage: "Codex error: The usage limit has been reached",
+      resetsInMinutes: null,
+    },
+    {
+      name: "a ChatGPT plan limit with a reset time",
+      errorMessage: "You have hit your ChatGPT usage limit (plus plan). Try again in ~137 min.",
+      resetsInMinutes: 137,
+    },
+  ])("fails the turn as a usage limit on $name", ({ errorMessage, resetsInMinutes }) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse("2026-11-09T12:00:00.000Z"));
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const receivedAt = yield* DateTime.now;
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "error", errorMessage },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "failed");
+      if (terminal.type !== "turn.terminal" || terminal.status !== "failed") return;
+      assert.strictEqual(terminal.failure.class, "usage_limit");
+      if (resetsInMinutes === null) {
+        assert.isUndefined(terminal.failure.resetAt);
+        return;
+      }
+      const earliest = DateTime.toEpochMillis(receivedAt) + resetsInMinutes * 60_000;
+      const resetAt = Date.parse(terminal.failure.resetAt ?? "");
+      assert.isAtLeast(resetAt, earliest);
+      assert.isAtMost(resetAt, earliest + 60_000);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
