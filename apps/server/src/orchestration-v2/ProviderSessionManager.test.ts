@@ -55,6 +55,10 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  makeProviderFailure,
+  makeProviderRetryTurnItem,
+} from "@t3tools/provider-core/server/failure";
 
 const layerTestDatabase = SqlitePersistence.layerMemory;
 const layerTestStores = Layer.merge(EventStore.layer, ProjectionStore.layer).pipe(
@@ -2020,6 +2024,131 @@ it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops",
     });
 
     yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resumes", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const interrupted = yield* Deferred.make<void>();
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-retry-stall");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({ idAllocator, threadId, providerSessionId, now });
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          {
+            id: yield* idAllocator.allocate.event({ threadId }),
+            type: "provider-thread.updated",
+            threadId,
+            occurredAt: now,
+            payload: providerThread,
+          },
+        ],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscription = yield* runtime.subscribeEvents!;
+      const collected = yield* subscription.events.pipe(Stream.runCollect, Effect.forkScoped);
+      const adapterQueue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(adapterQueue);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: CODEX_DRIVER,
+        nativeTurnId: "retry-stall-turn",
+      });
+      const failure = makeProviderFailure({
+        message: "Rate limit exceeded",
+        code: "rate_limited",
+        class: "usage_limit",
+        retryable: true,
+      });
+      const retry = { attempt: 2, maxAttempts: 5, retryDelayMs: 60_000 };
+      const retryItem = (status: "running" | "interrupted") =>
+        makeProviderRetryTurnItem({
+          driver: CODEX_DRIVER,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          itemOrdinal: 3,
+          failure,
+          retry,
+          status,
+          startedAt: now,
+          updatedAt: now,
+        });
+      yield* Queue.offer(adapterQueue!, {
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: retryItem("running"),
+      });
+      // The stall window starts after the provider's announced retry delay.
+      yield* TestClock.adjust("15 minutes");
+      assert.equal((yield* Ref.get(state)).interruptCount, 0);
+      yield* TestClock.adjust("1 minute");
+      yield* Deferred.await(interrupted);
+      yield* Queue.offer(adapterQueue!, {
+        type: "turn_item.updated",
+        driver: CODEX_DRIVER,
+        turnItem: retryItem("interrupted"),
+      });
+      yield* Queue.offer(adapterQueue!, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        runOrdinal: 1,
+        status: "interrupted",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      yield* Queue.offer(adapterQueue!, {
+        type: "provider_session.updated",
+        driver: CODEX_DRIVER,
+        providerSession: { ...runtime.providerSession, status: "stopped", updatedAt: now },
+      });
+      yield* Queue.end(adapterQueue!);
+
+      const terminal = Array.from(yield* Fiber.join(collected)).find(
+        (event) => event.type === "turn.terminal",
+      );
+      assert.deepEqual(terminal, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        runOrdinal: 1,
+        failureItemOrdinal: 3,
+        status: "failed",
+        failure: { ...failure, retryable: false },
+        retry,
+        retryStartedAt: now,
+        threadDisposition: "reusable",
+      });
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60 * 60_000,
+          interruptTurn: Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+        }),
+      ),
+    );
   }),
 );
 

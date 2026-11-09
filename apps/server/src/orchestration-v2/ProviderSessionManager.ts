@@ -12,7 +12,9 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
+  type OrchestrationV2TurnItem,
   type ProviderThreadId,
+  type ProviderTurnId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -66,6 +68,12 @@ const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThread
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
+// Providers can announce a retry and never resume; Codex fails its own stalls sooner.
+const PROVIDER_RETRY_STALL_TIMEOUT = Duration.minutes(15);
+type ProviderRetryItem = Extract<OrchestrationV2TurnItem, { readonly type: "error" }> & {
+  readonly providerTurnId: ProviderTurnId;
+  readonly providerThreadId: ProviderThreadId;
+};
 /** Suggestions outlive their sessions, so keep only the most recently updated threads. */
 const MAX_PROMPT_SUGGESTIONS = 256;
 const WORKING_RUN_STATUSES: ReadonlySet<string> = new Set([
@@ -2203,21 +2211,134 @@ export const layerWithOptions = (
           ),
       );
 
+      const makeRetryStallWatch = (entry: LiveSessionEntry) => {
+        const runningRetries = new Map<ProviderTurnId, ProviderRetryItem>();
+        const stalledRetries = new Map<ProviderTurnId, ProviderRetryItem>();
+        // Stops the stalled turn; its interrupted terminal is then reported as the retry's failure.
+        const stopStalledRetry = Effect.fn("ProviderSessionManager.stopStalledRetry")(
+          function* (item: ProviderRetryItem) {
+            if (runningRetries.get(item.providerTurnId) !== item) return;
+            const current = (yield* Ref.get(sessions)).get(
+              sessionKey(entry.runtime.providerSessionId),
+            );
+            if (current?.runtime !== entry.runtime) return;
+            const { providerThread } = yield* projectionStore.getProviderControlContext(
+              item.threadId,
+              { providerThreadId: item.providerThreadId, providerTurnId: item.providerTurnId },
+            );
+            if (providerThread === undefined) return;
+            stalledRetries.set(item.providerTurnId, item);
+            yield* entry.runtime.interruptTurn({
+              providerThread,
+              providerTurnId: item.providerTurnId,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-retry-stall-stop-failed", {
+              providerSessionId: entry.runtime.providerSessionId,
+              cause,
+            }),
+          ),
+        );
+        const trackProviderRetry = (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ): {
+          readonly event: ProviderAdapter.ProviderAdapterV2Event;
+          readonly armed?: ProviderRetryItem;
+        } => {
+          if (event.type === "turn_item.updated") {
+            const item = event.turnItem;
+            if (
+              item.type !== "error" ||
+              item.retry === undefined ||
+              item.providerTurnId === null ||
+              item.providerThreadId === null
+            )
+              return { event };
+            const retryItem = {
+              ...item,
+              providerTurnId: item.providerTurnId,
+              providerThreadId: item.providerThreadId,
+            };
+            if (item.status === "running") {
+              runningRetries.set(retryItem.providerTurnId, retryItem);
+              return { event, armed: retryItem };
+            }
+            runningRetries.delete(retryItem.providerTurnId);
+            // Adapters mark the retry stopped before the interrupted terminal; only recovery clears it.
+            if (item.status === "completed") stalledRetries.delete(retryItem.providerTurnId);
+            return { event };
+          }
+          if (event.type === "provider_turn.updated") {
+            if (event.providerTurn.status === "running") return { event };
+            runningRetries.delete(event.providerTurn.id);
+            const stalled = stalledRetries.has(event.providerTurn.id);
+            return stalled &&
+              (event.providerTurn.status === "interrupted" ||
+                event.providerTurn.status === "cancelled")
+              ? { event: { ...event, providerTurn: { ...event.providerTurn, status: "failed" } } }
+              : { event };
+          }
+          if (event.type !== "turn.terminal") return { event };
+          runningRetries.delete(event.providerTurnId);
+          const stalled = stalledRetries.get(event.providerTurnId);
+          stalledRetries.delete(event.providerTurnId);
+          if (
+            stalled === undefined ||
+            (event.status !== "interrupted" && event.status !== "cancelled")
+          )
+            return { event };
+          return {
+            event: {
+              type: "turn.terminal",
+              driver: event.driver,
+              providerThreadId: event.providerThreadId,
+              providerTurnId: event.providerTurnId,
+              runOrdinal: event.runOrdinal,
+              failureItemOrdinal: stalled.ordinal,
+              status: "failed",
+              failure: { ...stalled.failure, retryable: false },
+              ...(stalled.retry === undefined ? {} : { retry: stalled.retry }),
+              ...(stalled.startedAt === null ? {} : { retryStartedAt: stalled.startedAt }),
+              threadDisposition: event.threadDisposition,
+            },
+          };
+        };
+        return {
+          track: trackProviderRetry,
+          arm: (item: ProviderRetryItem) =>
+            stopStalledRetry(item).pipe(
+              Effect.delay(
+                Duration.sum(
+                  PROVIDER_RETRY_STALL_TIMEOUT,
+                  Duration.millis(item.retry?.retryDelayMs ?? 0),
+                ),
+              ),
+              Effect.forkIn(layerScope, { startImmediately: true }),
+              Effect.asVoid,
+            ),
+        };
+      };
+
       const startEventPump = (entry: LiveSessionEntry) => {
         let stoppedByProvider = false;
         let lastSessionStatus = entry.runtime.providerSession.status;
+        const retryStalls = makeRetryStallWatch(entry);
         return entry.runtime.events.pipe(
-          Stream.runForEach((event) => {
+          Stream.runForEach((nativeEvent) => {
             if (shutdownSignal.received) return Effect.void;
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
-            if (event.type === "command_output.delta") {
-              return commandOutput.append(event);
+            if (nativeEvent.type === "command_output.delta") {
+              return commandOutput.append(nativeEvent);
             }
-            if (event.type === "prompt_suggestion.updated") {
+            if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {
                 const next = new Map(current);
-                next.delete(event.threadId);
-                next.set(event.threadId, { runId: event.runId, text: event.text });
+                next.delete(nativeEvent.threadId);
+                next.set(nativeEvent.threadId, {
+                  runId: nativeEvent.runId,
+                  text: nativeEvent.text,
+                });
                 for (const threadId of next.keys()) {
                   if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
                   next.delete(threadId);
@@ -2225,6 +2346,8 @@ export const layerWithOptions = (
                 return next;
               });
             }
+            const { event, armed } = retryStalls.track(nativeEvent);
+            const armRetryStall = armed === undefined ? Effect.void : retryStalls.arm(armed);
             const releaseLiveOutput =
               event.type === "turn_item.updated" &&
               event.turnItem.type === "command_execution" &&
@@ -2254,6 +2377,7 @@ export const layerWithOptions = (
                   ? Effect.void
                   : touchActivity(entry.runtime.providerSessionId, { providerActivity: true }),
             ).pipe(
+              Effect.andThen(armRetryStall),
               Effect.andThen(
                 event.type === "provider_session.updated"
                   ? persistProviderSessionUpdate(entry, event)
