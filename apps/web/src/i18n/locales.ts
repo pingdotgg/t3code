@@ -7,6 +7,7 @@ export const SUPPORTED_LOCALES: ReadonlyArray<string> = [DEFAULT_LOCALE, ...gtCo
 // Shown in their own language so a user can find theirs from any UI language.
 const NATIVE_LANGUAGE_NAMES: Readonly<Record<string, string>> = {
   en: "English",
+  de: "Deutsch",
   es: "Español",
   fr: "Français",
   "pt-BR": "Português (Brasil)",
