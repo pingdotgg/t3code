@@ -3,7 +3,7 @@ import { LayersIcon } from "lucide-react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
-import { ManualProjectOrderSection, ProjectOrderList } from "./ProjectOrderList";
+import { ProjectOrderList } from "./ProjectOrderList";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
@@ -12,8 +12,8 @@ import { ALL_ENVIRONMENTS_VALUE, selectEnvironmentAxis } from "./settingsScopeAx
 
 export function ProjectsSettings() {
   const { search: value, scope, selectScope } = useSettingsScope();
-  const manualOrder = useClientSettings(
-    (settings) => settings.sidebarProjectSortOrder === "manual",
+  const canOrderProjects = useClientSettings(
+    (settings) => settings.boringSidebarEnabled || settings.sidebarProjectSortOrder === "manual",
   );
   const unavailable =
     scope.kind === "unavailable" ? (
@@ -52,8 +52,7 @@ export function ProjectsSettings() {
         unavailable
       ) : (
         <SettingsPageContainer>
-          <ManualProjectOrderSection enabled={manualOrder} />
-          {manualOrder ? (
+          {canOrderProjects ? (
             <ProjectOrderList />
           ) : (
             <SettingsScopeNotice inline target="project">
