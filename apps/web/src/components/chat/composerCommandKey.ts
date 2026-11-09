@@ -17,6 +17,7 @@ import {
   composerSubmissionIntentForKey,
 } from "../../composer-logic";
 import { type PendingUserInput } from "../../session-logic";
+import { folderMoveQueryPath } from "./folderMoveDestinations";
 import { type PreviewAnnotationPayload } from "@t3tools/contracts";
 import { type ReviewCommentContext } from "../../reviewCommentContext";
 import { composerTargetKey } from "../../composerDraftStore";
@@ -69,6 +70,7 @@ export function composerCommandKeyHandler(input: {
   readonly dismissComposerTrigger: (trigger: ComposerTrigger | null) => void;
   readonly nudgeComposerMenuHighlight: (key: "ArrowDown" | "ArrowUp") => void;
   readonly onSelectComposerItem: (item: ComposerCommandItem) => void;
+  readonly completeFolderMovePath: () => void;
   readonly resolveActiveComposerTrigger: () => { trigger: ComposerTrigger | null };
   readonly readComposerSnapshot: () => { value: string };
   readonly applyPromptReplacement: (
@@ -116,6 +118,7 @@ export function composerCommandKeyHandler(input: {
     dismissComposerTrigger,
     nudgeComposerMenuHighlight,
     onSelectComposerItem,
+    completeFolderMovePath,
     resolveActiveComposerTrigger,
     readComposerSnapshot,
     applyPromptReplacement,
@@ -228,13 +231,28 @@ export function composerCommandKeyHandler(input: {
     }
     if (menuIsActive && (submissionIntent === null || submissionIntent === "foreground")) {
       const currentItems = composerMenuItemsRef.current;
-      const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+      // In the `/cd` pane Enter runs the typed destination unless the user picked a row.
+      const isFolderPane = trigger?.kind === "folder";
+      const selectedItem =
+        activeComposerMenuItemRef.current ?? (isFolderPane ? undefined : currentItems[0]);
+      if (isFolderPane && key === "Tab") {
+        completeFolderMovePath();
+        return true;
+      }
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
         return true;
       }
       if (key === "ArrowUp" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowUp");
+        return true;
+      }
+      // A bare `/cd` has no destination to run, so Enter picks the first row instead; the next
+      // Enter moves there.
+      const bareFolderPane =
+        trigger?.kind === "folder" && folderMoveQueryPath(trigger.query) === "";
+      if (key === "Enter" && bareFolderPane && !selectedItem && currentItems.length > 0) {
+        nudgeComposerMenuHighlight("ArrowDown");
         return true;
       }
       if ((key === "Enter" || key === "Tab") && selectedItem) {

@@ -22,6 +22,7 @@ import {
   extendReplacementRangeForTrailingSpace,
   formatAssistantCitationForComposer,
   isPathSuggestionCurrent,
+  parseFolderMoveCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { slashCommandItemsForPromptPosition } from "./components/chat/composerSlashCommandSearch";
@@ -241,6 +242,22 @@ describe("detectComposerTrigger", () => {
     ["Use /etc/hosts now", "Use /et".length],
   ])("keeps the path in %j out of the slash menu", (text, cursor) => {
     expect(detectComposerTrigger(text, cursor)).toBeNull();
+  });
+
+  it("gives /cd its destination query, spaces and slashes included", () => {
+    const text = "/cd ~/My Projects/app";
+    expect(detectComposerTrigger(text, text.length)).toEqual({
+      kind: "folder",
+      query: "~/My Projects/app",
+      rangeStart: 4,
+      rangeEnd: text.length,
+    });
+    expect(detectComposerTrigger("/cd ", 4)).toMatchObject({ kind: "folder", query: "" });
+    // Before the space it is still the slash command; other text is not a destination.
+    expect(detectComposerTrigger("/cd", 3)).toMatchObject({ kind: "slash-command", query: "cd" });
+    expect(detectComposerTrigger("/cd /a", 2)).toMatchObject({ kind: "slash-command" });
+    expect(detectComposerTrigger("go /cd /tmp", 11)?.kind).not.toBe("folder");
+    expect(detectComposerTrigger("/cd /tmp\nmore", 8)?.kind).not.toBe("folder");
   });
 
   it.each(["Use ", "Use\t", "Use\n  "])("detects inline slash skills after %j", (prefix) => {
@@ -552,7 +569,7 @@ describe("extendReplacementRangeForTrailingSpace", () => {
 
 describe("side chat slash commands", () => {
   it("are not offered after the start of a message", () => {
-    const items = (["side", "btw", "clear", "model"] as const).map((command) => ({
+    const items = (["side", "btw", "clear", "cd", "no", "model"] as const).map((command) => ({
       id: `slash:${command}`,
       type: "slash-command" as const,
       command,
@@ -563,4 +580,20 @@ describe("side chat slash commands", () => {
       "slash:model",
     ]);
   });
+});
+
+it.each([
+  ["/cd", { command: "cd", path: null }],
+  ['/cd ""', { command: "cd", path: null }],
+  ["/CD ~/src/app ", { command: "cd", path: "~/src/app" }],
+  ["/cd My Projects/app", { command: "cd", path: "My Projects/app" }],
+  ['/cd "My Projects/app"', { command: "cd", path: "My Projects/app" }],
+  ["/cd ' a b '", { command: "cd", path: " a b " }],
+  ['/cd "a', { command: "cd", path: '"a' }],
+  ["/no", { command: "no", path: null }],
+  ["/no project", { command: "no", path: "project" }],
+  ["/node", null],
+  ["run /cd later", null],
+])("parseFolderMoveCommand parses %j", (text, expected) => {
+  expect(parseFolderMoveCommand(text)).toEqual(expected);
 });

@@ -41,6 +41,8 @@ export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 export const FilesystemBrowseResult = Schema.Struct({
   parentPath: TrimmedNonEmptyString,
   entries: Schema.Array(FilesystemBrowseEntry),
+  /** True when the server may not read the folder, so `entries` is empty. Older servers omit it. */
+  unreadable: Schema.optionalKey(Schema.Boolean),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
 

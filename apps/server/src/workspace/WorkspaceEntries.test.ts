@@ -816,6 +816,40 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("marks a folder it may not read as unreadable", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-unreadable-" });
+        yield* writeTextFile(cwd, "locked/inner/file.txt", "");
+        const locked = path.join(cwd, "locked");
+        yield* Effect.promise(() => NodeFSP.chmod(locked, 0o000));
+        const unlock = Effect.promise(() => NodeFSP.chmod(locked, 0o755));
+        // Root reads a folder without the read permission, so the case does not apply.
+        const readsAnyway = yield* Effect.promise(() =>
+          NodeFSP.readdir(locked).then(
+            () => true,
+            () => false,
+          ),
+        );
+        if (readsAnyway) return yield* unlock;
+
+        const lockedResult = yield* workspaceEntries
+          .browse({ partialPath: `${locked}${path.sep}` })
+          .pipe(Effect.ensuring(unlock));
+        const readableResult = yield* workspaceEntries.browse({
+          partialPath: `${cwd}${path.sep}`,
+        });
+
+        expect(lockedResult).toEqual({ parentPath: locked, entries: [], unreadable: true });
+        expect(readableResult).toEqual({
+          parentPath: cwd,
+          entries: [{ name: "locked", fullPath: locked }],
+        });
+      }),
+    );
+
     it.effect("marks only a missing directory as missing when browsing fails", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;

@@ -212,6 +212,7 @@ export const make = Effect.gen(function* () {
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
 
+      let unreadable = false;
       const dirents = yield* Effect.tryPromise({
         try: () => NodeFSP.readdir(parentPath, { withFileTypes: true }),
         catch: (cause) =>
@@ -227,7 +228,12 @@ export const make = Effect.gen(function* () {
             const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
             return code === "EACCES" || code === "EPERM";
           },
-          () => Effect.succeed([]),
+          // The listing stays empty, and the flag tells a client that the folder was not read.
+          () =>
+            Effect.sync(() => {
+              unreadable = true;
+              return [];
+            }),
         ),
       );
 
@@ -250,6 +256,7 @@ export const make = Effect.gen(function* () {
       return {
         parentPath,
         entries: entries.toSorted((left, right) => left.name.localeCompare(right.name)),
+        ...(unreadable ? { unreadable: true } : {}),
       };
     },
   );

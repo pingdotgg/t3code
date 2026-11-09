@@ -55,7 +55,11 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
+  parseFolderMoveCommand,
 } from "../../composer-logic";
+import { askThreadMove } from "./threadMoveDialogStore";
+import { threadMoveToastDescription } from "./threadMoveToast";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -91,9 +95,12 @@ import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  folderMoveBlockReason,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
+  runThreadMove,
+  threadMoveDialogCopy,
 } from "./composerSend.logic";
 import { useMultipleModelSend } from "./useMultipleModelSend";
 import { type ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
@@ -335,6 +342,7 @@ export function useComposerSend(input: ComposerSendInput) {
   const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
+  const moveThread = useAtomCommand(threadEnvironment.move, { reportFailure: false });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const sendToMultipleModels = useMultipleModelSend({
@@ -353,6 +361,31 @@ export function useComposerSend(input: ComposerSendInput) {
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
   const composerSendGenerationRef = useRef(0);
   const environmentUnavailableSendToastSlotRef = useRef(0);
+  const moveToastIdRef = useRef<ReturnType<typeof toastManager.add> | null>(null);
+  // One move toast at a time: a new attempt or a question replaces the last answer.
+  const closeMoveToast = () => {
+    if (moveToastIdRef.current !== null) toastManager.close(moveToastIdRef.current);
+    moveToastIdRef.current = null;
+  };
+  const notifyMove = (toast: Parameters<typeof stackedThreadToast>[0]) => {
+    closeMoveToast();
+    moveToastIdRef.current = toastManager.add(
+      stackedThreadToast({
+        ...toast,
+        // A draft has no thread route to scope the toast to.
+        ...(isLocalDraftThread || activeThread === undefined
+          ? {}
+          : { data: { threadRef: scopeThreadRef(environmentId, activeThread.id) } }),
+      }),
+    );
+  };
+  /** The toast for a `/cd` or `/no` that did not move the thread, typed or chosen from the menu. */
+  const refuseFolderMove = (reason: string) =>
+    notifyMove({
+      type: "warning",
+      title: "Thread not moved",
+      description: threadMoveToastDescription(reason),
+    });
   // A send awaits uploads before it declines, so it reads the approvals pending by then.
   const pendingApprovalsRef = useRef(pendingApprovals);
   const respondingRequestIdsRef = useRef(respondingRequestIds);
@@ -461,16 +494,17 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
-    if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
-      if (
-        sendCtx.images.length > 0 ||
+    const hasContext =
+      sendCtx !== undefined &&
+      (sendCtx.images.length > 0 ||
         sendCtx.files.length > 0 ||
         filterTerminalContextsWithText(sendCtx.terminalContexts).length > 0 ||
         sendCtx.previewAnnotations.length > 0 ||
         sendCtx.reviewComments.length > 0 ||
         sendCtx.threadContexts.length > 0 ||
-        sendCtx.environmentContexts.length > 0
-      ) {
+        sendCtx.environmentContexts.length > 0);
+    if (onSideChat && sendCtx && sideChatCommand && sideChatDisabledReason === null) {
+      if (hasContext) {
         toastManager.add(
           stackedThreadToast({
             type: "warning",
@@ -491,6 +525,80 @@ export function useComposerSend(input: ComposerSendInput) {
         setComposerDraftPrompt(composerDraftTarget, "");
         composerRef.current?.resetCursorState();
       }
+      return;
+    }
+    const folderMove = parseFolderMoveCommand(promptAtSend);
+    if (sendCtx && folderMove) {
+      const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId);
+      const blockReason = folderMoveBlockReason({
+        supported: config?.environment.capabilities.threadWorkingFolderMove === true,
+        isLocalDraftThread,
+        editingQueuedMessage: queuedRunEdit.isEditing,
+        requestPending: activePendingProgress !== null || pendingApprovalsRef.current.length > 0,
+        textOnly: !directAnnotation && !hasContext,
+      });
+      closeMoveToast();
+      if (blockReason !== null) return refuseFolderMove(blockReason);
+      // The composer opens the destination pane for a bare `/cd`; this is what is left when it
+      // cannot, such as during a running turn.
+      if (folderMove.command === "cd" && folderMove.path === null) {
+        notifyMove({
+          type: "info",
+          title: "Choose a destination",
+          description: "Type a project name or a folder path after /cd.",
+        });
+        return;
+      }
+      if (folderMove.command === "no" && folderMove.path !== null) {
+        refuseFolderMove("Usage: /no, with nothing after it.");
+        return;
+      }
+      sendInFlightRef.current = true;
+      await runThreadMove(
+        { threadId: activeThread.id, destination: folderMove.path },
+        async (request) => {
+          const result = await moveThread({ environmentId, input: request });
+          if (result._tag === "Success") return result.value;
+          const error = squashAtomCommandFailure(result);
+          const reason = error instanceof Error ? error.message : "Could not move the thread.";
+          return { _tag: "refused", reason };
+        },
+        (question) => {
+          closeMoveToast();
+          return askThreadMove(
+            threadMoveDialogCopy(
+              question,
+              activeThread.worktreePath ?? activeProject?.workspaceRoot ?? null,
+            ),
+          );
+        },
+      )
+        .then((outcome) => {
+          if (outcome === null) return;
+          if (outcome._tag === "refused") return refuseFolderMove(outcome.reason);
+          if (outcome.members.length === 0) {
+            notifyMove({
+              type: "info",
+              title: "Thread not moved",
+              description: threadMoveToastDescription(`Already in \`${outcome.folder}\`.`),
+            });
+          }
+          if (
+            currentRouteThreadKeyRef.current === routeThreadKey &&
+            promptRef.current === promptAtSend
+          ) {
+            promptRef.current = "";
+            setComposerDraftPrompt(composerDraftTarget, "");
+            composerRef.current?.resetCursorState();
+          }
+        })
+        .finally(() => {
+          sendInFlightRef.current = false;
+          // A dialog took the focus; the user goes on typing where they were.
+          if (currentRouteThreadKeyRef.current === routeThreadKey) {
+            composerRef.current?.focusAtEnd();
+          }
+        });
       return;
     }
     if (answeringQuestion) {
@@ -1390,5 +1498,5 @@ export function useComposerSend(input: ComposerSendInput) {
     }
   };
 
-  return { onSend };
+  return { onSend, refuseFolderMove };
 }

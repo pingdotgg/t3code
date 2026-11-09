@@ -69,6 +69,55 @@ describe("V2 session presentation", () => {
     ).toBe(false);
   });
 
+  it("shows a move receipt as a heading with details, and other notices as warnings", () => {
+    const at = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
+    const notice = (id: string, message: string, previousFolder?: string) => {
+      const item = {
+        id: TurnItemId.make(id),
+        threadId: ThreadId.make("thread-notices"),
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed" as const,
+        title: null,
+        startedAt: at,
+        completedAt: at,
+        updatedAt: at,
+        type: "system_notice" as const,
+        message,
+        ...(previousFolder === undefined ? {} : { previousFolder }),
+      };
+      return {
+        position: 0,
+        visibility: "local" as const,
+        sourceThreadId: item.threadId,
+        sourceItemId: item.id,
+        item,
+      };
+    };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [
+        notice("receipt", "Moved to B.\nThe next turn runs in `/b`.\nMore.", "/a"),
+        notice("plain", "Provider restarted.\nDetails."),
+      ],
+      optimisticMessages: [],
+    });
+    expect(
+      entries.map((entry) =>
+        entry.kind === "work"
+          ? [entry.entry.label, entry.entry.detail, entry.entry.sourceActivityKind]
+          : null,
+      ),
+    ).toEqual([
+      ["Moved to B", "The next turn runs in `/b`.\nMore.", undefined],
+      ["Provider restarted.\nDetails.", undefined, "runtime.warning"],
+    ]);
+  });
+
   it("offers Stop while a run is preparing/starting, not just once it's running (#13392)", () => {
     const runtimeWithStatus = (
       status: ThreadRuntimeSummary["status"],

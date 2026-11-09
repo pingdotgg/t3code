@@ -411,12 +411,22 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
         changedFiles: item.files.map((file) => file.path),
         toolData: item,
       };
-    case "system_notice":
+    case "system_notice": {
+      // A move receipt records a successful move: its first line is the heading, the rest the details.
+      if (item.previousFolder !== undefined) {
+        const [heading = "", ...details] = item.message.split("\n");
+        return {
+          ...common,
+          label: heading.replace(/\.$/u, ""),
+          ...(details.length > 0 ? { detail: details.join("\n") } : {}),
+        };
+      }
       return {
         ...common,
         label: item.message,
         sourceActivityKind: "runtime.warning",
       };
+    }
     case "error": {
       const presentation = providerErrorPresentation(item);
       return {
