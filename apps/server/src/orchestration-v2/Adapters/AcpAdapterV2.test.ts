@@ -1061,6 +1061,7 @@ describe("AcpAdapterV2", () => {
       } as const;
       // The runtime ordinal of each prompt, and the session each check watched.
       const promptRuntimes: Array<number> = [];
+      const promptTexts: Array<string> = [];
       const watchedSessions: Array<string> = [];
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -1081,9 +1082,14 @@ describe("AcpAdapterV2", () => {
             ),
             wrapRuntime: (runtime, runtimeOrdinal) => ({
               ...runtime,
-              prompt: () =>
+              prompt: (payload) =>
                 Effect.sync(() => {
                   promptRuntimes.push(runtimeOrdinal);
+                  promptTexts.push(
+                    payload.prompt
+                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                      .join("\n"),
+                  );
                   return { stopReason: "end_turn" as const };
                 }),
             }),
@@ -1134,6 +1140,9 @@ describe("AcpAdapterV2", () => {
       const completed = yield* runTurn(2);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
+      // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
+      assert.include(promptTexts[1] ?? "", "<runtime_info>");
+      assert.include(promptTexts[1] ?? "", "T3 Code interaction mode: Default");
       assert.equal(watchedSessions.length, 2);
       assert.equal(watchedSessions[0], watchedSessions[1]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
