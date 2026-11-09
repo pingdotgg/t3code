@@ -15,7 +15,6 @@ export const ChatCanvasContext = createContext<{
   lane: { padding: number; minChatWidth: number };
   layout: ReturnType<typeof resolveChatCanvasLayout>;
   previewKey: string | null;
-  registerTimeline: (element: HTMLElement | null) => void;
   measureDetailsCard: (measurement: DetailsCardMeasurement) => void;
   detailsCardTopInset: number;
   /** Where an inline card sits when nothing overlaps it; null when the canvas is too narrow. */
@@ -25,3 +24,10 @@ export const ChatCanvasContext = createContext<{
 } | null>(null);
 
 export const useChatCanvas = () => useContext(ChatCanvasContext);
+
+/** Separate from the layout so canvas resizes do not re-render the timeline. */
+export const ChatCanvasTimelineContext = createContext<
+  ((element: HTMLElement | null) => void) | null
+>(null);
+
+export const useRegisterChatCanvasTimeline = () => useContext(ChatCanvasTimelineContext);

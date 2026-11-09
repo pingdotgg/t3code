@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties } from "react";
 import { useStore } from "zustand";
-import { ChatCanvasContext } from "./ChatCanvasContext";
+import { ChatCanvasContext, ChatCanvasTimelineContext } from "./ChatCanvasContext";
 import type { ChatCanvasPreview } from "./chatCanvasLayout";
 import { resolveChatCanvasModel, type ChatCanvasStore } from "./canvasStore";
 import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
@@ -84,7 +84,6 @@ export function ChatCanvas({
     lane: model.lane,
     layout: model.layout,
     previewKey: preview?.key ?? null,
-    registerTimeline,
     measureDetailsCard: store.getState().measureDetailsCard,
     detailsCardTopInset: model.detailsCardTopInset,
     preferredDetailsCard: model.preferredDetailsCard,
@@ -93,27 +92,29 @@ export function ChatCanvas({
   const { layout } = context;
   return (
     <ChatCanvasContext value={context}>
-      <div
-        {...props}
-        ref={elementRef}
-        data-chat-canvas
-        data-preview-overlaps-chat={layout.overlapsChat || undefined}
-        className="relative flex min-h-0 min-w-0 flex-1 flex-col"
-        style={
-          {
-            "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
-            "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
-            "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
-          } as CSSProperties
-        }
-      >
+      <ChatCanvasTimelineContext value={registerTimeline}>
         <div
-          ref={widthProbeRef}
-          aria-hidden
-          className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
-        />
-        {children}
-      </div>
+          {...props}
+          ref={elementRef}
+          data-chat-canvas
+          data-preview-overlaps-chat={layout.overlapsChat || undefined}
+          className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+          style={
+            {
+              "--chat-timeline-gutter": `${measurements.timelineGutter}px`,
+              "--chat-lane-inset-start": `${layout.chat.insetStart}px`,
+              "--chat-lane-inset-end": `${layout.chat.insetEnd}px`,
+            } as CSSProperties
+          }
+        >
+          <div
+            ref={widthProbeRef}
+            aria-hidden
+            className="pointer-events-none invisible absolute h-0 w-(--chat-content-max-width) min-w-[40rem] box-content ps-3 sm:ps-12"
+          />
+          {children}
+        </div>
+      </ChatCanvasTimelineContext>
     </ChatCanvasContext>
   );
 }
