@@ -28,7 +28,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ContextWindowSegments } from "./ContextWindowMeter";
-import { contextWindowSegments } from "./ContextWindowMeter.logic";
+import { contextWindowSegments } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 // The canvas reserves the same icon, label, meter, percent and trailing columns in every row.

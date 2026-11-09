@@ -822,7 +822,6 @@ export default defineConfig({
         "apps/web/src/components/settings/KeybindingsSettings.tsx": 1,
         "apps/web/src/components/settings/OpenSourceLicenses.tsx": 1,
         "apps/web/src/components/settings/ThemeEditorPanel.tsx": 6,
-        "apps/web/src/components/chat/ContextWindowMeter.tsx": 9,
         "apps/web/src/components/settings/CaptureShortcutConfig.tsx": 9,
         "apps/web/src/components/chat/WorktreeSetupCard.tsx": 1,
         "apps/web/src/components/ChatMarkdown.tsx": 4,
