@@ -14,7 +14,6 @@ const nightly = (hoursAgo, overrides = {}) => ({
   publishedAt: new Date(now - hoursAgo * hour).toISOString(),
   ...overrides,
 });
-const httpError = (status) => Object.assign(new Error(`HTTP ${status}`), { status });
 
 function releaseSourceFixture({
   comparisonStatus = "ahead",
@@ -75,25 +74,16 @@ for (const comparisonStatus of ["behind", "diverged"]) {
 }
 
 // `pages` holds the GraphQL release pages; `releases` is shorthand for one page.
-// `failures` are thrown, in order, before the listed pages are served.
-function fixture({
-  releases = [nightly(7)],
-  pages = [releases],
-  failures = [],
-  comparisonStatus = "ahead",
-} = {}) {
+function fixture({ releases = [nightly(7)], pages = [releases], comparisonStatus = "ahead" } = {}) {
   const calls = [];
   const cursors = [];
-  const sleeps = [];
   return {
     calls,
     cursors,
-    sleeps,
     options: {
       now,
-      sleep: async (ms) => sleeps.push(ms),
       context: { repo: { owner: "example", repo: "app" }, sha: "new" },
-      core: { info() {}, warning() {} },
+      core: { info() {} },
       github: {
         rest: {
           repos: {
@@ -106,7 +96,6 @@ function fixture({
         async graphql(_query, { owner, repo, cursor }) {
           assert.deepEqual({ owner, repo }, { owner: "example", repo: "app" });
           cursors.push(cursor);
-          if (failures.length > 0) throw failures.shift();
           const index = cursor === null ? 0 : Number(cursor);
           const hasNextPage = index + 1 < pages.length;
           return {
@@ -181,64 +170,12 @@ test("ignores stable releases and drafts when checking the gap", async () => {
   assert.equal(await shouldReleaseNightly(options), true);
 });
 
-test("retries transient release list failures with bounded backoff", async () => {
-  const { options, sleeps } = fixture({ failures: [httpError(504), httpError(500)] });
-  assert.equal(await shouldReleaseNightly(options), true);
-  assert.deepEqual(sleeps, [2_000, 5_000]);
-});
-
-test("fails instead of releasing when transient failures outlast the retries", async () => {
-  const failures = [500, 504, 502, 503].map(httpError);
-  const { options, cursors, sleeps } = fixture({ failures });
-  await assert.rejects(shouldReleaseNightly(options), /HTTP 503/);
-  assert.equal(cursors.length, 4);
-  assert.deepEqual(sleeps, [2_000, 5_000, 10_000]);
-});
-
-for (const failure of [httpError(401), httpError(422), new Error("GraphQL query error")]) {
-  test(`fails at once without retrying: ${failure.message}`, async () => {
-    const { options, cursors } = fixture({ failures: [failure] });
-    await assert.rejects(shouldReleaseNightly(options), failure);
-    assert.equal(cursors.length, 1);
-  });
-}
-
-test("retries a transient failure on a later page without losing earlier pages", async () => {
-  const { options, cursors, calls } = fixture({
-    pages: [[nightly(10)], [nightly(8, { tagName: "v1.0.1-nightly.20260905.200" })]],
-  });
-  const graphql = options.github.graphql;
-  let failed = false;
-  options.github.graphql = async (query, variables) => {
-    if (variables.cursor === "1" && !failed) {
-      failed = true;
-      cursors.push(variables.cursor);
-      throw httpError(502);
-    }
-    return graphql(query, variables);
+test("fails instead of releasing when GitHub cannot supply release state", async () => {
+  const { options } = fixture();
+  options.github.graphql = async () => {
+    throw new Error("GitHub unavailable");
   };
-  assert.equal(await shouldReleaseNightly(options), true);
-  assert.deepEqual(cursors, [null, "1", "1"]);
-  assert.deepEqual(
-    calls.map((call) => call.basehead),
-    ["v1.0.1-nightly.20260905.200...new"],
-  );
-});
-
-test("retries a transient comparison failure", async () => {
-  const { options, calls, sleeps } = fixture();
-  const compare = options.github.rest.repos.compareCommitsWithBasehead;
-  let failed = false;
-  options.github.rest.repos.compareCommitsWithBasehead = async (params) => {
-    if (!failed) {
-      failed = true;
-      throw httpError(500);
-    }
-    return compare(params);
-  };
-  assert.equal(await shouldReleaseNightly(options), true);
-  assert.equal(calls.length, 1);
-  assert.deepEqual(sleeps, [2_000]);
+  await assert.rejects(shouldReleaseNightly(options), /GitHub unavailable/);
 });
 
 for (const status of ["behind", "diverged"]) {

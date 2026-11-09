@@ -1,23 +1,4 @@
 const MINIMUM_RELEASE_GAP_MS = 6 * 60 * 60 * 1000;
-// Waits before each retry of a read that failed with a 5xx or a network error.
-const RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
-
-const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Octokit reports network failures as status 500, so this also covers resets.
-// Auth, permission, validation, and GraphQL query errors fail at once.
-async function withRetry(label, request, { core, sleep = defaultSleep } = {}) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await request();
-    } catch (error) {
-      const delay = RETRY_DELAYS_MS[attempt];
-      if (delay === undefined || !(error?.status >= 500)) throw error;
-      core?.warning(`${label} failed with status ${error.status}. Retrying in ${delay / 1000}s.`);
-      await sleep(delay);
-    }
-  }
-}
 
 function repositoryDefaultBranch(context) {
   const branch = context.payload.repository?.default_branch;
@@ -27,14 +8,13 @@ function repositoryDefaultBranch(context) {
   return branch;
 }
 
-async function assertCommitOnDefaultBranch({ github, context, core, sleep, sha }) {
+async function assertCommitOnDefaultBranch({ github, context, sha }) {
   const defaultBranch = repositoryDefaultBranch(context);
-  const basehead = `${sha}...${defaultBranch}`;
-  const { data: comparison } = await withRetry(
-    `Compare ${basehead}`,
-    () => github.rest.repos.compareCommitsWithBasehead({ ...context.repo, basehead, per_page: 1 }),
-    { core, sleep },
-  );
+  const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+    ...context.repo,
+    basehead: `${sha}...${defaultBranch}`,
+    per_page: 1,
+  });
   if (comparison.status !== "ahead" && comparison.status !== "identical") {
     throw new Error(
       `Release commit ${sha} is not contained in ${defaultBranch} (${comparison.status}).`,
@@ -42,7 +22,7 @@ async function assertCommitOnDefaultBranch({ github, context, core, sleep, sha }
   }
 }
 
-async function assertReleaseSource({ github, context, core, sleep, releaseChannel }) {
+async function assertReleaseSource({ github, context, releaseChannel }) {
   if (releaseChannel === "preview") return;
   if (releaseChannel !== "stable" && releaseChannel !== "nightly") {
     throw new Error(`Unsupported release channel: ${releaseChannel}`);
@@ -55,7 +35,7 @@ async function assertReleaseSource({ github, context, core, sleep, releaseChanne
     );
   }
 
-  await assertCommitOnDefaultBranch({ github, context, core, sleep, sha: context.sha });
+  await assertCommitOnDefaultBranch({ github, context, sha: context.sha });
 }
 
 const isNightlyTag = (tag) => /^v.*-nightly\./.test(tag) || tag.startsWith("nightly-v");
@@ -76,15 +56,11 @@ const RELEASES_QUERY = `
 // Returns the nightly with the newest publishedAt. Release order follows the
 // tagged commit date, not publication, so every page is read unless `isSettled`
 // says the newest nightly seen so far already decides the caller's answer.
-async function findLatestNightly({ github, context, core, sleep, isSettled = () => false }) {
+async function findLatestNightly({ github, context, isSettled = () => false }) {
   let latest;
   let cursor = null;
   do {
-    const { repository } = await withRetry(
-      "List releases",
-      () => github.graphql(RELEASES_QUERY, { ...context.repo, cursor }),
-      { core, sleep },
-    );
+    const { repository } = await github.graphql(RELEASES_QUERY, { ...context.repo, cursor });
     const { nodes, pageInfo } = repository.releases;
     for (const release of nodes) {
       if (release.isDraft || !release.publishedAt || !isNightlyTag(release.tagName)) continue;
@@ -98,10 +74,10 @@ async function findLatestNightly({ github, context, core, sleep, isSettled = () 
   return latest;
 }
 
-async function shouldReleaseNightly({ github, context, core, sleep, now = Date.now() }) {
+async function shouldReleaseNightly({ github, context, core, now = Date.now() }) {
   const isInGap = (release) => now - Date.parse(release.publishedAt) < MINIMUM_RELEASE_GAP_MS;
   // Any nightly inside the gap means the newest one is too, so stop reading.
-  const lastNightly = await findLatestNightly({ github, context, core, sleep, isSettled: isInGap });
+  const lastNightly = await findLatestNightly({ github, context, isSettled: isInGap });
 
   if (!lastNightly) {
     core.info("No published nightly found. Proceeding with release.");
@@ -114,12 +90,11 @@ async function shouldReleaseNightly({ github, context, core, sleep, now = Date.n
     return false;
   }
 
-  const basehead = `${tag}...${context.sha}`;
-  const { data: comparison } = await withRetry(
-    `Compare ${basehead}`,
-    () => github.rest.repos.compareCommitsWithBasehead({ ...context.repo, basehead, per_page: 1 }),
-    { core, sleep },
-  );
+  const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+    ...context.repo,
+    basehead: `${tag}...${context.sha}`,
+    per_page: 1,
+  });
   if (comparison.status !== "ahead") {
     core.info(`Candidate commit is ${comparison.status} relative to ${tag}. Skipping.`);
     return false;
@@ -129,18 +104,14 @@ async function shouldReleaseNightly({ github, context, core, sleep, now = Date.n
   return true;
 }
 
-async function resolveLatestNightlyCommit({ github, context, core, sleep }) {
-  const lastNightly = await findLatestNightly({ github, context, core, sleep });
+async function resolveLatestNightlyCommit({ github, context, core }) {
+  const lastNightly = await findLatestNightly({ github, context });
   if (!lastNightly) {
     throw new Error("No published nightly found. Stable releases build the latest nightly commit.");
   }
 
   const tag = lastNightly.tagName;
-  const { data: commit } = await withRetry(
-    `Read commit ${tag}`,
-    () => github.rest.repos.getCommit({ ...context.repo, ref: tag }),
-    { core, sleep },
-  );
+  const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: tag });
   const version = /^(?:nightly-)?v(\d+\.\d+\.\d+)-nightly\./.exec(tag)?.[1];
   if (!version) {
     throw new Error(`Cannot derive a stable version from nightly tag ${tag}.`);

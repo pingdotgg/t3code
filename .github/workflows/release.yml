@@ -86,14 +86,14 @@ jobs:
                 ? dispatchChannel
                 : 'stable';
 
-            await assertReleaseSource({ github, context, core, releaseChannel });
+            await assertReleaseSource({ github, context, releaseChannel });
 
             if (context.eventName === 'schedule') {
               core.setOutput('has_changes', await shouldReleaseNightly({ github, context, core }));
               core.setOutput('ref', context.sha);
             } else if (context.eventName === 'workflow_dispatch' && dispatchChannel === 'stable') {
               const { tag, sha, version } = await resolveLatestNightlyCommit({ github, context, core });
-              await assertCommitOnDefaultBranch({ github, context, core, sha });
+              await assertCommitOnDefaultBranch({ github, context, sha });
               core.notice(`Stable release builds ${sha}, the commit shipped by ${tag}.`);
               core.setOutput('ref', sha);
               core.setOutput('nightly_version', version);
