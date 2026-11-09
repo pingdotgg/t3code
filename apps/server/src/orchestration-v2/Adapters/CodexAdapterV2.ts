@@ -6976,7 +6976,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const activation = { stopped: false };
             goalActivations.set(threadId, activation);
             yield* Effect.gen(function* () {
-              // A bare objective reads like a statement, so the model echoes it back.
+              // A bare objective gets echoed back, and "start this goal" gets a
+              // create_goal call that Codex rejects because the goal already exists.
               yield* startNativeTurn(
                 turnInput,
                 command.type === "set"
@@ -6984,7 +6985,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       ...turnInput,
                       message: {
                         ...turnInput.message,
-                        text: `Start working toward this goal: ${command.objective}`,
+                        text: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${command.objective}`,
                       },
                     })
                   : [],
