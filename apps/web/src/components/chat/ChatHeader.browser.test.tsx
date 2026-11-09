@@ -1,6 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 const persisted = vi.hoisted(() => ({ title: "" }));
 vi.mock(import("../../state/session"), async (importOriginal) => ({
@@ -23,7 +23,11 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 import { render } from "../../../test/render";
 import { ChatHeader } from "./ChatHeader";
 
-function header(title: string) {
+function setup() {
+  persisted.title = "New thread";
+}
+
+function header(title: string, onNewThreadInProject = () => {}) {
   return (
     <>
       <ChatHeader
@@ -35,7 +39,7 @@ function header(title: string) {
         parentThreadLink={null}
         onOpenThread={() => {}}
         rightPanelOpen={false}
-        onNewThreadInProject={() => {}}
+        onNewThreadInProject={onNewThreadInProject}
       />
       <div tabIndex={0}>Outside rename</div>
     </>
@@ -45,9 +49,9 @@ function header(title: string) {
 it.each(["blur", "Enter"] as const)(
   "preserves a concurrent title update when an untouched rename ends with %s",
   async (finish) => {
-    persisted.title = "New thread";
+    setup();
     await using screen = await render(header(persisted.title));
-    await screen.getByRole("button", { name: "Thread actions for New thread" }).dblClick();
+    await screen.getByRole("button", { name: "Switch thread, current: New thread" }).dblClick();
     const input = screen.getByRole("textbox", { name: "Thread title" });
     await expect.element(input).toHaveValue("New thread");
 
@@ -60,7 +64,9 @@ it.each(["blur", "Enter"] as const)(
     expect(persisted.title).toBe("Fix login redirect");
 
     await screen.rerender(header(persisted.title));
-    await screen.getByRole("button", { name: "Thread actions for Fix login redirect" }).dblClick();
+    await screen
+      .getByRole("button", { name: "Switch thread, current: Fix login redirect" })
+      .dblClick();
     await screen.getByRole("textbox", { name: "Thread title" }).fill("My edited title");
     persisted.title = "Another concurrent title";
     await screen.rerender(header(persisted.title));
@@ -71,3 +77,16 @@ it.each(["blur", "Enter"] as const)(
     expect(persisted.title).toBe("My edited title");
   },
 );
+
+it("opens the thread switcher and starts a new thread", async () => {
+  setup();
+  const onNewThreadInProject = vi.fn();
+  await using screen = await render(header(persisted.title, onNewThreadInProject));
+
+  await screen.getByRole("button", { name: "Switch thread, current: New thread" }).click();
+  await expect.element(page.getByRole("textbox", { name: "Search threads" })).toBeVisible();
+  const newThread = page.getByRole("menuitem", { name: "New thread", exact: true });
+  await expect.element(newThread).toBeVisible();
+  await newThread.click();
+  expect(onNewThreadInProject).toHaveBeenCalledOnce();
+});
