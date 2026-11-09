@@ -6,12 +6,18 @@ import {
   mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+import * as CloudLink from "../cloud/CloudLink.ts";
+import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -62,6 +68,23 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const cloudLink = yield* CloudLink.CloudLink;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const hostedAppUrl = yield* hostedAppUrlConfig.pipe(
+      Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
+    );
+    // The hosted app returns a code only to the tunnel address, so other origins keep the code field.
+    const connectSignIn = (issuer: string) =>
+      cloudLink.linkState().pipe(
+        Effect.flatMap((state) =>
+          state.linked && !state.linkRevoked && state.tunnelHostname === new URL(issuer).hostname
+            ? serverEnvironment.getEnvironmentId.pipe(
+                Effect.map((environmentId) => Option.some({ environmentId, hostedAppUrl })),
+              )
+            : Effect.succeedNone,
+        ),
+        Effect.orElseSucceed(Option.none),
+      );
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
@@ -116,6 +139,10 @@ export const layer = HttpApiBuilder.group(
           if ("redirectTo" in resolved) return resolved;
           const urls = yield* requestUrls;
           const session = yield* oauth.approvingBrowserSession(request, resolved);
+          // A link needs a plain pairing code, which T3 Connect does not mint.
+          const connect = resolved.client.peerLink
+            ? Option.none()
+            : yield* connectSignIn(urls.issuer);
           yield* noStore;
           return {
             clientName: resolved.client.name,
@@ -124,6 +151,7 @@ export const layer = HttpApiBuilder.group(
             ...(oauth.runtimeModeCeiling === undefined
               ? {}
               : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+            ...(Option.isSome(connect) ? { connectSignIn: connect.value } : {}),
             ...(session === undefined
               ? {}
               : {
