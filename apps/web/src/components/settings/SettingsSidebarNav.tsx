@@ -2,6 +2,7 @@ import {
   lazy,
   Suspense,
   useEffect,
+  useEffectEvent,
   useRef,
   useState,
   type ComponentType,
@@ -13,6 +14,7 @@ import {
   BotIcon,
   createLucideIcon,
   CalendarClockIcon,
+  BlocksIcon,
   FileDiffIcon,
   FolderTreeIcon,
   GitBranchIcon,
@@ -61,6 +63,8 @@ import {
 import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchItems";
 import { handleSettingsSectionKeyDown } from "./settingsSectionNavigation";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
+import { useAtomValue } from "@effect/atom-react";
+import { sidebarBackShownAtom } from "../sidebar/mainAppLocation";
 
 const SnapShotIcon = createLucideIcon("snap-shot", [
   [
@@ -102,6 +106,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/browser": GlobeIcon,
   "/settings/devices": SmartphoneIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
+  "/settings/plugins": BlocksIcon,
   "/settings/source-control": GitBranchIcon,
   "/settings/worktrees": FolderTreeIcon,
   "/settings/connections": ServerIcon,
@@ -129,10 +134,31 @@ function SettingsSectionIcon({ to }: { to: SettingsPath }) {
   return <Icon className="size-4 shrink-0 text-(--sidebar-icon-color)" />;
 }
 
-export function SettingsSidebarNav({ pathname }: { pathname: string }) {
+/**
+ * Settings' sections and search. In the page it is a column that shrinks to an icon rail below
+ * md; a plugin can draw it in the app sidebar instead, where it fills the sidebar's width.
+ */
+export function SettingsSidebarNav({
+  pathname,
+  placement = "page",
+  onNavigate,
+  onRevealSearch,
+}: {
+  pathname: string;
+  placement?: "page" | "sidebar";
+  /** Runs after a section or search result is picked, such as to close the phone's sheet. */
+  onNavigate?: () => void;
+  /** Runs before the search shortcut focuses the field, such as to open a collapsed sidebar. */
+  onRevealSearch?: () => void;
+}) {
   const gt = useGT();
   const m = useMessages();
-  const navArea = workspaceAreaProps("settings-nav", 0, gt("Settings sections"));
+  const rail = placement === "page";
+  const sidebarBackShown = useAtomValue(sidebarBackShownAtom);
+  // In the app sidebar, a Back button below takes the avatar onto its row.
+  const avatarShown = rail || !sidebarBackShown;
+  // In the app sidebar, the sidebar's own focus area holds the sections.
+  const navArea = rail ? workspaceAreaProps("settings-nav", 0, gt("Settings sections")) : undefined;
   const navigate = useNavigate();
   const currentHash = useLocation({ select: (location) => location.hash });
   const activePath = SETTINGS_DETAIL_PAGE_PARENTS[pathname] ?? pathname;
@@ -150,6 +176,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   if (activeResultIndex > maxResultIndex) {
     setActiveResultIndex(maxResultIndex);
   }
+
+  const focusSearch = useEffectEvent(() => {
+    setCompactSearchOpen(true);
+    const focus = () => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    };
+    if (onRevealSearch === undefined) return focus();
+    onRevealSearch();
+    // Once the opened sidebar has drawn, so focus lands in a visible field.
+    requestAnimationFrame(focus);
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener for the find and slash search shortcuts
   useEffect(() => {
@@ -183,9 +221,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
       }
 
       event.preventDefault();
-      setCompactSearchOpen(true);
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
+      focusSearch();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -197,6 +233,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   }, [compactSearchOpen]);
 
   const handleSectionClick = (to: SettingsPath) => {
+    onNavigate?.();
     void navigate({
       to,
       hash: "",
@@ -212,6 +249,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const handleSearchResultClick = (item: SettingsSearchItem) => {
     clearSearch();
     setCompactSearchOpen(false);
+    onNavigate?.();
     const targetId = item.targetId ?? item.id;
     revealSettingsSearchTarget(targetId);
     if (pathname === item.to && currentHash.replace(/^#/, "") === targetId) {
@@ -257,9 +295,13 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <nav
       {...navArea}
       role="navigation"
+      aria-label={gt("Settings sections")}
       className={cn(
-        "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
-        compactSearchOpen &&
+        rail
+          ? "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14"
+          : "flex min-h-0 flex-1 flex-col",
+        rail &&
+          compactSearchOpen &&
           "max-md:absolute max-md:inset-y-0 max-md:start-0 max-md:z-10 max-md:w-full",
       )}
     >
@@ -269,7 +311,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             <div
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-                !compactSearchOpen && "max-md:hidden",
+                rail && !compactSearchOpen && "max-md:hidden",
               )}
             >
               <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
@@ -365,7 +407,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               </SidebarMenu>
             ) : (
               <div className="flex flex-col gap-4">
-                {compactSearchOpen ? null : (
+                {compactSearchOpen || !rail ? null : (
                   <SidebarMenu className="md:hidden">
                     <SidebarMenuItem>
                       <SidebarMenuButton
@@ -381,14 +423,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   {SETTINGS_NAV_GROUPS.map((group, index) => (
                     <div
                       key={group.heading ?? index}
-                      className="flex flex-col gap-1 max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0"
+                      className={cn(
+                        "flex flex-col gap-1",
+                        rail &&
+                          "max-md:border-t max-md:border-sidebar-border max-md:pt-4 max-md:first:border-t-0 max-md:first:pt-0",
+                      )}
                     >
                       {group.heading ? (
                         <h3
                           id={`settings-nav-group-${index}`}
                           className={cn(
                             "px-2 text-xs font-medium text-sidebar-muted-foreground/80",
-                            !compactSearchOpen && "max-md:sr-only",
+                            rail && !compactSearchOpen && "max-md:sr-only",
                           )}
                         >
                           {m(group.heading)}
@@ -415,7 +461,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                                   <span
                                     className={cn(
                                       "truncate",
-                                      !compactSearchOpen && "max-md:sr-only",
+                                      rail && !compactSearchOpen && "max-md:sr-only",
                                     )}
                                   >
                                     {m(SETTINGS_SECTION_LABELS[to])}
@@ -434,13 +480,16 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           </div>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="max-md:hidden">
+      {/* Empty once the avatar moves beside Back and there is no sign-in prompt. */}
+      <SidebarFooter className={cn(rail && "max-md:hidden", "empty:hidden")}>
         <Suspense fallback={null}>
           <T3ConnectSidebarSignIn />
         </Suspense>
-        <Suspense fallback={null}>
-          <T3ConnectSidebarAvatar />
-        </Suspense>
+        {avatarShown ? (
+          <Suspense fallback={null}>
+            <T3ConnectSidebarAvatar />
+          </Suspense>
+        ) : null}
       </SidebarFooter>
     </nav>
   );

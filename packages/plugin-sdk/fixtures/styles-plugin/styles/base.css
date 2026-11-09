@@ -1,0 +1,4 @@
+/* Stable region names and theme tokens, so the rule survives T3 updates. */
+[data-t3-region="sidebar"] {
+  border-inline-end: 1px solid var(--border);
+}

@@ -99,7 +99,7 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
       {isElectron ? <WorkspacePageHeader electron /> : null}
-      <Empty className="flex-1">
+      <Empty data-t3-region="home" className="flex-1">
         <EmptyHeader className="max-w-md">
           <EmptyTitle>Couldn’t start a new thread</EmptyTitle>
           <EmptyDescription>

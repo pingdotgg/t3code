@@ -1101,6 +1101,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   background-size: var(--surface-grain-size);
 }
 
+/* Settings or Usage shown as a page (a plugin's `app.pageFrame`) hides the thread kept mounted
+   under it. */
+[data-slot="sidebar-inset"]:has(~ [data-app-route-page]) {
+  display: none;
+}
+
 /* Suppress all transitions during theme changes */
 .no-transitions,
 .no-transitions *,
@@ -1586,6 +1592,12 @@ html[data-theme-id] [data-app-sidebar] {
   @variant dark {
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   }
+}
+
+/* A published theme, such as a plugin's, also colors the sidebar's row metadata, like thread
+   times. Built-in themes keep the sidebar's own step below read titles. */
+html[data-theme-published] [data-app-sidebar] {
+  --secondary-label: var(--app-theme-secondary-label);
 }
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance

@@ -270,3 +270,6 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
     }),
   );
 });
+
+// Plugin file requests sign the same way.
+export { buildEnvironmentAuthHeaders };

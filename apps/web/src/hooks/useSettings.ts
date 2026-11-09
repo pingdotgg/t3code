@@ -36,6 +36,7 @@ import {
   getThemePreviewSidebarArtwork,
   resolveThemeHalf,
   subscribeToThemePreview,
+  themeAllowsComposerArtwork,
   themeAllowsSidebarArtwork,
 } from "~/themePalette";
 import {
@@ -396,7 +397,10 @@ function resolveEnvironmentIdentificationMode(input: {
     : input.mode;
 }
 
-export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMode {
+/** `place` is where the artwork would draw: the sidebar, or the composer's send button. */
+export function useEnvironmentIdentificationMode(
+  place: "sidebar" | "composer" = "sidebar",
+): EnvironmentIdentificationMode {
   const settingsHydrated = useClientSettingsHydrated();
   const mode = useClientSettings((settings) => settings.environmentIdentificationMode);
   const { resolvedTheme, theme, themeHalves } = useTheme();
@@ -411,7 +415,11 @@ export function useEnvironmentIdentificationMode(): EnvironmentIdentificationMod
     mode,
     settingsHydrated,
     paletteThemeActive: previewSidebarArtwork !== null || activeThemeDefinition !== null,
-    paletteThemeAllowsArtwork: previewSidebarArtwork ?? themeAllowsSidebarArtwork(activeTheme),
+    paletteThemeAllowsArtwork:
+      previewSidebarArtwork ??
+      (place === "composer"
+        ? themeAllowsComposerArtwork(activeTheme)
+        : themeAllowsSidebarArtwork(activeTheme)),
   });
 }
 

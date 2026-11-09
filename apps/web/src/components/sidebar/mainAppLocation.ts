@@ -1,4 +1,5 @@
 import { useNavigate, type AnyRouter } from "@tanstack/react-router";
+import { Atom } from "effect/reactivity";
 
 import { GUEST_PAGE_PATH } from "../../guestPage";
 import { withoutAssistantCitationHash } from "../../lib/assistantCitationNavigation";
@@ -38,8 +39,26 @@ export function useNavigateToMainApp() {
   return () => navigate({ href: mainAppHref ?? "/" });
 }
 
+/** The pages that open as a modal, or in place of the thread through a plugin's page frame. */
+export type AppPage = "settings" | "usage";
+
+/** The page a plugin's page frame shows in place of the thread, else null. */
+export const shownAppPageAtom = Atom.make<AppPage | null>(null).pipe(Atom.keepAlive);
+
+/** Whether the sidebar shows a Back button, which makes a page's own close button redundant. */
+export const sidebarBackShownAtom = Atom.make(false).pipe(Atom.keepAlive);
+
+/** Whether the sidebar lists Settings' sections in place of the threads. */
+export const sidebarSettingsNavShownAtom = Atom.make(false).pipe(Atom.keepAlive);
+
 /** Leaves Settings or Usage for the page that opened it. */
 export function useCloseAppModal() {
   const navigate = useNavigate();
-  return () => navigate({ href: appModalReturnHref ?? mainAppHref ?? "/" });
+  return () => {
+    // Leaving unmounts a focused field without a blur, so commit-on-blur rows would drop what
+    // was typed. Blur first so they commit.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.closest("[data-app-modal]")) focused.blur();
+    return navigate({ href: appModalReturnHref ?? mainAppHref ?? "/" });
+  };
 }

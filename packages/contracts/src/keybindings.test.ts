@@ -29,10 +29,13 @@ it.effect("drops resolved rules with commands this build does not know", () =>
       { command: "terminal.toggle", shortcut },
       { command: "someFuture.toggle", shortcut },
       { command: "filePicker.toggle", shortcut },
+      { command: "plugin.hello-web.say-hello", shortcut },
+      { command: "plugin.Hello.say-hello", shortcut },
+      { command: "plugin.hello-web.say.hello", shortcut },
     ]);
     assert.deepEqual(
       parsed.map((rule) => rule.command),
-      ["terminal.toggle", "filePicker.toggle"],
+      ["terminal.toggle", "filePicker.toggle", "plugin.hello-web.say-hello"],
     );
   }),
 );

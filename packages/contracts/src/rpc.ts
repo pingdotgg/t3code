@@ -383,6 +383,28 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  PluginCreateUploadUrlInput,
+  PluginCreateUploadUrlResult,
+  PluginError,
+  PluginInvokeInput,
+  PluginInvokeResult,
+  PluginLinkInput,
+  PluginUninstallInput,
+  PluginUninstallResult,
+  PluginListInput,
+  PluginListResult,
+  PluginRescanInput,
+  PluginMutationResult,
+  PluginReloadInput,
+  PluginSetEnabledInput,
+  PluginSettingsGetInput,
+  PluginSettingsGetResult,
+  PluginSettingsResult,
+  PluginSettingsUpdateInput,
+  PluginSubscribeInput,
+  PluginSubscriptionEvent,
+} from "./plugins.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -558,6 +580,18 @@ export const WS_METHODS = {
   guestShareCreate: "guestShare.create",
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+
+  pluginsSubscribeStates: "plugins.subscribeStates",
+  pluginsSetEnabled: "plugins.setEnabled",
+  pluginsReload: "plugins.reload",
+  pluginsCreateUploadUrl: "plugins.createUploadUrl",
+  pluginsRescan: "plugins.rescan",
+  pluginsLink: "plugins.link",
+  pluginsUninstall: "plugins.uninstall",
+  pluginsSettingsGet: "plugins.settings.get",
+  pluginsSettingsUpdate: "plugins.settings.update",
+  pluginsInvoke: "plugins.invoke",
+  pluginsSubscribe: "plugins.subscribe",
 
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -2045,6 +2079,79 @@ const WsScheduledTasksGetWebhookDeliveryRpc = Rpc.make(
   },
 );
 
+const PluginRpcError = Schema.Union([PluginError, EnvironmentAuthorizationError]);
+
+/** The current list, then the whole list again after every change. */
+const WsPluginsSubscribeStatesRpc = Rpc.make(WS_METHODS.pluginsSubscribeStates, {
+  payload: PluginListInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+  stream: true,
+});
+
+const WsPluginsSetEnabledRpc = Rpc.make(WS_METHODS.pluginsSetEnabled, {
+  payload: PluginSetEnabledInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsReloadRpc = Rpc.make(WS_METHODS.pluginsReload, {
+  payload: PluginReloadInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+/** Signs the URL a client uploads a dropped plugin folder to, over HTTP. */
+const WsPluginsCreateUploadUrlRpc = Rpc.make(WS_METHODS.pluginsCreateUploadUrl, {
+  payload: PluginCreateUploadUrlInput,
+  success: PluginCreateUploadUrlResult,
+  error: PluginRpcError,
+});
+
+/** Looks at the plugins folder again, so plugin folders put there since are listed. */
+const WsPluginsRescanRpc = Rpc.make(WS_METHODS.pluginsRescan, {
+  payload: PluginRescanInput,
+  success: PluginListResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsLinkRpc = Rpc.make(WS_METHODS.pluginsLink, {
+  payload: PluginLinkInput,
+  success: PluginMutationResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsUninstallRpc = Rpc.make(WS_METHODS.pluginsUninstall, {
+  payload: PluginUninstallInput,
+  success: PluginUninstallResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsGetRpc = Rpc.make(WS_METHODS.pluginsSettingsGet, {
+  payload: PluginSettingsGetInput,
+  success: PluginSettingsGetResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSettingsUpdateRpc = Rpc.make(WS_METHODS.pluginsSettingsUpdate, {
+  payload: PluginSettingsUpdateInput,
+  success: PluginSettingsResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsInvokeRpc = Rpc.make(WS_METHODS.pluginsInvoke, {
+  payload: PluginInvokeInput,
+  success: PluginInvokeResult,
+  error: PluginRpcError,
+});
+
+const WsPluginsSubscribeRpc = Rpc.make(WS_METHODS.pluginsSubscribe, {
+  payload: PluginSubscribeInput,
+  success: PluginSubscriptionEvent,
+  error: PluginRpcError,
+  stream: true,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2133,6 +2240,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsPluginsSubscribeStatesRpc,
+  WsPluginsSetEnabledRpc,
+  WsPluginsReloadRpc,
+  WsPluginsCreateUploadUrlRpc,
+  WsPluginsRescanRpc,
+  WsPluginsLinkRpc,
+  WsPluginsUninstallRpc,
+  WsPluginsSettingsGetRpc,
+  WsPluginsSettingsUpdateRpc,
+  WsPluginsInvokeRpc,
+  WsPluginsSubscribeRpc,
   WsServerReportClientActivityRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,

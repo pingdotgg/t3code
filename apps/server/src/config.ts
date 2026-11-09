@@ -94,6 +94,8 @@ export class ServerConfig extends Context.Service<
     readonly devAuthToken?: Redacted.Redacted<string> | undefined;
     readonly devAllowedOrigins: ReadonlyArray<string>;
     readonly noBrowser: boolean;
+    /** Lists plugins but runs none of their code, so a plugin that stops the server can be turned off. */
+    readonly noPlugins?: boolean | undefined;
     readonly startupPresentation: StartupPresentation;
     readonly desktopBootstrapToken: string | undefined;
     readonly desktopBootstrapSecret?: string | undefined;

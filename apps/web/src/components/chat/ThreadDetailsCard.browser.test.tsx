@@ -171,6 +171,11 @@ it("returns to full density when hidden items make the content fit", async () =>
   await using screen = await render(<Card threadRef={threadB} inline fixture={fixture} rows={6} />);
   const card = page.getByRole("region", { name: "Thread details" });
   await expect.element(card).toHaveAttribute("data-density", "compact");
+  // Plugin styles target the card by this name, on the element that paints it.
+  expect(card.element().querySelector("[data-thread-details-card]")).toHaveAttribute(
+    "data-t3-region",
+    "thread-details",
+  );
 
   await screen.rerender(<Card threadRef={threadB} inline fixture={fixture} rows={2} />);
   await expect.element(card).toHaveAttribute("data-density", "full");

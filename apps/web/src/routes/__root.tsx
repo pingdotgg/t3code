@@ -58,6 +58,7 @@ import { readProject } from "../state/entities";
 
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { PluginLoaderStarter } from "../plugins/PluginLoaderStarter";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -194,6 +195,8 @@ function RootRouteBranch() {
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
       {import.meta.env.DEV && primaryEnvironmentAuthenticated ? <DevReplayHost /> : null}
+      {/* Also without a primary environment, where it loads plugin UI only from one the user picked. */}
+      <PluginLoaderStarter />
     </>
   );
   const appShell = (

@@ -158,6 +158,10 @@ it("closes an exited terminal on its own thread after navigating to one reusing 
   await using screen = await render(
     <Drawer threadRef={original} onCloseTerminal={onCloseTerminal} />,
   );
+  // Plugin styles target the drawer by this name.
+  await expect
+    .element(screen.getByRole("region", { name: "Terminal" }))
+    .toHaveAttribute("data-t3-region", "terminal");
   using _timers = fakeTimers();
   // The exit is seen once the surface loads, and its close waits for the next task.
   await act(async () => {

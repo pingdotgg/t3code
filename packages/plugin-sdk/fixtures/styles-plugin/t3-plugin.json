@@ -1,0 +1,7 @@
+{
+  "id": "styles-plugin",
+  "name": "Styles plugin",
+  "version": "0.1.0",
+  "description": "Test fixture that changes the app with CSS alone, without server or web code.",
+  "engines": { "t3": ">=0.1.0" }
+}

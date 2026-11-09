@@ -74,6 +74,8 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     "'self'",
     "'unsafe-inline'",
     "'wasm-unsafe-eval'",
+    // Only the page holds each environment's credentials, so plugin bundles it fetches run from blob URLs.
+    "blob:",
     ...(clerkOrigin ? [clerkOrigin] : []),
     "https://challenges.cloudflare.com",
   ];
@@ -89,7 +91,8 @@ function makeDesktopContentSecurityPolicy(input: DesktopProtocolRegistrationInpu
     `img-src 'self' ${input.scheme}: blob: data: http: https:`,
     `media-src 'self' ${input.scheme}: blob: http: https:`,
     "style-src 'self' 'unsafe-inline'",
-    `font-src 'self' ${input.scheme}: data:`,
+    // `blob:` for fonts a plugin ships, which reach the page through `api.assetUrl`.
+    `font-src 'self' ${input.scheme}: blob: data:`,
     "worker-src 'self' blob:",
     "frame-src 'self' blob: http: https:",
     "object-src 'self' blob: http: https:",
