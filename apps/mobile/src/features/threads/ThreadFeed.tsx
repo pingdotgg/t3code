@@ -181,7 +181,6 @@ import {
 import { cn } from "../../lib/cn";
 import {
   deriveCenteredContentHorizontalPadding,
-  deriveThreadFeedInitialContentInset,
   deriveThreadWorkLogSizing,
   type LayoutVariant,
 } from "../../lib/layout";
@@ -2777,11 +2776,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const bottomContentInset = props.contentBottomInset ?? 18;
   const usesNativeAutomaticInsets =
     props.usesAutomaticContentInsets === true && Platform.OS === "ios";
-  const initialContentInset = deriveThreadFeedInitialContentInset({
-    platform: Platform.OS,
-    usesNativeAutomaticInsets,
-    bottomContentInset,
-  });
   const anchorTopInset = usesNativeAutomaticInsets ? barInset : topContentInset;
 
   const theme = useUniwindTheme();
@@ -3671,7 +3665,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={props.contentInsetEndAdjustment}
             keyboardOffset={props.keyboardOffset}
-            contentInset={usesNativeAutomaticInsets ? { top: anchorTopInset } : initialContentInset}
+            {...(usesNativeAutomaticInsets ? { contentInset: { top: anchorTopInset } } : {})}
             freeze={props.freeze}
             maintainScrollAtEnd={jumpReady ? false : THREAD_FEED_MAINTAIN_SCROLL_AT_END}
             maintainVisibleContentPosition
