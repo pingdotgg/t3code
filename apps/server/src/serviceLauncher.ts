@@ -266,7 +266,7 @@ async function copyWithoutOpening(source: string, destination: string): Promise<
 // Copies the main file while the server runs; an open read transaction stops SQLite resetting the WAL,
 // which `finish` copies after the stop and which overrides any page the copy caught mid-checkpoint.
 // `-shm` is left out: its backfill count would make SQLite trust those pages. Past the WAL size gate,
-// a write-heavy server's writes stall until the copy ends.
+// a write-heavy server's new writes wait, uncommitted, until the server stops.
 async function startOnlineDatabaseBackup(
   baseDir: string,
   pending: PendingServiceUpdate,
