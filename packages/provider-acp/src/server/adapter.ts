@@ -498,6 +498,8 @@ export interface AcpAdapterV2Flavor {
     readonly status: "running" | "completed" | "failed";
     readonly appendOutput: string;
   }>;
+  /** When true, a background mutation notice terminalizes the tool immediately with its status instead of waiting for hydration. */
+  readonly backgroundNoticesAreTerminal?: boolean;
   readonly extractSubagentEndNotice?: (text: string) =>
     | {
         readonly childSessionId: string;
@@ -5507,7 +5509,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         : mutation.status === "failed"
                           ? ("failed" as const)
                           : ("completed" as const);
-                    if (nextStatus !== "inProgress") {
+                    if (flavor.backgroundNoticesAreTerminal === true) {
+                      yield* clearAwaitingBackgroundHydration(context, mutation.taskId);
+                    } else if (nextStatus !== "inProgress") {
                       yield* markAwaitingBackgroundHydration(context, mutation.taskId);
                       nextStatus = "inProgress";
                     }

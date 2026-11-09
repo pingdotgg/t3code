@@ -36,8 +36,8 @@ import { normalizeAntigravitySessionUpdate } from "../../provider/acp/Antigravit
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { acpCompletedTurnShouldTerminalizeTool } from "@t3tools/provider-acp/server/adapter";
 import {
-  acpCompletedTurnShouldTerminalizeTool,
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
@@ -137,6 +137,7 @@ describe("AntigravityAdapterV2 flavor", () => {
 
   it("enables background task tracking and completion de-registration", () => {
     assert.isTrue(flavor.backgroundTasksIdleOnTurnCompletion);
+    assert.isTrue(flavor.backgroundNoticesAreTerminal);
     assert.isDefined(flavor.extractBackgroundTaskId);
     assert.isDefined(flavor.extractBackgroundTaskCompletion);
     assert.isDefined(flavor.extractBackgroundToolMutation);
