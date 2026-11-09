@@ -14,12 +14,14 @@ export function CollapsibleSectionHeader({
   tone = "muted",
   variant = "default",
   accessory,
+  showChevron = true,
   ...buttonProps
 }: Omit<ComponentProps<"button">, "className" | "style" | "aria-expanded"> & {
   expanded: boolean;
   tone?: keyof typeof tones;
   variant?: "default" | "panel";
   accessory?: ReactNode;
+  showChevron?: boolean;
 }) {
   return (
     <button
@@ -41,7 +43,11 @@ export function CollapsibleSectionHeader({
       {accessory}
       <ChevronDownIcon
         aria-hidden
-        className={cn("size-3 shrink-0 transition-transform", !expanded && "-rotate-90")}
+        className={cn(
+          "size-3 shrink-0 transition-transform",
+          !expanded && "-rotate-90",
+          !showChevron && "invisible",
+        )}
       />
     </button>
   );

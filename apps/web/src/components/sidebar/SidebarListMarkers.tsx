@@ -141,7 +141,12 @@ export function SidebarSectionHeader(props: {
           expanded={props.toggle.expanded}
           tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}
           data-testid={`sidebar-${shelf}-shelf-toggle`}
-          accessory={<span className="font-normal tabular-nums">{props.count}</span>}
+          accessory={
+            <span className={cn("font-normal tabular-nums", props.dragging && "invisible")}>
+              {props.count}
+            </span>
+          }
+          showChevron={!props.dragging}
         >
           {props.label}
         </CollapsibleSectionHeader>

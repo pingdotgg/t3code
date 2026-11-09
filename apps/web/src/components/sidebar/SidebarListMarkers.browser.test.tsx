@@ -52,7 +52,7 @@ it("reveals an empty Settled drop target only for a drag and keeps it after a dr
   await using screen = await render(<Harness />, {
     router: false /* shelf drag/drop does not navigate */,
   });
-  const settled = screen.getByRole("button", { name: /^Settled\s*0$/ });
+  const settled = screen.getByTestId("sidebar-settled-shelf-toggle");
   await expect.element(settled).not.toBeInTheDocument();
 
   const startDrag = async () => {
