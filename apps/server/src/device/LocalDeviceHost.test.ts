@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -44,7 +46,8 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
-  const hub = { running: true, spawnFails: false };
+  const hub = { running: true, spawnFails: false, cleanup: Effect.void };
+  const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
   for (const [name, version, entry] of [
@@ -74,20 +77,22 @@ const agentFixture = Effect.fn("agentFixture")(function* (
                 description: "Hub entry missing",
               }),
             )
-          : Effect.succeed(
-              ChildProcessSpawner.makeHandle({
-                pid: ChildProcessSpawner.ProcessId(123),
-                stdout: Stream.empty,
-                stderr: Stream.empty,
-                all: Stream.empty,
-                exitCode: Effect.never,
-                isRunning: Effect.sync(() => hub.running),
-                kill: () => Effect.void,
-                stdin: Sink.drain,
-                getInputFd: () => Sink.drain,
-                getOutputFd: () => Stream.empty,
-                unref: Effect.succeed(Effect.void),
-              }),
+          : Effect.addFinalizer(() => hub.cleanup).pipe(
+              Effect.as(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(123),
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  exitCode: Effect.never,
+                  isRunning: Effect.sync(() => hub.running),
+                  kill: () => Effect.void,
+                  stdin: Sink.drain,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                  unref: Effect.succeed(Effect.void),
+                }),
+              ),
             ),
       ),
     ),
@@ -95,7 +100,9 @@ const agentFixture = Effect.fn("agentFixture")(function* (
       run: (input) =>
         input.args.includes("devices")
           ? startup(stateDir)
-          : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
+          : input.args.includes("daemon")
+            ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
+            : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0)),
     }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -114,7 +121,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     ),
   );
   yield* host.ensureReady(() => Effect.void);
-  return { host, fs, stateDir, hub, daemonHealthy };
+  return { host, fs, stateDir, hub, daemonHealthy, daemonStopRequested };
 });
 
 describe("AgentDevice startup", () => {
@@ -274,6 +281,33 @@ describe("AgentDevice startup", () => {
       hub.spawnFails = false;
       yield* host.ensureReady(() => Effect.void);
       expect((yield* host.current)?.releaseAgentSession).toBeTypeOf("function");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("stops the agent daemon while the hub is still shutting down", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, hub, stateDir, daemonStopRequested } = yield* agentFixture((stateDir) =>
+        fs
+          .writeFileString(
+            `${stateDir}/daemon.json`,
+            JSON.stringify({ httpPort: 12345, token: "test-token" }),
+          )
+          .pipe(Effect.orDie, Effect.as(processOutput(0))),
+      );
+      yield* host.ensureAgentReady(() => Effect.void);
+      const hubExited = yield* Deferred.make<void>();
+      hub.cleanup = Deferred.await(hubExited);
+      const stopping = yield* Effect.forkChild(host.stop);
+      expect((yield* Deferred.await(daemonStopRequested)).slice(1)).toEqual([
+        "daemon",
+        "stop",
+        "--state-dir",
+        stateDir,
+      ]);
+      yield* Deferred.succeed(hubExited, undefined);
+      yield* Fiber.join(stopping);
+      expect(yield* fs.exists(`${stateDir}/hub.json`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
