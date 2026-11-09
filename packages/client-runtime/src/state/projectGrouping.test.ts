@@ -289,6 +289,49 @@ describe("buildProjectGroups", () => {
     expect(groups[1]?.label).toBe("julius/t3code-fork");
   });
 
+  it.each([
+    {
+      remoteUrl: "https://dev.azure.com/example-org/My%20Project/_git/my-repo",
+      canonicalKey: "dev.azure.com/example-org/my%20project/_git/my-repo",
+      displayName: "example-org/My%20Project/_git/my-repo",
+      name: "my-repo",
+      label: "My Project/my-repo",
+    },
+    {
+      remoteUrl: "git@ssh.dev.azure.com:v3/Example-Org/Other%20Project/ssh-repo",
+      canonicalKey: "dev.azure.com/example-org/other%20project/_git/ssh-repo",
+      displayName: "example-org/other%20project/_git/ssh-repo",
+      name: "ssh-repo",
+      label: "Other Project/ssh-repo",
+    },
+  ])(
+    "labels Azure DevOps checkouts of $remoteUrl by project and repository",
+    ({ remoteUrl, canonicalKey, displayName, name, label }) => {
+      const identity = {
+        canonicalKey,
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        provider: SourceControlProviderKind.make("azure-devops"),
+        owner: "example-org",
+        name,
+        displayName,
+      };
+      const projects = [
+        makeProject("checkout-1", `/work/one/${name}`, {
+          title: name,
+          repositoryIdentity: identity,
+        }),
+        makeProject("checkout-2", `/work/two/${name}`, {
+          title: name,
+          repositoryIdentity: identity,
+        }),
+      ];
+
+      const groups = buildProjectGroups({ projects, settings: settings("repository") });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe(label);
+    },
+  );
+
   it("applies a physical-project override without dropping its siblings", () => {
     const first = makeProject("t3code", "/work/t3code");
     const second = makeProject("t3code-2", "/work/t3code-2");
