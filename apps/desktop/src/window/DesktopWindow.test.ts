@@ -479,6 +479,30 @@ describe("DesktopWindow", () => {
     );
   });
 
+  it("restores a window saved 1px past a display edge, and nothing further out", () => {
+    const displays = [
+      { x: 0, y: 0, width: 1920, height: 1280 },
+      { x: 1920, y: 0, width: 1280, height: 1920 },
+    ];
+    const snappedBounds = { x: 1921, y: 30, width: 1280, height: 945 };
+
+    assert.strictEqual(
+      DesktopWindow.resolveInitialMainWindowBounds(snappedBounds, displays),
+      snappedBounds,
+    );
+    for (const bounds of [
+      { x: 1922, y: 30, width: 1280, height: 945 },
+      { x: 1918, y: 30, width: 1280, height: 945 },
+      { x: 1921, y: -2, width: 1279, height: 945 },
+      { x: 1920, y: 976, width: 1280, height: 946 },
+    ]) {
+      assert.deepEqual(
+        DesktopWindow.resolveInitialMainWindowBounds(bounds, displays),
+        DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE,
+      );
+    }
+  });
+
   it("rejects renderer navigations whose origin only serializes as null", () => {
     for (const applicationUrl of ["t3code://app/", "t3code-dev://app/"]) {
       assert.isTrue(
