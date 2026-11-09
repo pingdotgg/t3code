@@ -68,6 +68,11 @@ export function planClaudeSkillDispatch(
   };
 }
 
+/** Cheap pre-check so an answer with no skill syntax skips skill discovery. */
+export function answerMayMentionClaudeSkill(answer: string): boolean {
+  return /\p{Sc}|^\s*\//u.test(answer);
+}
+
 /** Tool results never expand skills, so an answer only names them for the agent to run. */
 export function rewriteClaudeSkillMentionsInAnswer(
   answer: string,

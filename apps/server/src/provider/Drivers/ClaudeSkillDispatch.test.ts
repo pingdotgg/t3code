@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { planClaudeSkillDispatch, type ClaudeSkillTarget } from "./ClaudeSkillDispatch.ts";
+import {
+  answerMayMentionClaudeSkill,
+  planClaudeSkillDispatch,
+  rewriteClaudeSkillMentionsInAnswer,
+  type ClaudeSkillTarget,
+} from "./ClaudeSkillDispatch.ts";
 
 const skillPath = (name: string) => `/home/me/.claude/skills/${name}/SKILL.md`;
 
@@ -82,5 +87,16 @@ describe("planClaudeSkillDispatch", () => {
       leadingText: `/interrogate [The user invoked this skill. Follow the instructions at: ${skillPath("interrogate")}] then /interrogate then /implement and /implement the fixes`,
       commandText: "/implement the fixes",
     });
+  });
+
+  it("pre-check passes every answer the rewrite would change", () => {
+    const userOnly = new Map([["review", { path: skillPath("review"), userInvocationOnly: true }]]);
+    for (const answer of ["$review", "ok €review now", "/review", "\n /review it"]) {
+      expect(rewriteClaudeSkillMentionsInAnswer(answer, userOnly)).not.toBe(answer);
+      expect(answerMayMentionClaudeSkill(answer)).toBe(true);
+    }
+    for (const answer of ["Yes", "Simple, Safe", "see docs/review", ""]) {
+      expect(answerMayMentionClaudeSkill(answer)).toBe(false);
+    }
   });
 });

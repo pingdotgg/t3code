@@ -160,6 +160,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
+  answerMayMentionClaudeSkill,
   rewriteClaudeSkillMentionsInAnswer,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
@@ -10438,7 +10439,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     questions: toolInput.questions,
                     answers: claudeSdkUserInputAnswers(
                       resolvedAnswers,
-                      yield* userInvocableSkills(context.input.runtimePolicy.cwd),
+                      Object.values(claudeSdkUserInputAnswers(resolvedAnswers, new Map())).some(
+                        answerMayMentionClaudeSkill,
+                      )
+                        ? yield* userInvocableSkills(context.input.runtimePolicy.cwd)
+                        : new Map(),
                     ),
                   },
                   toolUseID: callbackOptions.toolUseID,
