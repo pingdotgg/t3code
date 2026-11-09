@@ -5,11 +5,11 @@ import { observeSelectionActions, SELECTION_MULTI_CLICK_INTERVAL_MS } from "./se
 
 describe("observeSelectionActions", () => {
   it.each([
-    { immediateMultiClick: false, before: [], after: [[{ x: 40, y: 12 }]] },
-    { immediateMultiClick: true, before: [[null]], after: [[null]] },
+    { immediateMultiClick: false, nextFrame: [], afterInterval: [[{ x: 40, y: 12 }]] },
+    { immediateMultiClick: true, nextFrame: [[null]], afterInterval: [[null]] },
   ])(
     "double-click with immediateMultiClick=$immediateMultiClick",
-    ({ immediateMultiClick, before, after }) => {
+    ({ immediateMultiClick, nextFrame, afterInterval }) => {
       using stack = new DisposableStack();
       const element = stack.adopt(document.body.appendChild(document.createElement("div")), (e) =>
         e.remove(),
@@ -37,10 +37,12 @@ describe("observeSelectionActions", () => {
         }),
       );
 
-      vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS - 1);
-      expect(onSelection.mock.calls).toEqual(before);
+      vi.advanceTimersByTime(20);
+      expect(onSelection.mock.calls).toEqual(nextFrame);
+      vi.advanceTimersByTime(SELECTION_MULTI_CLICK_INTERVAL_MS - 21);
+      expect(onSelection.mock.calls).toEqual(nextFrame);
       vi.advanceTimersByTime(50);
-      expect(onSelection.mock.calls).toEqual(after);
+      expect(onSelection.mock.calls).toEqual(afterInterval);
     },
   );
 });
