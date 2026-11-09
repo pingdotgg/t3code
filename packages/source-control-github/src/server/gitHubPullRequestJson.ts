@@ -511,7 +511,7 @@ export function toPullRequestActionSummary(
   };
 }
 
-/** GitHub's reviewDecision ignores reviews outside branch rules, including app approvals. */
+/** Prefer GitHub's reviewDecision; only use latest reviews when it is absent (e.g. bot approvals). */
 function toReviewDecisionWithReviews(
   value: string | null | undefined,
   reviews: ReadonlyArray<LatestReviewFields> | undefined,
@@ -520,7 +520,7 @@ function toReviewDecisionWithReviews(
   if (summarized === "approved" || summarized === "changes-requested") return summarized;
   const states = new Set((reviews ?? []).map((review) => review.state?.trim().toUpperCase() ?? ""));
   if (states.has("CHANGES_REQUESTED")) return "changes-requested";
-  if (states.has("APPROVED")) return "approved";
+  if (summarized === null && states.has("APPROVED")) return "approved";
   return summarized;
 }
 
