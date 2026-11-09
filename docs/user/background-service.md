@@ -169,13 +169,14 @@ Settings > Maintenance (mobile) suggests the repair when at least 1 GiB can be
 reclaimed.
 
 When the desktop app or the background service runs T3 Code on that machine,
-select **Reclaim** there. T3 Code checks for free disk space, then stops,
-repairs the database, and starts again. It is offline while the repair runs, and
-running agents stop. If the repair fails, Settings shows why.
+select **Reclaim** in Settings on web or desktop. T3 Code checks for free disk
+space, then stops, repairs the database, and starts again. It is offline while
+the repair runs, and running agents stop. If the repair fails, Settings shows
+why.
 
-For a server you started by hand, run `t3 doctor` on the machine that hosts the
-environment. It reports the
-database size and the space it can reclaim, then asks which repairs to run;
+In other cases, such as a server you started by hand, run `t3 doctor` on the
+machine that hosts the environment. It reports the database size and the
+space it can reclaim, then asks which repairs to run;
 pass `--fix` to run the recommended ones without a prompt (for scripts), or
 `--dry-run` to only report. An installed background service for the same data
 directory is stopped for the repair and started again afterwards, also when
