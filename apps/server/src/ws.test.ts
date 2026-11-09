@@ -3,6 +3,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  AuthOrchestrationOperateScope,
   AuthSessionId,
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -1426,6 +1427,94 @@ it.effect("a publish whose push fails still refreshes the new remote", () =>
       [yield* Queue.take(refreshes), yield* Queue.take(refreshes)],
       ["identity /repo refresh=true", "status /repo"],
     );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.fresh(layerConfigSources),
+        Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+        Layer.mock(ServerBrowser.ServerBrowser)({}),
+      ),
+    ),
+    Effect.scoped,
+  ),
+);
+
+it.effect("inline image uploads keep their SnapShot source", () =>
+  Effect.gen(function* () {
+    const exits = yield* Queue.unbounded<Exit.Exit<unknown, unknown>>();
+    const server = yield* RpcServer.makeNoSerialization(WsRpcGroup, {
+      ...WS_RPC_SERVER_OPTIONS,
+      onFromServer: (response) =>
+        response._tag === "Exit" ? Queue.offer(exits, response.exit) : Effect.void,
+    }).pipe(
+      Effect.provide(
+        layerWsRpc(
+          {
+            sessionId: AuthSessionId.make("persist-test"),
+            subject: "persist-test",
+            method: "browser-session-cookie",
+            scopes: [AuthOrchestrationOperateScope],
+          },
+          {},
+          yield* ServerBrowser.ServerBrowser,
+          () => Effect.void,
+          { secretReferences: true },
+        ).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              layerUnusedConfigRpcServices,
+              Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+              Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+              Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+              Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+              Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+              Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+              Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+              Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+                namedProjectsRoot: "/unused",
+              }),
+              Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+              Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+              Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+            ),
+          ),
+          Layer.merge(RpcAuthorization.layer([AuthOrchestrationOperateScope])),
+        ),
+      ),
+    );
+    const source = {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-11-09T00:00:00.000Z",
+      appName: "Terminal",
+      windowTitle: "build.log",
+      accessibleText: "error: build failed",
+    };
+    yield* server.write(0, {
+      _tag: "Request",
+      id: RpcMessage.RequestId("persist"),
+      tag: WS_METHODS.assetsPersistChatAttachments,
+      payload: {
+        threadId: ThreadId.make("thread-persist"),
+        messageId: MessageId.make("message-persist"),
+        attachments: [
+          {
+            type: "image",
+            name: "capture.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            dataUrl: "data:image/png;base64,iVBORw==",
+            source,
+          },
+        ],
+      },
+      headers: Headers.empty,
+    });
+    const exit = yield* Queue.take(exits);
+    assert.isTrue(Exit.isSuccess(exit));
+    if (!Exit.isSuccess(exit)) return;
+    const { attachments } = exit.value as { attachments: ReadonlyArray<{ source?: unknown }> };
+    assert.deepEqual(attachments[0]?.source, source);
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
