@@ -79,6 +79,7 @@ export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
   const prompt = [
     "You split a staged working tree into logical git commits.",
     "Return a JSON object with a commits array. Each commit has subject, body, and hunkIds.",
+    "Only propose commit groups and messages. Do not run commands, edit files, or create commits; T3 performs all Git operations.",
     "Rules:",
     "- use every ID from Available change units exactly once",
     "- copy hunk IDs exactly; do not invent, omit, or duplicate IDs",
@@ -94,10 +95,10 @@ export function buildCommitPlanPrompt(input: CommitPlanPromptInput) {
     `Branch: ${input.branch ?? "(detached)"}`,
     "",
     "Available change units:",
-    limitSection(input.changeUnitSummary, 20_000),
+    input.changeUnitSummary,
     "",
     "Detailed change units:",
-    limitSection(input.annotatedPatch, 40_000),
+    input.annotatedPatch,
   ].join("\n");
 
   return {

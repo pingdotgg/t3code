@@ -131,7 +131,6 @@ import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as CommitWorkflowService from "./git/CommitWorkflowService.ts";
-import * as CommitWorkflowRunner from "./git/CommitWorkflowRunner.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
@@ -639,11 +638,6 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
 
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   CommitWorkflowService.layer.pipe(
-    Layer.provide(
-      CommitWorkflowRunner.layer.pipe(
-        Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
-      ),
-    ),
     Layer.provide(layerOrchestrationApplication),
     Layer.provide(ProjectStore.layer),
     Layer.provide(layerGit),

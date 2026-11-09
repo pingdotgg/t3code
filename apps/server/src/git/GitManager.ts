@@ -1,3 +1,4 @@
+import type { GitStartCommitWorkflowInput, GitStartCommitWorkflowResult } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
@@ -98,12 +99,7 @@ import * as VcsProjectConfig from "../vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
-import {
-  buildPatchForLogicalChangeUnits,
-  formatLogicalChangeUnitsForModel,
-  parseLogicalChangeUnits,
-  summarizeLogicalChangeUnits,
-} from "./LogicalCommitPatch.ts";
+import { runLogicalCommitWorkflow } from "./LogicalCommitWorkflow.ts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -168,6 +164,11 @@ export class GitManager extends Context.Service<
       readonly filePaths?: readonly string[];
       readonly settings: SourceControlTextGenerationSettings;
     }) => Effect.Effect<string, GitManagerServiceError>;
+    readonly runCommitWorkflow: (input: {
+      readonly request: GitStartCommitWorkflowInput;
+      readonly modelSelection: ModelSelection;
+      readonly style: SourceControlWritingStyleSettings;
+    }) => Effect.Effect<GitStartCommitWorkflowResult, GitManagerServiceError>;
     readonly runStackedAction: (
       input: GitRunStackedActionInput,
       options?: GitRunStackedActionOptions,
@@ -194,9 +195,6 @@ export class GitManager extends Context.Service<
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const AFTER_PUSH_TIMEOUT_MS = 30 * 60_000;
-const MAX_LOGICAL_COMMITS = 20;
-const MAX_LOGICAL_CHANGE_UNITS = 200;
-const MAX_LOGICAL_COMMIT_PATCH_BYTES = 2_000_000;
 const MAX_REWRITEABLE_COMMITS = 50;
 const MAX_COMMIT_MESSAGE_PATCH_BYTES = 2_000_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
@@ -2562,6 +2560,78 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const performCommitWorkflow = Effect.fn("GitManager.performCommitWorkflow")(
+    function* (
+      request: Pick<
+        GitStartCommitWorkflowInput,
+        "cwd" | "expectedBranch" | "scope" | "instructions"
+      >,
+      settings: SourceControlTextGenerationSettings,
+    ) {
+      const stylePolicy = yield* resolveStylePolicy(request.cwd, settings);
+      const repositoryInstructions = yield* readRepositoryInstructions(
+        request.cwd,
+        ".t3code/commit-message.md",
+      );
+      const policy = {
+        ...stylePolicy,
+        commitInstructions: [
+          stylePolicy.commitInstructions,
+          repositoryInstructions,
+          request.instructions,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      };
+      return yield* runLogicalCommitWorkflow(
+        request,
+        `refs/t3/commit-workflow/${yield* randomUUIDv4(request.cwd)}`,
+        (context) =>
+          textGeneration.generateCommitPlan({
+            ...context,
+            policy,
+            modelSelection: settings.modelSelection,
+          }),
+      ).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, gitCore),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
+    },
+    (effect, request) =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitManagerError({
+              operation: "splitCommits",
+              cwd: request.cwd,
+              detail: cause.message,
+              cause,
+            }),
+        ),
+      ),
+  );
+
+  const runCommitWorkflow: GitManager["Service"]["runCommitWorkflow"] = Effect.fn(
+    "GitManager.runCommitWorkflow",
+  )(function* (input) {
+    const result = yield* performCommitWorkflow(input.request, {
+      modelSelection: input.modelSelection,
+      style: input.style,
+    });
+    return {
+      summary:
+        result.subjects.length === 0
+          ? "No changes to commit."
+          : [
+              `Created ${result.subjects.length} logical commit(s).`,
+              ...result.subjects.map((subject) => `- ${subject}`),
+              `Backup: ${result.backupRef}`,
+              "T3 verified the final tree and preserved excluded files and their staged state. Nothing was pushed.",
+            ].join("\n"),
+    };
+  });
+
   const runSplitCommitStep = Effect.fn("runSplitCommitStep")(function* (
     settings: SourceControlTextGenerationSettings,
     cwd: string,
@@ -2570,166 +2640,32 @@ export const make = Effect.gen(function* () {
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
   ) {
-    const emit = (event: GitActionProgressPayload) =>
-      progressReporter && actionId
-        ? progressReporter.publish({
-            actionId,
-            cwd,
-            action: "commit",
-            ...event,
-          } as GitActionProgressEvent)
-        : Effect.void;
-
-    yield* emit({
-      kind: "phase_started",
-      phase: "commit",
-      label: "Planning logical commits...",
-    });
-
-    const prepared = yield* gitCore.prepareCommitContext(cwd, selectedFilePaths, {
-      binaryPatch: true,
-      maxOutputBytes: MAX_LOGICAL_COMMIT_PATCH_BYTES,
-    });
-    if (!prepared) {
-      return { status: "skipped_no_changes" as const };
-    }
-
-    if (prepared.stagedPatchTruncated) {
-      return yield* new GitManagerError({
-        operation: "runSplitCommitStep",
-        cwd,
-        detail: `Logical commit splitting supports patches up to ${MAX_LOGICAL_COMMIT_PATCH_BYTES} bytes.`,
-      });
-    }
-    const changeUnits = parseLogicalChangeUnits(prepared.stagedPatch);
-    if (changeUnits.length === 0 || changeUnits.length > MAX_LOGICAL_CHANGE_UNITS) {
-      return yield* new GitManagerError({
-        operation: "runSplitCommitStep",
-        cwd,
-        detail: `Logical commit splitting supports between 1 and ${MAX_LOGICAL_CHANGE_UNITS} change units.`,
-      });
-    }
-
-    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
-    const repositoryCommitInstructions = yield* readRepositoryInstructions(
-      cwd,
-      ".t3code/commit-message.md",
-    );
-    const policy = repositoryCommitInstructions
-      ? {
-          ...stylePolicy,
-          commitInstructions: [stylePolicy.commitInstructions, repositoryCommitInstructions]
-            .filter((instructions): instructions is string => Boolean(instructions))
-            .join("\n\n"),
-        }
-      : stylePolicy;
-    const generated = yield* textGeneration.generateCommitPlan({
-      cwd,
-      branch,
-      changeUnitSummary: summarizeLogicalChangeUnits(changeUnits),
-      annotatedPatch: formatLogicalChangeUnitsForModel(changeUnits),
-      ...(policy ? { policy } : {}),
-      modelSelection: settings.modelSelection,
-    });
-
-    const unitsById = new Map(changeUnits.map((unit) => [unit.id, unit] as const));
-    const unitOrder = new Map(changeUnits.map((unit, index) => [unit.id, index] as const));
-    const plannedIds = new Set<string>();
-    const commits = generated.commits;
-    if (commits.length === 0 || commits.length > MAX_LOGICAL_COMMITS) {
-      return yield* new GitManagerError({
-        operation: "runSplitCommitStep",
-        cwd,
-        detail: `The generated commit plan must contain between 1 and ${MAX_LOGICAL_COMMITS} commits.`,
-      });
-    }
-
-    for (const commit of commits) {
-      if (commit.hunkIds.length === 0) {
-        return yield* new GitManagerError({
-          operation: "runSplitCommitStep",
-          cwd,
-          detail: "The generated commit plan contained an empty commit.",
-        });
-      }
-      for (const hunkId of commit.hunkIds) {
-        if (!unitsById.has(hunkId) || plannedIds.has(hunkId)) {
-          return yield* new GitManagerError({
-            operation: "runSplitCommitStep",
-            cwd,
-            detail: `The generated commit plan contained an invalid or duplicate hunk ID: ${hunkId}`,
-          });
-        }
-        plannedIds.add(hunkId);
-      }
-    }
-
-    const missingIds = changeUnits.filter((unit) => !plannedIds.has(unit.id));
-    if (missingIds.length > 0) {
-      return yield* new GitManagerError({
-        operation: "runSplitCommitStep",
-        cwd,
-        detail: `The generated commit plan omitted ${missingIds.length} change unit(s).`,
-      });
-    }
-
-    let lastCommit: {
-      status: "created";
-      commitSha: string;
-      subject: string;
-      commitCount: number;
-      subjects: ReadonlyArray<string>;
-    } | null = null;
-
-    for (const [index, commit] of commits.entries()) {
-      const commitUnits = commit.hunkIds
-        .map((hunkId) => unitsById.get(hunkId))
-        .filter((unit): unit is NonNullable<typeof unit> => unit !== undefined)
-        .toSorted((left, right) => (unitOrder.get(left.id) ?? 0) - (unitOrder.get(right.id) ?? 0));
-      const commitPatch = buildPatchForLogicalChangeUnits(commitUnits);
-      yield* gitCore.execute({
-        operation: "GitManager.runSplitCommitStep.resetIndex",
-        cwd,
-        args: ["reset"],
-      });
-      yield* gitCore.execute({
-        operation: "GitManager.runSplitCommitStep.applyPatch",
-        cwd,
-        args: ["apply", "--cached", "--recount", "--whitespace=nowarn", "-"],
-        stdin: commitPatch,
-      });
-      const result = yield* runCommitStep(
-        settings,
-        cwd,
-        "commit",
-        branch,
-        undefined,
-        {
-          subject: commit.subject,
-          body: commit.body,
-          commitMessage: formatCommitMessage(commit.subject, commit.body),
-        },
-        undefined,
-        progressReporter,
+    if (progressReporter && actionId)
+      yield* progressReporter.publish({
         actionId,
-        `Committing ${index + 1} of ${commits.length}...`,
-        false,
-      );
-      if (result.status !== "created") {
-        return yield* new GitManagerError({
-          operation: "runSplitCommitStep",
-          cwd,
-          detail: `Logical commit ${index + 1} could not be created.`,
-        });
-      }
-      lastCommit = {
-        ...result,
-        commitCount: commits.length,
-        subjects: commits.map((plannedCommit) => plannedCommit.subject),
-      };
-    }
-
-    return lastCommit ?? { status: "skipped_no_changes" as const };
+        cwd,
+        action: "commit",
+        kind: "phase_started",
+        phase: "commit",
+        label: "Planning logical commits...",
+      });
+    const result = yield* performCommitWorkflow(
+      {
+        cwd,
+        expectedBranch: branch,
+        scope: { type: "working_tree", filePaths: selectedFilePaths },
+      },
+      settings,
+    );
+    return result.subjects.length === 0
+      ? { status: "skipped_no_changes" as const }
+      : {
+          status: "created" as const,
+          commitSha: result.commitSha,
+          subject: result.subjects.at(-1)!,
+          commitCount: result.subjects.length,
+          subjects: result.subjects,
+        };
   });
 
   const generatePrContent = Effect.fn("GitManager.generatePrContent")(function* (
@@ -4501,6 +4437,7 @@ export const make = Effect.gen(function* () {
     rewriteCommitMessages,
     generatePullRequestDescription,
     runStackedAction,
+    runCommitWorkflow,
     subscribePullRequestStateChanges: PubSub.subscribe(pullRequestStateChanges).pipe(
       Effect.map((subscription) => Stream.fromSubscription(subscription)),
     ),

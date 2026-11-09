@@ -1,26 +1,22 @@
 # Commit workflow
 
-Reproduces a logical-commit worker stopping because the optional `.t3code/commit-message.md`
-was absent (reported November 2026). The control includes repository instructions and checks
-that its subject prefix is followed. Each sample runs the actual workflow prompt through the
-local Codex CLI in a disposable Git repository. Passing requires commits, the expected final
-file contents, the original branch, and a clean worktree.
+Checks the structured planner used by logical commits. The model must assign each supplied change
+ID exactly once, return commit messages, and honor repository writing instructions when provided.
+The regression fixture has no optional `.t3code/commit-message.md`; the control supplies a subject
+prefix. Source checkout contents, index, and HEAD must remain unchanged during text generation.
+Git staging and commits are covered by the server's GitManager integration tests.
 
 ```sh
 cd evals
-pnpm commit-workflow --model <model> --out runs/commit-before
-pnpm commit-workflow --model <model> --out runs/commit-after --baseline runs/commit-before/results.json
+pnpm commit-workflow --model <model> --out runs/commit-plans
 ```
 
-Uses the local Codex login. `--case missing-instructions` selects the regression; the other case
-is `present-instructions`. Each case defaults to three samples; use `--samples 1` for a first
-check. The baseline is validated as JSON and copied into the output directory. Inspect the
-JSON results and retained CLI transcripts when a sample fails. A case fails when at least
-half its samples fail. Compare against a baseline on the same model.
+Uses the actual Codex text-generation implementation and local login, with an isolated generation
+folder and read-only execution. The model receives the supplied diff, not a task to manipulate Git.
+`--case missing-instructions` or `--case present-instructions` selects one fixture. Each case defaults
+to three samples; `--samples 1` runs a first check. JSON responses and per-sample grades are retained.
+A case fails when at least half its samples fail. `--baseline` copies earlier JSON results for review;
+compare only runs of the same planner and model.
 
-The CLI runs with approvals and sandboxing disabled so it can create temporary Git worktrees
-and update fixture refs. Source files and worktrees are disposable; scratch work happens under
-the system temporary directory. Do not put real project content in fixtures.
-
-A full run makes six paid calls through the local subscription. The CLI does not report
-per-call cost; the runner reports its call count. No real project or application state is used.
+A full run makes six paid calls through the local subscription. The CLI does not report per-call
+cost; the runner reports the call count. Fixtures contain no real project or application state.

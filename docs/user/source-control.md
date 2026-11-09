@@ -189,14 +189,17 @@ branch-naming rules. Use **Rewrite commits** to rebuild existing branch history;
 and desktop it also offers regenerating selected commit messages without changing code.
 
 Splitting and rebuilding commits use the model and writing style from **Settings → Source Control**,
-including project overrides, and run independently as a quick action without chat history.
+including project overrides. The model receives the diff and returns commit groups, their order, and
+messages. T3 stages and commits those changes directly in your checkout, verifies the final tree,
+and keeps a backup ref. The model does not run Git commands or edit files. Optional instructions in
+`.t3code/commit-message.md` are included when present; **Grouping instructions** lets you guide the
+split. Existing diff hunks are the smallest split units; new, renamed, and binary files stay whole.
+Normal Git commit hooks still run.
+
 Uncommitted changes can also be split on detached HEAD during a paused interactive rebase.
 The rebase stays paused; review the new commits, then continue the rebase yourself.
 Existing branch history requires a clean feature branch; leave the base branch blank to use the
-repository default. The workflow reads `.t3code/commit-message.md` when present and is instructed to build in a
-separate worktree, inspect dependency ordering, preserve the final contents, and keep a backup ref.
-Build, type, lint, test, and IDE checks run only when requested in **Additional instructions**;
-otherwise the action skips them and dependency/runtime setup.
+repository default.
 The dialog closes when the action starts. Follow its running state in the Git sidebar (or the
 progress overlay on mobile), where you can cancel it. A notification shows the result when it
 finishes. Nothing is pushed.

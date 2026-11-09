@@ -19,8 +19,8 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import * as Runner from "./CommitWorkflowRunner.ts";
 import * as GitManager from "./GitManager.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 
 const isGitManagerError = Schema.is(GitManagerError);
 const encodeRequest = Schema.encodeSync(Schema.fromJsonString(GitStartCommitWorkflowInput));
@@ -48,7 +48,6 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const fs = yield* FileSystem.FileSystem;
-  const runner = yield* Runner.CommitWorkflowRunner;
   const gitManager = yield* GitManager.GitManager;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
@@ -73,61 +72,63 @@ export const make = Effect.gen(function* () {
       if (runningCheckouts.has(cwd))
         return yield* fail("Commit splitting is already running for this checkout.");
       runningCheckouts.add(cwd);
-      return yield* Effect.gen(function* () {
-        const status = yield* git.status({ cwd });
-        if (!status.isRepo || (input.scope.type === "branch" && status.refName === null))
-          return yield* fail("Switch to a Git branch before rebuilding commits.");
-        if (status.refName !== input.expectedBranch)
-          return yield* fail("The branch changed. Reopen the commit dialog and try again.");
-        if (input.scope.type === "branch" && status.hasWorkingTreeChanges)
-          return yield* fail(
-            "Commit or set aside uncommitted changes before rebuilding branch history.",
-          );
-        if (input.scope.type === "branch" && status.isDefaultRef)
-          return yield* fail("Switch to a feature branch before rebuilding branch history.");
-        const settings = resolveProjectSettings(
-          yield* serverSettings.getSettings,
-          thread.projectId,
-        ).settings;
-        const modelSelection =
-          settings.sourceControlWriterModelSelection === null
-            ? settings.textGenerationModelSelection
-            : ServerSettings.resolveSourceControlWriterModelSelection(
-                settings,
-                yield* providers.getProviders,
-                thread.projectId,
-              );
-        let request = input;
-        if (input.scope.type === "working_tree_new_branch") {
-          if (!status.hasWorkingTreeChanges)
-            return yield* fail("There are no uncommitted changes to split on a new branch.");
-          const branch = yield* gitManager.createFeatureBranch({
-            cwd,
-            expectedBranch: input.expectedBranch,
-            ...(input.scope.filePaths ? { filePaths: input.scope.filePaths } : {}),
-            settings: { modelSelection, style: settings.sourceControlWritingStyle },
+      return yield* withWorkspaceLease(
+        cwd,
+        Effect.gen(function* () {
+          const status = yield* git.status({ cwd });
+          if (!status.isRepo || (input.scope.type === "branch" && status.refName === null))
+            return yield* fail("Switch to a Git branch before rebuilding commits.");
+          if (status.refName !== input.expectedBranch)
+            return yield* fail("The branch changed. Reopen the commit dialog and try again.");
+          if (input.scope.type === "branch" && status.hasWorkingTreeChanges)
+            return yield* fail(
+              "Commit or set aside uncommitted changes before rebuilding branch history.",
+            );
+          if (input.scope.type === "branch" && status.isDefaultRef)
+            return yield* fail("Switch to a feature branch before rebuilding branch history.");
+          const settings = resolveProjectSettings(
+            yield* serverSettings.getSettings,
+            thread.projectId,
+          ).settings;
+          const modelSelection =
+            settings.sourceControlWriterModelSelection === null
+              ? settings.textGenerationModelSelection
+              : ServerSettings.resolveSourceControlWriterModelSelection(
+                  settings,
+                  yield* providers.getProviders,
+                  thread.projectId,
+                );
+          let request = input;
+          if (input.scope.type === "working_tree_new_branch") {
+            if (!status.hasWorkingTreeChanges)
+              return yield* fail("There are no uncommitted changes to split on a new branch.");
+            const branch = yield* gitManager.createFeatureBranch({
+              cwd,
+              expectedBranch: input.expectedBranch,
+              ...(input.scope.filePaths ? { filePaths: input.scope.filePaths } : {}),
+              settings: { modelSelection, style: settings.sourceControlWritingStyle },
+            });
+            yield* threads.dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`${input.commandId}:feature-branch`),
+              threadId: input.threadId,
+              branch,
+              expectedBranch: thread.branch,
+              expectedWorktreePath: thread.worktreePath,
+            });
+            request = {
+              ...input,
+              expectedBranch: branch,
+              scope: { ...input.scope, type: "working_tree" },
+            };
+          }
+          return yield* gitManager.runCommitWorkflow({
+            request,
+            modelSelection,
+            style: settings.sourceControlWritingStyle,
           });
-          yield* threads.dispatch({
-            type: "thread.metadata.update",
-            commandId: CommandId.make(`${input.commandId}:feature-branch`),
-            threadId: input.threadId,
-            branch,
-            expectedBranch: thread.branch,
-            expectedWorktreePath: thread.worktreePath,
-          });
-          request = {
-            ...input,
-            expectedBranch: branch,
-            scope: { ...input.scope, type: "working_tree" },
-          };
-        }
-        return yield* runner.run({
-          request,
-          projectId: thread.projectId,
-          modelSelection,
-          style: settings.sourceControlWritingStyle,
-        });
-      }).pipe(Effect.ensuring(Effect.sync(() => runningCheckouts.delete(cwd))));
+        }),
+      ).pipe(Effect.ensuring(Effect.sync(() => runningCheckouts.delete(cwd))));
     }).pipe(
       Effect.mapError((cause) =>
         isGitManagerError(cause)
@@ -173,7 +174,7 @@ export const make = Effect.gen(function* () {
                     operation: "splitCommits",
                     cwd: input.cwd,
                     detail:
-                      "Commit splitting was cancelled. Any recovery refs created by the provider are retained.",
+                      "Commit splitting was cancelled. Any recovery refs created by T3 are retained.",
                   }),
                 ),
               ),

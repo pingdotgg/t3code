@@ -40,6 +40,7 @@ import type {
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  CommandId,
   EventId,
   GitCommandError,
   MessageId,
@@ -4184,6 +4185,120 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           Effect.map((output) => output.stdout.trim()),
         ),
       ).toBe("");
+    }),
+  );
+
+  it.effect.each([
+    "working_tree",
+    "branch",
+    "detached",
+    "concurrent-index",
+    "concurrent-worktree",
+    "invalid-plan",
+    "commit-failure",
+  ] as const)("T3 owns logical commit installation and recovery: %s", (mode) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-controlled-commits-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.txt"), "beta\n");
+      yield* runGit(repoDir, ["add", "."]);
+      yield* runGit(repoDir, ["commit", "-m", "Prepare files"]);
+      const base = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(
+        repoDir,
+        mode === "detached" ? ["checkout", "--detach"] : ["checkout", "-b", "feature/test"],
+      );
+      NodeFS.writeFileSync(NodePath.join(repoDir, "alpha.txt"), "alpha\nupdated alpha\n");
+      NodeFS.writeFileSync(NodePath.join(repoDir, "beta.txt"), "beta\nupdated beta\n");
+      if (mode === "branch") {
+        yield* runGit(repoDir, ["add", "alpha.txt", "beta.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Mixed changes"]);
+      } else {
+        NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "excluded staged change\n");
+        yield* runGit(repoDir, ["add", "README.md"]);
+      }
+      const originalHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+      const originalIndex = (yield* runGit(repoDir, ["diff", "--cached", "--binary"])).stdout;
+      if (mode === "commit-failure") {
+        const hook = NodePath.join(repoDir, ".git", "hooks", "pre-commit");
+        NodeFS.writeFileSync(
+          hook,
+          '#!/bin/sh\nif [ "$(git log -1 --format=%s)" = "Update concern 1" ]; then exit 1; fi\n',
+        );
+        NodeFS.chmodSync(hook, 0o755);
+      }
+      let plans = 0;
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitPlan: (context) =>
+            Effect.sync(() => {
+              plans++;
+              expect(context.cwd).not.toBe(repoDir);
+              expect(NodeFS.existsSync(NodePath.join(context.cwd, ".git"))).toBe(false);
+              expect(NodeFS.readFileSync(NodePath.join(repoDir, "alpha.txt"), "utf8")).toBe(
+                "alpha\nupdated alpha\n",
+              );
+              if (mode === "concurrent-worktree")
+                NodeFS.appendFileSync(NodePath.join(repoDir, "alpha.txt"), "concurrent edit\n");
+              if (mode === "concurrent-index")
+                NodeChildProcess.execFileSync("git", ["add", "alpha.txt"], { cwd: repoDir });
+              const ids = context.changeUnitSummary.split("\n").map((line) => line.split("\t")[0]!);
+              return {
+                commits: ids.slice(0, mode === "invalid-plan" ? 1 : undefined).map((id, index) => ({
+                  subject: `Update concern ${index + 1}`,
+                  body: "",
+                  hunkIds: [id],
+                })),
+              };
+            }),
+        },
+      });
+      const operation = manager.runCommitWorkflow({
+        request: {
+          commandId: CommandId.make("controlled-workflow"),
+          threadId: ThreadId.make("thread"),
+          cwd: repoDir,
+          expectedBranch: mode === "detached" ? null : "feature/test",
+          scope:
+            mode === "branch"
+              ? { type: "branch", baseRef: "main" }
+              : { type: "working_tree", filePaths: ["alpha.txt", "beta.txt"] },
+        },
+        modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+        style: DEFAULT_SERVER_SETTINGS.sourceControlWritingStyle,
+      });
+      if (mode.startsWith("concurrent") || mode === "invalid-plan" || mode === "commit-failure") {
+        const error = yield* operation.pipe(Effect.flip);
+        expect(error.message).toContain(
+          mode === "invalid-plan" ? "omitted" : mode === "commit-failure" ? "commit" : "changed",
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(originalHead);
+        if (mode !== "concurrent-index")
+          expect((yield* runGit(repoDir, ["diff", "--cached", "--binary"])).stdout).toBe(
+            originalIndex,
+          );
+      } else {
+        const result = yield* operation;
+        expect(result.summary).toContain("Update concern 1");
+        expect(result.summary).toContain("Backup:");
+        expect(
+          (yield* runGit(repoDir, ["rev-list", "--count", `${base}..HEAD`])).stdout.trim(),
+        ).toBe("2");
+        expect((yield* runGit(repoDir, ["diff", "--cached", "--binary"])).stdout).toBe(
+          originalIndex,
+        );
+        const backup = result.summary.match(/Backup: (\S+)/)?.[1];
+        expect(backup).toBeDefined();
+        expect((yield* runGit(repoDir, ["rev-parse", backup!])).stdout.trim()).toBe(originalHead);
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "alpha.txt"), "utf8")).toBe(
+          "alpha\nupdated alpha\n",
+        );
+        expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+          mode === "detached" ? "" : "feature/test",
+        );
+      }
+      expect(plans).toBe(1);
     }),
   );
 

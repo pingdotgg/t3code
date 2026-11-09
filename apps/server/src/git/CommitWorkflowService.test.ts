@@ -19,9 +19,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import { v2PullRequestThread } from "../orchestration-v2/testkit/pullRequestFixtures.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as CommitWorkflow from "./CommitWorkflowService.ts";
-import * as Runner from "./CommitWorkflowRunner.ts";
 import * as GitManager from "./GitManager.ts";
-import { buildCommitWorkflowPrompt } from "./commitWorkflowPrompt.ts";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as ServerSettingsService from "../serverSettings.ts";
@@ -74,7 +72,7 @@ function harness(
     missingProject?: boolean;
     planMode?: boolean;
     settings?: Partial<ServerSettings>;
-    run?: Runner.CommitWorkflowRunner["Service"]["run"];
+    run?: GitManager.GitManager["Service"]["runCommitWorkflow"];
   } = {},
 ) {
   const thread = v2PullRequestThread({
@@ -97,10 +95,11 @@ function harness(
     settledOverride: null,
     latestUserMessageAt: null,
   });
-  const run = vi.fn((request: Runner.CommitWorkflowRunInput) =>
-    options.run
-      ? options.run(request)
-      : Effect.succeed({ summary: "Created logical commits; backup: refs/t3/backup/test" }),
+  const run = vi.fn(
+    (request: Parameters<GitManager.GitManager["Service"]["runCommitWorkflow"]>[0]) =>
+      options.run
+        ? options.run(request)
+        : Effect.succeed({ summary: "Created logical commits; backup: refs/t3/backup/test" }),
   );
   const createFeatureBranch = vi.fn(() => Effect.succeed("feature/logical-commits"));
   const dispatch = vi.fn(() => Effect.succeed({ sequence: 1, storedEvents: [] }));
@@ -135,8 +134,7 @@ function harness(
                   }),
             ),
         }),
-        Layer.mock(Runner.CommitWorkflowRunner)({ run }),
-        Layer.mock(GitManager.GitManager)({ createFeatureBranch }),
+        Layer.mock(GitManager.GitManager)({ createFeatureBranch, runCommitWorkflow: run }),
         ServerSettingsService.layerTest({
           providerInstances: {
             [ProviderInstanceId.make("generation-writer")]: {
@@ -167,7 +165,7 @@ function harness(
   return { layer, run, gitStatus, createFeatureBranch, dispatch };
 }
 
-describe("agent commit workflow", () => {
+describe("controlled commit workflow", () => {
   it.effect("uses the configured Source Control writer and custom writing instructions", () => {
     const selection = {
       instanceId: writerId,
@@ -189,9 +187,7 @@ describe("agent commit workflow", () => {
       yield* service.start(input);
       const request = h.run.mock.calls[0]![0];
       expect(request.modelSelection).toEqual(selection);
-      expect(buildCommitWorkflowPrompt(request.request, request.style)).toContain(
-        "Use German subjects.",
-      );
+      expect(request.style.customInstructions).toBe("Use German subjects.");
     }).pipe(Effect.provide(h.layer));
   });
 
@@ -216,9 +212,7 @@ describe("agent commit workflow", () => {
       yield* service.start(input);
       const request = h.run.mock.calls[0]![0];
       expect(request.modelSelection).toEqual(selection);
-      expect(buildCommitWorkflowPrompt(request.request, request.style)).toContain(
-        "Project-specific subjects.",
-      );
+      expect(request.style.customInstructions).toBe("Project-specific subjects.");
     }).pipe(Effect.provide(h.layer));
   });
 
@@ -280,7 +274,6 @@ describe("agent commit workflow", () => {
       expect(h.run).toHaveBeenCalledTimes(1);
       const request = h.run.mock.calls[0]![0];
       expect(request.request).toEqual(input);
-      expect(request.projectId).toBe(projectId);
       expect(request.modelSelection).toMatchObject({
         instanceId: "generation-writer",
         model: "writer-model",
@@ -297,11 +290,6 @@ describe("agent commit workflow", () => {
         yield* service.start({ ...input, expectedBranch: null });
         const request = h.run.mock.calls[0]![0];
         expect(request.request.expectedBranch).toBeNull();
-        const text = buildCommitWorkflowPrompt(request.request, request.style);
-        expect(text).toContain("Expected source state: detached HEAD");
-        expect(text).toContain("git update-ref --no-deref HEAD <candidate> <recorded-head>");
-        expect(text).toContain("Do not continue, skip, abort, or restart the rebase");
-        expect(text).toContain("Preserve all existing commits");
       }).pipe(Effect.provide(h.layer));
     },
   );
@@ -340,20 +328,15 @@ describe("agent commit workflow", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
-  it.effect("rebuilds branch history from an explicit base without a hunk or commit limit", () => {
+  it.effect("rebuilds branch history from an explicit base with an explicit base", () => {
     const h = harness({ status: { hasWorkingTreeChanges: false } });
     return Effect.gen(function* () {
       const service = yield* CommitWorkflow.CommitWorkflowService;
       yield* service.start({ ...input, scope: { type: "branch", baseRef: "origin/development" } });
-      const text = buildCommitWorkflowPrompt(
-        h.run.mock.calls[0]![0].request,
-        h.run.mock.calls[0]![0].style,
-      );
-      expect(text).toContain('merge base with "origin/development"');
-      expect(text).not.toContain("Selected paths");
-      expect(text).toContain("temporary intermediate versions");
-      expect(text).toContain("tree object");
-      expect(text).toContain("no fixed commit-count target");
+      expect(h.run.mock.calls[0]![0].request.scope).toEqual({
+        type: "branch",
+        baseRef: "origin/development",
+      });
     }).pipe(Effect.provide(h.layer));
   });
 
@@ -368,7 +351,7 @@ describe("agent commit workflow", () => {
     { options: { status: { refName: "other-feature" } }, expected: "branch changed" },
     { options: { worktreePath: "/other" }, expected: "checkout changed" },
     { options: { missingProject: true }, expected: "project is unavailable" },
-  ])("refuses an invalid target before starting an agent: $expected", ({ options, expected }) => {
+  ])("refuses an invalid target before planning commits: $expected", ({ options, expected }) => {
     const h = harness(options);
     return Effect.gen(function* () {
       const service = yield* CommitWorkflow.CommitWorkflowService;

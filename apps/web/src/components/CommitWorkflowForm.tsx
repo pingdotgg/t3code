@@ -132,7 +132,7 @@ export function CommitWorkflowForm(props: {
             <p className="text-sm text-warning">This will commit directly to the default branch.</p>
           )}
           <label className="block space-y-2 text-sm">
-            <span>Additional instructions (optional)</span>
+            <span>Grouping instructions (optional)</span>
             <Textarea
               value={instructions}
               onChange={(event) => setInstructions(event.target.value)}
@@ -141,9 +141,9 @@ export function CommitWorkflowForm(props: {
             />
           </label>
           <p className="text-sm text-muted-foreground">
-            Preserves final contents and a backup of the original history. Tests run only if
-            requested. Runs independently without chat history. Existing branch commits will receive
-            new IDs. Nothing is pushed.
+            The model groups changes and writes messages. T3 stages and commits them in this
+            checkout, keeping a backup of the original history. Existing branch commits receive new
+            IDs. Nothing is pushed.
           </p>
         </div>
       </DialogPanel>

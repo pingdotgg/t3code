@@ -209,9 +209,8 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           {isWorkflow && (
             <View className="gap-3 bg-card p-4 android:rounded-[20px] ios:rounded-[22px]">
               <Text className="text-foreground-secondary text-sm">
-                Build a dependency-ordered commit sequence using your Source Control settings,
-                independently without chat history. Final contents and a backup of the original
-                history are preserved. Tests run only if requested in additional instructions.
+                The model groups changes and writes messages using your Source Control settings. T3
+                stages and commits them in this checkout, keeping a backup of the original history.
                 Nothing is pushed.
               </Text>
               {workflowScope === "working_tree" && gitStatus.data?.refName === null && (
@@ -247,11 +246,11 @@ export function GitCommitSheet(_props: GitCommitSheetProps) {
           ) : null}
           <View className="gap-2">
             <Text className="text-sm font-t3-medium text-foreground">
-              {isWorkflow ? "Additional instructions (optional)" : "Commit message"}
+              {isWorkflow ? "Grouping instructions (optional)" : "Commit message"}
             </Text>
             <TextInput
               multiline
-              accessibilityLabel={isWorkflow ? "Additional instructions" : "Commit message"}
+              accessibilityLabel={isWorkflow ? "Grouping instructions" : "Commit message"}
               value={isWorkflow ? workflowInstructions : dialogCommitMessage}
               onChangeText={isWorkflow ? setWorkflowInstructions : setDialogCommitMessage}
               placeholder={
