@@ -17,8 +17,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AgentSessionSource,
-  AuthAccessReadScope,
-  AuthAccessWriteScope,
   AuthProvidersManageScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
@@ -74,7 +72,7 @@ import {
   isBrokenVersion,
   turnedOnInstance,
   welcomeAgentState,
-  welcomePhonePath,
+  welcomeOffersPhone,
 } from "../../onboarding/welcomePage.logic";
 import {
   StoredWelcomeImportSelection,
@@ -140,14 +138,10 @@ export function WelcomePage({
   // The same access Settings → Sharing & access checks.
   const canReadRelay = useEnvironmentScope(environmentId, AuthRelayReadScope);
   const canWriteRelay = useEnvironmentScope(environmentId, AuthRelayWriteScope);
-  // Creating a pairing code needs write access, and showing it needs read access.
-  const canReadAccess = useEnvironmentScope(environmentId, AuthAccessReadScope);
-  const canWriteAccess = useEnvironmentScope(environmentId, AuthAccessWriteScope);
-  const phonePath = welcomePhonePath({
+  const showPhone = welcomeOffersPhone({
     isPrimary,
     cloud: hasCloudPublicConfig(),
     canShare: canReadRelay && canWriteRelay,
-    canPair: canReadAccess && canWriteAccess,
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
@@ -294,9 +288,7 @@ export function WelcomePage({
                 projectImport={projectImport}
                 isImporting={isImporting}
               />
-              {phonePath === null ? null : (
-                <PhoneSection environmentId={environmentId} path={phonePath} />
-              )}
+              {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               {agentReady ? (
@@ -914,13 +906,7 @@ function ProjectsSection({
   );
 }
 
-function PhoneSection({
-  environmentId,
-  path,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly path: "connect" | "pairing";
-}) {
+function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const [open, setOpen] = useState(false);
   return (
     <WelcomeSection title="Phone">
@@ -944,16 +930,7 @@ function PhoneSection({
                 <p className="text-sm text-foreground">Scan with your phone to get the app.</p>
               </PhoneStep>
               <PhoneStep step={2}>
-                {path === "connect" ? (
-                  <PhoneConnectLink environmentId={environmentId} />
-                ) : (
-                  <>
-                    <p className="text-sm text-foreground">Pair the app with this computer.</p>
-                    <Button variant="outline" size="xs" render={<Link to="/settings/access" />}>
-                      Show pairing code
-                    </Button>
-                  </>
-                )}
+                <PhoneConnectLink environmentId={environmentId} />
               </PhoneStep>
             </ol>
             {/* One code for both stores: the link opens the store that matches the phone. */}

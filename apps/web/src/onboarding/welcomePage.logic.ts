@@ -138,29 +138,23 @@ export function codexNeedsSetup(
 }
 
 /**
- * How the Welcome page offers the phone: T3 Connect sign-in, a pairing code, or not at all.
- * Both act on the primary computer, so another computer gets neither.
+ * The phone joins by signing in to T3 Connect, which shares the primary computer. Another
+ * computer, a build without T3 Connect, or a policy that turns it off gets no Phone section.
  */
-export function welcomePhonePath(input: {
+export function welcomeOffersPhone(input: {
   readonly isPrimary: boolean;
   readonly cloud: boolean;
   // Relay read and write access, which sharing this computer through T3 Connect needs.
   readonly canShare: boolean;
-  // Access to create a pairing code, as in Settings → Sharing & access.
-  readonly canPair: boolean;
   readonly policy: ManagedPolicySummary | undefined;
 }) {
-  if (!input.isPrimary || managedCapabilityDenial(input.policy, "remoteClients") !== undefined) {
-    return null;
-  }
-  if (
+  return (
+    input.isPrimary &&
     input.cloud &&
     input.canShare &&
+    managedCapabilityDenial(input.policy, "remoteClients") === undefined &&
     managedCapabilityDenial(input.policy, "connect") === undefined
-  ) {
-    return "connect";
-  }
-  return input.canPair ? "pairing" : null;
+  );
 }
 
 /**
