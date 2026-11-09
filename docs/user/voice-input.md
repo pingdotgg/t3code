@@ -123,6 +123,8 @@ transcript is inserted.
 
 Cleanup uses the environment's text generation model unless you pick a
 **Cleanup model** for that environment, for example a cheaper or faster one.
+That model can come from a model API such as OpenAI or OpenRouter instead of a
+coding agent; see [text generation models](./text-generation.md).
 
 If cleanup misses the way you correct yourself, set a **Correction cue**: the
 word or phrase you say to flag a correction, such as "scratch that". Cleanup
