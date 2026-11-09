@@ -1802,13 +1802,15 @@ const ThreadListV2ThreadRow = memo(function ThreadListV2ThreadRow(props: {
               <Text
                 className={cn(
                   "text-xs font-t3-bold",
-                  status === "working" && "tabular-nums",
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
                 {statusLabel.label}
                 {status === "working" ? (
-                  <ThreadListV2Duration startedAt={resolveThreadWorkingStartedAt(thread)} />
+                  <ThreadListV2Duration
+                    startedAt={resolveThreadWorkingStartedAt(thread)}
+                    leadingSpace={statusLabel.label !== null}
+                  />
                 ) : null}
               </Text>
             </View>
