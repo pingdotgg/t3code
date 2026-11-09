@@ -197,7 +197,7 @@ export function deriveReportedModelSelection(projection: ThreadStructure): Model
   return providerThread?.nativeMetadata?.modelSelection ?? null;
 }
 
-/** Effort labels read only select descriptors and string values: Pi's `thinking` counts, Claude's boolean does not. */
+/** Label consumers check select descriptors and string values: Pi's `thinking` counts, Claude's boolean does not. */
 export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "reasoningEffort",
   "effort",
@@ -246,14 +246,17 @@ export function formatSubagentEffort(input: {
     (provider && resolveSelectableModel(provider.driver, selection.model, provider.models)) ??
     selection.model.trim();
   if (selectionSlug !== modelSlug) return null;
+  const statedEffort = REASONING_EFFORT_OPTION_IDS.map((id) =>
+    getModelSelectionStringOptionValue(selection, id),
+  ).find(Boolean);
+  if (!statedEffort) return null;
   if (provider?.models.some((model) => model.slug === modelSlug && model.capabilities)) {
-    return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
+    return (
+      formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models) ??
+      statedEffort
+    );
   }
-  return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
-    ) ?? null
-  );
+  return statedEffort;
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {

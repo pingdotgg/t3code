@@ -617,11 +617,52 @@ describe("formatSubagentEffort", () => {
 
   it.each([
     [
+      "never invents an unknown OpenCode variant when none was stated",
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        models: [
+          {
+            ...piModel,
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                {
+                  id: "variant",
+                  label: "Variant",
+                  type: "select",
+                  options: [{ id: "high", label: "High", isDefault: true }],
+                },
+              ],
+            }),
+          },
+        ],
+      },
+      piModel.slug,
+      [],
+      null,
+    ],
+    [
       "labels a Pi child's thinking level",
       pi,
       piModel.slug,
       [{ id: "thinking", value: "high" }],
       "High",
+    ],
+    [
+      "keeps a stated Pi level after its descriptor is removed",
+      {
+        driver: pi.driver,
+        models: [{ ...piModel, capabilities: createModelCapabilities({ optionDescriptors: [] }) }],
+      },
+      piModel.slug,
+      [{ id: "thinking", value: "high" }],
+      "high",
+    ],
+    [
+      "keeps a stated Pi level the current descriptor no longer offers",
+      pi,
+      piModel.slug,
+      [{ id: "thinking", value: "medium" }],
+      "medium",
     ],
     [
       "keeps a Pi level the catalog does not know",
