@@ -104,6 +104,8 @@ const SETTINGS_SEARCH_TERMS = {
     "beta",
     "linked environments",
     "link machine",
+    "fast worktree checkout",
+    "clone cache",
     "tool calls in chat",
     "hide tool calls",
     "commands edits searches",
