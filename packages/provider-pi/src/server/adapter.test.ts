@@ -3646,26 +3646,48 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
-  it.effect("settles a plain prompt an input handler consumed once Pi is idle", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakePi;
-      const { runtime, takeEvent } = yield* openRuntime(fake);
-      const providerThread = yield* runtime.ensureThread({
-        threadId: THREAD_ID,
-        modelSelection: modelSelection("default"),
-        runtimePolicy,
-      });
-      yield* startTurn(runtime, providerThread);
-      yield* fake.takeRequest("prompt");
-      yield* fake.emit({
-        type: "response",
-        command: "prompt",
-        success: true,
-        data: { disposition: "handled" },
-      });
-      const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
-    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  it.effect.each([false, true])(
+    "settles a handled plain prompt after native work is idle (busy: %s)",
+    (busy) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime, takeEvent } = yield* openRuntime(fake);
+        const providerThread = yield* runtime.ensureThread({
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        });
+        yield* startTurn(runtime, providerThread);
+        yield* fake.takeRequest("prompt");
+        if (busy) fake.queueState({ isStreaming: true });
+        yield* fake.emit({
+          type: "response",
+          command: "prompt",
+          success: true,
+          data: { disposition: "handled" },
+        });
+        if (busy) {
+          yield* fake.takeRequest("get_state");
+          yield* fake.emit({
+            type: "extension_ui_request",
+            id: "busy-notice",
+            method: "notify",
+            message: "Native work is still running",
+            notifyType: "info",
+          });
+          const notice = yield* takeEvent(
+            (event) =>
+              (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") ||
+              event.type === "turn.terminal",
+          );
+          assert.isTrue(
+            notice.type === "turn_item.updated" && notice.turnItem.type === "system_notice",
+          );
+          yield* fake.emit({ type: "agent_settled" });
+        }
+        const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
+        assert.isTrue(terminal.type === "turn.terminal" && terminal.status === "completed");
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("leaves /compacted as an ordinary prompt", () =>
