@@ -114,18 +114,20 @@ export function isNewOnboardingProject(
     readonly workspaceRoot: string;
   }>,
 ) {
-  const rootKey = (environmentId: EnvironmentId, path: string) =>
-    `${environmentId}\u0000${normalizeProjectPathForComparison(path)}`;
   const roots = new Set(
-    projects.map((project) => rootKey(project.environmentId, project.workspaceRoot)),
+    projects.map(
+      (project) =>
+        `${project.environmentId}\u0000${normalizeProjectPathForComparison(project.workspaceRoot)}`,
+    ),
   );
   return (
     environmentId: EnvironmentId,
     candidate: Pick<AgentSessionProjectCandidate, "path" | "projectId">,
-  ) =>
-    candidate.projectId === undefined &&
-    (normalizeProjectPathForComparison(candidate.path).length === 0 ||
-      !roots.has(rootKey(environmentId, candidate.path)));
+  ) => {
+    if (candidate.projectId !== undefined) return false;
+    const path = normalizeProjectPathForComparison(candidate.path);
+    return path.length === 0 || !roots.has(`${environmentId}\u0000${path}`);
+  };
 }
 
 export function resolveOnboardingLandingProject<T>(
