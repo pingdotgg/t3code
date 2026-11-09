@@ -3,6 +3,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  settingsSecretLiteral,
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -801,8 +802,8 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
           binaryPath: openCodeSettings.binaryPath,
           directory: cwd,
           serverUrl: openCodeSettings.serverUrl,
-          ...(openCodeSettings.serverPassword
-            ? { serverPassword: openCodeSettings.serverPassword }
+          ...(settingsSecretLiteral(openCodeSettings.serverPassword)
+            ? { serverPassword: settingsSecretLiteral(openCodeSettings.serverPassword) }
             : {}),
         })
         .pipe(Effect.flatMap(loadInventory), Effect.scoped)
