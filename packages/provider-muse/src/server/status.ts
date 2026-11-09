@@ -16,6 +16,7 @@ import {
   DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   providerModelsFromSettings,
+  providerProbeEnvironment,
   spawnAndCollect,
   type ProviderProbeResult,
 } from "@t3tools/provider-core/server/snapshotProbe";
@@ -59,7 +60,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
 ) {
   if (!settings.enabled) return yield* makePendingMuseProvider(settings);
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  const museEnvironment = environment ?? makeMuseEnvironment();
+  const museEnvironment = providerProbeEnvironment(environment ?? makeMuseEnvironment());
   const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
     buildServerProvider({
       presentation: MUSE_PRESENTATION,

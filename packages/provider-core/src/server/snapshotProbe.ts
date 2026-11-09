@@ -103,6 +103,15 @@ export function isCommandMissingCause(error: unknown): boolean {
   return error instanceof PlatformError.PlatformError && error.reason._tag === "NotFound";
 }
 
+/**
+ * Environment for background status probes. A mise shim for a missing tool would otherwise
+ * download it on every refresh and leave a partial download behind when the probe times out.
+ * Sessions and user-started commands keep the plain environment, so mise still installs there.
+ */
+export function providerProbeEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...environment, MISE_OFFLINE: "1" };
+}
+
 export const spawnAndCollect = Effect.fn("snapshotProbe.spawnAndCollect")(function* (
   binaryPath: string,
   command: ChildProcess.Command,
