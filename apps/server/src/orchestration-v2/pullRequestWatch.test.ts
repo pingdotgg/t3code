@@ -113,6 +113,24 @@ describe("evaluatePullRequestWatch", () => {
     assert.deepEqual(evaluatePullRequestWatch(watch(), plain, noRemarks).changes, []);
   });
 
+  it("reports a new failed run even if it missed the rerun's pending state", () => {
+    const oldRun = check("test", "failure");
+    const first = evaluatePullRequestWatch(watch(), detail({ checks: [oldRun] }), noRemarks);
+    const newRun = { ...oldRun, url: "https://ci.example/test/rerun" };
+    const next = evaluatePullRequestWatch(first.next, detail({ checks: [newRun] }), noRemarks);
+    assert.deepEqual(next.changes, [{ kind: "checks-failed", failed: [newRun] }]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(next.next, detail({ checks: [newRun] }), noRemarks).changes,
+      [],
+    );
+    const legacy = watch({ headSha: "aaaaaaaaaa", failedChecks: ["test"] });
+    const migrated = evaluatePullRequestWatch(legacy, detail({ checks: [oldRun] }), noRemarks);
+    assert.deepEqual(migrated.changes, []);
+    assert.deepEqual(migrated.next.failedCheckRuns, [JSON.stringify([oldRun.name, oldRun.url])]);
+    const unread = evaluatePullRequestWatch(migrated.next, detail({ checks: [] }), noRemarks);
+    assert.deepEqual(unread.next.failedCheckRuns, migrated.next.failedCheckRuns);
+  });
+
   it("reports passed again when a required check shows up already passed", () => {
     const required = (name: string, status: PullRequestCheck["status"]) => ({
       ...check(name, status),

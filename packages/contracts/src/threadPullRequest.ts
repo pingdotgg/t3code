@@ -83,6 +83,7 @@ export const ThreadPullRequestWatch = Schema.Struct({
   startedAt: IsoDateTime,
   headSha: Schema.NullOr(TrimmedNonEmptyString),
   failedChecks: Schema.Array(TrimmedNonEmptyString),
+  failedCheckRuns: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   passed: Schema.Boolean,
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),

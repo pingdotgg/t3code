@@ -31,6 +31,8 @@ export interface PullRequestWatchReport {
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
+const checkRunKey = (check: PullRequestCheck) => JSON.stringify([check.name, check.url]);
+
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
@@ -47,14 +49,20 @@ export function evaluatePullRequestWatch(
 
   // Hosts can return no checks on read failure; preserve prior state.
   let failedChecks = headMoved ? [] : watch.failedChecks;
+  let failedCheckRuns = headMoved ? [] : watch.failedCheckRuns;
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
   if (detail.checks.length > 0) {
     const failed = detail.checks.filter(isFailedCheck);
-    const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
+    const newlyFailed = failed.filter((check) =>
+      failedCheckRuns === undefined
+        ? !failedChecks.includes(check.name)
+        : !failedCheckRuns.includes(checkRunKey(check)),
+    );
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
     failedChecks = failed.map((check) => check.name);
+    failedCheckRuns = failed.map(checkRunKey);
 
     const required = detail.checks.filter((check) => check.required === true);
     const gate = required.length > 0 ? required : detail.checks;
@@ -145,6 +153,7 @@ export function evaluatePullRequestWatch(
       startedAt: watch.startedAt,
       headSha,
       failedChecks,
+      ...(failedCheckRuns !== undefined && { failedCheckRuns }),
       passed,
       passedChecks,
       owedChecks,

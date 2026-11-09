@@ -3456,6 +3456,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* watch(true, "start");
 
       let headSha = "ad70160aaa";
+      let failed = false;
       const host = Layer.mergeAll(
         NodeServices.layer,
         NodeCrypto.layer,
@@ -3470,7 +3471,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               headSha,
               checks: ["lint", "test"].map((name) => ({
                 name,
-                status: "success" as const,
+                status: failed ? ("failure" as const) : ("success" as const),
                 description: null,
                 url: null,
                 required: true,
@@ -3510,6 +3511,26 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* TestClock.adjust("10 minutes");
       yield* restarted.sweep;
       assert.deepEqual(yield* summaries, ["#12: checks passed", "#12: checks passed"]);
+      failed = true;
+      yield* TestClock.adjust("10 minutes");
+      yield* restarted.sweep;
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed",
+        "#12: checks passed",
+        "#12: checks failed",
+      ]);
+      yield* watch(false, "stop-failed");
+      yield* watch(true, "again-failed");
+      assert.deepEqual(
+        (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch?.failedCheckRuns,
+        ['["lint",null]', '["test",null]'],
+      );
+      yield* restarted.sweep;
+      assert.deepEqual(yield* summaries, [
+        "#12: checks passed",
+        "#12: checks passed",
+        "#12: checks failed",
+      ]);
       yield* watch(false, "end");
     }),
   );
