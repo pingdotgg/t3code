@@ -173,12 +173,16 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
           JSON.stringify({
-            hooks: { afterPush: ["./scripts/populate-cache", "./scripts/notify-ci"] },
+            hooks: {
+              afterPush: ["./scripts/populate-cache", "./scripts/notify-ci"],
+              changeRequestContext: "printf '[]'",
+            },
           }),
         );
 
         const config = yield* VcsProjectConfig.VcsProjectConfig;
         const hooks = yield* config.resolveHooks({ cwd: nested });
+        assert.equal(yield* config.resolveChangeRequestContext({ cwd: nested }), "printf '[]'");
 
         assert.deepStrictEqual(hooks, {
           afterPush: ["./scripts/populate-cache", "./scripts/notify-ci"],
@@ -199,6 +203,7 @@ describe("VcsProjectConfig", () => {
           path.join(configDir, "vcs.json"),
           JSON.stringify({
             hooks: {
+              changeRequestContext: ["node", "-e", "console.log('[]')"],
               afterPush: [
                 ["./scripts/populate-cache", "--ref", "feature/example"],
                 ["./scripts/notify-ci"],
@@ -209,6 +214,11 @@ describe("VcsProjectConfig", () => {
 
         const config = yield* VcsProjectConfig.VcsProjectConfig;
         const hooks = yield* config.resolveHooks({ cwd: root });
+        assert.deepStrictEqual(yield* config.resolveChangeRequestContext({ cwd: root }), [
+          "node",
+          "-e",
+          "console.log('[]')",
+        ]);
 
         assert.deepStrictEqual(hooks, {
           afterPush: [
@@ -242,6 +252,10 @@ describe("VcsProjectConfig", () => {
 
         assert.equal(kind, "auto");
         const [error] = messages[0] as ReadonlyArray<unknown>;
+        const contextResult = yield* config
+          .resolveChangeRequestContext({ cwd: root })
+          .pipe(Effect.result);
+        assert.deepInclude(contextResult, { _tag: "Failure" });
         assert.instanceOf(error, VcsProjectConfig.VcsProjectConfigError);
         assert.equal(
           error.message,

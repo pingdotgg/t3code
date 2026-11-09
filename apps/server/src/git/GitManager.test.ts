@@ -5251,6 +5251,25 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(cwd, ["add", "."]);
         yield* runGit(cwd, ["commit", "-m", "Updated feature"]);
         NodeFS.writeFileSync(NodePath.join(cwd, "feature.txt"), "uncommitted\n");
+        NodeFS.mkdirSync(NodePath.join(cwd, "daten/sql"), { recursive: true });
+        NodeFS.appendFileSync(NodePath.join(cwd, ".git/info/exclude"), "\n/daten/\n");
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, "daten/sql/feature.sql"),
+          "INSERT INTO permissions VALUES (123);\n",
+        );
+        NodeFS.writeFileSync(
+          NodePath.join(cwd, ".t3code/vcs.json"),
+          JSON.stringify({
+            hooks: {
+              changeRequestContext: [
+                "node",
+                "-e",
+                `const branch = process.env.T3_HEAD_BRANCH.replace(/[^A-Za-z0-9._-]/g, "_");
+console.log(JSON.stringify([\`daten/sql/\${branch}.sql\`, \`notes/\${process.env.T3_BASE_BRANCH}.md\`]));`,
+              ],
+            },
+          }),
+        );
         let generated: TextGeneration.PrContentGenerationInput | undefined;
         const { manager, providerCalls } = yield* makeManager({
           textGeneration: {
@@ -5299,6 +5318,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(generated?.diffPatch).not.toContain("+uncommitted");
         expect(generated?.changeRequestTemplate).toBe("## Summary\n\n## Testing");
         expect(generated?.policy?.changeRequestInstructions).toContain("Explain the user impact.");
+        expect(generated).toMatchObject({
+          additionalContext: [
+            { path: "daten/sql/feature.sql", content: "INSERT INTO permissions VALUES (123);\n" },
+            { path: "notes/release.md", content: null },
+          ],
+        });
         expect(created(providerCalls).length > 0).toBe(false);
       }),
   );

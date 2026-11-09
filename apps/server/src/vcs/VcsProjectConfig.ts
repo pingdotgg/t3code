@@ -26,6 +26,9 @@ const ArgvHookCommands = Schema.Array(ArgvHookCommand).check(Schema.isMinLength(
 
 const HooksConfig = Schema.Struct({
   afterPush: Schema.optional(Schema.NullOr(Schema.Union([ShellHookCommands, ArgvHookCommands]))),
+  changeRequestContext: Schema.optional(
+    Schema.NullOr(Schema.Union([TrimmedNonEmptyString, ArgvHookCommand])),
+  ),
 });
 
 const ProjectVcsConfig = Schema.Struct({
@@ -94,6 +97,9 @@ export class VcsProjectConfig extends Context.Service<
       readonly fallback?: VcsBranchNamingConfig;
     }) => Effect.Effect<VcsBranchNamingConfig>;
     readonly resolveHooks: (input: { readonly cwd: string }) => Effect.Effect<VcsHooksConfig>;
+    readonly resolveChangeRequestContext: (input: {
+      readonly cwd: string;
+    }) => Effect.Effect<string | readonly [string, ...string[]] | null, VcsProjectConfigError>;
   }
 >()("t3/vcs/VcsProjectConfig") {}
 
@@ -250,10 +256,19 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const resolveChangeRequestContext: VcsProjectConfig["Service"]["resolveChangeRequestContext"] =
+    Effect.fn("VcsProjectConfig.resolveChangeRequestContext")(function* (input) {
+      const configPath = yield* findConfigPath(input.cwd);
+      if (Option.isNone(configPath)) return null;
+      const config = yield* readConfig(input.cwd, configPath.value);
+      return config.hooks?.changeRequestContext ?? null;
+    });
+
   return VcsProjectConfig.of({
     resolveKind,
     resolveBranchNaming,
     resolveHooks,
+    resolveChangeRequestContext,
   });
 });
 

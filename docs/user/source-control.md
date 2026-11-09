@@ -211,6 +211,40 @@ With a clean worktree, both actions skip committing.
 After rebasing a published branch, use **Push** and confirm **Force push with lease**. The push
 stops if the upstream changed since T3 Code last fetched it.
 
+### Include project files in a PR or MR description
+
+Set `hooks.changeRequestContext` in `.t3code/vcs.json` to compute extra context whenever T3 Code
+creates or regenerates a description. The command runs in the current checkout on the connected
+environment. It receives `T3_HEAD_BRANCH` and `T3_BASE_BRANCH` and must print a JSON array of
+checkout-relative file paths to stdout. Use stderr for diagnostic output. Like the push hook, it
+accepts a shell command string or an argv array for a command and its arguments.
+
+For example, to include a branch-specific SQL file, including a gitignored one:
+
+```json
+{
+  "hooks": {
+    "changeRequestContext": [
+      "node",
+      "-e",
+      "const branch = process.env.T3_HEAD_BRANCH.replace(/[^A-Za-z0-9._-]/g, '_'); console.log(JSON.stringify(['daten/sql/' + branch + '.sql']));"
+    ]
+  }
+}
+```
+
+T3 Code supplies the files' full contents to the writer. Use `.t3code/change-request.md` to say
+how to include them, such as copying the SQL into the template's SQL section. A missing file is
+marked as missing; returning `[]` supplies no extra context. Paths are literal, so any discovery or
+conditional selection belongs in the script.
+
+The command has 30 seconds and can select at most 16 UTF-8 text files totaling 128 KB. Files and
+symlink targets must stay inside the checkout. Script errors, invalid output, unreadable files, and
+oversized context stop generation instead of silently dropping content. Selected files are read
+from the current checkout, even when regenerating a description for another branch. The configured
+command must be available on the environment; this example requires Node.js on PATH. An external
+script is also possible, for example `["python3", ".t3code/mr-context.py"]`.
+
 ### Run a command after pushing
 
 Add `hooks.afterPush` commands to `.t3code/vcs.json` to run project-specific commands after a

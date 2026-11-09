@@ -131,6 +131,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         policy: input.policy,
         changeRequestTemplate: input.changeRequestTemplate,
         threadContext: input.threadContext,
+        additionalContext: input.additionalContext,
       }),
     });
     return { title: sanitizePrTitle(generated.title), body: generated.body.trim() };

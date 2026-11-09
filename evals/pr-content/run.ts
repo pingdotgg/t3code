@@ -63,6 +63,19 @@ const fixtures = [
     threadContext:
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
   },
+  {
+    id: "additional-sql-context",
+    source: "Reported gitignored branch SQL omitted from an MR, November 2026",
+    launchArgs: undefined,
+    titlePrefix: undefined,
+    threadContext: "user: Retire legacy models and include the migration in the PR description.",
+    additionalContext: [
+      {
+        path: "data/sql/fix_retire-legacy-models.sql",
+        content: "UPDATE model_registry SET active = 0 WHERE registry_id = 73142;\n",
+      },
+    ],
+  },
 ];
 const selectedFixtures = fixtures.filter(
   (fixture) => values.case === undefined || fixture.id === values.case,
@@ -101,6 +114,17 @@ await Effect.runPromise(
           diffPatch:
             'diff --git a/src/models.ts b/src/models.ts\n--- a/src/models.ts\n+++ b/src/models.ts\n@@ -1 +1,3 @@\n export const legacyModel = {\n+  retirementDate: "2026-10-23",\n+  successor: "replacement-model",\n };',
           threadContext: fixture.threadContext,
+          ...("additionalContext" in fixture
+            ? {
+                additionalContext: fixture.additionalContext,
+                policy: {
+                  kind: "custom" as const,
+                  inferRepositoryConventions: false,
+                  changeRequestInstructions:
+                    "Include the exact migration SQL from the additional context in a fenced SQL block. Do not replace it with a summary or a file reference.",
+                },
+              }
+            : {}),
         });
         results.push({
           id: fixture.id,
@@ -108,7 +132,12 @@ await Effect.runPromise(
           ...generated,
           passed:
             gradePrContent(generated) &&
-            (fixture.titlePrefix === undefined || generated.title.startsWith(fixture.titlePrefix)),
+            (fixture.titlePrefix === undefined ||
+              generated.title.startsWith(fixture.titlePrefix)) &&
+            (!("additionalContext" in fixture) ||
+              fixture.additionalContext.every((file) =>
+                generated.body.includes(file.content.trim()),
+              )),
         });
       }
     }

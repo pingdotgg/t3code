@@ -54,6 +54,9 @@ export interface PrContentGenerationInput {
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
   threadContext?: string | undefined;
+  additionalContext?:
+    | ReadonlyArray<{ readonly path: string; readonly content: string | null }>
+    | undefined;
   policy?: TextGenerationPolicy | undefined;
   modelSelection: ModelSelection;
 }

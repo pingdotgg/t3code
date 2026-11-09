@@ -100,6 +100,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
 import { runLogicalCommitWorkflow } from "./LogicalCommitWorkflow.ts";
+import { readChangeRequestContext } from "./ChangeRequestContext.ts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -2703,6 +2704,12 @@ export const make = Effect.gen(function* () {
         : undefined;
 
     const threadContext = yield* readThreadContext(threadId);
+    const additionalContext = yield* readChangeRequestContext({ cwd, baseBranch, headBranch }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(VcsProcess.VcsProcess, vcsProcess),
+      Effect.provideService(VcsProjectConfig.VcsProjectConfig, vcsProjectConfig),
+    );
     return yield* textGeneration.generatePrContent({
       cwd,
       baseBranch,
@@ -2713,6 +2720,7 @@ export const make = Effect.gen(function* () {
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(policy ? { policy } : {}),
       ...(threadContext ? { threadContext } : {}),
+      additionalContext,
       modelSelection: settings.modelSelection,
     });
   });
