@@ -14,6 +14,7 @@ import type {
   EnvironmentSpeechModel,
   EnvironmentSpeechStatus,
   ProjectId,
+  SpeechBenchmarkTier,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
@@ -351,7 +352,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       session.adopt(createTarget());
   }, [session, input.ownerKey, createTarget]);
   const loadSetupCatalog = useStableCallback(
-    async (connection: PreparedConnection, selectedModelId: string, request: number) => {
+    async (
+      connection: PreparedConnection,
+      selectedModelId: string,
+      benchmarkTier: SpeechBenchmarkTier,
+      request: number,
+    ) => {
       setSetup({ ...INITIAL_SETUP, open: true });
       const catalog = await runEnvironmentSpeech(
         getEnvironmentSpeechModels(connection, true),
@@ -361,6 +367,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
         selectedModelId,
         intent: latestRef.current.clientSettings.speechLanguage,
         preferred: preferredSpeechLanguages(),
+        benchmarkTier,
       });
       setSetup((current) => ({
         ...current,
@@ -414,7 +421,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     setStatus({ prepared, value: latestStatus });
     setQueuedStart(null);
     if (latestStatus.supported && latestStatus.state === "missing-model") {
-      return loadSetupCatalog(prepared, latestStatus.modelId, request);
+      return loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
     }
     if (!latestStatus.supported) {
       toastManager.add({
@@ -509,7 +516,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       retryCatalog:
         setup.open && setup.catalogFailed && prepared && currentStatus?.supported
-          ? () => loadSetupCatalog(prepared, currentStatus.modelId, ++startRequestRef.current)
+          ? () =>
+              loadSetupCatalog(
+                prepared,
+                currentStatus.modelId,
+                currentStatus.benchmarkTier,
+                ++startRequestRef.current,
+              )
           : null,
       download: downloadSetupModel,
       cancelDownload: cancelSetupDownload,

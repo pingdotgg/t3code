@@ -29,7 +29,11 @@ const policyTarget = new URL(
   "../../../packages/shared/src/speechRecommendationPolicy.json",
   import.meta.url,
 );
-const policy = await format("speechRecommendationPolicy.json", JSON.stringify(catalog.methodology));
+const { fastCpuMaxWaitSeconds, ...methodology } = catalog.methodology;
+const policy = await format(
+  "speechRecommendationPolicy.json",
+  JSON.stringify({ ...methodology, fastMaxWaitSeconds: fastCpuMaxWaitSeconds }),
+);
 if (policy.errors.length > 0) throw new Error("Could not format speech recommendation policy.");
 if (process.argv.includes("--check")) {
   if (

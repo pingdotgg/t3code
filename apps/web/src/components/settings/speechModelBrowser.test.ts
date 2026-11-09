@@ -34,7 +34,7 @@ const models: readonly EnvironmentSpeechModel[] = [
         en: { grade: "A", errorPercent: 3.8 },
         fr: { grade: "B", errorPercent: 7 },
       },
-      secondsPer30s: { cpu: 2, accelerated: 2 },
+      secondsPer30s: { accelerated: 2, cpu: 1 },
     },
   },
   {
@@ -48,7 +48,7 @@ const models: readonly EnvironmentSpeechModel[] = [
         en: { grade: "A", errorPercent: 3.2 },
         fr: { grade: "B", errorPercent: 9 },
       },
-      secondsPer30s: { cpu: 1, accelerated: 1 },
+      secondsPer30s: { accelerated: 1, cpu: 3 },
     },
   },
   {
@@ -59,7 +59,7 @@ const models: readonly EnvironmentSpeechModel[] = [
     active: false,
     state: "verifying",
     languages: ["en"],
-    benchmark: { accuracy: {}, secondsPer30s: { cpu: null, accelerated: null } },
+    benchmark: { accuracy: {}, secondsPer30s: { accelerated: null, cpu: null } },
   },
 ];
 
@@ -114,6 +114,7 @@ it("ranks language recommendations before the rest without changing explicit sor
     downloadedOnly: false,
     sort: "recommended",
     accuracyLanguage: "en",
+    benchmarkTier: "accelerated",
   } as const;
   expect(filterSpeechModels(catalog, options).map(({ id }) => id)).toEqual([
     "fast",
@@ -123,7 +124,7 @@ it("ranks language recommendations before the rest without changing explicit sor
   ]);
   expect(
     filterSpeechModels(catalog, { ...options, languages: ["en", "fr"] }).map(({ id }) => id),
-  ).toEqual(["small", "active", "fast"]);
+  ).toEqual(["small", "fast", "active"]);
   expect(filterSpeechModels(catalog, { ...options, languages: [] }).map(({ id }) => id)).toEqual(
     catalog.map(({ id }) => id),
   );
@@ -133,6 +134,11 @@ it("ranks language recommendations before the rest without changing explicit sor
     "active",
     "pending",
   ]);
+  expect(
+    filterSpeechModels(catalog, { ...options, sort: "speed", benchmarkTier: "cpu" }).map(
+      ({ id }) => id,
+    ),
+  ).toEqual(["small", "fast", "active", "pending"]);
   expect(
     filterSpeechModels(catalog, { ...options, sort: "accuracy", languages: ["en", "fr"] }).map(
       ({ id }) => id,
@@ -146,5 +152,7 @@ it("ranks language recommendations before the rest without changing explicit sor
   expect(filterSpeechModels(catalog, { ...options, search: "small" }).map(({ id }) => id)).toEqual([
     "small",
   ]);
-  expect(recommendSpeechModels(catalog, options.languages).has("small")).toBe(false);
+  expect(
+    recommendSpeechModels(catalog, options.languages, options.benchmarkTier).has("small"),
+  ).toBe(false);
 });

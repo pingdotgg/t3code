@@ -6,6 +6,6 @@
   "maxLanguageErrorPercent": 20,
   "noteMinErrorPercent": 15,
   "experimentalMaxErrorPercent": 30,
-  "fastCpuMaxWaitSeconds": 4,
-  "accurateMaxWaitSeconds": 10
+  "accurateMaxWaitSeconds": 10,
+  "fastMaxWaitSeconds": 4
 }

@@ -3,6 +3,7 @@ import {
   type CloudSpeechProvider,
   SPEECH_MAX_OPTIONS_BYTES,
   type SpeechCustomWords,
+  type SpeechBenchmarkTier,
   SpeechTranscriptionOptions,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -17,8 +18,10 @@ type RecommendationModel = {
   readonly languages: readonly string[];
   readonly benchmark?: {
     readonly accuracy: Readonly<Record<string, { readonly errorPercent: number }>>;
-    readonly secondsPer30s: number | null;
-    readonly cpuSecondsPer30s?: number | null;
+    readonly secondsPer30s: {
+      readonly cpu?: number | null;
+      readonly accelerated: number | null;
+    };
   };
 };
 
@@ -26,15 +29,16 @@ type RecommendationModel = {
 export function recommendSpeechModels(
   models: readonly RecommendationModel[],
   languages: readonly string[],
+  tier: SpeechBenchmarkTier | undefined,
 ) {
   const wanted = [...new Set(languages)];
   const roles = new Map<string, SpeechRecommendationRole>();
-  if (wanted.length === 0) return roles;
+  if (wanted.length === 0 || tier === undefined) return roles;
   const policy = recommendationPolicy;
   const scored = models.flatMap((model) => {
     if (!wanted.every((language) => model.languages.includes(language))) return [];
     const errors = wanted.map((language) => model.benchmark?.accuracy[language]?.errorPercent);
-    const wait = model.benchmark?.secondsPer30s;
+    const wait = model.benchmark?.secondsPer30s[tier];
     if (
       wait == null ||
       !Number.isFinite(wait) ||
@@ -52,7 +56,6 @@ export function recommendSpeechModels(
         error,
         worst: Math.max(...measured),
         wait,
-        cpu: model.benchmark?.cpuSecondsPer30s,
         cost: error + policy.waitWeight * Math.max(0, wait - policy.freeWaitSeconds),
       },
     ];
@@ -71,31 +74,27 @@ export function recommendSpeechModels(
       ? lowest(withinBudget.length ? withinBudget : pool, (model) => model.cost)
       : lowest(pool, (model) => model.worst + model.error / 1000)
   )!;
-  const onCpu = pool.filter(
-    (model) => model.cpu != null && Number.isFinite(model.cpu) && model.cpu >= 0,
-  );
+  const quicker = pool.filter((model) => model.wait < best.wait);
   const fast = useful.length
     ? (lowest(
-        onCpu.filter((model) => model.cpu! <= policy.fastCpuMaxWaitSeconds),
+        quicker.filter((model) => model.wait <= policy.fastMaxWaitSeconds),
         (model) => model.error,
-      ) ??
-      lowest(onCpu, (model) => model.cpu! + model.error / 1000) ??
-      best)
-    : best;
+      ) ?? lowest(quicker, (model) => model.wait + model.error / 1000))
+    : undefined;
   const accurate = useful.length
-    ? (lowest(
-        pool.filter((model) => model.wait <= policy.accurateMaxWaitSeconds),
+    ? lowest(
+        pool.filter(
+          (model) => model.error < best.error && model.wait <= policy.accurateMaxWaitSeconds,
+        ),
         (model) => model.error,
-      ) ??
-      lowest(pool, (model) => model.error) ??
-      best)
-    : best;
+      )
+    : undefined;
   for (const [model, role] of [
     [best, "recommended"],
     [fast, "faster"],
     [accurate, "accurate"],
   ] as const) {
-    if (!roles.has(model.id)) roles.set(model.id, role);
+    if (model && !roles.has(model.id)) roles.set(model.id, role);
   }
   return roles;
 }
@@ -141,6 +140,7 @@ export function chooseSetupSpeechModel<
     readonly selectedModelId: string;
     readonly intent: string;
     readonly preferred: readonly string[];
+    readonly benchmarkTier: SpeechBenchmarkTier | undefined;
   },
 ) {
   if (input.intent === "auto" && input.preferred.length === 0) {
@@ -152,7 +152,9 @@ export function chooseSetupSpeechModel<
       const effective = effectiveSpeechLanguage(model, input.intent);
       return effective === language || (effective === "auto" && model.languages.includes(language));
     });
-    const recommendedId = recommendSpeechModels(capable, [language]).keys().next().value;
+    const recommendedId = recommendSpeechModels(capable, [language], input.benchmarkTier)
+      .keys()
+      .next().value;
     const model =
       capable.find(({ id }) => id === input.selectedModelId) ??
       capable.find(({ id }) => id === recommendedId) ??
