@@ -1,5 +1,6 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { pipe } from "effect/Function";
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, OrchestrationV2ThreadShell } from "@t3tools/contracts";
 import {
   formatAssistantCitationHref,
   parseAssistantCitationHref,
@@ -7,6 +8,8 @@ import {
 import * as Base64Url from "effect/encoding/Base64Url";
 import * as Result from "effect/Result";
 
+import { readThreadShell } from "~/state/entities";
+import { openSideChatTab } from "./sideChatPane";
 import { randomUUID } from "./utils";
 
 declare module "@tanstack/react-router" {
@@ -18,7 +21,7 @@ declare module "@tanstack/react-router" {
 const CITATION_HASH_PREFIX = "assistant-citation=";
 
 /** Base64url keeps router hash normalization from decoding quote whitespace or source IDs. */
-export function assistantCitationHash(citation: AssistantCitation) {
+function assistantCitationHash(citation: AssistantCitation) {
   return `${CITATION_HASH_PREFIX}${Base64Url.encode(formatAssistantCitationHref(citation))}`;
 }
 
@@ -46,13 +49,29 @@ export function withoutAssistantCitationHash(href: string) {
   return href.slice(0, hashIndex);
 }
 
-/** A fresh activation lets the same link reveal its source again after dismissal. */
-export function assistantCitationNavigation(citation: AssistantCitation) {
+/** A side chat has no route of its own, so its quotes open on its parent thread. */
+export function assistantCitationRoute(
+  citation: AssistantCitation,
+  sourceThread: Pick<OrchestrationV2ThreadShell, "lineage"> | null,
+) {
+  const parentThreadId = sourceThread?.lineage.sideChat
+    ? sourceThread.lineage.parentThreadId
+    : null;
   return {
     to: "/$environmentId/$threadId" as const,
-    params: { environmentId: citation.environmentId, threadId: citation.threadId },
+    params: {
+      environmentId: citation.environmentId,
+      threadId: parentThreadId ?? citation.threadId,
+    },
     hash: assistantCitationHash(citation),
     resetScroll: false,
-    state: { assistantCitationActivation: randomUUID() },
   };
+}
+
+/** A fresh activation lets the same link reveal its source again after dismissal. */
+export function assistantCitationNavigation(citation: AssistantCitation) {
+  const sourceThread = readThreadShell(scopeThreadRef(citation.environmentId, citation.threadId));
+  const route = assistantCitationRoute(citation, sourceThread);
+  openSideChatTab(scopeThreadRef(route.params.environmentId, route.params.threadId), sourceThread);
+  return { ...route, state: { assistantCitationActivation: randomUUID() } };
 }
