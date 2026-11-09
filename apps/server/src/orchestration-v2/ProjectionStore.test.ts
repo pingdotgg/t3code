@@ -3531,6 +3531,195 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.deepEqual(recovery?.restartCancelledBackgroundWork, work);
     }),
   );
+  it.effect("pages distinct previous agents outside the transcript window", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = DateTime.makeUnsafe("2026-11-01T00:00:00Z");
+      const threadId = ThreadId.make("thread:lineage-history");
+      const thread = {
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        id: threadId,
+        projectId: ProjectId.make("project:lineage-history"),
+        title: "Lineage history",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:lineage-history"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: thread,
+      });
+      const task = Effect.fn("test.lineageTask")(function* (
+        id: string,
+        childThreadId: ThreadId | null,
+        status: "completed" | "failed" | "running" | "pending" | "waiting" | "idle" | "interrupted",
+        remoteChild?: {
+          environmentId: EnvironmentId;
+          threadId: ThreadId;
+          projectId: ProjectId;
+          label: string;
+        },
+      ) {
+        yield* store.apply({
+          id: EventId.make(`event:${id}`),
+          type: "subagent.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: NodeId.make(id),
+            threadId,
+            runId: RunId.make("run:old"),
+            parentNodeId: NodeId.make(`node:${id}`),
+            origin: "app_owned",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId,
+            ...(remoteChild === undefined ? {} : { remoteChild }),
+            nativeTaskRef: null,
+            title: id,
+            prompt: "large prompt".repeat(1000),
+            result: "large result".repeat(1000),
+            model: null,
+            status,
+            startedAt: now,
+            completedAt: status === "running" ? null : now,
+            updatedAt: now,
+          },
+        });
+      });
+      const addChild = Effect.fn("test.lineageChild")(function* (id: string) {
+        const childThreadId = ThreadId.make(id);
+        yield* store.apply({
+          id: EventId.make(`event:thread:${id}`),
+          type: "thread.created",
+          threadId: childThreadId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: childThreadId,
+            title: id,
+            lineage: {
+              parentThreadId: threadId,
+              relationshipToParent: "subagent",
+              rootThreadId: threadId,
+            },
+          },
+        });
+        return childThreadId;
+      });
+      for (let i = 0; i < 137; i += 1) {
+        const child = yield* addChild(`child:${String(i).padStart(3, "0")}`);
+        yield* task(`task:${i}`, child, i === 0 ? "failed" : "completed");
+        if (i === 1) yield* task("task:duplicate", child, "interrupted");
+      }
+      for (const status of ["pending", "running", "waiting"] as const) {
+        const child = yield* addChild(`child:${status}`);
+        yield* task(`task:old:${status}`, child, "completed");
+        yield* task(`task:new:${status}`, child, status);
+      }
+      for (const status of ["running", "failed"] as const) {
+        const child = yield* addChild(`child:follow-up:${status}`);
+        yield* task(`task:follow-up:${status}`, child, "completed");
+        const requestedAt = DateTime.makeUnsafe("2026-11-02T00:00:00Z");
+        const id = RunId.make(`run:follow-up:${status}`);
+        yield* store.apply({
+          id: EventId.make(`event:${id}`),
+          type: "run.created",
+          threadId: child,
+          occurredAt: requestedAt,
+          payload: {
+            id,
+            threadId: child,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${id}`),
+            rootNodeId: null,
+            activeAttemptId: null,
+            status,
+            requestedAt,
+            startedAt: requestedAt,
+            completedAt: status === "running" ? null : requestedAt,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      }
+      yield* sql`INSERT INTO orchestration_v2_projection_runs (
+        run_id, thread_id, ordinal, provider, status, requested_at, completed_at, payload_json
+      ) SELECT 'run:newer-completed', thread_id, 2, provider, 'completed', requested_at, completed_at,
+        json_set(payload_json, '$.id', 'run:newer-completed', '$.ordinal', 2, '$.status', 'completed')
+        FROM orchestration_v2_projection_runs WHERE run_id = 'run:follow-up:running'`;
+      const idle = yield* addChild("child:idle");
+      yield* task("task:idle", idle, "idle");
+      yield* addChild("child:without-task");
+      const deleted = yield* addChild("child:deleted");
+      yield* task("task:deleted", deleted, "completed");
+      yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = '2026-11-02T00:00:00Z'
+        WHERE thread_id = ${deleted}`;
+      const remote = {
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("child:000"),
+        projectId: thread.projectId,
+        label: "Remote",
+      };
+      yield* task("task:remote:a", null, "completed", remote);
+      yield* task("task:remote:b", null, "completed", remote);
+      yield* task("task:unlinked", null, "completed");
+      const snapshot = yield* store.getThreadSnapshotWindow(threadId, { rowLimit: 1 });
+      assert.equal(snapshot.projection.subagents.length, 3);
+      const plan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
+        SELECT thread_id FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL AND json_extract(payload_json, '$.lineage.parentThreadId') = ${threadId}
+          AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'`;
+      assert.isTrue(plan.some((row) => row.detail.includes("subagent_parent_idx")));
+      const first = yield* store.listPreviousAgents({ threadId, limit: 12 });
+      assert.equal(first.total, 141);
+      assert.equal(first.failedCount, 2);
+      assert.equal(first.agents.length, 12);
+      assert.equal(first.nextCursor, 12);
+      const identities: Array<string> = [];
+      for (let cursor = 0; cursor < first.total; cursor += 12) {
+        const page = yield* store.listPreviousAgents({ threadId, cursor, limit: 12 });
+        assert.equal(page.total, 141);
+        assert.isAtMost(page.agents.length, 12);
+        identities.push(
+          ...page.agents.map((agent) =>
+            JSON.stringify([agent.childThreadId, agent.remoteChild?.environmentId]),
+          ),
+        );
+        assert.isBelow(JSON.stringify(page).length, 6000);
+        assert.equal(page.nextCursor, cursor + 12 < first.total ? cursor + 12 : null);
+      }
+      assert.equal(identities.length, 141);
+      assert.equal(new Set(identities).size, 141);
+      const repeated = yield* store.listPreviousAgents({ threadId, limit: 12 });
+      assert.deepEqual(repeated, first);
+      const empty = yield* store.listPreviousAgents({ threadId, cursor: 141, limit: 12 });
+      assert.deepEqual(empty, { agents: [], total: 141, failedCount: 2, nextCursor: null });
+    }),
+  );
   it.effect("record reads select subagents by id", () => subagentRecordsSelectById);
   it.effect(
     "command reads skip finished leaf nodes of finished runs",

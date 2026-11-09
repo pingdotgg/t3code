@@ -35,6 +35,7 @@ import {
   type EnvironmentId,
   type OrchestrationV2DelegatedFrom,
   type OrchestrationV2RemoteTaskChild,
+  type OrchestrationV2PreviousAgent,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
   type ServerProvider,
@@ -48,6 +49,8 @@ import {
   ArrowRightIcon,
   BotIcon,
   ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   MessagesSquareIcon,
@@ -56,7 +59,7 @@ import {
   SquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -141,10 +144,13 @@ type RemoteSubagent = OrchestrationV2Subagent & {
 };
 
 /** A task delegated to a linked environment has no thread here, so it gets its own row kind. */
-type LineageRow = ThreadRelationshipWalkRow | { readonly remote: RemoteSubagent };
+type LineageRow =
+  | ThreadRelationshipWalkRow
+  | { readonly remote: RemoteSubagent }
+  | { readonly history: OrchestrationV2PreviousAgent };
 
 const lineageRowStatus = (row: LineageRow) =>
-  "remote" in row ? row.remote.status : row.edge.status;
+  "history" in row ? row.history.status : "remote" in row ? row.remote.status : row.edge.status;
 
 const isFinishedAgentStatus = (status: string | null | undefined) =>
   ["completed", "failed", "error", "cancelled", "interrupted", "idle"].includes(status ?? "");
@@ -153,16 +159,29 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   readonly label: string | null;
   readonly rows: ReadonlyArray<Row>;
   readonly expanded: boolean;
+  readonly pagination?: {
+    readonly total: number;
+    readonly failedCount: number;
+    readonly cursor: number;
+    readonly onPrevious: (() => void) | undefined;
+    readonly onNext: (() => void) | undefined;
+  };
+  readonly partialCount?: boolean;
   readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
-  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
-  const failedCount = props.rows.filter((row) => {
-    const status = lineageRowStatus(row);
-    return status === "failed" || status === "error";
-  }).length;
-  if (props.rows.length === 0) return null;
+  const { visibleRows, hiddenCount } = resolveThreadLineageWindow(
+    props.rows,
+    props.pagination ? props.rows.length : visibleCount,
+  );
+  const failedCount =
+    props.pagination?.failedCount ??
+    props.rows.filter((row) => {
+      const status = lineageRowStatus(row);
+      return status === "failed" || status === "error";
+    }).length;
+  if ((props.pagination?.total ?? props.rows.length) === 0) return null;
   return (
     <div>
       {props.label ? (
@@ -174,7 +193,8 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           {failedCount > 0 ? <SectionHeaderStatus>{failedCount} failed</SectionHeaderStatus> : null}
           {expanded ? null : (
             <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-              {props.rows.length}
+              {props.pagination?.total ?? props.rows.length}
+              {props.partialCount ? " loaded" : ""}
             </span>
           )}
           <ChevronDownIcon
@@ -193,6 +213,30 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
           onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
         >
           {props.children(visibleRows)}
+          {props.pagination && props.pagination.total > THREAD_LINEAGE_PAGE_COUNT ? (
+            <li className="flex items-center justify-between">
+              <ThreadDetailsControl
+                part="icon"
+                aria-label="Previous page"
+                onClick={props.pagination.onPrevious}
+                disabled={!props.pagination.onPrevious}
+              >
+                <ChevronLeftIcon aria-hidden />
+              </ThreadDetailsControl>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                {props.pagination.cursor + 1}–{props.pagination.cursor + props.rows.length} of{" "}
+                {props.pagination.total}
+              </span>
+              <ThreadDetailsControl
+                part="icon"
+                aria-label="Next page"
+                onClick={props.pagination.onNext}
+                disabled={!props.pagination.onNext}
+              >
+                <ChevronRightIcon aria-hidden />
+              </ThreadDetailsControl>
+            </li>
+          ) : null}
         </ThreadLineageRowList>
       ) : null}
     </div>
@@ -261,7 +305,11 @@ function currentSubagent<Agent extends RuntimeSubagent>(
  * the thread there, when this client is connected to that environment.
  */
 function RemoteSubagentRow(props: {
-  readonly agent: RemoteSubagent;
+  readonly agent: {
+    readonly title: string | null;
+    readonly status: string | null;
+    readonly remoteChild: OrchestrationV2RemoteTaskChild;
+  };
   readonly provider: ServerProvider | undefined;
 }) {
   const navigate = useNavigate();
@@ -468,6 +516,36 @@ export function ThreadRelationshipsPanel(props: {
   const mergeErrorToastId = useRef<string | null>(null);
   const detachErrorToastId = useRef<string | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const historyRevision =
+    projection === null && relationshipShells.length === 0
+      ? null
+      : [
+          projection?.subagents.map((agent) => `${agent.id}:${agent.status}`).join(","),
+          relationshipShells
+            .map((thread) => `${thread.id}:${thread.activityRunStatus}:${thread.status}`)
+            .join(","),
+        ].join(";");
+  const [historyPage, setHistoryPage] = useState({ key: "", cursor: 0 });
+  const historyKey = `${scopedThreadKey(ref)}:${historyRevision}`;
+  const historyCursor = historyPage.key === historyKey ? historyPage.cursor : 0;
+  const previousAgents = useEnvironmentQuery(
+    props.showLineage && !hidingAnywhere
+      ? orchestrationEnvironment.previousAgents({
+          environmentId: props.environmentId,
+          input: {
+            threadId: props.threadId,
+            cursor: historyCursor,
+            limit: THREAD_LINEAGE_PAGE_COUNT,
+          },
+        })
+      : null,
+  );
+  const refreshPreviousAgents = previousAgents.refresh;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Refresh the historical read when streamed tasks change state.
+  useEffect(() => {
+    if (historyRevision === null) return;
+    refreshPreviousAgents();
+  }, [refreshPreviousAgents, historyRevision]);
   // Derive graphs after hooks to preserve their compiler cache.
   const providers = providersByEnvironment.get(props.environmentId);
   const derivedProviderEntries = deriveProviderInstanceEntries(providers ?? []);
@@ -592,14 +670,42 @@ export function ThreadRelationshipsPanel(props: {
     label: string | null;
     rows: ReadonlyArray<LineageRow>;
     expanded: boolean;
+    pagination?: NonNullable<Parameters<typeof ThreadLineageGroup>[0]["pagination"]>;
+    partialCount?: boolean;
   }> = [
     { id: "related", label: null, rows: related, expanded: true },
     { id: "active", label: null, rows: [...active, ...remoteActive], expanded: true },
     {
       id: "previous",
       label: "Previous agents",
-      rows: [...previous, ...remotePrevious],
+      rows: previousAgents.data?.agents.map((history) => ({ history })) ?? [
+        ...previous,
+        ...remotePrevious,
+      ],
       expanded: false,
+      partialCount: previousAgents.data === null,
+      ...(previousAgents.data === null
+        ? {}
+        : {
+            pagination: {
+              total: previousAgents.data.total,
+              failedCount: previousAgents.data.failedCount,
+              cursor: historyCursor,
+              onPrevious:
+                historyCursor === 0
+                  ? undefined
+                  : () =>
+                      setHistoryPage({
+                        key: historyKey,
+                        cursor: Math.max(0, historyCursor - THREAD_LINEAGE_PAGE_COUNT),
+                      }),
+              onNext:
+                previousAgents.data.nextCursor === null
+                  ? undefined
+                  : () =>
+                      setHistoryPage({ key: historyKey, cursor: previousAgents.data!.nextCursor! }),
+            },
+          }),
     },
   ];
   const runningCount =
@@ -615,6 +721,7 @@ export function ThreadRelationshipsPanel(props: {
     (related.length > 0 ||
       active.length > 0 ||
       previous.length > 0 ||
+      (previousAgents.data?.total ?? 0) > 0 ||
       runningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
@@ -967,6 +1074,59 @@ export function ThreadRelationshipsPanel(props: {
     );
   };
 
+  const renderHistoricalAgent = (agent: OrchestrationV2PreviousAgent) => {
+    if (agent.remoteChild !== null) {
+      return (
+        <RemoteSubagentRow
+          key={`${agent.remoteChild.environmentId}:${agent.remoteChild.threadId}`}
+          agent={{ title: agent.title, status: agent.status, remoteChild: agent.remoteChild }}
+          provider={providersByEnvironment
+            .get(agent.remoteChild.environmentId)
+            ?.find((provider) => provider.instanceId === agent.providerInstanceId)}
+        />
+      );
+    }
+    const childThreadId = agent.childThreadId;
+    if (childThreadId === null) return null;
+    const loadedRow = previous.find((row) => row.threadId === childThreadId);
+    if (loadedRow)
+      return renderRelationshipRow({
+        ...loadedRow,
+        edge: { ...loadedRow.edge, status: agent.status },
+      });
+    const title = relationshipThreadTitle({
+      title: agent.title ?? childThreadId,
+      isSubagent: true,
+    });
+    return (
+      <li key={childThreadId} className="group relative flex h-8 items-center rounded-lg">
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={
+              <ThreadDetailsControl
+                size="sm"
+                variant="ghost"
+                part="row"
+                onClick={() => openThread(childThreadId)}
+              />
+            }
+          >
+            <ThreadRelationshipIcon fallbackIcon={BotIcon} status={agent.status} />
+            <span className="min-w-0 flex-1 truncate text-left text-sm font-medium leading-4 text-foreground/85">
+              {title}
+            </span>
+            <span className="shrink-0 text-2xs text-muted-foreground">
+              {threadRelationshipStatusLabel(agent.status)}
+            </span>
+          </TooltipTrigger>
+          <TooltipPopup side="left">
+            <LineageTooltipContent title={title} hint="Open subagent in this chat" />
+          </TooltipPopup>
+        </Tooltip>
+      </li>
+    );
+  };
   return (
     <>
       {lineageVisible ? (
@@ -1021,7 +1181,9 @@ export function ThreadRelationshipsPanel(props: {
             <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
               {(visibleRows) =>
                 visibleRows.map((row) =>
-                  "remote" in row ? (
+                  "history" in row ? (
+                    renderHistoricalAgent(row.history)
+                  ) : "remote" in row ? (
                     <RemoteSubagentRow
                       key={row.remote.id}
                       agent={row.remote}

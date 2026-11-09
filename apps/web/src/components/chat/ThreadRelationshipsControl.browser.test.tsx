@@ -13,14 +13,33 @@ const state = vi.hoisted(() => ({
   relatedShells: [] as unknown[],
   threadTitles: {} as Record<string, string>,
   archivedThreads: [] as unknown[],
+  historyQuery: Symbol("history"),
+  refreshHistory: () => {},
 }));
+
+vi.mock(import("../../state/orchestration"), async (original) => {
+  const actual = await original();
+  return {
+    orchestrationEnvironment: {
+      ...actual.orchestrationEnvironment,
+      previousAgents: (() => state.historyQuery) as never,
+    },
+  };
+});
 
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((atom: unknown) =>
-    atom === null
-      ? { data: null, isSuccess: false, isPending: false }
-      : { data: state.threadTitles, isSuccess: true, isPending: false }) as never,
+    atom === state.historyQuery
+      ? { data: null, isSuccess: false, isPending: false, refresh: state.refreshHistory }
+      : atom === null
+        ? { data: null, isSuccess: false, isPending: false, refresh: state.refreshHistory }
+        : {
+            data: state.threadTitles,
+            isSuccess: true,
+            isPending: false,
+            refresh: state.refreshHistory,
+          }) as never,
 }));
 
 vi.mock(import("@effect/atom-react"), async (original) => ({
