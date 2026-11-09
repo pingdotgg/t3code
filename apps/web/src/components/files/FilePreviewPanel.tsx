@@ -92,7 +92,8 @@ import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
-  type FileCommentLineAnnotation,
+  appendFileCommentEntry,
+  fileCommentAnnotationsFromReviewComments,
   formatFileCommentRange,
   nextFileCommentId,
   normalizeFileCommentRange,
@@ -684,7 +685,12 @@ function EditableFileSurface({
 }: EditableFileSurfaceProps) {
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
-  const [lineAnnotations, setLineAnnotations] = useState<FileCommentLineAnnotation[]>([]);
+  const [lineAnnotations, setLineAnnotations] = useState(() =>
+    fileCommentAnnotationsFromReviewComments(
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.reviewComments ?? [],
+      relativePath,
+    ),
+  );
   const [selectionOverride, setSelectionOverride] = useState<FileSelectionOverride | null>(null);
   const selectedRange =
     selectionOverride?.revealRequestId === revealRequestId ? selectionOverride.range : null;
@@ -805,26 +811,7 @@ function EditableFileSurface({
         const entries = annotation.metadata.entries.filter((entry) => entry.kind !== "draft");
         return entries.length > 0 ? [{ ...annotation, metadata: { entries } }] : [];
       });
-      const existingIndex = withoutDraft.findIndex(
-        (annotation) => annotation.lineNumber === endLine,
-      );
-      if (existingIndex < 0) {
-        return [
-          ...withoutDraft,
-          {
-            lineNumber: endLine,
-            metadata: { entries: [draftEntry] },
-          },
-        ];
-      }
-      return withoutDraft.map((annotation, index) =>
-        index === existingIndex
-          ? {
-              ...annotation,
-              metadata: { entries: [...annotation.metadata.entries, draftEntry] },
-            }
-          : annotation,
-      );
+      return appendFileCommentEntry(withoutDraft, draftEntry);
     });
   };
   const hasOpenCommentForm = lineAnnotations.some((annotation) =>

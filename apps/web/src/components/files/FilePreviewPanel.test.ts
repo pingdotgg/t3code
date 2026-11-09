@@ -5,7 +5,12 @@ import { ProjectReadFileError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { remapFileCommentAnnotations } from "./fileCommentAnnotations";
+import { buildFileReviewComment } from "~/reviewCommentContext";
+
+import {
+  fileCommentAnnotationsFromReviewComments,
+  remapFileCommentAnnotations,
+} from "./fileCommentAnnotations";
 import {
   filePreviewReadErrorMessage,
   isMarkdownPreviewFile,
@@ -58,6 +63,32 @@ describe("file comment annotations", () => {
               endLine: 20,
               text: "Keep this guarded.",
             },
+          ],
+        },
+      },
+    ]);
+  });
+  it("groups this file's stored comments under their end line", () => {
+    const contents = "a\nb\nc\n";
+    const comment = (id: string, filePath: string, startLine: number, endLine: number) =>
+      buildFileReviewComment({ id, filePath, startLine, endLine, text: id, contents });
+    expect(
+      fileCommentAnnotationsFromReviewComments(
+        [
+          comment("range", "a.ts", 1, 3),
+          comment("other-file", "b.ts", 3, 3),
+          { ...comment("diff-section", "a.ts", 3, 3), sectionId: "turn:1" },
+          comment("single", "a.ts", 3, 3),
+        ],
+        "a.ts",
+      ),
+    ).toEqual([
+      {
+        lineNumber: 3,
+        metadata: {
+          entries: [
+            { id: "range", kind: "comment", startLine: 1, endLine: 3, text: "range" },
+            { id: "single", kind: "comment", startLine: 3, endLine: 3, text: "single" },
           ],
         },
       },
