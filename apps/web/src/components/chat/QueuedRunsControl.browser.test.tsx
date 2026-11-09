@@ -1,5 +1,9 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
+import {
+  formatComposerContextReference,
+  toKindScopedComposerContextId,
+} from "@t3tools/shared/composerContextReferences";
 import * as DateTime from "effect/DateTime";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vite-plus/test";
@@ -108,6 +112,38 @@ it("previews assistant quotes as readable text and preserves the citation when e
   await page.getByRole("button", { name: "Edit queued message", exact: true }).nth(1).click();
   expect(onEditQueuedRun).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ text: quoteAndText }),
+  );
+});
+
+it("keeps inline image reference labels in the preview text alongside thumbnails", async () => {
+  setup();
+  const image = (id: string, name: string) => ({
+    attachment: { type: "image", id, name, mimeType: "image/png", sizeBytes: 1024 },
+    reference: formatComposerContextReference({
+      kind: "image",
+      contextId: toKindScopedComposerContextId("image", id),
+      label: name,
+    }),
+  });
+  const header = image("attachment:header", "header.png");
+  const sidebar = image("attachment:sidebar", "sidebar.png");
+  state.projection = { projection: { messages: [] } };
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    queuedRuns: [
+      {
+        run: { id: "run:images", userMessageId: "message:images" },
+        text: `Make the header look like this ${header.reference} . Keep the logo. The sidebar ${sidebar.reference} should collapse on mobile.`,
+        attachments: [header.attachment, sidebar.attachment],
+      },
+    ],
+  };
+  await using _screen = await renderQueue();
+
+  await expect.element(page.getByRole("img", { name: "header.png" })).toBeInTheDocument();
+  expect(page.getByText(/Keep the logo/).element().textContent).toBe(
+    "Make the header look like this header.png . Keep the logo. The sidebar sidebar.png should collapse on mobile.",
   );
 });
 
