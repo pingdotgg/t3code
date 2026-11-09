@@ -102,6 +102,9 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command) return;
+    // Only commands this chat published. Sidebar/app scopes own thread.prev/next
+    // and must resolve with their own when-context (e.g. previewOpen).
+    if (!lookupHandler(command)) return;
     // Shared registry is the only run path; handlers register below.
     if (executeCommand(command, { source: "keybinding", event })) {
       event.preventDefault();

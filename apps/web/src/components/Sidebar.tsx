@@ -2934,6 +2934,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           !event.repeat &&
           !isCommandPaletteOpen() &&
           !isModelPickerOpen(),
+        // Use the React-subscribed config so tests (and live updates) reach
+        // resolveShortcutCommand; appAtomRegistry alone can lag behind mocks.
+        keybindings: () => keybindings,
         context: () => ({
           terminalFocus: isTerminalFocused(),
           terminalOpen: routeTerminalOpen,
@@ -2946,6 +2949,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       },
     );
   }, [
+    keybindings,
     navigateToThread,
     orderedThreadKeys,
     routePreviewOpen,
