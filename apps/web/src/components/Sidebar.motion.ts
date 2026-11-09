@@ -228,7 +228,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         }
       }
       if (released !== null) {
-        if (!reducedMotion?.matches) {
+        if (document.visibilityState === "visible" && !reducedMotion?.matches) {
           for (const [node, position] of next) {
             const top = released.get(node);
             if (top !== undefined) move(node, top - position.top);
