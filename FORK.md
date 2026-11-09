@@ -33,7 +33,7 @@ Pushing a new commit to `main` also builds and publishes a release.
 
 The fork's desktop features, ported to the Android app (`apps/mobile`). It is sideloaded as a separate app named "T3 Code Fork" (the `preview` variant, package `com.t3tools.t3code.preview`), so it sits beside the official app.
 
-- **Next-prompt buttons:** 2–4 buttons above the message box after a run. A reply's `options` block shows as buttons and is hidden from the reply. With the Labs "Suggest next prompt" switch on, the provider's prediction and the small model's picks show too. A tap fills the empty box and never sends.
+- **Next-prompt buttons:** 2–4 buttons above the message box after a run. A reply's `options` block shows as buttons and is hidden from the reply. With the Labs "Suggest next prompt" switch on, the provider's prediction and the small model's picks show too. A tap adds it to the message, after a blank line when there is already text (a slash command goes first, where it runs), and a second tap takes it back out; it never sends. The buttons stay up while you type, so you can pick several.
 - **Inline pages fill the message box:** a page's button can call `t3Compose(text)` to append to that thread's draft, only after a real tap (at most 4 requests and 20,000 characters per tap). It works inline and full screen.
 - **Move to project:** a No project thread's menu can file it under an existing project.
 - **New thread button:** a setting (Settings > General) that makes New thread start a No project thread without the picker.

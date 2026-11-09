@@ -67,6 +67,10 @@
       "types": "./src/userMessage.ts",
       "default": "./src/userMessage.ts"
     },
+    "./next-prompt-draft": {
+      "types": "./src/nextPromptDraft.ts",
+      "default": "./src/nextPromptDraft.ts"
+    },
     "./prompt-links": {
       "types": "./src/promptLinks.ts",
       "default": "./src/promptLinks.ts"

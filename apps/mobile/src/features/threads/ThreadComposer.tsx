@@ -104,12 +104,8 @@ import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import { NextPromptSuggestionChips, useNextPromptChips } from "./NextPromptSuggestionChips";
-import {
-  nextPromptChipDraft,
-  nextPromptChipsAllowed,
-  visibleNextPromptChips,
-  type NextPromptChip,
-} from "./nextPromptChips";
+import { toggleNextPromptInDraft } from "@t3tools/client-runtime/next-prompt-draft";
+import { nextPromptChipsAllowed, type NextPromptChip } from "./nextPromptChips";
 import type { ComposerEnvironmentCandidate } from "@t3tools/client-runtime/composerThreadItems";
 import { offersLinkedEnvironments } from "@t3tools/client-runtime/link-request";
 import {
@@ -660,18 +656,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     hasPendingUserInput: props.selectedThread.hasPendingUserInput,
     hasActionableProposedPlan: props.selectedThread.hasActionableProposedPlan,
   });
-  const offeredNextPrompts = visibleNextPromptChips(
-    showNextPromptChips ? nextPromptChips : NO_NEXT_PROMPT_CHIPS,
-    draftMessage,
-  );
-  // A tap fills the empty composer (or swaps an untouched suggestion) and never sends.
+  const offeredNextPrompts = showNextPromptChips ? nextPromptChips : NO_NEXT_PROMPT_CHIPS;
+  // A tap adds the suggestion to the message (or takes it back out) and never sends.
   const pickNextPrompt = (chip: NextPromptChip) => {
-    const next = nextPromptChipDraft(
-      nextPromptChips,
+    const next = toggleNextPromptInDraft(
       getComposerDraftSnapshot(composerDraftKey).text,
-      chip,
+      chip.insertText,
+      { leading: chip.kind === "command" },
     );
-    if (next === null) return;
     onChangeDraftMessage(next);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
@@ -942,8 +934,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
           />
         ) : null}
         <NextPromptSuggestionChips
-          chips={offeredNextPrompts.chips}
-          activeIndex={offeredNextPrompts.activeIndex}
+          chips={offeredNextPrompts}
+          draft={draftMessage}
           onPick={pickNextPrompt}
         />
 

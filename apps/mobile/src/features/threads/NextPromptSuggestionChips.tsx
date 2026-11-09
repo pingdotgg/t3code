@@ -1,4 +1,5 @@
 // Custom build: next-prompt suggestion buttons above the composer.
+import { isNextPromptInDraft } from "@t3tools/client-runtime/next-prompt-draft";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
   EnvironmentId,
@@ -88,8 +89,8 @@ const ROW_GUTTER = 12;
  */
 export function NextPromptSuggestionChips(props: {
   readonly chips: ReadonlyArray<NextPromptChip>;
-  /** The chip whose text is in the composer unchanged, or -1. */
-  readonly activeIndex: number;
+  /** The composer text, to mark the chips already added to it. */
+  readonly draft: string;
   readonly onPick: (chip: NextPromptChip) => void;
 }) {
   const windowSize = useWindowDimensions();
@@ -111,18 +112,17 @@ export function NextPromptSuggestionChips(props: {
         keyboardShouldPersistTaps="always"
         contentContainerClassName="items-center gap-1.5 px-[12px]"
       >
-        {props.chips.map((chip, index) => {
-          const selected = index === props.activeIndex;
+        {props.chips.map((chip) => {
+          const selected = isNextPromptInDraft(props.draft, chip.insertText);
           // Skills and commands look like code, as on desktop: monospace with a primary border.
           const isCommand = chip.kind !== "prompt";
           return (
             <Pressable
               key={`${chip.kind}:${chip.label}`}
               accessibilityRole="button"
-              accessibilityLabel={
-                chip.kind === "prompt"
-                  ? `Put "${chip.label}" in the message box`
-                  : `Put ${chip.label} in the message box`
+              accessibilityLabel={chip.label}
+              accessibilityHint={
+                selected ? "Takes it out of your message" : "Adds it to your message"
               }
               accessibilityState={{ selected }}
               onPress={() => props.onPick(chip)}

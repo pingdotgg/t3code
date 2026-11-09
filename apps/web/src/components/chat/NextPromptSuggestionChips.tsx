@@ -5,6 +5,7 @@ import type {
   RunId,
   ServerProvider,
 } from "@t3tools/contracts";
+import { isNextPromptInDraft } from "@t3tools/client-runtime/next-prompt-draft";
 import { useState, useSyncExternalStore } from "react";
 
 import type { Thread } from "../../types";
@@ -17,7 +18,7 @@ export interface NextPromptChip {
   readonly kind: "prompt" | "skill" | "command";
   /** The suggestion as shown: a sentence, or a skill or command name. */
   readonly label: string;
-  /** What a click puts in the empty composer. */
+  /** What a click adds to the composer. */
   readonly insertText: string;
 }
 
@@ -153,6 +154,8 @@ export function NextPromptSuggestionChips(props: {
   readonly showTabHint: boolean;
   /** The chip whose text is in the composer unchanged, or -1. */
   readonly activeIndex?: number;
+  /** The composer text, to mark the chips already added to it. */
+  readonly draft: string;
   readonly onPick: (chip: NextPromptChip) => void;
 }) {
   if (props.chips.length === 0) return null;
@@ -160,26 +163,23 @@ export function NextPromptSuggestionChips(props: {
   // The hint sits on the chip the next Tab puts in the composer.
   const tabTargetIndex =
     activeIndex === -1 ? 0 : props.chips.length > 1 ? (activeIndex + 1) % props.chips.length : -1;
+  const picked = props.chips.map((chip) => isNextPromptInDraft(props.draft, chip.insertText));
   return (
-    <div data-next-prompt-suggestions="true">
+    <div data-next-prompt-suggestions="true" role="group" aria-label="Add to your message">
       <div className="mb-2 flex flex-wrap justify-start gap-1.5 px-1">
         {props.chips.map((chip, index) => (
           <button
             key={`${chip.kind}:${chip.label}`}
             type="button"
-            aria-label={
-              chip.kind === "prompt"
-                ? `Put "${chip.label}" in the message box`
-                : `Put ${chip.insertText.trim()} in the message box`
-            }
-            aria-pressed={index === activeIndex}
+            aria-label={chip.kind === "prompt" ? chip.label : chip.insertText.trim()}
+            aria-pressed={picked[index]}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => props.onPick(chip)}
             className={`${
               chip.kind === "prompt"
                 ? "inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-border bg-popover px-3 py-1 text-xs text-popover-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground"
                 : "inline-flex max-w-full items-center gap-1.5 truncate rounded-full border border-primary/60 bg-popover px-3 py-1 text-xs text-primary shadow-sm transition-colors hover:bg-accent"
-            }${index === activeIndex ? " bg-accent ring-1 ring-primary" : ""}`}
+            }${picked[index] ? " bg-accent ring-1 ring-primary" : ""}`}
           >
             {chip.kind === "prompt" ? null : (
               <span className="font-mono opacity-70">{chip.kind === "skill" ? "$" : "/"}</span>

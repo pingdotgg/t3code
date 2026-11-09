@@ -276,6 +276,7 @@ import { composerCommandKeyHandler } from "./composerCommandKey";
 import { usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
 import { NextPromptSuggestionChips, useNextPromptChips } from "./NextPromptSuggestionChips";
+import { toggleNextPromptInDraft } from "@t3tools/client-runtime/next-prompt-draft";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -2324,12 +2325,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     skills: selectedProviderSkills,
     slashCommands: selectedProviderSlashCommands,
   });
-  // The buttons stay while the composer is empty or holds one of them unchanged; any edit hides them.
+  // The buttons stay up while the person writes, so more of them can be added to the message.
   const activeNextPromptChipIndex = nextPromptChips.findIndex((chip) => chip.insertText === prompt);
-  const offeredNextPromptChips =
-    promptSuggestionAllowed && (prompt.length === 0 || activeNextPromptChipIndex !== -1)
-      ? nextPromptChips
-      : [];
+  const offeredNextPromptChips = promptSuggestionAllowed ? nextPromptChips : [];
   const offeredPromptSuggestion = promptSuggestionAllowed
     ? (nextPromptChips[0]?.insertText ?? promptSuggestion)
     : null;
@@ -3335,17 +3333,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : createPortal(
             <NextPromptSuggestionChips
               chips={offeredNextPromptChips}
-              showTabHint
+              showTabHint={prompt.length === 0 || activeNextPromptChipIndex !== -1}
               activeIndex={activeNextPromptChipIndex}
+              draft={prompt}
               onPick={(chip) => {
                 const current = promptRef.current;
-                // Only an empty box or an untouched suggestion is replaced, never the person's text.
-                if (current.length > 0 && !nextPromptChips.some((c) => c.insertText === current)) {
-                  return;
-                }
-                applyPromptReplacement(0, current.length, chip.insertText, {
-                  focusEditorAfterReplace: true,
-                });
+                applyPromptReplacement(
+                  0,
+                  current.length,
+                  toggleNextPromptInDraft(current, chip.insertText, {
+                    leading: chip.kind === "command",
+                  }),
+                  { focusEditorAfterReplace: true },
+                );
               }}
             />,
             nextPromptChipsSlot,

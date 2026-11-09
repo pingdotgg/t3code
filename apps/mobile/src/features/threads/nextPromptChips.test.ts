@@ -3,12 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildNextPromptChips,
-  nextPromptChipDraft,
-  nextPromptChipFor,
   nextPromptChipsAllowed,
   nextPromptCommandsToFreeze,
   offeredNextPromptCommands,
-  visibleNextPromptChips,
 } from "./nextPromptChips";
 
 const runId = "run-1" as RunId;
@@ -71,32 +68,6 @@ describe("buildNextPromptChips", () => {
       [],
     );
     expect(buildNextPromptChips({ enabled: true, completedRunId: null, data })).toEqual([]);
-  });
-});
-
-describe("visibleNextPromptChips", () => {
-  const chips = [nextPromptChipFor("prompt", "Ship it"), nextPromptChipFor("skill", "review")];
-
-  it("shows the buttons for an empty or untouched composer", () => {
-    expect(visibleNextPromptChips(chips, "")).toEqual({ chips, activeIndex: -1 });
-    expect(visibleNextPromptChips(chips, "$review ")).toEqual({ chips, activeIndex: 1 });
-  });
-
-  it("hides them once the person types", () => {
-    expect(visibleNextPromptChips(chips, "Ship it now")).toEqual({ chips: [], activeIndex: -1 });
-  });
-});
-
-describe("nextPromptChipDraft", () => {
-  const chips = [nextPromptChipFor("prompt", "Ship it"), nextPromptChipFor("command", "compact")];
-
-  it("fills an empty box or swaps an untouched suggestion", () => {
-    expect(nextPromptChipDraft(chips, "", chips[1]!)).toBe("/compact ");
-    expect(nextPromptChipDraft(chips, "Ship it", chips[1]!)).toBe("/compact ");
-  });
-
-  it("never replaces the person's own text", () => {
-    expect(nextPromptChipDraft(chips, "my words", chips[0]!)).toBeNull();
   });
 });
 

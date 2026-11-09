@@ -2,6 +2,7 @@
 # If a feature's wording changes, update its marker here in the same commit.
 New thread button
 Search Google for
-next-message buttons above the empty composer
+suggested next messages, including skills and commands
+Add to your message
 w-0 border-b border-border/60 font-medium text-muted-foreground
 t3/compose

@@ -175,7 +175,7 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="After a turn completes, show up to four next-message buttons above the empty composer, including skills and slash commands that fit. Click or tap one to put it in the composer, press Tab for the first, or Escape to hide them. Each turn makes one or two small extra requests with your thread title model, so it uses some of your plan. Codex needs version 0.165 or later. Open Claude threads follow a change after they restart."
+      description="After a turn, show up to four suggested next messages, including skills and commands. Click one to add it to your message, again to remove it. Each turn makes one or two small extra requests."
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}

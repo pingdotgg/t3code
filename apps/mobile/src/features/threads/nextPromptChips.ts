@@ -11,13 +11,13 @@ export interface NextPromptChip {
   readonly kind: "prompt" | "skill" | "command";
   /** The suggestion as shown: a sentence, or `$skill` / `/command`. */
   readonly label: string;
-  /** What a tap puts in the empty composer. */
+  /** What a tap adds to the composer. */
   readonly insertText: string;
 }
 
 const MAX_CHIPS = 4;
 
-export function nextPromptChipFor(kind: NextPromptChip["kind"], text: string): NextPromptChip {
+function nextPromptChipFor(kind: NextPromptChip["kind"], text: string): NextPromptChip {
   const insertText = kind === "skill" ? `$${text} ` : kind === "command" ? `/${text} ` : text;
   return { kind, label: kind === "prompt" ? text : insertText.trim(), insertText };
 }
@@ -136,27 +136,4 @@ export function nextPromptChipsAllowed(input: {
     !input.hasPendingUserInput &&
     !input.hasActionableProposedPlan
   );
-}
-
-/** The buttons stay while the composer is empty or holds one of them unchanged; any edit hides them. */
-export function visibleNextPromptChips(
-  chips: ReadonlyArray<NextPromptChip>,
-  draftText: string,
-): { readonly chips: ReadonlyArray<NextPromptChip>; readonly activeIndex: number } {
-  const activeIndex = chips.findIndex((chip) => chip.insertText === draftText);
-  return draftText.length === 0 || activeIndex !== -1
-    ? { chips, activeIndex }
-    : { chips: [], activeIndex: -1 };
-}
-
-/** The composer text after a tap, or null when the person's own text is there. */
-export function nextPromptChipDraft(
-  chips: ReadonlyArray<NextPromptChip>,
-  draftText: string,
-  chip: NextPromptChip,
-): string | null {
-  if (draftText.length > 0 && !chips.some((candidate) => candidate.insertText === draftText)) {
-    return null;
-  }
-  return chip.insertText;
 }
