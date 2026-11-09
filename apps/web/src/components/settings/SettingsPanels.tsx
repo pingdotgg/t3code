@@ -1322,7 +1322,6 @@ function DiffColorsSettingsRow() {
 export function DiffsSettingsPanel() {
   const requestTerms = useChangeRequestTerms();
   const settings = useScopedSettings();
-  const changeRequestTerms = useChangeRequestTerms();
   const updateSettings = useUpdateScopedSettings();
 
   return (
@@ -1432,10 +1431,10 @@ export function DiffsSettingsPanel() {
         <DiffColorsSettingsRow />
       </SettingsSection>
 
-      <SettingsSection id="pull-requests" title={capitalizeTerm(changeRequestTerms.plural)}>
+      <SettingsSection id="pull-requests" title={capitalizeTerm(requestTerms.plural)}>
         <SettingsRow
           {...searchableSetting("proactive-panels", requestTerms)}
-          description={`Open linked ${changeRequestTerms.plural} first. Otherwise, open Changes for edits to at least 3 files or 50 lines.`}
+          description={`Open linked ${requestTerms.plural} first. Otherwise, open Changes for edits to at least 3 files or 50 lines.`}
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
