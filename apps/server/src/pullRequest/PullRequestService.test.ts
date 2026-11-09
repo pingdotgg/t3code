@@ -32,6 +32,9 @@ import type { SourceControlProvider } from "@t3tools/source-control-core/server/
 import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import { fakePullRequestProvider } from "@t3tools/source-control-testing/fakeSourceControlDriver";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
+import { FetchHttpClient } from "effect/http";
 import {
   PullRequestProviderError,
   type ProviderChangeRequest,
@@ -2352,6 +2355,77 @@ it.effect("a listing narrowed to some projects is its own cache entry", () =>
 
     yield* service.list({ state: "open", projectIds: ["p2" as ProjectId] });
     assert.strictEqual(asked.length, 2);
+  }),
+);
+
+it.effect("lists many GitLab projects on one host in a few glab reads, not one per project", () =>
+  Effect.gen(function* () {
+    const reads: Array<string> = [];
+    const emptyPage = { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] };
+    const gitlab = yield* GitLabDriver.driver.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestSourceControlHost.layer({
+            process: {
+              run: (input) => {
+                const path = input.args[1];
+                if (path === "user") {
+                  return Effect.succeed(
+                    TestSourceControlHost.processOutput(JSON.stringify({ username: "reviewer" })),
+                  );
+                }
+                reads.push(path ?? input.args.join(" "));
+                if (path !== "graphql") {
+                  return Effect.succeed(TestSourceControlHost.processOutput("[]"));
+                }
+                const request = JSON.parse(input.stdin ?? "{}") as {
+                  readonly query?: string;
+                  readonly variables?: { readonly fullPaths?: ReadonlyArray<string> };
+                };
+                const data = request.query?.includes("version")
+                  ? { metadata: { version: "19.6.0" } }
+                  : {
+                      metadata: { enterprise: false },
+                      project: { mergeRequests: emptyPage },
+                      projects: {
+                        pageInfo: emptyPage.pageInfo,
+                        nodes: (request.variables?.fullPaths ?? []).map((fullPath) => ({
+                          fullPath,
+                          mergeRequests: emptyPage,
+                        })),
+                      },
+                    };
+                return Effect.succeed(
+                  TestSourceControlHost.processOutput(JSON.stringify({ data })),
+                );
+              },
+            },
+          }),
+          SourceControlRateLimit.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+          FetchHttpClient.layer,
+        ),
+      ),
+    );
+    assert.isNotNull(gitlab.pullRequests);
+    const projects = Array.from({ length: 60 }, (_, index) =>
+      project({
+        id: `p${index}`,
+        title: `project ${index}`,
+        workspaceRoot: `/w/${index}`,
+        repository: `gitlab-org/project-${index}`,
+        provider: "gitlab",
+      }),
+    );
+    const service = yield* makeService({ projects, providers: [gitlab.pullRequests] });
+
+    const result = yield* service.list({ state: "open", involvement: "all" });
+
+    assert.deepStrictEqual(result.errors, []);
+    // GitLab takes at most 50 project paths per GraphQL request; one read per project is what
+    // got gitlab.com to answer HTTP 429 on a large workspace.
+    expect(reads.length).toBeLessThanOrEqual(projects.length / 10);
   }),
 );
 
