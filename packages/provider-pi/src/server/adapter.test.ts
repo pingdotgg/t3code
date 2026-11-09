@@ -3601,6 +3601,18 @@ describe("PiAdapterV2", () => {
       ]);
       assert.deepEqual(unknown, []);
       assert.deepEqual(work, [true, false, true, false]);
+      const late = yield* subagentRowsBefore(fake, collectEvent, "unknown-widget", [
+        asyncStatusWidget(1, [
+          {
+            id: "unknown",
+            kind: "workflow",
+            state: "complete",
+            children: [{ id: "a", kind: "step", state: "running" }],
+          },
+        ]),
+      ]);
+      assert.deepEqual(late, []);
+      assert.deepEqual(work, [true, false, true, false]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -3691,6 +3703,64 @@ describe("PiAdapterV2", () => {
         ["running", "completed"],
       );
       assert.deepEqual(work, [true, false, true, false]);
+      for (const [index, source] of ["notice", "widget"].entries()) {
+        const id = `paused-${source}`;
+        const node = (state: string, a: string, b: string) => ({
+          id,
+          kind: "workflow",
+          state,
+          children: [
+            { id: "a", kind: "step", state: a },
+            { id: "b", kind: "step", state: b },
+          ],
+        });
+        const before = work.length;
+        const members = yield* subagentRowsBefore(fake, collectEvent, `${id}-members`, [
+          launch(id),
+          asyncStatusWidget(10 + index * 10, [node("running", "running", "running")]),
+          asyncStatusWidget(11 + index * 10, [node("running", "paused", "running")]),
+        ]);
+        assert.deepEqual(
+          members.map(({ status }) => status),
+          ["running", "running", "idle"],
+        );
+        assert.deepEqual(work.slice(before), [true]);
+        const paused = yield* subagentRowsBefore(fake, collectEvent, `${id}-root`, [
+          source === "notice"
+            ? piCustomMessage("subagent-notify", {
+                runs: [{ workflowRunId: id, status: "paused" }],
+              })
+            : asyncStatusWidget(12 + index * 10, [node("paused", "paused", "running")]),
+        ]);
+        assert.deepEqual(paused, []);
+        assert.deepEqual(work.slice(before), [true, false]);
+        const stale = yield* subagentRowsBefore(fake, collectEvent, `${id}-stale`, [
+          asyncStatusWidget(13 + index * 10, [node("running", "running", "running")]),
+        ]);
+        assert.deepEqual(stale, []);
+        assert.deepEqual(work.slice(before), [true, false]);
+      }
+      yield* fake.emit({ type: "agent_settled" });
+      yield* collectEvent((event) => event.type === "turn.terminal");
+      yield* startTurn(runtime, providerThread, "default", [], "Resume", undefined, 2);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      const resumed = yield* subagentRowsBefore(fake, collectEvent, "replacement", [
+        launch("replacement"),
+        asyncStatusWidget(30, [
+          {
+            id: "replacement",
+            kind: "workflow",
+            state: "running",
+            children: [{ id: "a", kind: "step", state: "running" }],
+          },
+        ]),
+      ]);
+      assert.deepEqual(
+        resumed.map(({ nativeId, runId, status }) => [nativeId, runId, status]),
+        [["replacement:subagent:a", RunId.make(`run:${THREAD_ID}:2`), "running"]],
+      );
+      assert.deepEqual(work, [true, false, true, false, true, false, true, false, true]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
@@ -4017,7 +4087,7 @@ describe("PiAdapterV2", () => {
           ]),
         ]),
       ]);
-      yield* subagentRowsBefore(
+      const late = yield* subagentRowsBefore(
         fake,
         collectEvent,
         "late-live-states",
@@ -4031,6 +4101,7 @@ describe("PiAdapterV2", () => {
         ),
       );
       assert.deepEqual(work, [true, false]);
+      assert.deepEqual(late, []);
       assert.deepEqual(settled, [
         {
           title: "reviewer",
