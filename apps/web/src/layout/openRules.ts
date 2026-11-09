@@ -1,12 +1,17 @@
 /** Surface toggles reuse saved placement and hide tabs without ending resources; ordinary opens
  * create tabs. */
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 
-import { closeThreadSurface, hideThreadSurfaces } from "../components/ThreadSurfaceTab";
+import {
+  closeThreadSurface,
+  hideThreadSurfaceTabs,
+  hideThreadSurfaces,
+} from "../components/ThreadSurfaceTab";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell } from "../state/entities";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { getLayoutBehavior } from "./layoutBehavior";
@@ -15,6 +20,8 @@ import {
   findLayoutLauncherFor,
   findLayoutPane,
   findLayoutSurfaceTabs,
+  layoutChatSwaps,
+  selectFocusedTab,
   selectFocusedWorkspace,
   THREAD_TERMINAL_SURFACE_ID,
   type LayoutState,
@@ -258,4 +265,62 @@ export function openPullRequestWorkspace(threadRef: ScopedThreadRef, number: num
     store.focusTab(chat.tab.id);
   }
   useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+}
+
+/** Threads whose surfaces an open hid, by thread key: they show again when an open brings it back. */
+const companionsHiddenByOpen = new Map<string, { panel: boolean; terminal: boolean }>();
+
+function chatThreadRef(target: ThreadRouteTarget): ScopedThreadRef | null {
+  if (target.kind === "server") return target.threadRef;
+  const draft = useComposerDraftStore.getState().getDraftSession(target.draftId);
+  return draft ? scopeThreadRef(draft.environmentId, draft.threadId) : null;
+}
+
+/**
+ * Run an open (a sidebar click, a route) so a thread's terminal and side panes follow its chat:
+ * a chat it swaps off a pane hides them, shells and browsers still running, and a chat it brings
+ * back shows the ones an earlier open hid.
+ */
+export function followLayoutCompanions(open: () => void): void {
+  const before = useLayoutStore.getState().layout;
+  open();
+  const after = useLayoutStore.getState().layout;
+  for (const swap of layoutChatSwaps(before, after)) {
+    const from = chatThreadRef(swap.from);
+    const to = chatThreadRef(swap.to);
+    if (from && to && scopedThreadKey(from) === scopedThreadKey(to)) continue;
+    if (from) hideCompanionsOf(from);
+    if (to) showCompanionsOf(to);
+  }
+}
+
+function hideCompanionsOf(threadRef: ScopedThreadRef) {
+  const panel = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    threadRef,
+  ).isOpen;
+  const terminal = selectThreadTerminalUiState(
+    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    threadRef,
+  ).terminalOpen;
+  if (!panel && !terminal) return;
+  companionsHiddenByOpen.set(scopedThreadKey(threadRef), { panel, terminal });
+  hideThreadSurfaceTabs(threadRef);
+}
+
+function showCompanionsOf(threadRef: ScopedThreadRef) {
+  const key = scopedThreadKey(threadRef);
+  const hidden = companionsHiddenByOpen.get(key);
+  if (!hidden) return;
+  companionsHiddenByOpen.delete(key);
+  const store = useLayoutStore.getState();
+  const chat = findThreadChat(store.layout, threadRef);
+  const focused = selectFocusedTab(store.layout);
+  if (!chat) return;
+  if (hidden.panel) useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
+  if (hidden.terminal) {
+    requestSurfaceDestination(threadRef, chat, true);
+    useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
+  }
+  if (focused) useLayoutStore.getState().focusTab(focused.id);
 }
