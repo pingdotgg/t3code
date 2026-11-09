@@ -119,5 +119,11 @@ it.effect("filters listed pull requests by the requested state", () =>
     assert.deepStrictEqual(yield* numbers("closed"), [2]);
     assert.deepStrictEqual(yield* numbers("all"), [1, 2]);
     assert.deepStrictEqual(yield* numbers("open"), []);
+    // A slice reads at most `limit` rows however few it keeps, then hands the rest to a
+    // continuation.
+    assert.deepStrictEqual(
+      yield* provider.listChangeRequests({ ...input, state: "closed", limit: 1 }),
+      { items: [], truncated: true, continues: true, cursorAdvance: 1 },
+    );
   }),
 );
