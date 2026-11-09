@@ -169,8 +169,13 @@ function repeatLabel(weekdays: ReadonlyArray<number>): string {
   );
 }
 
-const CRON_HELP =
-  "Minute, hour, day of month, month, weekday. */30 9-16 * * 1-5 runs every 30 minutes from 9:00 to 16:30 on weekdays.";
+const cronHelp = (example: string) =>
+  `Minute, hour, day of month, month, weekday. ${example} runs every 30 minutes from 9:00 to 16:30 on weekdays.`;
+const CRON_HELP = cronHelp(DEFAULT_CRON_EXPRESSION);
+// Word joiners and no-break spaces keep the example on one line; screen readers get CRON_HELP.
+const CRON_HELP_VISIBLE = cronHelp(
+  [...DEFAULT_CRON_EXPRESSION.replaceAll(" ", "\u00a0")].join("\u2060"),
+);
 
 function FormField(props: {
   readonly label: string;
@@ -1239,7 +1244,7 @@ function TaskForm({
                     : "px-4 pb-3 text-sm text-danger-foreground"
                 }
               >
-                {cronError ?? CRON_HELP}
+                {cronError ?? CRON_HELP_VISIBLE}
               </Text>
             </>
           ) : draft.schedule.mode === "webhook" ? (
