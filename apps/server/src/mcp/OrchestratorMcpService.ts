@@ -90,6 +90,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
+  delegatedFollowupRuns,
   delegatedTaskProgress,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
@@ -585,18 +586,17 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "messages" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
   const resultRunIds = new Set(
-    child.runs
-      .filter(
-        (run) =>
-          run.delegatedTaskId === task.id ||
-          (originalRun?.delegatedTaskId === undefined && run.delegatedTaskId === undefined),
-      )
-      .map((run) => run.id),
+    [
+      ...delegatedFollowupRuns(child, task.id),
+      ...(originalRun?.delegatedTaskId === undefined
+        ? child.runs.filter((run) => run.delegatedTaskId === undefined)
+        : []),
+    ].map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
   return parent.contextTransfers.find(
@@ -1537,9 +1537,7 @@ const make = Effect.gen(function* () {
     const progress = delegatedTaskProgress(childControls);
     const taskResultRun =
       childRun?.delegatedTaskId === task.id
-        ? childControls.runs
-            .filter((run) => run.delegatedTaskId === task.id)
-            .toSorted((a, b) => b.ordinal - a.ordinal)[0]
+        ? delegatedFollowupRuns(childControls, task.id).at(-1)
         : progress.resultRun;
     const taskWorkState =
       childRun?.delegatedTaskId === task.id
@@ -3120,7 +3118,8 @@ const make = Effect.gen(function* () {
         (input.textOffset ?? 0) === 0
       ) {
         for (const task of tasks) {
-          const transfer = taskResultTransfer(parent, target, task);
+          // Like directAppOwnedChildTasks, this read leaves wake runs with the original task.
+          const transfer = taskResultTransfer(parent, { ...target, messages: [] }, task);
           const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
           const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
           const resultRecords = yield* threadManagement

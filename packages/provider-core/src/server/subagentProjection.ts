@@ -15,6 +15,7 @@ import type {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -246,6 +247,45 @@ export function subagentResultForRun(
     messageId: failure === undefined ? (message?.id ?? turnItem?.messageId ?? null) : null,
     turnItemId: failure?.id ?? turnItem?.id ?? null,
   };
+}
+
+/**
+ * A follow-up task's runs by ordinal: its own, then the wakes for subagents those runs started,
+ * and restart continuations of either. Its result is the last one, as the original task's is.
+ */
+export function delegatedFollowupRuns(
+  projection: {
+    readonly runs: OrchestrationV2ThreadProjection["runs"];
+    readonly messages: ReadonlyArray<
+      Pick<OrchestrationV2ConversationMessage, "id" | "delegatedCompletion">
+    >;
+  },
+  taskId: NodeId,
+): ReadonlyArray<OrchestrationV2Run> {
+  const wokenBy = new Map(
+    projection.messages.flatMap((message) =>
+      message.delegatedCompletion === undefined
+        ? []
+        : [[message.id, message.delegatedCompletion.parentRunId] as const],
+    ),
+  );
+  const owned = new Set<RunId>();
+  const runs: Array<OrchestrationV2Run> = [];
+  for (const run of projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)) {
+    const source = wokenBy.get(run.userMessageId) ?? run.restartContinuationOfRunId;
+    if (
+      run.delegatedTaskId === taskId ||
+      (run.delegatedTaskId === undefined &&
+        source !== undefined &&
+        owned.has(source) &&
+        run.status !== "rolled_back" &&
+        !(run.status === "queued" && run.queueHeld === true))
+    ) {
+      owned.add(run.id);
+      runs.push(run);
+    }
+  }
+  return runs;
 }
 
 export function delegatedTaskProgress(projection: {
