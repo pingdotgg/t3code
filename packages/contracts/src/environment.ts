@@ -101,6 +101,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   projectWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   settledWorktreeCleanup: Schema.optionalKey(Schema.Boolean),
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
+  /** Sent by macOS servers, which honor the fastWorktreeCheckout setting. */
+  fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   threadAutoSettlementScope: Schema.optionalKey(Schema.Boolean),
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
@@ -165,6 +167,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       (`linkOrigin`). Another environment links to this one only when it is
       set, since without it that work could change the user's own threads. */
   linkFence: Schema.optionalKey(Schema.Boolean),
+  /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
+  mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   /** Server answers server.prepareTriage. */
   triage: Schema.optionalKey(Schema.Boolean),
   /** Server accepts `{ type: "once" }` scheduled tasks; older servers reject them on save. */
