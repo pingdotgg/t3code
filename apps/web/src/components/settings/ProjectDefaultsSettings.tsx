@@ -7,6 +7,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useNavigate } from "@tanstack/react-router";
+import { useRef } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import {
@@ -30,6 +31,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -108,6 +110,9 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
   const mixedAgentCredits = useScopedSettingsMixed(["removeAgentCreditsOnMerge"]);
   const mixedMergeMethod = useScopedSettingsMixed(["pullRequestMergeMethod"]);
+  const mixedWatchInstructions = useScopedSettingsMixed(["pullRequestWatchInstructions"]);
+  const watchInstructionsEdited = useRef(false);
+  const scopeKey = targets.map((entry) => `${entry.environmentId}:${entry.projectId}`).join(",");
   const modelSource = useScopedSettingSource(["defaultModelSelection"]);
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const unavailable = connectedEnvironments.length === 0;
@@ -516,6 +521,46 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               </Select>
             }
           />
+          <SettingsRow
+            serverScoped
+            settingKeys={["pullRequestWatchInstructions"]}
+            {...searchableSetting("pull-request-watch-instructions")}
+            description="Added to every update T3 Code sends an agent watching a pull request: failed checks, comments, conflicts, or a moved base. Tell it how to handle them."
+            resetAction={
+              mixedWatchInstructions || settings.pullRequestWatchInstructions !== "" ? (
+                <SettingResetButton
+                  label="pull request watch instructions"
+                  onClick={() => updateSettings({ pullRequestWatchInstructions: "" })}
+                />
+              ) : null
+            }
+          >
+            <div className="mt-3 max-w-2xl pb-3.5">
+              <Textarea
+                key={`${scopeKey}:${mixedWatchInstructions}:${settings.pullRequestWatchInstructions}`}
+                aria-label="Pull request watch instructions"
+                onChange={() => {
+                  watchInstructionsEdited.current = true;
+                }}
+                rows={4}
+                defaultValue={mixedWatchInstructions ? "" : settings.pullRequestWatchInstructions}
+                placeholder={
+                  mixedWatchInstructions
+                    ? "Mixed. Enter instructions to apply to all selected targets."
+                    : "Rebase onto the base when it moves. Fix failing checks yourself. Ask me before replying to a reviewer."
+                }
+                onBlur={(event) => {
+                  const value = event.target.value.trim();
+                  if (
+                    watchInstructionsEdited.current &&
+                    (mixedWatchInstructions || value !== settings.pullRequestWatchInstructions)
+                  )
+                    updateSettings({ pullRequestWatchInstructions: value });
+                  watchInstructionsEdited.current = false;
+                }}
+              />
+            </div>
+          </SettingsRow>
         </>
       )}
     </SettingsSection>

@@ -1094,6 +1094,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
+    id: "pull-request-watch-instructions",
+    title: "Pull request watch instructions",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["pull request pr watch wake babysit rebase base behind agent prompt custom"],
+  },
+  {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
