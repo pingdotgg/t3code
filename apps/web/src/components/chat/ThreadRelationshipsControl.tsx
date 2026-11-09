@@ -1,4 +1,4 @@
-import { formatModelSlugName } from "@t3tools/shared/model";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { openSideChatTab } from "../../lib/sideChatPane";
 import { runInNewLayoutTab } from "../../layout/layoutStore";
 import { useAtomValue } from "@effect/atom-react";
@@ -15,7 +15,10 @@ import {
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
-import { deriveProviderSubagentStatus } from "@t3tools/client-runtime/state/thread-execution";
+import {
+  deriveProviderSubagentStatus,
+  REASONING_EFFORT_OPTION_IDS,
+} from "@t3tools/client-runtime/state/thread-execution";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -76,7 +79,6 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   shouldShowInstanceBadge,
-  type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -91,7 +93,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "./providerIconUtils";
 import {
   THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS,
   THREAD_DETAILS_PANEL_META_CLASS,
@@ -724,13 +725,6 @@ function useThreadLineage(props: {
   };
 }
 
-function lineageModelLabel(model: string, providerEntry: ProviderInstanceEntry | undefined) {
-  const selectedModel = providerEntry?.models.find((entry) => entry.slug === model);
-  return selectedModel
-    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : formatModelSlugName(model);
-}
-
 export function ThreadRelationshipsPanel(props: {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
@@ -811,7 +805,7 @@ export function ThreadRelationshipsPanel(props: {
       projectedAgent === undefined ? undefined : workflowGroupsById.get(projectedAgent.id);
     const agent = workflowGroup ? projectedAgent : currentSubagent(projectedAgent, node?.thread);
     const failed = rowStatus === "failed" || rowStatus === "error";
-    // The second line names parents, forks and transfers; only a child agent has a state to show.
+    // A child agent shows its state; parents, forks and transfers are named on the second line.
     const childAgent = isSubagent && !isParent;
     const running = childAgent && (rowStatus === "running" || rowStatus === "in_progress");
     const childFailed = childAgent && failed;
@@ -888,8 +882,13 @@ export function ThreadRelationshipsPanel(props: {
         }
       />
     );
-    const relationshipModel =
-      node?.thread?.modelSelection.model ?? agent?.modelSelection?.model ?? agent?.model;
+    const relationshipSelection = node?.thread?.modelSelection ?? agent?.modelSelection;
+    const relationshipModel = relationshipSelection?.model ?? agent?.model;
+    const relationshipEffort = relationshipSelection
+      ? REASONING_EFFORT_OPTION_IDS.map((id) =>
+          getModelSelectionStringOptionValue(relationshipSelection, id),
+        ).find(Boolean)
+      : undefined;
     const relationshipContent = (
       <>
         {providerDriver ? (
@@ -910,16 +909,28 @@ export function ThreadRelationshipsPanel(props: {
           <RelationshipIcon className="size-4 shrink-0 text-muted-foreground" />
         )}
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-label leading-4">{threadTitle}</span>
-          <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
-            <span className="shrink-0">{relationship}</span>
-            {relationshipModel ? (
-              <span className="min-w-0 truncate">
-                {lineageModelLabel(relationshipModel, providerEntry)}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 flex-1 truncate text-label leading-4">{threadTitle}</span>
+            {childFailed || running ? (
+              <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
+                {childFailed ? (
+                  <span className="text-destructive-foreground">Failed</span>
+                ) : (
+                  <Spinner size="xs" tone="muted" aria-label="Running" />
+                )}
               </span>
             ) : null}
+          </span>
+          <span className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-caption leading-4 text-muted-foreground">
+            {childAgent ? null : <span className="shrink-0">{relationship}</span>}
+            {relationshipModel ? (
+              <span className="min-w-0 truncate font-mono">{relationshipModel}</span>
+            ) : null}
+            {relationshipEffort ? (
+              <span className="shrink-0 font-mono">{relationshipEffort}</span>
+            ) : null}
             {childAgent && !failed ? (
-              <span className="shrink-0">
+              <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
                 {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
                   <AgentElapsed agent={agent} compact />
                 ) : running ? null : (
@@ -929,15 +940,6 @@ export function ThreadRelationshipsPanel(props: {
             ) : null}
           </span>
         </span>
-        {childFailed || running ? (
-          <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
-            {childFailed ? (
-              <span className="text-destructive-foreground">Failed</span>
-            ) : (
-              <Spinner size="xs" tone="muted" aria-label="Running" />
-            )}
-          </span>
-        ) : null}
       </>
     );
     // A workflow pairs its menu row with a disclosure; other rows render directly.
