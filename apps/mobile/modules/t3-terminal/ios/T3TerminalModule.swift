@@ -16,6 +16,10 @@ public class T3TerminalModule: Module {
         view.writeOutput(data, reset: reset)
       }
 
+      AsyncFunction("resetInput") { (view: T3TerminalView) in
+        view.resetInputField()
+      }
+
       Prop("terminalKey") { (view: T3TerminalView, terminalKey: String) in
         view.terminalKey = terminalKey
       }
@@ -63,7 +67,15 @@ public class T3TerminalModule: Module {
       Prop("captureRequest") { (view: T3TerminalView, request: Double) in
         view.captureRequest = request
       }
+
+      Prop("sharedGrid") { (view: T3TerminalView, sharedGrid: [Int]) in
+        view.sharedGrid = sharedGrid
+      }
       Events("onInput", "onResize", "onCapture", "onPaste")
+
+      OnViewDidUpdateProps { (view: T3TerminalView) in
+        view.applyPendingBuffer()
+      }
     }
   }
 }

@@ -255,7 +255,14 @@ const make = Effect.gen(function* () {
           createdAt: now,
           updatedAt: now,
         })
-        .onConflictDoNothing()
+        // Refreshing updatedAt makes a re-reserved row count toward the tunnel limit again.
+        .onConflictDoUpdate({
+          target: [
+            relayManagedEndpointAllocations.userId,
+            relayManagedEndpointAllocations.environmentId,
+          ],
+          set: { updatedAt: now },
+        })
         .returning(allocationSelection)
         .pipe(
           Effect.mapError(
@@ -269,26 +276,7 @@ const make = Effect.gen(function* () {
           ),
         );
 
-      const allocation =
-        inserted[0] ??
-        (yield* db
-          .select(allocationSelection)
-          .from(relayManagedEndpointAllocations)
-          .where(whereAllocation(input))
-          .limit(1)
-          .pipe(
-            Effect.map((rows) => rows[0]),
-            Effect.mapError(
-              (cause) =>
-                new ManagedEndpointAllocationPersistenceError({
-                  operation: "reserve",
-                  stage: "database-request",
-                  ...input,
-                  cause,
-                }),
-            ),
-          ));
-
+      const allocation = inserted[0];
       if (allocation === undefined) {
         return yield* new ManagedEndpointAllocationPersistenceError({
           operation: "reserve",
@@ -524,9 +512,8 @@ const make = Effect.gen(function* () {
       const claimed = yield* db
         .update(relayManagedEndpointAllocations)
         .set({
-          updatedAt: now,
           generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
-          ...(input.markReleased === true ? { tunnelReleasedAt: now } : {}),
+          ...(input.markReleased === true ? { tunnelReleasedAt: now, updatedAt: now } : {}),
         })
         .where(
           and(
@@ -597,10 +584,8 @@ const make = Effect.gen(function* () {
     ) {
       const claimed = yield* db
         .update(relayManagedEndpointAllocations)
-        .set({
-          updatedAt: DateTime.formatIso(yield* DateTime.now),
-          generation: sql`${relayManagedEndpointAllocations.generation} + 1`,
-        })
+        // Claims move only the generation: the tunnel limit reads updatedAt as the last provisioning write.
+        .set({ generation: sql`${relayManagedEndpointAllocations.generation} + 1` })
         .where(
           and(
             whereAllocation(input),

@@ -139,12 +139,16 @@ private final class TerminalInputField: UITextField {
     action: #selector(handleHardwareKeyCommand(_:))
   )
 
+  // While an IME composes, arrows, Tab and Escape pick or cancel candidates instead.
   override var keyCommands: [UIKeyCommand]? {
-    Self.hardwareKeyCommands
+    markedTextRange == nil ? Self.hardwareKeyCommands : nil
   }
 
   override func deleteBackward() {
-    onDeleteBackward?()
+    // Backspace edits marked or committed field text first; the field diff sends that DEL.
+    if markedTextRange == nil, !hasText {
+      onDeleteBackward?()
+    }
     super.deleteBackward()
   }
 
@@ -212,6 +216,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
   private var streamedOutput: TerminalOutputBuffer?
   private var pendingVerticalScrollPoints: CGFloat = 0
   private var menuText: String?
+  private var sentInput = ""
   private var app: ghostty_app_t?
   private let callbackRef = TerminalViewRef()
   private var surface: ghostty_surface_t?
@@ -251,9 +256,23 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     }
   }
 
+  // Expo sets a batch's props in no fixed order, so the buffer waits for the whole batch:
+  // output fed before the same batch's sharedGrid lands would be drawn, and clipped, at the
+  // previous grid.
   var initialBuffer: String = "" {
     didSet {
-      applyRemoteBuffer(initialBuffer)
+      hasPendingBuffer = true
+    }
+  }
+  private var hasPendingBuffer = false
+
+  // The PTY grid shared by every attached client, or empty before the server reports one.
+  // The surface draws this grid so its wrapping and cursor match the PTY; the view's own
+  // fit still goes out through onResize.
+  var sharedGrid: [Int] = [] {
+    didSet {
+      guard oldValue != sharedGrid else { return }
+      resizeSurface()
     }
   }
 
@@ -343,19 +362,22 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     inputField.spellCheckingType = .no
     inputField.smartDashesType = .no
     inputField.smartQuotesType = .no
+    inputField.smartInsertDeleteType = .no
     inputField.returnKeyType = .send
-    inputField.keyboardType = .asciiCapable
+    inputField.keyboardType = .default
     inputField.enablesReturnKeyAutomatically = false
     inputField.translatesAutoresizingMaskIntoConstraints = false
     inputField.alpha = 0.02
     inputField.isAccessibilityElement = false
     inputField.accessibilityElementsHidden = true
     inputField.addTarget(self, action: #selector(handleInputEditingDidBegin), for: .editingDidBegin)
+    inputField.addTarget(self, action: #selector(handleInputEditingChanged), for: .editingChanged)
     inputField.onDeleteBackward = { [weak self] in
       self?.emitInput("\u{7F}")
     }
     inputField.onInsert = { [weak self] data in
       self?.emitInput(data)
+      self?.resetInputField()
     }
     inputField.onPaste = { [weak self] in
       self?.emitPaste()
@@ -419,21 +441,11 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     }
   }
 
-  public func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
-    if !string.isEmpty {
-      // Some software keyboards deliver Return through this delegate instead of
-      // textFieldShouldReturn, so normalize that path too.
-      emitInput(TerminalInputSequence.normalizingReturn(string))
-      return false
-    }
-
-    emitInput("\u{7F}")
-    return false
-  }
-
   public func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+    // Return during a composition commits it; that is not Enter.
+    guard textField.markedTextRange == nil else { return false }
     emitInput(TerminalInputSequence.carriageReturn)
-    textField.text = ""
+    resetInputField()
     return false
   }
 
@@ -496,6 +508,32 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     default:
       pendingVerticalScrollPoints = 0
       gesture.setTranslation(.zero, in: terminalViewport)
+    }
+  }
+
+  // Korean keyboards build a syllable by replacing the committed character before the cursor,
+  // so the field keeps what was sent and each change goes out as DELs plus the new suffix.
+  // Scalars, not Characters: a Thai or Indic mark joins the previous grapheme, and resending
+  // that grapheme after one DEL would leave its base twice in a code-point line editor.
+  @objc
+  private func handleInputEditingChanged() {
+    guard inputField.markedTextRange == nil else { return }
+    let text = inputField.text ?? ""
+    let fieldScalars = text.unicodeScalars
+    let sentScalars = sentInput.unicodeScalars
+    let commonCount = zip(fieldScalars, sentScalars).prefix { $0.0 == $0.1 }.count
+    let unsent = String(String.UnicodeScalarView(sentScalars.dropFirst(commonCount)))
+    let added = String(String.UnicodeScalarView(fieldScalars.dropFirst(commonCount)))
+    // Some software keyboards deliver Return as an inserted newline instead of textFieldShouldReturn.
+    emitInput(String(repeating: "\u{7F}", count: unsent.count) + TerminalInputSequence.normalizingReturn(added))
+    sentInput = text
+    // A Hangul syllable never spans whitespace; past the cap, keep the last character to compose onto.
+    if text.last?.isWhitespace == true {
+      resetInputField()
+    } else if text.count > 64 {
+      let last = String(text.suffix(1))
+      inputField.text = last
+      sentInput = last
     }
   }
 
@@ -578,7 +616,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
 
   @objc
   private func handleInputEditingDidBegin() {
+    // A composition abandoned by losing focus must not reach the PTY with the next keystroke.
+    resetInputField()
     textInputModeDidChange()
+  }
+
+  func resetInputField() {
+    inputField.text = ""
+    sentInput = ""
   }
 
   private func createSurfaceIfPossible() {
@@ -645,7 +690,7 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     resizeSurface()
     if let streamedOutput {
       feedData(streamedOutput.data)
-    } else {
+    } else if !hasPendingBuffer {
       feedBuffer(initialBuffer)
     }
   }
@@ -672,6 +717,19 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     }
     surface = nil
     app = nil
+    // Ghostty adds its IOSurface layer to the viewport on iOS but never removes it on
+    // free, leaving the last frame on screen under the next surface's layer. The
+    // viewport has no subviews, so every sublayer belongs to a freed surface.
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    terminalViewport.layer.sublayers?.forEach { $0.removeFromSuperlayer() }
+    CATransaction.commit()
+  }
+
+  func applyPendingBuffer() {
+    guard hasPendingBuffer else { return }
+    hasPendingBuffer = false
+    applyRemoteBuffer(initialBuffer)
   }
 
   private func tickApp() {
@@ -766,10 +824,25 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     terminalViewport.contentScaleFactor = scale
     ghostty_surface_set_content_scale(surface, Double(scale), Double(scale))
     ghostty_surface_set_size(surface, width, height)
+    let fitted = ghostty_surface_size(surface)
+    let fittedCols = max(1, Int(fitted.columns))
+    let fittedRows = max(1, Int(fitted.rows))
+    // Trimming whole cells keeps ghostty's padding, and the surface can only shrink
+    // within the view, so a stale larger grid falls back to the fitted one.
+    var surfaceWidth = width
+    var surfaceHeight = height
+    if sharedGrid.count == 2, sharedGrid[0] > 0, sharedGrid[1] > 0 {
+      surfaceWidth -= UInt32(max(fittedCols - sharedGrid[0], 0)) * fitted.cell_width_px
+      surfaceHeight -= UInt32(max(fittedRows - sharedGrid[1], 0)) * fitted.cell_height_px
+      if surfaceWidth != width || surfaceHeight != height {
+        ghostty_surface_set_size(surface, surfaceWidth, surfaceHeight)
+      }
+    }
     ghostty_surface_set_occlusion(surface, window != nil)
-    configureIOSurfaceLayers()
+    configureIOSurfaceLayers(
+      size: CGSize(width: CGFloat(surfaceWidth) / scale, height: CGFloat(surfaceHeight) / scale))
     redrawSurface()
-    emitGhosttyResize()
+    emitResize(cols: fittedCols, rows: fittedRows)
   }
 
   private func redrawSurface() {
@@ -777,19 +850,6 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     ghostty_surface_refresh(surface)
     ghostty_surface_draw(surface)
     markIOSurfaceLayersForDisplay()
-    emitGhosttyResize()
-  }
-
-  private func emitGhosttyResize() {
-    guard let surface else {
-      emitEstimatedResize()
-      return
-    }
-
-    let size = ghostty_surface_size(surface)
-    let cols = max(1, Int(size.columns))
-    let rows = max(1, Int(size.rows))
-    emitResize(cols: cols, rows: rows)
   }
 
   private func emitEstimatedResize() {
@@ -845,8 +905,8 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate, UIEditMenuInte
     ghostty_app_keyboard_changed(app)
   }
 
-  private func configureIOSurfaceLayers() {
-    let targetBounds = CGRect(origin: .zero, size: terminalViewport.bounds.size)
+  private func configureIOSurfaceLayers(size: CGSize) {
+    let targetBounds = CGRect(origin: .zero, size: size)
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     terminalViewport.layer.sublayers?.forEach { sublayer in

@@ -41,35 +41,46 @@ export const cachedFunction = <A extends Array<any>, B, E, R>(
   fn: (...args: A) => Effect.Effect<B, E, R>,
   options?: CachedFunctionOptions<A>,
 ): Effect.Effect<(...args: A) => Effect.Effect<B, E, R>> =>
-  Effect.sync(() => {
-    const keyFn = options?.key ?? JSON.stringify;
-    const cache = new Map<string, Deferred.Deferred<B, E>>();
+  Effect.sync(() => makeCachedFunction(fn, options));
 
-    return (...args: A): Effect.Effect<B, E, R> =>
-      Effect.suspend(() => {
-        const cacheKey = keyFn(args);
-        const existing = cache.get(cacheKey);
+/**
+ * {@link cachedFunction} for callers that own the cache's lifetime outside an
+ * Effect, such as a `Context.Reference` default.
+ */
+export const makeCachedFunction = <A extends Array<any>, B, E, R>(
+  fn: (...args: A) => Effect.Effect<B, E, R>,
+  options?: CachedFunctionOptions<A>,
+): ((...args: A) => Effect.Effect<B, E, R>) => {
+  const keyFn = options?.key ?? JSON.stringify;
+  const cache = new Map<string, Deferred.Deferred<B, E>>();
 
-        // If there's already a deferred for this key, wait on it
-        if (existing) {
-          return Deferred.await(existing);
-        }
+  return (...args: A): Effect.Effect<B, E, R> =>
+    Effect.suspend(() => {
+      const cacheKey = keyFn(args);
+      const existing = cache.get(cacheKey);
 
-        // Create a new deferred and store it
-        return Effect.gen(function* () {
+      // If there's already a deferred for this key, wait on it
+      if (existing) {
+        return Deferred.await(existing);
+      }
+
+      // Create a new deferred and store it. Only the call itself is
+      // interruptible, so an interrupted first caller still settles its
+      // waiters and evicts the key instead of leaving it pending forever.
+      return Effect.uninterruptibleMask((restore) =>
+        Effect.gen(function* () {
           const deferred = yield* Deferred.make<B, E>();
           cache.set(cacheKey, deferred);
 
-          // Execute the effect and complete the deferred
-          const exit = yield* Effect.exit(fn(...args));
+          const exit = yield* Effect.exit(restore(fn(...args)));
           yield* Deferred.done(deferred, exit);
 
           if (exit._tag === "Failure") {
             cache.delete(cacheKey);
           }
 
-          // Return the result
           return yield* exit;
-        });
-      });
-  });
+        }),
+      );
+    });
+};

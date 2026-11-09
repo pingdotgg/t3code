@@ -1,6 +1,7 @@
 import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
+  withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "./session";
@@ -30,7 +31,7 @@ import * as Cause from "effect/Cause";
 import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { appAtomRegistry } from "./atom-registry";
 import { orchestrationEnvironment } from "./orchestration";
@@ -148,14 +149,22 @@ export function useComposerPullRequestSearch(input: {
       : null,
   );
   const entries = (() => {
-    if (!ready) return [];
-    if (numeric) {
+    if (input.query === null || input.projectId === null || input.repository === null) return [];
+    if (/^\d*$/.test(input.query)) {
       return filterComposerPullRequestMatches({
-        entries: [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])],
+        entries: ready ? [...(exact.data ? [exact.data] : []), ...(list.data?.entries ?? [])] : [],
         linked,
-        projectId: input.projectId!,
-        repository: input.repository!,
-        query: query ?? "",
+        projectId: input.projectId,
+        repository: input.repository,
+        query: input.query,
+        limit: 20,
+      });
+    }
+    if (!ready) {
+      return withLinkedComposerPullRequestsFirst({
+        matches: [],
+        linked,
+        query: input.query,
         limit: 20,
       });
     }
@@ -170,9 +179,14 @@ export function useComposerPullRequestSearch(input: {
     );
     const unique = new Map<number, (typeof found)[number]>();
     for (const entry of found) if (!unique.has(entry.number)) unique.set(entry.number, entry);
-    return [...unique.values()]
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, 20);
+    return withLinkedComposerPullRequestsFirst({
+      matches: [...unique.values()].sort((left, right) =>
+        right.updatedAt.localeCompare(left.updatedAt),
+      ),
+      linked,
+      query: query ?? "",
+      limit: 20,
+    });
   })();
   return {
     entries,
@@ -285,26 +299,33 @@ export function usePaginatedBranches(target: VcsRefTarget) {
     cursors: INITIAL_BRANCH_CURSORS,
   });
   const cursors = pagination.targetKey === targetKey ? pagination.cursors : INITIAL_BRANCH_CURSORS;
-  const pageAtoms =
-    target.environmentId !== null && target.cwd !== null
-      ? cursors.map((cursor) =>
-          vcsEnvironment.listRefs({
-            environmentId: target.environmentId!,
-            input: {
-              cwd: target.cwd!,
-              ...(query.length > 0 ? { query } : {}),
-              ...(cursor === undefined ? {} : { cursor }),
-              limit: VCS_REF_LIST_LIMIT,
-            },
-          }),
-        )
-      : [];
-  const pagesAtom = Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
-    Atom.withLabel(`mobile:vcs-ref-pages:${targetKey ?? "empty"}`),
+  const pageAtoms = useMemo(
+    () =>
+      target.environmentId !== null && target.cwd !== null
+        ? cursors.map((cursor) =>
+            vcsEnvironment.listRefs({
+              environmentId: target.environmentId!,
+              input: {
+                cwd: target.cwd!,
+                ...(query.length > 0 ? { query } : {}),
+                ...(cursor === undefined ? {} : { cursor }),
+                limit: VCS_REF_LIST_LIMIT,
+              },
+            }),
+          )
+        : [],
+    [target.environmentId, target.cwd, query, cursors],
+  );
+  const pagesAtom = useMemo(
+    () =>
+      Atom.make((get) => pageAtoms.map((atom) => get(atom))).pipe(
+        Atom.withLabel(`mobile:vcs-ref-pages:${targetKey ?? "empty"}`),
+      ),
+    [pageAtoms, targetKey],
   );
   const results = useAtomValue(pagesAtom);
   const values = results.flatMap((result) => {
-    const value = Option.getOrNull(AsyncResult.value(result));
+    const value = AsyncResult.getOrElse(result, () => null);
     return value === null ? [] : [value];
   });
   const refs = new Map<string, VcsRef>();

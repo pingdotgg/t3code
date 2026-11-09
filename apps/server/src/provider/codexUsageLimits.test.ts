@@ -128,6 +128,29 @@ describe("codexRateLimitsToLimits", () => {
 });
 
 describe("codexRateLimitsToUpdate", () => {
+  it("does not republish cached windows over a newer account probe", () => {
+    const cached = {
+      primary: { usedPercent: 0, resetsAt: 1_784_000_000, windowDurationMins: 300 },
+      secondary: { usedPercent: 20, resetsAt: 1_784_500_000, windowDurationMins: 10080 },
+    };
+    expect(codexRateLimitsToUpdate(cached)?.windows).toHaveLength(2);
+    expect(codexRateLimitsToUpdate(structuredClone(cached), cached)).toBeUndefined();
+
+    const changed = { ...cached, secondary: { ...cached.secondary, usedPercent: 21 } };
+    expect(codexRateLimitsToUpdate(changed, cached)?.windows.map((window) => window.id)).toEqual([
+      "secondary",
+    ]);
+    expect(codexRateLimitsToUpdate({ primary: cached.primary }, cached)).toBeUndefined();
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, resetsAt: 1_784_001_000 } }, cached)
+        ?.windows,
+    ).toHaveLength(1);
+    expect(
+      codexRateLimitsToUpdate({ primary: { ...cached.primary, usedPercent: 76 } }, cached)
+        ?.windows[0]?.usedPercent,
+    ).toBe(76);
+  });
+
   it("carries only the windows the notification names", () => {
     expect(
       codexRateLimitsToUpdate({

@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
@@ -111,7 +112,7 @@ export function useAcpRegistrySearch(environmentId: EnvironmentId, enabled: bool
         return;
       }
       if (!isAtomCommandInterrupted(result)) {
-        setPrepareError(errorMessage(squashAtomCommandFailure(result)));
+        pipe(squashAtomCommandFailure(result), errorMessage, setPrepareError);
       }
     },
   };

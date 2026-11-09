@@ -9,12 +9,25 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import { setMarkdownTaskChecked } from "./files/filePreviewMode";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { HostImageUrlContext } from "./chat/hostImageUrl";
 
 const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
   filesystemMetadata: vi.fn(),
 }));
+const parsedSources = vi.hoisted(() => [] as string[]);
+vi.mock(import("mdast-util-from-markdown"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    fromMarkdown: ((source: string, ...rest: never[]) => {
+      parsedSources.push(String(source));
+      return (actual.fromMarkdown as (...args: unknown[]) => unknown)(source, ...rest);
+    }) as typeof actual.fromMarkdown,
+  };
+});
+
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
   ...(await original()),
   useAtomQueryRunner: ((family: unknown) =>
@@ -61,6 +74,22 @@ vi.mock(import("./chat/MermaidDiagram"), async (original) => {
   };
 });
 
+const appearance = vi.hoisted(() => ({
+  value: "light" as "light" | "dark",
+  listeners: new Set<() => void>(),
+}));
+vi.mock(import("../hooks/useTheme"), async (original) => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    appearance.listeners.add(listener);
+    return () => appearance.listeners.delete(listener);
+  };
+  return {
+    ...(await original()),
+    useRenderedAppearance: () => useSyncExternalStore(subscribe, () => appearance.value),
+  };
+});
+
 const settingsOverrides = vi.hoisted(() => ({ mathRenderingEnabled: false }));
 vi.mock(import("../hooks/useSettings"), async (original) => {
   const actual = await original();
@@ -98,6 +127,8 @@ it("keeps compact audio playback loaded across signed URL renewals", async () =>
 });
 
 function setup() {
+  appearance.value = "light";
+  parsedSources.length = 0;
   settingsOverrides.mathRenderingEnabled = false;
   renderDiagram.mockReset();
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -120,6 +151,78 @@ it("shows unavailable audio when a workspace embed has no thread", async () => {
   expect(screen.container.textContent).toContain("Audio unavailable");
   expect(screen.container.textContent).not.toContain("Loading audio");
   expect(screen.container.querySelector("audio")).toBeNull();
+});
+
+it("loads a host image through the page's own route when there is no environment", async () => {
+  setup();
+  const pixel =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  const hostImageUrl = vi.fn((_path: string) => pixel);
+  await using screen = await render(
+    <HostImageUrlContext value={hostImageUrl}>
+      <ChatMarkdown cwd={undefined} text="![Shot](</work/my shot.png>)" />
+    </HostImageUrlContext>,
+  );
+  await expect.element(screen.getByAltText("Shot")).toHaveAttribute("src", pixel);
+  expect(new Set(hostImageUrl.mock.calls.map(([path]) => path))).toEqual(
+    new Set(["/work/my shot.png"]),
+  );
+});
+
+it("loads the <picture> source for the current theme through the image route", async () => {
+  setup();
+  const pixel =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
+  const hostImageUrl = (path: string) => `${pixel}#${path}`;
+  await using screen = await render(
+    <HostImageUrlContext value={hostImageUrl}>
+      <ChatMarkdown
+        cwd={undefined}
+        text={
+          '<picture><source media="(prefers-color-scheme: dark)" srcset="/work/dark.png"><img src="/work/light.png" alt="Shot"></picture>'
+        }
+      />
+    </HostImageUrlContext>,
+  );
+  await expect
+    .element(screen.getByAltText("Shot"))
+    .toHaveAttribute("src", `${pixel}#/work/light.png`);
+
+  await act(() => {
+    appearance.value = "dark";
+    for (const listener of appearance.listeners) listener();
+  });
+  await expect
+    .element(screen.getByAltText("Shot"))
+    .toHaveAttribute("src", `${pixel}#/work/dark.png`);
+});
+
+it("reuses the parse of a streaming reply's finished blocks when it remounts", async () => {
+  setup();
+  const message = (
+    <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
+  );
+  {
+    await using _first = await render(message);
+  }
+  await using screen = await render(message);
+  await expect.element(screen.getByText("Still growing")).toBeVisible();
+  expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
+});
+
+it("reuses the parse of a remounted message that has stable extra plugins", async () => {
+  setup();
+  const parsed = vi.fn();
+  const countingPlugins = [() => () => void parsed()];
+  const message = (
+    <ChatMarkdown cwd="/tmp/project" text="Cached text" extraRemarkPlugins={countingPlugins} />
+  );
+  {
+    await using _first = await render(message);
+  }
+  await using screen = await render(message);
+  await expect.element(screen.getByText("Cached text")).toBeVisible();
+  expect(parsed).toHaveBeenCalledTimes(1);
 });
 
 describe("ChatMarkdown favicon privacy", () => {
@@ -217,7 +320,29 @@ describe("ChatMarkdown streaming", () => {
     await act(async () => original.click());
     expect(editedText).toBe("- [ ] A longer first task\n- [x] Second");
     await vi.waitFor(() => expect(checkboxes()[1]!.checked).toBe(true));
+    await rerender(message("- [ ] A longer first task\n- [ ] Second"));
+    expect(checkboxes()[1]).toBe(original);
+    expect(checkboxes()[1]!.checked).toBe(false);
   });
+
+  it.each([
+    ["read-only", undefined],
+    ["editable", () => {}],
+  ])(
+    "unchecks the remaining %s task when the checked row above it is removed",
+    async (_, onTaskListChange) => {
+      setup();
+      const message = (text: string) => (
+        <ChatMarkdown cwd="/tmp/project" text={text} onTaskListChange={onTaskListChange} />
+      );
+      await using screen = await render(message("- [x] Completed item\n- [ ] Pending item"));
+      await screen.rerender(message("- [ ] Pending item"));
+      const checkboxes =
+        screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+      expect(checkboxes).toHaveLength(1);
+      expect(checkboxes[0]!.checked).toBe(false);
+    },
+  );
 });
 
 describe("ChatMarkdown workspace file opens", () => {
@@ -308,6 +433,67 @@ describe("ChatMarkdown headings", () => {
       "user-content-install",
       "user-content-install-2",
     ]);
+  });
+});
+
+describe("ChatMarkdown inline code selection", () => {
+  it("selects the whole inline code span on double-click, but only a word in fenced code", async () => {
+    setup();
+    await using screen = await renderText(
+      "Run `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
+    );
+    await userEvent.dblClick(screen.getByText("migration-gate --dry-run"));
+    expect(window.getSelection()?.toString()).toBe("migration-gate --dry-run");
+
+    window.getSelection()?.removeAllRanges();
+    const fenced = screen.container.querySelector("pre code")!;
+    await userEvent.dblClick(fenced, { position: { x: 4, y: 4 } });
+    expect(window.getSelection()?.toString()).toBe("fenced");
+  });
+});
+
+describe("ChatMarkdown file chip tooltips", () => {
+  it("wraps a long path so its file name stays inside the tooltip", async () => {
+    setup();
+    const path =
+      "/tmp/project/packages/client-runtime/src/state/generated/environment-connection-handshake-retry-policy-fixtures.ts";
+    await using screen = await renderText(`See [the fixtures](${path}).`);
+
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const tooltip = page.getByText(path);
+    await expect.element(tooltip).toBeVisible();
+
+    const popup = tooltip.element().closest("[data-side]")!;
+    const pathEnd = document.createRange();
+    pathEnd.selectNodeContents(tooltip.element());
+    expect(pathEnd.getBoundingClientRect().right).toBeLessThanOrEqual(
+      popup.getBoundingClientRect().right,
+    );
+  });
+});
+
+describe("ChatMarkdown editor deep links", () => {
+  const hrefs = (container: HTMLElement) =>
+    [...container.querySelectorAll("a")].map((link) => link.getAttribute("href"));
+
+  it("keeps local editor file links", async () => {
+    setup();
+    await using screen = await renderText(
+      "[file.md line 3](cursor://file/Users/me/repo/file.md:3) and [same](vscode://file/Users/me/repo/file.md:3:7)",
+    );
+    expect(hrefs(screen.container)).toEqual([
+      "cursor://file/Users/me/repo/file.md:3",
+      "vscode://file/Users/me/repo/file.md:3:7",
+    ]);
+  });
+
+  it("still drops other editor links and unknown schemes", async () => {
+    setup();
+    await using screen = await renderText(
+      "[prompt](cursor://anysphere.cursor-deeplink/prompt?text=hi) [user](cursor://me@file/Users/me/file.md) [unknown](foo://file/Users/me/file.md)",
+    );
+    expect(screen.container.innerHTML).not.toContain("://");
+    expect(hrefs(screen.container).filter(Boolean)).toEqual([]);
   });
 });
 

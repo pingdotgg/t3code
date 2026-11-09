@@ -10,7 +10,6 @@ import type {
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
 import { getClientSettings } from "../../hooks/useSettings";
@@ -50,7 +49,7 @@ export function revealServerTabs(
         (surface) => surface.kind === "preview" && surface.resourceId === session.tabId,
       );
     if (surface && force) {
-      useRightPanelStore.getState().activateSurface(threadRef, surface.id);
+      useRightPanelStore.getState().revealSurface(threadRef, surface.id);
     } else if (!surface) {
       usePreviewMiniPlayerStore.getState().open(threadRef, browserMiniPlayerSource(session.tabId));
     }
@@ -222,7 +221,7 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
   return appAtomRegistry.subscribe(
     deviceEnvironment.state({ environmentId, input: {} }),
     (result) => {
-      const state = Option.getOrNull(AsyncResult.value(result));
+      const state = AsyncResult.getOrElse(result, () => null);
       if (state === null) return;
       applyDeviceSnapshot(environmentId, state, {
         sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
