@@ -92,6 +92,12 @@ export class ProviderRegistry extends Context.Service<
       readonly fresh?: boolean | undefined;
     }) => Effect.Effect<void>;
 
+    /**
+     * For an opened model picker: refetch a model manifest older than a few
+     * minutes, and probe providers only when it has models they have not seen.
+     */
+    readonly refreshModelCatalog: Effect.Effect<void>;
+
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
       provider: ProviderDriverKind,
@@ -1069,6 +1075,14 @@ export const layer = Layer.effect(
       );
     });
 
+    // Background fetches replace the manifest without a probe, so track what the last probe saw.
+    const probedManifestUpdatedAt = yield* Ref.make((yield* manifestService.current).updatedAt);
+    const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
+      const { updatedAt } = yield* manifestService.refreshOnDemand;
+      if ((yield* Ref.getAndSet(probedManifestUpdatedAt, updatedAt)) === updatedAt) return;
+      yield* refreshAll().pipe(Effect.catchCause(recoverRefreshFailure));
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1081,6 +1095,7 @@ export const layer = Layer.effect(
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
       invalidateModelCaches,
+      refreshModelCatalog: refreshModelCatalog(),
       getProviderMaintenanceCapabilitiesForInstance,
       setProviderMaintenanceActionState,
       get streamChanges() {
