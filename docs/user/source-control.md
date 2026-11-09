@@ -329,6 +329,9 @@ watch already reported; unlinking the pull request clears that. Subagents cannot
 it yourself, use the row menu in the **Linked pull requests** panel. In the thread details card, a
 watched pull request shows an eye; click it to stop watching.
 
+To tell the agent how to handle these wakes, write **Pull request watch instructions** in Settings →
+Source control → Repositories. Every wake ends with them. A project can override them with its own.
+
 A watched thread counts as working between wakes, so it stays in the **Working** section and does
 not auto-settle. Agents stop watching when they hand the work back to you, and the thread then
 returns to your inbox.
