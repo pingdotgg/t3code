@@ -3139,6 +3139,7 @@ it.effect(
                 isDraft: true,
                 reviewDecision: "approved",
                 checksState: "passing",
+                isInMergeQueue: true,
               }),
             getChangeRequest: () =>
               Effect.succeed({
@@ -3146,6 +3147,7 @@ it.effect(
                 deletions: 3,
                 changedFiles: 5,
                 mergeability: "conflicting",
+                isInMergeQueue: false,
               }),
           }),
         ],
@@ -3159,6 +3161,7 @@ it.effect(
       assert.strictEqual(summary.deletions, 3);
       assert.strictEqual(summary.changedFiles, 5);
       assert.strictEqual(summary.mergeability, "conflicting");
+      assert.strictEqual(summary.isInMergeQueue, false);
       assert.strictEqual(summary.reviewDecision, "approved");
       assert.strictEqual(summary.checksState, "passing");
     }),

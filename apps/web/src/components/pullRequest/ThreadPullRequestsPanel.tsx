@@ -123,6 +123,7 @@ function LinkRowImpl({
           number: link.number,
           state: snapshot.state,
           isDraft: snapshot.isDraft,
+          isInMergeQueue: snapshot.isInMergeQueue,
           ...(link.stack === null ? {} : { stack: link.stack }),
         }
       : null;

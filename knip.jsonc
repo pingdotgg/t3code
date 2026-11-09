@@ -15,6 +15,8 @@
       ],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
+      // Workspace typecheck scripts invoke the binary; knip does not trace those.
+      "ignoreDependencies": ["@effect/tsgo"],
     },
     "scripts": {
       // Knip loads its preprocessor through a CLI option; native verification and
@@ -117,10 +119,12 @@
         "src/features/browser/preview-stream.browser.ts!",
       ],
       // Fonts are configured as asset paths; Expo autolinks the native packages.
+      // `generate:nitro` runs nitrogen by script name; knip does not trace it.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
+        "nitrogen",
       ],
     },
     "apps/mobile/modules/t3-highlights": {
