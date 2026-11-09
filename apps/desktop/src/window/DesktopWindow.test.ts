@@ -1176,7 +1176,7 @@ describe("DesktopWindow", () => {
         contextMenu(
           { preventDefault: vi.fn() },
           {
-            linkURL: "mailto:restaurant@example.com?subject=Hi",
+            linkURL: "mailto:restaurant%40example.com?subject=Hi",
             misspelledWord: "",
             dictionarySuggestions: [],
             mediaType: "none",
