@@ -28,10 +28,9 @@ export function materializeReplayTranscriptRuntimeInstructions(
   };
   // Grok's flavor sets `supportsCompaction`; Kiro compacts through its own request instead.
   const compactsThroughPrompt = runtime.driver === "grok";
-  // The ACP adapter resends the runtime notes until a prompt that carried that exact text
-  // succeeds. Cancelled, refused, and failed prompts do not establish delivery. A new runtime and
-  // a compaction reset it. Copilot's compaction events and compactions routed to a child session
-  // are not mirrored here; no recording has them yet.
+  // Like the adapter: notes go out until a prompt carrying that text succeeds, and a new runtime
+  // or compaction resets that. Not mirrored, as no recording has them: Copilot compaction events,
+  // child-session compactions, and ACP v2 prompts that settle through an idle `state_update`.
   const deliveredNotes = new Map<unknown, string>();
   // A prompt's success records delivery only if no compaction completed after it was sent.
   const compactionCounts = new Map<unknown, number>();
@@ -204,7 +203,8 @@ export function materializeReplayTranscriptRuntimeInstructions(
           recordedNotes === undefined && deliveredNotes.get(promptSessionId) !== expected;
         pendingPrompt = {
           sessionId: promptSessionId,
-          notes: recordedNotes ?? (resend ? expected : undefined),
+          // Recorders normalize the notes they keep, so a recorded block stands for this model's.
+          notes: recordedNotes !== undefined || resend ? expected : undefined,
           compact: false,
           compactionsAtSend: compactionCounts.get(promptSessionId) ?? 0,
         };

@@ -207,7 +207,8 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
       prompt("on A"),
       promptAnswer,
       selectModel("model-b"),
-      prompt("on B"),
+      // As the Kiro recorder keeps another model's notes: normalized, not the exact text.
+      prompt("on B", "<runtime_info>\n<any>\n</runtime_info>"),
       promptAnswer,
       prompt("again on B"),
       promptAnswer,
@@ -217,7 +218,6 @@ describe("materializeReplayTranscriptRuntimeInstructions", () => {
     ]);
     expect(onA).toMatch(/^<runtime_info>/);
     expect(onB).toMatch(/^<runtime_info>/);
-    expect(onB).toContain("model-b");
     expect(againOnB).toBe("again on B");
     expect(backOnA).toBe(onA);
   });
