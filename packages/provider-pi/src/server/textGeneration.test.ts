@@ -177,7 +177,7 @@ it.effect.each([
     models: [],
     sent: { provider: "custom", modelId: "org/model" },
   },
-])("sends Pi the provider and model ID it listed for $name", ({ model, models, sent }) =>
+])("sends Pi the resolved provider and model ID for $name", ({ model, models, sent }) =>
   Effect.gen(function* () {
     const result = yield* selectModel(model, models);
 
@@ -194,6 +194,7 @@ it.effect("refuses a model slug that matches two listed Pi models", () =>
     ]);
 
     assert.include(error?.detail, "Pi lists more than one model as 'a/b/c'");
+    assert.notInclude(error?.detail ?? "", "--no-extensions");
     assert.isUndefined(sent);
   }),
 );

@@ -73,11 +73,15 @@ export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
   request: (record: PiRpcRecord) => Effect.Effect<unknown, PiRpcError | PiRpcTimeoutError>,
   slug: string,
 ) {
-  const available = yield* request({ type: "get_available_models" }).pipe(
-    Effect.orElseSucceed(() => undefined),
-  );
+  const available = yield* request({ type: "get_available_models" });
   const listed = piRecordField(available, "models");
-  const matches = (Array.isArray(listed) ? listed : []).flatMap((model) => {
+  if (!Array.isArray(listed)) {
+    return yield* new PiRpcError({
+      operation: "get_available_models",
+      detail: "Invalid model catalog",
+    });
+  }
+  const matches = listed.flatMap((model) => {
     const provider = piRecordString(model, "provider");
     const modelId = piRecordString(model, "id");
     return provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug
@@ -87,14 +91,14 @@ export const setPiModel = Effect.fn("PiRpc.setPiModel")(function* (
   const providers = [...new Set(matches.map((match) => match.provider))];
   if (providers.length > 1) {
     return yield* new PiRpcError({
-      operation: "set_model",
+      operation: "resolve_model",
       detail: `Pi lists more than one model as '${slug}' (providers ${providers.map((provider) => `'${provider}'`).join(", ")})`,
     });
   }
   const identity = matches[0] ?? parsePiModelSlug(slug);
   if (identity === null) {
     return yield* new PiRpcError({
-      operation: "set_model",
+      operation: "resolve_model",
       detail: `Pi model '${slug}' must use provider/model format`,
     });
   }
