@@ -1,4 +1,6 @@
 // Pi frames are LF-delimited with trailing CR stripped; readline also splits U+2028/U+2029 and corrupts them.
+import * as NodeUtil from "node:util";
+
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -150,13 +152,60 @@ function summarizePiError(error: unknown): string {
     : text;
 }
 
-// Pi 0.84+ may exit 1 during import without any protocol output.
-function describePiStdoutClosure(exitCode: number | undefined): string {
-  if (exitCode === undefined || !Number.isFinite(exitCode)) {
-    return "pi process closed stdout";
-  }
-  return `pi process exited with code ${exitCode}`;
+const PI_STDERR_TAIL_MAX_CHARS = 8_192;
+const PI_STDERR_LINE_MAX_CHARS = 240;
+const PI_STDERR_MAX_STACK_FRAMES = 3;
+// `Error: …`, `TypeError: …`, `Error [ERR_MODULE_NOT_FOUND]: …`, `fatal: …`
+const PI_STDERR_ERROR_LINE = /^(?:[a-z]*error|fatal)(?: ?\[[^\]]+\])?:\s*\S/i;
+const PI_STDERR_SECRET_KEY =
+  /((?<![\w-])[\w-]*(?:access[_-]?token|api[_-]?key|authorization|credential|password|secret|token)\b\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu;
+
+function redactPiStderrLine(line: string): string {
+  const redacted = line
+    .replace(/(\bhttps?:\/\/)[^\s/@]+@/giu, "$1[redacted]@")
+    .replace(/(\bhttps?:\/\/[^\s?#]+)[?#]\S*/giu, "$1")
+    .replace(/\b(Bearer|Basic)\s+[^\s,;]+/giu, "$1 [redacted]")
+    .replace(PI_STDERR_SECRET_KEY, "$1[redacted]")
+    .replace(/\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]+|xox[a-z]-[A-Za-z0-9-]+)/gu, "[redacted]");
+  return redacted.length <= PI_STDERR_LINE_MAX_CHARS
+    ? redacted
+    : `${redacted.slice(0, PI_STDERR_LINE_MAX_CHARS - 1)}…`;
 }
+
+/**
+ * The last error line of Pi's stderr and the stack frames under it, redacted.
+ * Other stderr can carry prompts or debug output, so it is never surfaced.
+ */
+function piStderrExcerpt(tail: string): string | undefined {
+  const lines = NodeUtil.stripVTControlCharacters(tail)
+    .split(/\r?\n/)
+    .map((line) => line.trim());
+  const errorIndex = lines.findLastIndex((line) => PI_STDERR_ERROR_LINE.test(line));
+  if (errorIndex < 0) return undefined;
+  const frames = lines.slice(errorIndex + 1, errorIndex + 1 + PI_STDERR_MAX_STACK_FRAMES);
+  const stackDepth = frames.findIndex((line) => !line.startsWith("at "));
+  return [lines[errorIndex] ?? "", ...frames.slice(0, stackDepth < 0 ? undefined : stackDepth)]
+    .map(redactPiStderrLine)
+    .join("\n");
+}
+
+// Pi 0.84+ may exit 1 during import without any protocol output.
+function describePiStdoutClosure(exitCode: number | undefined, stderrTail: string): string {
+  const closure =
+    exitCode === undefined || !Number.isFinite(exitCode)
+      ? "pi process closed stdout"
+      : `pi process exited with code ${exitCode}`;
+  const excerpt = piStderrExcerpt(stderrTail);
+  return excerpt === undefined ? closure : `${closure}\n${excerpt}`;
+}
+
+// Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
+const awaitBriefly = <A, E>(effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    Effect.timeoutOption(Duration.millis(250)),
+    Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
+    Effect.orElseSucceed(() => Option.none<A>()),
+  );
 
 function parsePiRecord(line: string): PiRpcRecord | undefined {
   try {
@@ -254,15 +303,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   const exitDeferred = yield* Deferred.make<number, PiRpcError>();
   let nextRequestId = 0;
 
+  /** Returns whether this error is the one that brought the transport down. */
   const failTransport = Effect.fn("PiRpc.failTransport")(function* (error: PiRpcError) {
     const claimed = yield* Deferred.fail(transportDown, error);
-    if (!claimed) return;
+    if (!claimed) return false;
     for (const [key, pending] of pendingRequests) {
       pendingRequests.delete(key);
       yield* Deferred.fail(pending.deferred, error);
     }
     yield* Queue.fail(outgoing, error);
     yield* Queue.fail(events, error);
+    return true;
   });
 
   const routeRecord =
@@ -304,6 +355,21 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     Effect.forkIn(scope),
   );
 
+  // Keep only a bounded tail; it is read once, when stdout closes unexpectedly.
+  let stderrTail = "";
+  const stderrDrained = yield* Deferred.make<void>();
+  yield* child.stderr.pipe(
+    Stream.decodeText(),
+    Stream.runForEach((chunk) =>
+      Effect.sync(() => {
+        stderrTail = `${stderrTail}${chunk}`.slice(-PI_STDERR_TAIL_MAX_CHARS);
+      }),
+    ),
+    Effect.ignore,
+    Effect.ensuring(Deferred.succeed(stderrDrained, undefined)),
+    Effect.forkIn(scope),
+  );
+
   yield* Effect.gen(function* () {
     const frame = makeJsonlFramer();
     yield* child.stdout.pipe(
@@ -338,40 +404,17 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       onSuccess: Effect.fnUntraced(function* () {
         // Claim stdout-close diagnosis before waiting so broken stdin cannot replace the exit error.
         diagnosingStdoutClose = true;
-        const polled = yield* Deferred.poll(exitDeferred);
-        const maybeExitCode = Option.isSome(polled)
-          ? yield* polled.value.pipe(
-              Effect.asSome,
-              Effect.orElseSucceed(() => Option.none<number>()),
-            )
-          : yield* Deferred.await(exitDeferred).pipe(
-              Effect.timeoutOption(Duration.millis(250)),
-              // Stdout-close waits need wall time; TestClock would strand Stop-with-restart without an exit.
-              Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()),
-              Effect.orElseSucceed(() => Option.none<number>()),
-            );
-        return yield* failTransport(
-          new PiRpcError({
-            operation: "read",
-            detail: describePiStdoutClosure(
-              Option.isSome(maybeExitCode) ? maybeExitCode.value : undefined,
-            ),
-          }),
+        // Extension children can inherit stderr and hold it open after Pi exits.
+        const [maybeExitCode] = yield* Effect.all(
+          [awaitBriefly(Deferred.await(exitDeferred)), awaitBriefly(Deferred.await(stderrDrained))],
+          { concurrency: "unbounded" },
         );
+        const detail = describePiStdoutClosure(Option.getOrUndefined(maybeExitCode), stderrTail);
+        if (yield* failTransport(new PiRpcError({ operation: "read", detail }))) {
+          yield* Effect.logWarning("Pi process closed stdout.", { detail });
+        }
       }),
     }),
-    Effect.forkIn(scope),
-  );
-
-  yield* child.stderr.pipe(
-    Stream.decodeText(),
-    Stream.runForEach((chunk) =>
-      chunk.trim().length === 0
-        ? Effect.void
-        : // Log stderr length only; unbounded text may contain credentials or prompts.
-          Effect.logDebug("pi stderr", { stderrLength: chunk.length }),
-    ),
-    Effect.ignore,
     Effect.forkIn(scope),
   );
 
