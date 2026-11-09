@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -14,7 +15,7 @@ const target = { host: "github.com", repository: "pingdotgg/t3code", number: 15 
 const sse = (...frames: ReadonlyArray<readonly [string, string]>) =>
   frames.map(([event, data]) => `event: ${event}\ndata: ${data}\n\n`).join("");
 
-function fakeRest(subscribe: (count: number) => Effect.Effect<string>) {
+function fakeRest(subscribe: (count: number) => Effect.Effect<string>, signedIn = true) {
   const posts: Array<unknown> = [];
   const deletes: Array<string> = [];
   const rest = GitHubRest.GitHubRest.of({
@@ -42,7 +43,16 @@ function fakeRest(subscribe: (count: number) => Effect.Effect<string>) {
           ? { token: Redacted.make("user-token"), fingerprint: "user", source: "gh" as const }
           : { token: Redacted.make("app-token"), fingerprint: "app", source: "app" as const },
       ),
-    appCredential: () => Effect.succeedNone,
+    appCredential: () =>
+      Effect.succeed(
+        signedIn
+          ? Option.some({
+              token: Redacted.make("app-token"),
+              fingerprint: "app",
+              source: "app" as const,
+            })
+          : Option.none(),
+      ),
   });
   return { rest, posts, deletes };
 }
@@ -101,5 +111,24 @@ it.effect("follows a pull request across a refused app token, reconnects, and re
       ],
     });
     assert.deepEqual(deletes, ["event-subscriptions/1", "event-subscriptions/2"]);
+  }),
+);
+
+it.effect("leaves users without the app sign-in, and other hosts, to polling", () =>
+  Effect.gen(function* () {
+    const httpClient = HttpClient.make(() => Effect.die("no stream without a subscription"));
+    const signedOut = fakeRest(subscription, false);
+    assert.equal(
+      yield* Stream.runCount(GitHubPullRequestEvents.make(signedOut.rest, httpClient)(target)),
+      0,
+    );
+
+    const signedIn = fakeRest(subscription);
+    const enterprise = { ...target, host: "ghe.example.com" };
+    assert.equal(
+      yield* Stream.runCount(GitHubPullRequestEvents.make(signedIn.rest, httpClient)(enterprise)),
+      0,
+    );
+    assert.equal(signedOut.posts.length + signedIn.posts.length, 0);
   }),
 );

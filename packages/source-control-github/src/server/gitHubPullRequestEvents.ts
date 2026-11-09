@@ -228,6 +228,12 @@ export const make = (rest: GitHubRest.GitHubRest["Service"], httpClient: HttpCli
         ),
       );
 
-    return subscribed();
+    // Event streams are a GitHub preview, so only the app sign-in, itself opt-in, uses them.
+    return Stream.unwrap(
+      rest.appCredential(target.host).pipe(
+        Effect.map((app) => (Option.isSome(app) ? subscribed() : Stream.empty)),
+        Effect.orElseSucceed(() => Stream.empty),
+      ),
+    );
   };
 };
