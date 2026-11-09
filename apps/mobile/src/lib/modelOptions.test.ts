@@ -576,6 +576,22 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
+
+    const option = (providerKey: string, model: string, isDefault = false) =>
+      ({
+        providerKey,
+        selection: { instanceId: ProviderInstanceId.make(providerKey), model },
+        isDefault,
+      }) as ModelOption;
+    const firstVisible = option("claudeAgent", "visible");
+    expect(
+      resolveNewTaskModelSelection({
+        draftSelection: null,
+        projectDefaultSelection: null,
+        stickySelection: null,
+        modelOptions: [firstVisible, option("codex", "default", true)],
+      }),
+    ).toBe(firstVisible.selection);
   });
 
   describe("project-aware enablement", () => {

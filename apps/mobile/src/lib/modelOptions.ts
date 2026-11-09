@@ -267,12 +267,17 @@ export function resolveNewTaskModelSelection(input: {
   readonly stickySelection: ModelSelection | null;
   readonly modelOptions: ReadonlyArray<ModelOption>;
 }): ModelSelection | null {
+  // Like web, the first available provider wins before its default model.
+  const first = input.modelOptions.find((option) => !option.isUnavailable);
+  const providerDefault = input.modelOptions.find(
+    (option) =>
+      option.providerKey === first?.providerKey && option.isDefault && !option.isUnavailable,
+  );
   return (
     input.draftSelection ??
     input.projectDefaultSelection ??
     input.stickySelection ??
-    input.modelOptions.find((option) => option.isDefault && !option.isUnavailable)?.selection ??
-    input.modelOptions.find((option) => !option.isUnavailable)?.selection ??
+    (providerDefault ?? first)?.selection ??
     null
   );
 }
