@@ -89,6 +89,17 @@ describe("closeLayoutTabByUser", () => {
     closeOtherLayoutTabsByUser(layout.tabOf(other)!.id);
     expect(layout.chats()).toEqual([other]);
   });
+
+  it.each([{ contents: [subagent, other] }, { contents: [parent, subagent, other] }])(
+    "closes a background subagent tab without opening or focusing its parent: $contents",
+    ({ contents }) => {
+      using layout = setup(contents);
+      const focused = selectFocusedTab(useLayoutStore.getState().layout);
+      closeLayoutTabByUser(layout.tabOf(subagent)!.id);
+      expect(selectFocusedTab(useLayoutStore.getState().layout)).toBe(focused);
+      expect(layout.chats()).toEqual(contents.filter((content) => content !== subagent));
+    },
+  );
 });
 
 describe("runInNewLayoutTab", () => {
