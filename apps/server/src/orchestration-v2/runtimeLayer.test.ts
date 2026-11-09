@@ -6150,6 +6150,88 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("keeps a model picked ahead of a queued agent message that names none", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make("runtime-layer-queued-agent-message-model-pick");
+      const pickedSelection = { ...modelSelection, model: "gpt-5.5" };
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        createdBy: "user",
+        creationSource: "web",
+        title: "Queued model pick",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const [key, selection] of [
+        ["active", modelSelection],
+        ["picked", pickedSelection],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:${key}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${key}`),
+          text: key,
+          attachments: [],
+          modelSelection: selection,
+          dispatchMode: { type: key === "active" ? "start_immediately" : "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      // What t3_thread_send dispatches: no model of its own.
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:agent`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:agent`),
+        text: "Message from another thread",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const [active, picked, agent] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.isDefined(active);
+      assert.isDefined(picked);
+      assert.isDefined(agent);
+      const now = yield* DateTime.now;
+      for (const runId of [active.id, picked.id]) {
+        const current = yield* orchestrator.getThreadProjection(threadId);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${runId}:completed`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: {
+                ...current.runs.find((run) => run.id === runId)!,
+                status: "completed",
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+      }
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const delivered = after.runs.find((run) => run.id === agent.id)!;
+      assert.equal(delivered.status, "starting");
+      assert.deepEqual(delivered.modelSelection, pickedSelection);
+      assert.deepEqual(after.thread.modelSelection, pickedSelection);
+    }),
+  );
+
   it.effect("keeps the queue after a user interrupts the active run", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
