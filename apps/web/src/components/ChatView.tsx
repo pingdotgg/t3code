@@ -3274,7 +3274,6 @@ export default function ChatView(props: ChatViewProps) {
           <header
             ref={threadPanelPopoverAnchorRef}
             data-chat-header
-            data-sidebar-slide-children=""
             className={cn(
               "relative z-10 bg-background md:pl-0",
               isElectron

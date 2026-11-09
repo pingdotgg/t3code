@@ -42,7 +42,7 @@ export function PaneNotch({ children }: { readonly children: ReactNode }) {
   const isMobile = useMediaQuery("max-md");
   return (
     <>
-      <span aria-hidden data-pane-notch-corner="" data-sidebar-slide-stay="" />
+      <span aria-hidden data-pane-notch-corner="" />
       <div
         data-pane-notch=""
         data-chrome-scope={isMobile ? undefined : ""}
