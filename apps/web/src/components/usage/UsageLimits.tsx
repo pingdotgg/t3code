@@ -242,25 +242,29 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
 export function useResetCredit(
   environmentId: EnvironmentId,
   input: ProviderConsumeResetCreditInput,
+  clears?: string,
 ) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  // The input is pinned when the dialog opens, so a refresh behind it cannot swap the credit spent.
-  const [confirmingInput, setConfirmingInput] = useState<ProviderConsumeResetCreditInput | null>(
-    null,
-  );
+  // Pinned when the dialog opens, so a refresh behind it cannot change where or what it spends.
+  const [pinned, setPinned] = useState<{
+    readonly environmentId: EnvironmentId;
+    readonly input: ProviderConsumeResetCreditInput;
+    readonly clears: string | undefined;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const confirming = confirmingInput !== null;
-  const setConfirming = (open: boolean) => setConfirmingInput(open ? input : null);
+  const confirming = pinned !== null;
+  const setConfirming = (open: boolean) =>
+    setPinned(open ? { environmentId, input, clears } : null);
 
   const redeem = async () => {
-    const pinned = confirmingInput ?? input;
-    setConfirmingInput(null);
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    const target = pinned ?? { environmentId, input };
+    setPinned(null);
+    if (!readEnvironmentScope(target.environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: pinned });
+    const result = await consume({ environmentId: target.environmentId, input: target.input });
     setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
@@ -273,7 +277,15 @@ export function useResetCredit(
     );
   };
 
-  return { canManageProviders, confirming, setConfirming, busy, status, redeem };
+  return {
+    canManageProviders,
+    confirming,
+    setConfirming,
+    confirmingClears: pinned?.clears,
+    busy,
+    status,
+    redeem,
+  };
 }
 
 /** Require confirmation because redemption spends credits. Mount outside popovers, which stack above
@@ -340,10 +352,8 @@ export function ResetCredits({
   readonly credits: ResetCreditsOffer;
   readonly now: number;
 }) {
-  const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
-    environmentId,
-    resetCreditInput(input, credits),
-  );
+  const { canManageProviders, confirming, setConfirming, confirmingClears, busy, status, redeem } =
+    useResetCredit(environmentId, resetCreditInput(input, credits), credits.clears);
   if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -368,7 +378,7 @@ export function ResetCredits({
         open={confirming}
         onOpenChange={setConfirming}
         onConfirm={() => void redeem()}
-        clears={credits.clears}
+        clears={confirmingClears}
         disabled={!canManageProviders}
       />
     </div>

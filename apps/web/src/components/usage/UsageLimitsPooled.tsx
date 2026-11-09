@@ -309,7 +309,11 @@ function RedeemableSegment({
   readonly redeemAt: NonNullable<LimitAccount["redeem"]>;
 }) {
   const credits = windowResetCredits(props.account.limits, props.window.id);
-  const redeem = useResetCredit(redeemAt.environmentId, resetCreditInput(redeemAt.input, credits));
+  const redeem = useResetCredit(
+    redeemAt.environmentId,
+    resetCreditInput(redeemAt.input, credits),
+    credits?.clears,
+  );
   return (
     <>
       <SegmentTriggers redeem={redeem} {...props} />
@@ -317,7 +321,7 @@ function RedeemableSegment({
         open={redeem.confirming}
         onOpenChange={redeem.setConfirming}
         onConfirm={() => void redeem.redeem()}
-        clears={credits?.clears}
+        clears={redeem.confirmingClears}
         disabled={!redeem.canManageProviders}
       />
       {/* The popover closed before the confirm, so progress and the outcome need a home outside it. */}
