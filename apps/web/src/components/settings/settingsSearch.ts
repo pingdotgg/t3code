@@ -1490,15 +1490,22 @@ export function searchSettings(
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
   const queryTokens = normalizedQuery.split(" ");
+  const terms = currentChangeRequestTerms();
 
   return settingsForThisPlatform(items)
-    .map((item) => ({ ...item, title: formatSettingsSearchTitle(item) }))
+    .map((item) => ({ ...item, title: formatSettingsSearchTitle(item, terms) }))
     .flatMap((item, index) => {
       const title = normalizeSearchText(item.title);
       const fields = [
         title,
-        normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to])),
-        ...(item.searchTerms ?? []).map(normalizeSearchText),
+        normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], terms)),
+        ...(item.searchTerms ?? []).flatMap((term) => [
+          normalizeSearchText(term),
+          normalizeSearchText(formatChangeRequestText(term, terms)).replace(
+            /\b(?:pr|mr)(s?)\b/gu,
+            `${terms.shortLabel.toLowerCase()}$1`,
+          ),
+        ]),
       ];
       if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
 

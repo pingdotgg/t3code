@@ -120,6 +120,24 @@ describe("searchSettings", () => {
         .slice(0, 2)
         .map((item) => item.id),
     ).toEqual(["network-access", "connections-environment"]);
+    try {
+      for (const enabled of [false, true]) {
+        setMergeRequestTerms(enabled);
+        const queries = [
+          "pull request review guide",
+          "pr review guide",
+          ...(enabled ? ["merge request review guide", "mr review guide"] : []),
+        ];
+        for (const query of queries) {
+          expect(
+            searchSettings(query).map((item) => item.id),
+            query,
+          ).toContain("review-guides");
+        }
+      }
+    } finally {
+      setMergeRequestTerms(false);
+    }
   });
 
   it("hides desktop-only settings from browser search", () => {
