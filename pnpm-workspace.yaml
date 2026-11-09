@@ -267,6 +267,8 @@ patchedDependencies:
   alchemy@2.0.0-beta.85: patches/alchemy@2.0.0-beta.85.patch
   # Android: a marker orient other than "auto" or a number (auto-start-reverse) no longer throws.
   react-native-svg@15.16.0: patches/react-native-svg@15.16.0.patch
+  # iOS: a feed following its end keeps the end through a size-only reflow in one pass.
+  "@legendapp/list@3.7.2": patches/@legendapp__list@3.7.2.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
