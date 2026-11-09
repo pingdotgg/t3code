@@ -12,7 +12,6 @@ import {
   cliTerminalStep,
   codexNeedsSetup,
   groupWelcomeAgents,
-  terminalCommand,
   welcomePhonePath,
 } from "./welcomePage.logic";
 
@@ -153,37 +152,23 @@ describe("cliTerminalStep", () => {
     expect(step({ auth: { status: "unauthenticated" } })).toBe("open");
     // A check that timed out still gets the sign-in command.
     expect(step({ status: "error", auth: { status: "unknown" } })).toBe("open");
-    // A broken version opens the installer, signed in, signed out, or too old to check.
+    // A broken version is updated from its row in Settings, signed in, signed out, or unchecked.
     const broken = {
       status: "broken",
       message: "Update Codex.",
       recommendedVersion: null,
       recommendedRange: null,
     } as const;
-    expect(step({ compatibilityAdvisory: broken })).toBe("open");
+    expect(step({ compatibilityAdvisory: broken })).toBe("done");
     expect(step({ compatibilityAdvisory: broken, auth: { status: "unauthenticated" } })).toBe(
-      "open",
+      "done",
     );
     expect(
       step({ compatibilityAdvisory: broken, status: "error", auth: { status: "unknown" } }),
-    ).toBe("open");
+    ).toBe("done");
+    // Signed in but needing a look for another reason: a sign-in would not help.
+    expect(step({ status: "warning" })).toBe("done");
     expect(step()).toBe("done");
-  });
-});
-
-describe("terminalCommand", () => {
-  it("installs a missing or broken CLI and signs in to any other", () => {
-    const broken = {
-      status: "broken",
-      message: "Update Claude Code.",
-      recommendedVersion: null,
-      recommendedRange: null,
-    } as const;
-    expect(terminalCommand(provider("Claude", { installed: false }))).toBe("install");
-    expect(terminalCommand(provider("Claude", { compatibilityAdvisory: broken }))).toBe("update");
-    expect(terminalCommand(provider("Claude", { auth: { status: "unauthenticated" } }))).toBe(
-      "signIn",
-    );
   });
 });
 
@@ -198,6 +183,18 @@ describe("codexNeedsSetup", () => {
     expect(setup({ status: "error", auth: { status: "unknown" } })).toBe(true);
     // Signed in from its home files but the binary is gone: Install, not the card.
     expect(setup({ installed: false, status: "error" })).toBe(false);
+    // A broken version gets Update on its row.
+    expect(
+      setup({
+        auth: { status: "unauthenticated" },
+        compatibilityAdvisory: {
+          status: "broken",
+          message: null,
+          recommendedVersion: null,
+          recommendedRange: null,
+        },
+      }),
+    ).toBe(false);
     expect(setup({})).toBe(false);
     const claude = provider("Claude", { auth: { status: "unauthenticated" } });
     expect(codexNeedsSetup(claude, undefined)).toBe(false);

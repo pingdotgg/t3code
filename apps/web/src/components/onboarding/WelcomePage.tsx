@@ -67,7 +67,7 @@ import {
   cliTerminalStep,
   codexNeedsSetup,
   groupWelcomeAgents,
-  terminalCommand,
+  isBrokenVersion,
   welcomeAgentState,
   welcomePhonePath,
 } from "../../onboarding/welcomePage.logic";
@@ -147,11 +147,17 @@ export function WelcomePage({
     policy: useManagedPolicy(environmentId),
   });
   const scans = useProjectScans([environmentId]);
-  const [importSelection, setImportSelection] = useLocalStorage(
+  const [storedSelection, storeSelection] = useLocalStorage(
     welcomeImportSelectionKey(environmentId),
     null,
     StoredWelcomeImportSelection,
   );
+  // The page keeps its own copy, so a failed write (a full quota) cannot undo a choice.
+  const [importSelection, setImportSelectionState] = useState(storedSelection);
+  const setImportSelection = (next: WelcomeImportSelection | null) => {
+    setImportSelectionState(next);
+    storeSelection(next);
+  };
   const [isImporting, setIsImporting] = useState(false);
   // True from Start until the landing; leaving earlier would drop the import or the landing.
   const holdPageRef = useRef(false);
@@ -432,7 +438,11 @@ function AgentsSection({
   const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
   const needsInstallOrSignIn = (provider: ServerProvider) => {
     const state = stateOf(provider);
-    return isInstallableDriver(provider.driver) && (state === "install" || state === "signIn");
+    return (
+      isInstallableDriver(provider.driver) &&
+      !isBrokenVersion(provider) &&
+      (state === "install" || state === "signIn")
+    );
   };
   // Codex's card also offers ChatGPT sign-in, which still works when the CLI check failed.
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
@@ -444,6 +454,10 @@ function AgentsSection({
         provider.instanceId === codexSetupId &&
         (codexNeedsSetup(provider, serverConfig?.settings) || stateOf(provider) === "checking"),
     ) ?? null;
+  // Once the card closes, a later status change does not reopen it and move the page.
+  if (codexSetupId !== null && providers != null && codexSetupProvider === null) {
+    setCodexSetupId(null);
+  }
 
   const openTerminal = (provider: ServerProvider) => {
     if (
@@ -457,17 +471,16 @@ function AgentsSection({
       driver: provider.driver,
       providerInstanceId: provider.instanceId,
       cwd: serverConfig.cwd,
-      command:
-        terminalCommand(provider) === "signIn"
-          ? resolveOnboardingProviderLoginCommand(
-              provider,
-              serverConfig.settings,
-              serverConfig.environment.platform.os,
-            )
-          : resolveOnboardingProviderInstallCommand(
-              provider.driver,
-              serverConfig.environment.platform.os,
-            ),
+      command: provider.installed
+        ? resolveOnboardingProviderLoginCommand(
+            provider,
+            serverConfig.settings,
+            serverConfig.environment.platform.os,
+          )
+        : resolveOnboardingProviderInstallCommand(
+            provider.driver,
+            serverConfig.environment.platform.os,
+          ),
       keybindings: serverConfig.keybindings,
     });
   };
@@ -513,6 +526,21 @@ function AgentsSection({
   const actionFor = (provider: ServerProvider) => {
     const state = stateOf(provider);
     const name = agentName(provider);
+    const settingsAction = (actionLabel: string) => (
+      <Button
+        size="xs"
+        variant="outline"
+        aria-label={`${actionLabel}: ${name}`}
+        render={
+          <Link
+            to="/settings/providers"
+            search={{ environmentId, instanceId: provider.instanceId }}
+          />
+        }
+      >
+        {actionLabel}
+      </Button>
+    );
     if (state === "disabled") {
       return (
         <Button
@@ -526,6 +554,8 @@ function AgentsSection({
         </Button>
       );
     }
+    // Settings updates a broken CLI the way it was installed, including a custom binary path.
+    if (isBrokenVersion(provider)) return settingsAction("Update");
     if (serverConfig !== null && codexNeedsSetup(provider, serverConfig.settings)) {
       const open = codexSetupId === provider.instanceId;
       return (
@@ -544,7 +574,7 @@ function AgentsSection({
       return (
         <TerminalAction
           name={name}
-          command={terminalCommand(provider)}
+          signIn={state === "signIn"}
           disabled={
             terminalSession?.providerInstanceId === provider.instanceId ||
             serverConfig === null ||
@@ -554,22 +584,8 @@ function AgentsSection({
         />
       );
     }
-    const actionLabel =
-      state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up";
-    return (
-      <Button
-        size="xs"
-        variant="outline"
-        aria-label={`${actionLabel}: ${name}`}
-        render={
-          <Link
-            to="/settings/providers"
-            search={{ environmentId, instanceId: provider.instanceId }}
-          />
-        }
-      >
-        {actionLabel}
-      </Button>
+    return settingsAction(
+      state === "signIn" ? "Sign in" : state === "attention" ? "Details" : "Set up",
     );
   };
 
@@ -604,6 +620,11 @@ function AgentsSection({
         <p className="mt-2 text-sm text-muted-foreground">
           This connection cannot control terminals.
         </p>
+      ) : null}
+      {!canManageProviders &&
+      (acpAllowed ||
+        [...found, ...available].some((provider) => stateOf(provider) === "disabled")) ? (
+        <p className="mt-2 text-sm text-muted-foreground">This connection cannot manage agents.</p>
       ) : null}
       <Collapsible
         open={showMore}
@@ -1097,16 +1118,16 @@ function OnboardingCodexSetup({
 
 function TerminalAction({
   name,
-  command,
+  signIn,
   disabled,
   onClick,
 }: {
   readonly name: string;
-  readonly command: ReturnType<typeof terminalCommand>;
+  readonly signIn: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
-  const label = command === "signIn" ? "Sign in" : command === "update" ? "Update" : "Install";
+  const label = signIn ? "Sign in" : "Install";
   return (
     <Button
       size="xs"
@@ -1135,6 +1156,9 @@ function AgentCard({
 }) {
   const name = agentName(provider);
   // Claude Code and Codex tiles show Install or Set up; other agents that are on say why not.
+  const brokenMessage = isBrokenVersion(provider)
+    ? (provider.compatibilityAdvisory?.message ?? null)
+    : null;
   const detail =
     state === "install"
       ? isInstallableDriver(provider.driver)
@@ -1144,12 +1168,10 @@ function AgentCard({
         ? null
         : state === "attention"
           ? (provider.unavailableReason ??
-            (provider.compatibilityAdvisory?.status === "broken"
-              ? provider.compatibilityAdvisory.message
-              : null) ??
+            brokenMessage ??
             provider.message ??
             getProviderSummary(provider).headline)
-          : getProviderSummary(provider).headline;
+          : (brokenMessage ?? getProviderSummary(provider).headline);
   return (
     <div
       className={cn(

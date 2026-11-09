@@ -265,6 +265,7 @@ function ManagedCodexSetup({
   autoStart,
   onAutoStartConsumed,
   allowExistingCli = true,
+  existingCliDisabled,
   presentation,
   displayName,
   onSignInCancelled,
@@ -916,7 +917,7 @@ function ManagedCodexSetup({
               <Button
                 size="sm"
                 variant="ghost-muted"
-                disabled={readOnly || busy}
+                disabled={readOnly || busy || existingCliDisabled}
                 onClick={() => onModeChange("existing")}
               >
                 Use existing CLI

@@ -70,6 +70,11 @@ export function groupWelcomeAgents(
   return { checking, readyCount, found: found.map((entry) => entry.provider), available };
 }
 
+/** A CLI the server knows is too old or otherwise broken for T3 Code; Settings updates it. */
+export function isBrokenVersion(provider: ServerProvider) {
+  return provider.installed && provider.compatibilityAdvisory?.status === "broken";
+}
+
 /**
  * What "Use existing CLI" does next for Codex: wait for the CLI's own check, open its terminal,
  * or stop. Only the ChatGPT sign-in runtime reports `setup.canAuthenticate`.
@@ -81,8 +86,9 @@ export function cliTerminalStep(
   if (provider.setup?.canAuthenticate === true) return "wait";
   const state = welcomeAgentState(provider, settings);
   if (state === "checking") return "wait";
-  // The terminal shows the command first, so it also helps a CLI whose check failed. A broken
-  // version gets the installer, which brings the current one (`terminalCommand`).
+  // A broken version is updated from its row, and a signed-in CLI needs no terminal.
+  if (isBrokenVersion(provider) || provider.auth.status === "authenticated") return "done";
+  // The terminal shows the command first, so it also helps a CLI whose check failed.
   const fixable =
     state === "install" ||
     state === "signIn" ||
@@ -91,23 +97,20 @@ export function cliTerminalStep(
 }
 
 /**
- * What an agent's setup terminal runs: the vendor installer for a missing CLI or a version the
- * server knows is broken, else the CLI's sign-in.
- */
-export function terminalCommand(provider: ServerProvider) {
-  if (!provider.installed) return "install";
-  return provider.compatibilityAdvisory?.status === "broken" ? "update" : "signIn";
-}
-
-/**
  * Whether Codex's row opens its setup card, which offers ChatGPT sign-in or the CLI. A signed-in
- * Codex gets the plain Install or Details action instead, since the card has nothing left for it.
+ * or broken Codex gets its plain row action instead, since the card has nothing left for it.
  */
 export function codexNeedsSetup(
   provider: ServerProvider,
   settings: ComputerSettings | null | undefined,
 ) {
-  if (provider.driver !== "codex" || provider.auth.status === "authenticated") return false;
+  if (
+    provider.driver !== "codex" ||
+    provider.auth.status === "authenticated" ||
+    isBrokenVersion(provider)
+  ) {
+    return false;
+  }
   const state = welcomeAgentState(provider, settings);
   return (
     state === "install" ||

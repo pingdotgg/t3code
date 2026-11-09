@@ -591,6 +591,28 @@ it("keeps saved picks when Start comes before the project list loads", async () 
   expect(localStorage.getItem(welcomeImportSelectionKey(primaryId))).toBe(saved);
 });
 
+it("offers Update for a signed-in agent whose version is broken, and keeps Start off", async () => {
+  using _now = setup();
+  appAtomRegistry.set(state.providers as Atom.Writable<ReadonlyArray<ServerProvider>>, [
+    {
+      ...readyClaude,
+      compatibilityAdvisory: {
+        status: "broken",
+        message: "Update Claude Code to 2.0 or later.",
+        recommendedVersion: "2.0.0",
+        recommendedRange: null,
+      },
+    },
+  ]);
+  await using _screen = await mountWelcome();
+  await vi.waitFor(() => expect(pageText()).toContain("Update Claude Code to 2.0 or later."));
+  const update = [...document.querySelectorAll("a")].find(
+    (element) => element.textContent?.trim() === "Update",
+  );
+  expect(update?.getAttribute("href")).toContain("/settings/providers");
+  expect(button("Import 2 projects and start").disabled).toBe(true);
+});
+
 it("starts without importing when this connection cannot import projects", async () => {
   using _now = setup();
   setGrant(primaryId, false);
