@@ -46,10 +46,19 @@ it.each([
 });
 
 it.each([
-  { measurement: 2.1, expected: { accelerated: 2.1 } },
-  { measurement: null, expected: { accelerated: null } },
-  { measurement: { cpu: 5, accelerated: 2.1 }, expected: { cpu: 5, accelerated: 2.1 } },
-])("decodes speech benchmark measurements $measurement", ({ measurement, expected }) => {
+  { wire: { secondsPer30s: 2.1 }, expected: { accelerated: 2.1 } },
+  { wire: { secondsPer30s: null }, expected: { accelerated: null } },
+  { wire: { secondsPer30s: 2.1, cpuSecondsPer30s: 5 }, expected: { cpu: 5, accelerated: 2.1 } },
+  {
+    wire: { secondsPer30s: null, cpuSecondsPer30s: null },
+    expected: { cpu: null, accelerated: null },
+  },
+  {
+    wire: { secondsPer30s: { cpu: 5, accelerated: 2.1 } },
+    expected: { cpu: 5, accelerated: 2.1 },
+  },
+  { wire: { secondsPer30s: { accelerated: 2.1 } }, expected: { accelerated: 2.1 } },
+])("keeps speech benchmark $wire compatible with old and new clients", ({ wire, expected }) => {
   const model = {
     id: "test",
     name: "Test",
@@ -58,7 +67,7 @@ it.each([
     languages: ["en"],
     accuracy: 0,
     speed: 0,
-    benchmark: { accuracy: { en: { grade: "A-", errorPercent: 4 } }, secondsPer30s: measurement },
+    benchmark: { accuracy: { en: { grade: "A-", errorPercent: 4 } }, ...wire },
     recommended: false,
     supportsStreaming: false,
     supportsLanguageDetection: false,
@@ -67,10 +76,16 @@ it.each([
     state: "installed",
   };
   const decoded = decodeModel(model);
-  expect(decoded.benchmark).toEqual({ ...model.benchmark, secondsPer30s: expected });
-  expect(encodeModel(decoded)).toMatchObject({
-    benchmark: { secondsPer30s: expected },
+  expect(decoded.benchmark).toEqual({
+    accuracy: model.benchmark.accuracy,
+    secondsPer30s: expected,
   });
+  const encoded = encodeModel(decoded);
+  const legacyBenchmark = Schema.Struct({ secondsPer30s: Schema.NullOr(Schema.Finite) });
+  expect(Schema.decodeUnknownSync(legacyBenchmark)(encoded.benchmark)).toEqual({
+    secondsPer30s: expected.accelerated,
+  });
+  expect(decodeModel(encoded)).toEqual(decoded);
   for (const secondsPer30s of ["2.1", { cpu: 5 }, Number.NaN]) {
     expect(() =>
       decodeModel({

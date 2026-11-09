@@ -137,7 +137,19 @@ const SpeechBenchmarkTimes = Schema.Struct({
   cpu: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
   accelerated: Schema.NullOr(Schema.Finite),
 });
-const SpeechBenchmarkTimesWire = Schema.Union([SpeechBenchmarkTimes, Schema.NullOr(Schema.Finite)]);
+const SpeechBenchmarkAccuracy = Schema.Record(
+  Schema.String,
+  Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
+);
+const SpeechBenchmark = Schema.Struct({
+  accuracy: SpeechBenchmarkAccuracy,
+  secondsPer30s: SpeechBenchmarkTimes,
+});
+const SpeechBenchmarkWire = Schema.Struct({
+  accuracy: SpeechBenchmarkAccuracy,
+  secondsPer30s: Schema.Union([SpeechBenchmarkTimes, Schema.NullOr(Schema.Finite)]),
+  cpuSecondsPer30s: Schema.optionalKey(Schema.NullOr(Schema.Finite)),
+});
 
 export const EnvironmentSpeechModel = Schema.Struct({
   id: SpeechModelId,
@@ -148,25 +160,32 @@ export const EnvironmentSpeechModel = Schema.Struct({
   accuracy: Schema.Finite,
   speed: Schema.Finite,
   benchmark: Schema.optionalKey(
-    Schema.Struct({
-      accuracy: Schema.Record(
-        Schema.String,
-        Schema.Struct({ grade: Schema.String, errorPercent: Schema.Finite }),
-      ),
-      secondsPer30s: SpeechBenchmarkTimesWire.pipe(
-        Schema.decodeTo(
-          SpeechBenchmarkTimes,
-          SchemaTransformation.transform<
-            typeof SpeechBenchmarkTimes.Type,
-            typeof SpeechBenchmarkTimesWire.Type
-          >({
-            decode: (value) =>
-              typeof value === "number" || value === null ? { accelerated: value } : value,
-            encode: (value) => value,
+    SpeechBenchmarkWire.pipe(
+      Schema.decodeTo(
+        SpeechBenchmark,
+        SchemaTransformation.transform<
+          typeof SpeechBenchmark.Type,
+          typeof SpeechBenchmarkWire.Type
+        >({
+          decode: ({ accuracy, secondsPer30s, cpuSecondsPer30s }) => ({
+            accuracy,
+            secondsPer30s:
+              typeof secondsPer30s === "number" || secondsPer30s === null
+                ? {
+                    accelerated: secondsPer30s,
+                    ...(cpuSecondsPer30s !== undefined ? { cpu: cpuSecondsPer30s } : {}),
+                  }
+                : secondsPer30s,
           }),
-        ),
+          // Older clients require the scalar; newer clients normalize both wire representations.
+          encode: ({ accuracy, secondsPer30s }) => ({
+            accuracy,
+            secondsPer30s: secondsPer30s.accelerated,
+            ...(secondsPer30s.cpu !== undefined ? { cpuSecondsPer30s: secondsPer30s.cpu } : {}),
+          }),
+        }),
       ),
-    }),
+    ),
   ),
   recommended: Schema.Boolean,
   supportsStreaming: Schema.Boolean,
