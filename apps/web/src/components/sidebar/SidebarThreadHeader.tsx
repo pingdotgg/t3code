@@ -98,6 +98,9 @@ export function SidebarThreadHeader({
       </div>
       <div className="flex shrink-0 items-center">
         {hasProjects ? projectScope : null}
+        <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
+          <FolderPlusIcon />
+        </SidebarHeaderIconButton>
         <SidebarHeaderIconButton
           label="New thread"
           tooltip={
@@ -117,9 +120,6 @@ export function SidebarThreadHeader({
           onClick={onNewThread}
         >
           <SquarePenIcon />
-        </SidebarHeaderIconButton>
-        <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
-          <FolderPlusIcon />
         </SidebarHeaderIconButton>
       </div>
     </div>
