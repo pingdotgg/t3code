@@ -19,7 +19,7 @@ import { ref as makeRef } from "./Ref.ts";
 import { RemovalPolicy } from "./RemovalPolicy.ts";
 import { RenamePolicy } from "./Rename.ts";
 import { Self } from "./Self.ts";
-import { Stack } from "./Stack.ts";
+import { StackContext } from "./StackContext.ts";
 
 export type ResourceConstructor<R extends ResourceLike, Req = never> = {
   Type: R["Type"];
@@ -67,27 +67,18 @@ export type ResourceClass<R extends ResourceLike> = ResourceConstructor<
     Self: Self<R>;
     Provider: Provider<R>;
     Aliases: readonly string[] | undefined;
-    ref(
-      id: string,
-      options?: { stage?: string; stack?: string },
-    ): Effect.Effect<R>;
+    ref(id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R>;
   };
 
 export type ResourceClassWithMethods<
   R extends ResourceLike,
   Methods extends { [key: string]: any },
-> = ResourceConstructor<
-  R,
-  R["Providers"] extends undefined ? Provider<R> : R["Providers"]
-> &
+> = ResourceConstructor<R, R["Providers"] extends undefined ? Provider<R> : R["Providers"]> &
   Effect.Effect<ResourceConstructor<R>> & {
     Self: Self<R>;
     Provider: Provider<R>;
     Aliases: readonly string[] | undefined;
-    ref(
-      id: string,
-      options?: { stage?: string; stack?: string },
-    ): Effect.Effect<R>;
+    ref(id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R>;
   } & Methods;
 
 export type LogicalId = string;
@@ -168,21 +159,15 @@ export interface ResourceLike<
   Providers: Providers;
 }
 
-export const isResource = (value: any): value is ResourceLike => {
-  // Require the full resource identity (Type AND FQN), not just `Type`:
-  // user-authored prop objects legitimately carry a `Type` field (e.g.
-  // Amazon States Language states like `{ Type: "Pass", End: true }` in a
-  // Step Functions definition) and must not be mistaken for resources.
-  // Locally-declared resources always expose both as own keys; refs
-  // (`Resource.ref(...)`) deliberately report neither via `in` so they keep
-  // routing through Output resolution.
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "Type" in value &&
-    "FQN" in value
-  );
-};
+// Require the full resource identity (Type AND FQN), not just `Type`:
+// user-authored prop objects legitimately carry a `Type` field (e.g.
+// Amazon States Language states like `{ Type: "Pass", End: true }` in a
+// Step Functions definition) and must not be mistaken for resources.
+// Locally-declared resources always expose both as own keys; refs
+// (`Resource.ref(...)`) deliberately report neither via `in` so they keep
+// routing through Output resolution.
+export const isResource = (value: any): value is ResourceLike =>
+  typeof value === "object" && value !== null && "Type" in value && "FQN" in value;
 
 /**
  * Does `value` reference an instance of the resource type `type` —
@@ -299,14 +284,31 @@ export interface ResourceOptions {
  * whichever provider first reads a prop (e.g. `TypeError: undefined is not
  * an object (evaluating 'news.name')` in the Cloudflare Worker pre-create).
  */
-export class MissingImplementationError extends Data.TaggedError(
-  "MissingImplementationError",
-)<{
+export class MissingImplementationError extends Data.TaggedError("MissingImplementationError")<{
   message: string;
   /** Resource type of the platform, e.g. `Cloudflare.Worker`. */
   type: string;
   /** Logical id of the tagged resource (its class name by convention). */
   id: string;
+}> {}
+
+/**
+ * A logical id was declared again as a different resource type.
+ *
+ * A logical id names one resource in the stack. Yielding that id again
+ * returns the resource already registered, so one declaration can be shared
+ * by the stack program and a service init. A different type is a different
+ * resource. Returning the first one would drop the second declaration while
+ * TypeScript still typed the result as the second type.
+ */
+export class DuplicateLogicalIdError extends Data.TaggedError("DuplicateLogicalIdError")<{
+  message: string;
+  /** Fully qualified logical id already present on the stack. */
+  fqn: string;
+  /** Type registered under {@link fqn}. */
+  existingType: string;
+  /** Type of the declaration that collided with {@link fqn}. */
+  conflictingType: string;
 }> {}
 
 export const missingImplementation = (type: string, id: string) =>
@@ -350,12 +352,9 @@ export function Resource<R extends ResourceLike>(
   const defaultRemovalPolicy = options?.defaultRemovalPolicy ?? "destroy";
   type Props = Input<R["Props"]>;
   const self = Self<R>(type);
-  const constructor = (
-    id: string,
-    props: Props | Effect.Effect<Props> | undefined,
-  ) =>
+  const constructor = (id: string, props: Props | Effect.Effect<Props> | undefined) =>
     Effect.gen(function* () {
-      const stack = yield* Stack;
+      const stack = yield* StackContext;
       const namespace = yield* CurrentNamespace;
       const fqn = toFqn(namespace, id);
 
@@ -364,12 +363,24 @@ export function Resource<R extends ResourceLike>(
       // The Reference default is `undefined` — "no explicit decoration" —
       // which is distinct from an explicit `remote(false)`.
       const ambientPolicy = yield* ProviderModePolicy;
-      const ambientMode: ProviderMode | undefined = ambientPolicy
-        ? "live"
-        : undefined;
+      const ambientMode: ProviderMode | undefined = ambientPolicy ? "live" : undefined;
 
       const existing = stack.resources[fqn];
       if (existing) {
+        if (existing.Type !== type) {
+          return yield* Effect.die(
+            new DuplicateLogicalIdError({
+              message:
+                `Resource '${fqn}' is already registered as '${existing.Type}' ` +
+                `and cannot be declared as '${type}'. A logical id names one ` +
+                `resource in the stack. Yield the existing resource, or give ` +
+                `this declaration its own id.`,
+              fqn,
+              existingType: existing.Type,
+              conflictingType: type,
+            }),
+          );
+        }
         // A resource may be `yield*`ed from several places (idempotent
         // registration). If a later site carries an *explicit* ambient
         // ProviderModePolicy that disagrees with what the resource was
@@ -394,7 +405,7 @@ export function Resource<R extends ResourceLike>(
             }),
           );
         }
-        // // TODO(sam): check if props are different and die
+        // TODO(sam): check if props are different and die
         return existing;
       }
       const bind = (
@@ -426,10 +437,7 @@ export function Resource<R extends ResourceLike>(
                     .join(", ");
                 }
 
-                if (
-                  arg &&
-                  (typeof arg === "object" || typeof arg === "function")
-                ) {
+                if (arg && (typeof arg === "object" || typeof arg === "function")) {
                   if ("LogicalId" in arg && typeof arg.LogicalId === "string") {
                     return arg.LogicalId;
                   }
@@ -446,9 +454,7 @@ export function Resource<R extends ResourceLike>(
                 `${(args[0] as TemplateStringsArray)
                   .flatMap((text, i) => {
                     const stringified = stringifyBindArg(args[i + 1]);
-                    return stringified !== undefined
-                      ? [text, stringified]
-                      : [text];
+                    return stringified !== undefined ? [text, stringified] : [text];
                   })
                   .join("")}`,
                 data,
@@ -465,9 +471,7 @@ export function Resource<R extends ResourceLike>(
         RemovalPolicy: yield* Effect.serviceOption(RemovalPolicy).pipe(
           Effect.map(Option.getOrElse(() => defaultRemovalPolicy)),
         ),
-        Adopt: yield* Effect.serviceOption(AdoptPolicy).pipe(
-          Effect.map(Option.getOrUndefined),
-        ),
+        Adopt: yield* Effect.serviceOption(AdoptPolicy).pipe(Effect.map(Option.getOrUndefined)),
         Mode: ambientMode,
         RequiresImplementation: options?.requiresImplementation || undefined,
         // Bare-string former ids resolve against the SAME namespace as the
@@ -480,9 +484,7 @@ export function Resource<R extends ResourceLike>(
               onNone: () => undefined,
               onSome: (formerIds) =>
                 formerIds.map((formerId) =>
-                  typeof formerId === "string"
-                    ? toFqn(namespace, formerId)
-                    : formerId.fqn,
+                  typeof formerId === "string" ? toFqn(namespace, formerId) : formerId.fqn,
                 ),
             }),
           ),
@@ -510,10 +512,7 @@ export function Resource<R extends ResourceLike>(
         ? // @effect-diagnostics-next-line anyUnknownInErrorContext:off
           yield* props.pipe(
             Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(Self, Resource),
-                Layer.succeed(Self(type), Resource),
-              ),
+              Layer.mergeAll(Layer.succeed(Self, Resource), Layer.succeed(Self(type), Resource)),
             ),
           )
         : props;
@@ -531,10 +530,7 @@ export function Resource<R extends ResourceLike>(
      * (`ref.someAttr`) exactly the way it would for a locally-declared
      * resource.
      */
-    ref: (
-      id: string,
-      options?: { stage?: string; stack?: string },
-    ): Effect.Effect<R> =>
+    ref: (id: string, options?: { stage?: string; stack?: string }): Effect.Effect<R> =>
       Effect.succeed(Output.of(makeRef<R>(id, options, type)) as unknown as R),
 
     Type: type,
@@ -554,10 +550,7 @@ export function Resource<R extends ResourceLike>(
     // `Effect.isEffect(MyResource)` is now true so `Effect.all`/`forEach` work.
     Effectable.Prototype({
       label: `Resource<${type}>`,
-      evaluate: () =>
-        Effect.succeed((id: string, props: R["Props"]) =>
-          constructor(id, props),
-        ),
+      evaluate: () => Effect.succeed((id: string, props: R["Props"]) => constructor(id, props)),
     }),
   ) as any;
 

@@ -11,11 +11,13 @@ export function materializeReplayTranscriptRuntimeInstructions(
       ? "Cursor"
       : runtime.driver === "grok"
         ? "Grok"
-        : runtime.driver === "acpRegistry"
-          ? "acpRegistry"
-          : runtime.driver === "fx"
-            ? "fx"
-            : undefined;
+        : runtime.driver === "kiro"
+          ? "Kiro"
+          : runtime.driver === "acpRegistry"
+            ? "acpRegistry"
+            : runtime.driver === "fx"
+              ? "fx"
+              : undefined;
   if (harness === undefined) return transcript;
   const instructions = buildRuntimeInstructions({ harness, model: runtime.model });
   // The ACP adapter resends these instructions until a prompt that carried them succeeds.
@@ -67,6 +69,24 @@ export function materializeReplayTranscriptRuntimeInstructions(
           ? entry
           : { ...entry, frame: { ...frame, message: `${frame.message}\n\n${instructions}` } };
       }
+      if ("method" in frame && frame.method === "session/close") {
+        // A closed session comes back in a new runtime, which resends the instructions.
+        instructedSessionIds.clear();
+        pendingInstructedPrompt = undefined;
+        return entry;
+      }
+      if (
+        "method" in frame &&
+        frame.method === "_kiro/session/compact" &&
+        "params" in frame &&
+        typeof frame.params === "object" &&
+        frame.params !== null &&
+        "sessionId" in frame.params
+      ) {
+        // Like a compaction the agent reports, Kiro's native one makes the next prompt resend them.
+        instructedSessionIds.delete(frame.params.sessionId);
+        return entry;
+      }
       if (
         "method" in frame &&
         frame.method === "session/prompt" &&
@@ -83,7 +103,12 @@ export function materializeReplayTranscriptRuntimeInstructions(
         // Like the adapter, native slash commands go out without instructions.
         if (promptPartText(prompt[0])?.trimStart().startsWith("/") === true) return entry;
         pendingInstructedPrompt = { sessionId: promptSessionId };
-        if (promptPartText(prompt.at(-1))?.startsWith("<runtime_info>") === true) return entry;
+        const lastText = promptPartText(prompt.at(-1));
+        // A recording that switched models mid-thread already carries the
+        // instructions for the model each prompt ran on.
+        if (lastText === instructions || lastText?.startsWith("<runtime_info>") === true) {
+          return entry;
+        }
         return {
           ...entry,
           frame: {

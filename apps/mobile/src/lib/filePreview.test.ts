@@ -80,6 +80,10 @@ vi.mock("react-native", () => ({
   useWindowDimensions: () => ({ width: 390, height: 844, fontScale: 1 }),
   Text: ({ children }: { children?: ReactNode }) => createElement("span", null, children),
   AppState: { currentState: "active", addEventListener: () => ({ remove() {} }) },
+  AccessibilityInfo: {
+    isReduceMotionEnabled: async () => true,
+    addEventListener: () => ({ remove() {} }),
+  },
   View: ({ children }: { children?: ReactNode }) => createElement("div", null, children),
   Pressable: (props: {
     children?: ReactNode;
@@ -231,14 +235,14 @@ vi.mock("../components/ui/NativePresentation", () => ({
 vi.mock("../components/ui/Menu", () => ({
   Menu: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/FilePreviewGallery", () => ({
+vi.mock("../components/ui/FilePreviewGallery", () => ({
   FilePreviewGallery: ({ children }: { children?: ReactNode }) => children,
 }));
-vi.mock("../components/FilePreviewModal", () => ({
+vi.mock("../components/ui/FilePreviewModal", () => ({
   FilePreviewModal: (props: { source: { name: string } | null }) =>
     props.source ? createElement("div", { "data-file-preview": props.source.name }) : null,
 }));
-vi.mock("../components/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
+vi.mock("../components/ui/VideoPreviewModal", () => ({ VideoPreviewModal: () => null }));
 vi.mock("../components/ComposerContextSheet", () => ({}));
 vi.mock("../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => vi.fn() }));
 vi.mock("../native/useMarkdownImageSource", () => ({ useMarkdownImageSource: () => vi.fn() }));
@@ -253,7 +257,10 @@ vi.mock("../native/NativeScrollViewMarker", () => ({
 vi.mock("../native/NativeWorkspaceColumns", () => ({
   useNativeWorkspaceColumnsSupported: () => false,
 }));
-vi.mock("../native/native-layout-metrics", () => ({ useDeviceType: () => "phone" }));
+vi.mock("../native/native-layout-metrics", () => ({
+  useDeviceType: () => "phone",
+  useNativeColumnLayoutMetrics: () => null,
+}));
 vi.mock("../features/layout/workspace-content-width", () => ({
   useWorkspaceSettledContentWidth: () => null,
 }));

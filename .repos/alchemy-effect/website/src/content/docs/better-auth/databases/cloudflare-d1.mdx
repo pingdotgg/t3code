@@ -18,7 +18,7 @@ bun add @alchemy.run/better-auth better-auth@^1.7.5 kysely
 ```typescript title="src/worker.ts"
 import { BetterAuth } from "@alchemy.run/better-auth";
 import { CloudflareD1 } from "@alchemy.run/better-auth/CloudflareD1";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 const AuthDb = Cloudflare.D1.Database("AuthDb");
@@ -45,7 +45,7 @@ export default class AuthApi extends Cloudflare.Worker<AuthApi>()(
 
 ```typescript title="alchemy.run.ts"
 import * as Alchemy from "alchemy";
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import AuthApi from "./src/worker.ts";
 
