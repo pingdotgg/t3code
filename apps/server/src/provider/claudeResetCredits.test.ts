@@ -85,6 +85,38 @@ describe("claudeResetCreditsToContract", () => {
     ).toBeUndefined();
     expect(ClaudeResetCredits.claudeResetCreditsToContract(undefined, NOW)).toBeUndefined();
   });
+
+  it("keeps which windows a model-scoped grant clears", () => {
+    const fableGrant = {
+      id: "launch-2610-fable-week",
+      label: "New model launch: one Fable reset for Pro and Team Standard, launch week only",
+      resets_total: 1,
+      resets_left: 1,
+      starts_at: "2026-11-09T18:00:00+00:00",
+      ends_at: "2026-11-17T07:59:00+00:00",
+      clears: ["five_hour", "seven_day_overage_included"],
+      paused: false,
+      usable_now: true,
+      use_requires_limit: false,
+      percent_used: { five_hour: 59, seven_day_overage_included: 3, seven_day: 93 },
+      type: "full",
+      gives_back_weekly: true,
+    };
+    const credits = ClaudeResetCredits.claudeResetCreditsToContract(
+      { eligible: true, next_grant_id: fableGrant.id, grants: [fableGrant] },
+      Date.parse("2026-11-10T12:00:00.000Z"),
+      "Fable",
+    );
+
+    expect(credits?.grants).toEqual([
+      {
+        id: "launch-2610-fable-week",
+        count: 1,
+        expiresAt: "2026-11-17T07:59:00.000Z",
+        clearsWindowIds: ["five_hour", "seven_day_fable"],
+      },
+    ]);
+  });
 });
 
 effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
