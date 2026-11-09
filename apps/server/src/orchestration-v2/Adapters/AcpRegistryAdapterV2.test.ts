@@ -233,6 +233,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
       }).pipe(Effect.andThen(Queue.offer(offered, undefined)), Effect.asVoid),
   };
   const instanceId = ProviderInstanceId.make("claude-lifecycle");
+  const outgoing = yield* Queue.unbounded<unknown>();
   let onTermination: NonNullable<
     AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
   > = () => Effect.die("Runtime has not started");
@@ -254,7 +255,17 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime(runtimeInput);
+      return replayRuntime({
+        ...runtimeInput,
+        protocolLogging: {
+          logIncoming: false,
+          logOutgoing: true,
+          logger: (event) =>
+            event.stage === "raw" && typeof event.payload === "string"
+              ? Queue.offer(outgoing, JSON.parse(event.payload)).pipe(Effect.asVoid)
+              : Effect.void,
+        },
+      });
     },
   };
   const adapter = yield* makeAcpRegistryAdapterV2(adapterOptions).pipe(
@@ -364,6 +375,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     terminal,
     offers,
     offered,
+    outgoing,
     terminate: () =>
       onTermination(
         new EffectAcpErrors.AcpTransportError({
@@ -2050,6 +2062,129 @@ describe("AcpRegistryAdapterV2", () => {
       assert.deepEqual(tools.at(-1)?.output, [
         { type: "content", content: { type: "text", text: "stoppingcancelled" } },
       ]);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      offered: "a persistent grant listed first",
+      // Devin 3000.11.234 marks every allow-more-than-once option allow_always.
+      options: [
+        { optionId: "allow_once", name: "Allow", kind: "allow_once" },
+        {
+          optionId: "allow_always",
+          name: "Yes, always allow `curl` commands in project",
+          kind: "allow_always",
+        },
+        {
+          optionId: "allow_session",
+          name: "Yes, allow `curl` commands (this session)",
+          kind: "allow_always",
+        },
+        {
+          optionId: "allow_always_global",
+          name: "Yes, always allow `curl` commands in all projects",
+          kind: "allow_always",
+        },
+        { optionId: "switch_bypass", name: "Yes, switch to bypass mode", kind: "allow_always" },
+        { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+      ],
+      selected: "allow_session",
+    },
+    {
+      offered: "no session option",
+      options: [
+        { optionId: "allow_once", name: "Allow", kind: "allow_once" },
+        { optionId: "switch_bypass", name: "Yes, switch to bypass mode", kind: "allow_always" },
+        {
+          optionId: "allow_always",
+          name: "Yes, always allow `curl` commands in project",
+          kind: "allow_always",
+        },
+        { optionId: "reject_once", name: "Reject", kind: "reject_once" },
+      ],
+      selected: "allow_once",
+    },
+  ] as const)("answers Devin's this-session approval with $selected given $offered", (testCase) =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "request",
+              method: "session/request_permission",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                toolCall: {
+                  toolCallId: "curl-command",
+                  title: "curl https://example.com",
+                  kind: "execute",
+                  status: "pending",
+                  rawInput: { command: "curl https://example.com" },
+                },
+                options: testCase.options,
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              kind: "response",
+              method: "session/request_permission",
+              result: { outcome: { outcome: "selected", optionId: testCase.selected } },
+            },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        "devin",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const seen = yield* session.until(
+        (event) =>
+          event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+      );
+      const request = seen.at(-1)!;
+      if (request.type !== "runtime_request.updated") throw new Error("Missing request");
+      yield* session.runtime.respondToRuntimeRequest({
+        requestId: request.runtimeRequest.id,
+        decision: "acceptForSession",
+      });
+      let answer: unknown;
+      while (answer === undefined) {
+        const frame = (yield* Queue.take(session.outgoing)) as {
+          readonly result?: { readonly outcome?: { readonly optionId?: string } };
+        };
+        answer = frame.result?.outcome;
+      }
+      assert.deepEqual(answer, { outcome: "selected", optionId: testCase.selected });
+      assert.equal((yield* session.terminal).status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
