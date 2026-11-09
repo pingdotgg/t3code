@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
@@ -15,19 +16,44 @@ export function TimelineSystemDivider(props: {
   readonly onAction?: () => void;
 }) {
   const Icon = props.icon;
+  const wrapsDetail = props.wrapDetail === true && typeof props.detail === "string";
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const detailRef = useRef<HTMLSpanElement>(null);
+  const [detailWrapped, setDetailWrapped] = useState(false);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads layout to tell whether flex-wrap moved the detail below the label
+  useLayoutEffect(() => {
+    const label = labelRef.current;
+    const detail = detailRef.current;
+    const pill = detail?.parentElement;
+    if (!wrapsDetail || !label || !detail || !pill) return;
+    const update = () => setDetailWrapped(detail.offsetTop >= label.offsetTop + label.offsetHeight);
+    update();
+    return observeResize([pill, detail], update);
+  }, [wrapsDetail]);
+
+  const separator = props.showDetailSeparator !== false;
   const content = (
     <>
       {Icon ? <Icon className="size-3 shrink-0" /> : null}
-      <span className="font-medium">{props.label}</span>
+      <span ref={labelRef} className="font-medium">
+        {props.label}
+      </span>
       {props.detail ? (
         <span
+          ref={detailRef}
           className={cn(
             "inline-flex min-w-0 items-center opacity-70",
-            typeof props.detail === "string" &&
-              (props.wrapDetail ? "whitespace-pre-wrap text-center" : "max-w-80 truncate"),
+            typeof props.detail === "string" && !props.wrapDetail && "max-w-80 truncate",
+            wrapsDetail && "relative whitespace-pre-wrap text-center",
+            // The dot takes no width, so hiding it cannot change whether the detail fits inline.
+            wrapsDetail &&
+              separator &&
+              "mx-1.5 before:absolute before:right-full before:mr-1 before:content-['·']",
+            wrapsDetail && detailWrapped && "before:hidden",
           )}
         >
-          {props.showDetailSeparator === false ? null : "·\u00a0"}
+          {separator && !wrapsDetail ? "·\u00a0" : null}
           {props.detail}
         </span>
       ) : null}
