@@ -240,8 +240,12 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
         paddingTop: 8,
         gap: Platform.OS === "android" ? 8 : 14,
       }}
+      // Android wraps a RefreshControl's list in a layout the sheet takes for the list and reads
+      // as unable to scroll up, so dragging down collapsed the sheet; the AppBar refreshes there.
       refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        Platform.OS === "ios" ? (
+          <RefreshControl refreshing={isRefreshing} onRefresh={() => void handleRefresh()} />
+        ) : undefined
       }
     >
       <ListSection>
