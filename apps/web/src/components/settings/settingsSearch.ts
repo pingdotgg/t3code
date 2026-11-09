@@ -1332,7 +1332,9 @@ export const SETTINGS_SEARCH_ITEMS = [
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
-const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
+const SEARCH_ITEMS_BY_ID: ReadonlyMap<string, SettingsSearchItem> = new Map(
+  SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const),
+);
 
 const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
   "/settings/diagnostics": "environment",
@@ -1531,6 +1533,7 @@ export function searchSettings(
       const fields = [
         title,
         normalizeSearchText(originalItem.title),
+        normalizeSearchText(SEARCH_ITEMS_BY_ID.get(item.id)?.title ?? originalItem.title),
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
         normalizeSearchText(formatChangeRequestText(SETTINGS_SECTION_LABELS[item.to], terms)),
         ...(item.searchTerms ?? []).flatMap((term) => [

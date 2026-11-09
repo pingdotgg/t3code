@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 
 import {
   filterAvailableSettingsSearchItems,
+  formatSettingsSearchTitle,
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
@@ -78,6 +79,21 @@ describe("searchSettings", () => {
     try {
       for (const enabled of [false, true]) {
         setMergeRequestTerms(enabled);
+        const availableItems = SETTINGS_SEARCH_ITEMS.map((item) => ({
+          ...item,
+          title: formatSettingsSearchTitle(item),
+        }));
+        for (const query of [
+          "keep threads with a pr",
+          ...(enabled ? ["keep threads with an mr"] : []),
+        ]) {
+          expect(searchSettings(query, availableItems)).toContainEqual(
+            expect.objectContaining({
+              id: "keep-threads-with-pull-requests",
+              title: enabled ? "Keep threads with an MR" : "Keep threads with a PR",
+            }),
+          );
+        }
         for (const query of ["pull requests", ...(enabled ? ["merge requests"] : [])]) {
           expect(
             searchSettings(query).map((item) => item.id),
