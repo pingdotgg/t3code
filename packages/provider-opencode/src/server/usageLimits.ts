@@ -66,10 +66,7 @@ type StoredCredential = {
   readonly workspaceID?: string;
 };
 
-const readStoredCredential = (
-  databasePath: string,
-  integrationId: "opencode" | "opencode-go",
-) =>
+const readStoredCredential = (databasePath: string, integrationId: "opencode" | "opencode-go") =>
   Effect.try({
     try: (): StoredCredential | undefined => {
       const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
