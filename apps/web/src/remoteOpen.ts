@@ -244,6 +244,22 @@ export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
   return useAtomValue(remoteCapableEditorsAtom);
 }
 
+// Device-local launches need no SSH scheme, so this covers every editor with a CLI on this device.
+const localEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+  const probe = window.desktopBridge?.probeLocalEditors;
+  probe?.().then(
+    (ids) => {
+      if (ids.length > 0) get.setSelf(ids);
+    },
+    () => undefined,
+  );
+  return REMOTE_FALLBACK_EDITORS;
+}).pipe(Atom.keepAlive, Atom.withLabel("local-editors"));
+
+export function useLocalEditors(): ReadonlyArray<EditorId> {
+  return useAtomValue(localEditorsAtom);
+}
+
 /** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */
 export async function openRemoteEditorUrl(url: string): Promise<boolean> {
   const bridge = window.desktopBridge;
@@ -268,7 +284,9 @@ export async function openDeviceLocalEditor(editor: EditorId, path: string): Pro
       description:
         result?.reason === "path-missing"
           ? `Path does not exist on this device: ${path}. Local paths must match the environment.`
-          : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`,
+          : result?.reason === "unsupported-launcher"
+            ? "This editor's launcher cannot be started without a shell on this system."
+            : `Local editor opening failed (${result?.reason ?? "desktop bridge unavailable"}). No server-side fallback was attempted.`,
     });
   } catch {
     toastManager.add({ type: "error", title: "Could not open editor on this device" });

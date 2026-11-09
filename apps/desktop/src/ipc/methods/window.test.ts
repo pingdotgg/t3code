@@ -34,6 +34,7 @@ import {
   installRelayTelemetryEnabled,
   openLocalEditor,
   pickProjectFavicon,
+  probeLocalEditors,
   probeRemoteEditors,
   readMedia,
 } from "./window.ts";
@@ -405,5 +406,30 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "cursor");
       assert.include(editors, "vscode");
       assert.include(editors, "webstorm");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "probes local editors that have no remote scheme",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-local-editors-" });
+      const bin = path.join(home, "bin");
+      yield* fs.makeDirectory(bin, { recursive: true });
+      for (const command of ["kiro", "trae"]) {
+        yield* fs.writeFileString(path.join(bin, command), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(bin, command), 0o755);
+      }
+      const editors = yield* probeLocalEditors
+        .handler(undefined)
+        .pipe(
+          Effect.provideService(HostProcess.Environment, { HOME: home, PATH: bin }),
+          Effect.provideService(HostProcess.Platform, "linux"),
+        );
+      assert.include(editors, "kiro");
+      assert.include(editors, "trae");
+      assert.notInclude(editors, "file-manager");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

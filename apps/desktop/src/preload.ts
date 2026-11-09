@@ -216,6 +216,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   openSystemSettings: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.OPEN_SYSTEM_SETTINGS_CHANNEL, pane),
   probeRemoteEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_REMOTE_EDITORS_CHANNEL, undefined),
+  probeLocalEditors: () => ipcRenderer.invoke(IpcChannels.PROBE_LOCAL_EDITORS_CHANNEL, undefined),
   getEditorClientId: () => ipcRenderer.sendSync(IpcChannels.GET_EDITOR_CLIENT_ID_CHANNEL),
   openLocalEditor: (input) => ipcRenderer.invoke(IpcChannels.OPEN_LOCAL_EDITOR_CHANNEL, input),
   pasteAsText: () => ipcRenderer.invoke(IpcChannels.PASTE_AS_TEXT_CHANNEL, undefined),

@@ -18,6 +18,7 @@ vi.mock("react", () => ({ useCallback: (callback: unknown) => callback }));
 vi.mock("./remoteOpen", () => ({
   useRemoteOpenState: () => ({ mode: "local-exec" }),
   useRemoteCapableEditors: () => [],
+  useLocalEditors: () => [],
   openDeviceLocalEditor: vi.fn(),
 }));
 vi.mock("./state/shell", () => ({ shellEnvironment: { openInEditor: "openInEditor" } }));

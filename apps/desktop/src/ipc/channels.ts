@@ -8,6 +8,7 @@ export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const READ_MEDIA_CHANNEL = "desktop:read-media";
 export const OPEN_SYSTEM_SETTINGS_CHANNEL = "desktop:open-system-settings";
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
+export const PROBE_LOCAL_EDITORS_CHANNEL = "desktop:probe-local-editors";
 export const GET_EDITOR_CLIENT_ID_CHANNEL = "desktop:get-editor-client-id";
 export const OPEN_LOCAL_EDITOR_CHANNEL = "desktop:open-local-editor";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";

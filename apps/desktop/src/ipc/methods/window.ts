@@ -411,6 +411,21 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const probeLocalEditors = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PROBE_LOCAL_EDITORS_CHANNEL,
+  payload: Schema.Undefined,
+  result: Schema.Array(EditorId),
+  handler: Effect.fn("desktop.ipc.window.probeLocalEditors")(function* () {
+    const available: Array<EditorId> = [];
+    const env = yield* HostProcess.Environment;
+    for (const editor of EDITORS) {
+      if (editor.commands === null) continue;
+      if (Option.isSome(yield* resolveEditorCommand(editor, env))) available.push(editor.id);
+    }
+    return available;
+  }),
+});
+
 export const getEditorClientId = DesktopIpc.makeSyncIpcMethod({
   channel: IpcChannels.GET_EDITOR_CLIENT_ID_CHANNEL,
   result: Schema.NullOr(Schema.String),

@@ -47,6 +47,7 @@ import {
   openSystemSettings,
   checkSystemPermission,
   pasteAsText,
+  probeLocalEditors,
   probeRemoteEditors,
   openLocalEditor,
   getEditorClientId,
@@ -158,6 +159,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(pasteAsText);
   yield* ipc.handle(revealWindow);
   yield* ipc.handle(probeRemoteEditors);
+  yield* ipc.handle(probeLocalEditors);
   yield* ipc.handle(openLocalEditor).pipe(Effect.provide(NodeChildProcessSpawner.layer));
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

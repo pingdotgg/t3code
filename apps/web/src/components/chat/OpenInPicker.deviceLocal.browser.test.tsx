@@ -131,6 +131,7 @@ async function setup({ clientEditors = ["zed", "vscode"] as readonly EditorId[] 
     stubGlobal("desktopBridge", {
       getEditorClientId: () => CLIENT_ID,
       probeRemoteEditors: async () => clientEditors,
+      probeLocalEditors: async () => clientEditors,
       openLocalEditor,
       openExternal,
     }),

@@ -17,7 +17,7 @@ import { useAtomCommand } from "./state/use-atom-command";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
-import { openDeviceLocalEditor, useRemoteCapableEditors, useRemoteOpenState } from "./remoteOpen";
+import { openDeviceLocalEditor, useLocalEditors, useRemoteOpenState } from "./remoteOpen";
 
 export type FileContextMenuAction =
   | "reveal-in-folder"
@@ -89,7 +89,7 @@ function buildFileContextMenuItems(input: {
 
 export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const remote = useRemoteOpenState(environmentId);
-  const clientEditors = useRemoteCapableEditors();
+  const clientEditors = useLocalEditors();
   const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
 

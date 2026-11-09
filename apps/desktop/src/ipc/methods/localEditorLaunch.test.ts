@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -120,6 +121,12 @@ describe("launchLocalEditor", () => {
           records.map(({ args }) => args),
           [["--goto", `${file}:12:3`]],
         );
+        // Zed's `direct-path` style keeps the position on the path argument.
+        yield* fs.writeFileString(path.join(directory, "bin", "zed"), "#!/bin/sh\n");
+        yield* fs.chmod(path.join(directory, "bin", "zed"), 0o755);
+        records.length = 0;
+        yield* launchLocalEditor({ editor: "zed", path: `${file}:12:3` });
+        assert.deepEqual(records[0]?.args, [`${file}:12:3`]);
         // A real file whose name ends in :12 is opened as-is.
         const literal = path.join(directory, "notes:12");
         yield* fs.writeFileString(literal, "");
@@ -165,6 +172,31 @@ describe("launchLocalEditor", () => {
     ).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, makeSpawner(records, new Error("boom")))),
+    );
+  });
+
+  it.effect("reports a shell-only Windows launcher as unsupported, not unsafe", () => {
+    const records: SpawnRecord[] = [];
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-local-editor-win-" });
+      yield* fs.writeFileString(path.join(directory, "code.cmd"), "@echo off\r\n");
+      const result = yield* launchLocalEditor({ editor: "vscode", path: directory }).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          PATH: directory,
+          PATHEXT: ".CMD;.EXE",
+        }),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "code" ? path.join(directory, "code.cmd") : undefined,
+        ),
+      );
+      assert.deepEqual(result, { ok: false, reason: "unsupported-launcher" });
+      assert.deepEqual(records, []);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, makeSpawner(records))),
     );
   });
 });

@@ -26,13 +26,11 @@ function editorArguments(
   path: string,
   position: { readonly line: string; readonly column: string | undefined } | null,
 ): ReadonlyArray<string> {
-  if (position === null || launchStyle === "direct-path") return [path];
-  if (launchStyle === "goto") {
-    return [
-      "--goto",
-      `${path}:${position.line}${position.column === undefined ? "" : `:${position.column}`}`,
-    ];
-  }
+  if (position === null) return [path];
+  const target = `${path}:${position.line}${position.column === undefined ? "" : `:${position.column}`}`;
+  // Zed's CLI reads `path:line:column` as a plain argument.
+  if (launchStyle === "direct-path") return [target];
+  if (launchStyle === "goto") return ["--goto", target];
   return [
     "--line",
     position.line,
@@ -84,7 +82,8 @@ export const launchLocalEditor = Effect.fn("desktop.localEditor.launch")(functio
     [...resolved.value.baseArgs, ...editorArguments(editor.launchStyle, targetPath, position)],
     { env },
   );
-  if (spawnCommand.shell) return refuse("unsafe-path");
+  // Windows `.cmd`/`.bat` launchers need a shell, which this path never uses.
+  if (spawnCommand.shell) return refuse("unsupported-launcher");
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return yield* spawner

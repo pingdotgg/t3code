@@ -1037,6 +1037,7 @@ export const DesktopOpenLocalEditorFailureReason = Schema.Literals([
   "path-missing",
   "editor-unavailable",
   "unsafe-path",
+  "unsupported-launcher",
   "spawn-failed",
 ]);
 export type DesktopOpenLocalEditorFailureReason = typeof DesktopOpenLocalEditorFailureReason.Type;
@@ -1143,6 +1144,8 @@ export interface DesktopBridge {
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
   checkSystemPermission: (pane: SystemSettingsPane) => Promise<boolean>;
   probeRemoteEditors: () => Promise<readonly EditorId[]>;
+  /** Editors this device can launch directly, including ones without a remote-SSH scheme. */
+  probeLocalEditors: () => Promise<readonly EditorId[]>;
   /** Stable per-install id kept outside web storage; null when it cannot be read. */
   getEditorClientId: () => string | null;
   /** Starts an editor on this device for an existing absolute path; never contacts an environment. */

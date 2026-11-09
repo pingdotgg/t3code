@@ -16,6 +16,7 @@ import {
   openRemoteEditorUrl,
   openDeviceLocalEditor,
   useDeviceLocalEditorPreference,
+  useLocalEditors,
   useRemoteCapableEditors,
   useRemoteOpenHint,
   useRemoteOpenState,
@@ -239,10 +240,16 @@ export const OpenInPicker = memo(function OpenInPicker({
   const canOpenEditor = remote.mode !== "remote-unavailable" && !isHostEditorDenied;
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
+  const localEditors = useLocalEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
   const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
   // Remote editors run on the viewing machine; only desktop can probe that PATH.
-  const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
+  const effectiveEditors =
+    remote.mode === "local-exec"
+      ? availableEditors
+      : remote.mode === "device-local"
+        ? localEditors
+        : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
   const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
