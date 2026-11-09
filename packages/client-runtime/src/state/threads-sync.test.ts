@@ -1,4 +1,5 @@
 import {
+  EnvironmentAuthorizationError,
   EnvironmentId,
   EventId,
   MessageId,
@@ -783,31 +784,41 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect(
-    "opens over the socket alone, and asks HTTP whether a thread exists after it fails",
-    () =>
-      Effect.gen(function* () {
-        const harness = yield* makeHarness({
-          httpSnapshot: { _tag: "missing" },
-          socketSnapshots: true,
-        });
-        yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
-          Stream.filter((count) => count === 1),
-          Stream.runHead,
-        );
-        expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
-        expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
-
-        yield* Queue.offer(harness.inputs, new Error("Thread not found"));
-        yield* TestClock.adjust("250 millis");
-        const settled = yield* awaitThreadState(
-          harness.observed,
-          (value) => value.status === "deleted" || Option.isSome(value.error),
-        );
-        // The HTTP retry decides, so a missing thread never flashes an error.
-        expect(settled.status).toBe("deleted");
-        expect(yield* Ref.get(harness.loaderCalls)).toBe(1);
+  it.effect.each([
+    // The HTTP retry decides, so a missing thread never flashes an error.
+    { label: "asks HTTP", failure: new Error("Thread not found"), status: "deleted", loads: 1 },
+    // Authorization failures are never retried, so the error must show at once.
+    {
+      label: "shows an authorization error",
+      failure: new EnvironmentAuthorizationError({
+        message: "Not allowed",
+        requiredScope: "orchestration:read",
       }),
+      status: "empty",
+      loads: 0,
+    },
+  ])("opens over the socket alone, and $label after it fails", ({ failure, status, loads }) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        httpSnapshot: { _tag: "missing" },
+        socketSnapshots: true,
+      });
+      yield* SubscriptionRef.changes(harness.subscriptionCount).pipe(
+        Stream.filter((count) => count === 1),
+        Stream.runHead,
+      );
+      expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(0);
+
+      yield* Queue.offer(harness.inputs, failure);
+      yield* TestClock.adjust("250 millis");
+      const settled = yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "deleted" || Option.isSome(value.error),
+      );
+      expect(settled.status).toBe(status);
+      expect(yield* Ref.get(harness.loaderCalls)).toBe(loads);
+    }),
   );
 
   it.effect("resumes a warm cache via afterSequence without an HTTP fetch", () =>

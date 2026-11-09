@@ -32,7 +32,7 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import { request, subscribeDynamic } from "../rpc/client.ts";
+import { isAuthorizationFailure, request, subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
@@ -1065,8 +1065,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         onDefect: () => setStreamError("Could not synchronize the thread."),
         // A socket-only open that fails retries over HTTP, which tells a
         // missing thread apart from a failure, before showing an error.
-        onExpectedFailure: Effect.fnUntraced(function* (cause) {
+        onExpectedFailure: Effect.fn("EnvironmentThreadState.onExpectedFailure")(function* (cause) {
           const retryOverHttp =
+            !isAuthorizationFailure(cause) &&
             !(yield* Ref.getAndSet(socketSnapshotFailed, true)) &&
             Option.isNone((yield* SubscriptionRef.get(state)).data);
           if (!retryOverHttp) yield* setStreamError(formatThreadError(cause));
