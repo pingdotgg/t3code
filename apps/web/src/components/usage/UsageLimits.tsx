@@ -245,16 +245,22 @@ export function useResetCredit(
 ) {
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
-  const [confirming, setConfirming] = useState(false);
+  // The input is pinned when the dialog opens, so a refresh behind it cannot swap the credit spent.
+  const [confirmingInput, setConfirmingInput] = useState<ProviderConsumeResetCreditInput | null>(
+    null,
+  );
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const confirming = confirmingInput !== null;
+  const setConfirming = (open: boolean) => setConfirmingInput(open ? input : null);
 
   const redeem = async () => {
-    setConfirming(false);
+    const pinned = confirmingInput ?? input;
+    setConfirmingInput(null);
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input });
+    const result = await consume({ environmentId, input: pinned });
     setBusy(false);
     if (result._tag === "Success") {
       setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
