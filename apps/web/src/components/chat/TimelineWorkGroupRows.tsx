@@ -1013,20 +1013,24 @@ function WorkingWindowView({
     if (open) return;
     setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
   }, [open]);
-  const { onWorkingHistoryCollapsing } = ctx;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted, and the timeline stops following its end, until the collapse transition finishes
+  const { onWorkingHistoryMoving, onWorkingHistorySettled } = ctx;
+  const hasHistory = history !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the timeline holds off following its end, and older items stay mounted, until the open or collapse transition finishes
   useEffect(() => {
-    if (open || history === null) return;
-    onWorkingHistoryCollapsing(true);
+    if (!open && !hasHistory) return;
+    onWorkingHistoryMoving(true);
     let cancelled = false;
     void transitionsSettled(windowRef.current).then(() => {
-      if (!cancelled) setHistory(null);
+      if (cancelled) return;
+      onWorkingHistoryMoving(false);
+      onWorkingHistorySettled();
+      if (!open) setHistory(null);
     });
     return () => {
       cancelled = true;
-      onWorkingHistoryCollapsing(false);
+      onWorkingHistoryMoving(false);
     };
-  }, [open, history, onWorkingHistoryCollapsing]);
+  }, [open, hasHistory, onWorkingHistoryMoving, onWorkingHistorySettled]);
   const head = history?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
   useEffect(() => {
