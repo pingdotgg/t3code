@@ -23,13 +23,7 @@ const root = path.resolve(import.meta.dirname, "..");
 // Spawn the CLI entry directly (not through `bun run` / the cli.js
 // launcher) so signals hit the actual CLI process, whose scope teardown
 // kills the dev server and the provider sidecars.
-const alchemyBin = path.join(
-  root,
-  "node_modules",
-  "alchemy",
-  "bin",
-  "alchemy.js",
-);
+const alchemyBin = path.join(root, "node_modules", "alchemy", "bin", "alchemy.js");
 // Isolated stage so this suite never fights integ.test.ts (same stack
 // name) over state rows.
 const STAGE = "dev-cli-test";
@@ -83,9 +77,7 @@ const fetchOk = async (
     }
     await Bun.sleep(delayMs);
   }
-  throw new Error(
-    `GET ${url} never returned 2xx (last status: ${last?.status})`,
-  );
+  throw new Error(`GET ${url} never returned 2xx (last status: ${last?.status})`);
 };
 
 /** Extract the stack-output URL the CLI prints on stdout. */
@@ -156,9 +148,9 @@ test(
     expect(about.status).toBe(200);
 
     // Nitro API route serves through the dev server.
-    const hello = (await (
-      await fetchOk(new URL("/api/hello", url))
-    ).json()) as { greeting: string | null };
+    const hello = (await (await fetchOk(new URL("/api/hello", url))).json()) as {
+      greeting: string | null;
+    };
     expect(hello).toEqual({ greeting: "Hello from Nuxt on Railway!" });
 
     // Static asset from public/.

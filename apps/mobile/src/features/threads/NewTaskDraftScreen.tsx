@@ -1,10 +1,8 @@
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
 import { NativeScrollEdgeEffectsContext } from "../../native/NativeScrollViewMarker";
 import { DraftThreadHeader } from "./DraftThreadHeader";
-import { threadHeaderAppearance } from "./thread-header-appearance";
-import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useComposerAttachmentActions } from "../../state/use-composer-attachment-actions";
-import { useWorkspaceBackNavigation } from "../workspace/useAndroidWorkspaceNavigation";
+import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { submittedThreadParams } from "./thread-route-state";
 import { ThreadScreenBinding, ThreadScreenFallback } from "./ThreadScreenHost";
 import { draftThreadShell } from "./draft-thread-shell";
@@ -18,6 +16,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   CommonActions,
@@ -34,6 +33,7 @@ import { KeyboardController } from "react-native-keyboard-controller";
 
 import {
   AuthOrchestrationOperateScope,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
@@ -458,10 +458,15 @@ export function NewTaskDraftScreen(props: {
       return;
     }
 
-    const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes, {
-      incomingShareId: props.incomingShareId,
-      pickerClosed: initialPickerRef.current === "open" && isFocused,
-    });
+    const selection = resolveDraftProjectSelection(
+      selectedProjectKey,
+      projects,
+      pickableProjectGroups(projectScopes),
+      {
+        incomingShareId: props.incomingShareId,
+        pickerClosed: initialPickerRef.current === "open" && isFocused,
+      },
+    );
     if (selection.kind === "preserve") {
       initialPickerRef.current = null;
       return;
@@ -845,21 +850,7 @@ export function NewTaskDraftScreen(props: {
 
   if (!flow.selectedModel) {
     return (
-      <ThreadScreenFallback
-        header={
-          <AppBar
-            title="New thread"
-            sidebar={false}
-            onBack={goBack}
-            options={{
-              ...threadHeaderAppearance(NATIVE_LIQUID_GLASS_SUPPORTED),
-              unstable_headerSubtitle: undefined,
-              unstable_headerRightItems: () => [],
-              unstable_headerToolbarItems: () => [],
-            }}
-          />
-        }
-      >
+      <ThreadScreenFallback header={<AppBar title="New thread" onBack={goBack} />}>
         <View className="flex-1 justify-end gap-3 p-4">
           {environmentControl}
           <Text className="text-foreground-muted">
@@ -883,7 +874,7 @@ export function NewTaskDraftScreen(props: {
     threadId: ThreadId.make(creationMetadata.threadId),
     modelSelection: flow.selectedModel,
     runtimeMode: flow.runtimeMode,
-    interactionMode: flow.interactionMode,
+    interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     branch: flow.selectedBranchName,
     worktreePath: flow.selectedWorktreePath,
     createdAt: creationMetadata.createdAt,
@@ -978,9 +969,9 @@ export function NewTaskDraftScreen(props: {
         onStopThread={() => {}}
         onResumeQueue={null}
         onSendMessage={handleStart}
+        offersSideChat={false}
         onReconnectEnvironment={() => onReconnectEnvironment(selectedProject.environmentId)}
         canSwitchThreadProvider
-        onUpdateThreadInteractionMode={flow.planModeEnabled ? flow.setInteractionMode : undefined}
         onRespondToApproval={async () => {}}
         onSelectUserInputOption={() => {}}
         onChangeUserInputCustomAnswer={() => {}}
