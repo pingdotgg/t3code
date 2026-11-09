@@ -607,6 +607,10 @@ jobs:
       - name: Build
         if: steps.record.outputs.built != 'true'
         working-directory: apps/mobile
+        env:
+          # EAS secret variables don't reach local builds; the eas-build-on-success
+          # hook needs these to upload the bundle's source map.
+          MOBILE_SOURCEMAPS_R2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
         run: |
           eas build --local --platform android --profile production --non-interactive --output "$RUNNER_TEMP/t3code.aab"
           abis="$(unzip -Z1 "$RUNNER_TEMP/t3code.aab" | sed -n 's|^base/lib/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)"
@@ -767,6 +771,10 @@ jobs:
       - name: Build
         if: steps.record.outputs.built != 'true'
         working-directory: apps/mobile
+        env:
+          # EAS secret variables don't reach local builds; the eas-build-on-success
+          # hook needs these to upload the bundle's source map.
+          MOBILE_SOURCEMAPS_R2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
         run: |
           # A real path: /var -> /private/var symlinks break the expo-widgets bundle step.
           export EAS_LOCAL_BUILD_WORKINGDIR="$RUNNER_TEMP/eas-build"
