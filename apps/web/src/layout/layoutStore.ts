@@ -236,14 +236,19 @@ export type LayoutNewTabRequest =
   | { readonly replaceTabId: string }
   | { readonly ghostOf: ScopedThreadRef };
 
+/** One pending request; its identity tells overlapping requests apart. */
+export interface LayoutNewTabTicket {
+  readonly request: LayoutNewTabRequest;
+}
+
 type LayoutPersistedState = Pick<LayoutStoreState, "layout" | "companionShares">;
 
 interface LayoutStoreState {
   layout: LayoutState;
   /** Transient placement for a new thread route, including launcher replacement; never persist it
    * into saved layout state. */
-  newTabRequest: LayoutNewTabRequest | null;
-  requestNewTab: (request: LayoutNewTabRequest) => void;
+  newTabRequest: LayoutNewTabTicket | null;
+  requestNewTab: (request: LayoutNewTabRequest) => LayoutNewTabTicket;
   /**
    * The tab whose pane fills the strip (alt+cmd+F, the tab menu, the palette).
    * Session state: a restart shows the whole layout again.
@@ -264,7 +269,8 @@ interface LayoutStoreState {
     placement: LayoutTabPlacement,
     options: { activate: string | null; focus: boolean },
   ) => void;
-  clearNewTabRequest: () => void;
+  /** Clear the request, or only `ticket` so a settled action keeps a later one. */
+  clearNewTabRequest: (ticket?: LayoutNewTabTicket) => void;
   /** The zoomed-out map of every workspace (alt+cmd+O, pinch, hot corner). Session only. */
   overviewOpen: boolean;
   setOverviewOpen: (open: boolean) => void;
@@ -473,9 +479,17 @@ export const useLayoutStore = create<LayoutStoreState>()(
           ),
         placeTabs: (tabs, placement, options) =>
           apply((layout) => placeLayoutTabs(layout, tabs, placement, options)),
-        requestNewTab: (request) => set({ newTabRequest: request }),
-        clearNewTabRequest: () =>
-          set((state) => (state.newTabRequest !== null ? { newTabRequest: null } : state)),
+        requestNewTab: (request) => {
+          const ticket = { request };
+          set({ newTabRequest: ticket });
+          return ticket;
+        },
+        clearNewTabRequest: (ticket) =>
+          set((state) =>
+            state.newTabRequest !== null && (ticket === undefined || state.newTabRequest === ticket)
+              ? { newTabRequest: null }
+              : state,
+          ),
         openTab: (content, options) => apply((layout) => openLayoutTab(layout, content, options)),
         replaceTabContent: (tabId, content) =>
           apply((layout) => replaceLayoutTabContent(layout, tabId, content)),
@@ -570,11 +584,11 @@ export async function runInNewLayoutTab(
   action: () => Promise<unknown>,
   request: LayoutNewTabRequest = "active-pane",
 ): Promise<void> {
-  useLayoutStore.getState().requestNewTab(request);
+  const ticket = useLayoutStore.getState().requestNewTab(request);
   try {
     await action();
   } finally {
     // Let the route render that consumes the request land first.
-    setTimeout(() => useLayoutStore.getState().clearNewTabRequest(), 0);
+    setTimeout(() => useLayoutStore.getState().clearNewTabRequest(ticket), 0);
   }
 }

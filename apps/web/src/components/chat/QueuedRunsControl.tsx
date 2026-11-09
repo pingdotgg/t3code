@@ -110,8 +110,9 @@ export function QueuedRunsControl({
   const resume = useAtomCommand(threadEnvironment.resumeThreadQueue);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
-  const [draggedRunId, setDraggedRunId] = useState<RunId | null>(null);
-  const [dropBeforeRunId, setDropBeforeRunId] = useState<RunId | null>(null);
+  // The row being dragged and the row it would land before (null: the end).
+  const [drag, setDrag] = useState<{ runId: RunId; beforeRunId: RunId | null } | null>(null);
+  const draggedRunId = drag?.runId ?? null;
   const [showAll, setShowAll] = useState(false);
   const queueListId = useId();
   const queueListRef = useRef<HTMLOListElement>(null);
@@ -273,7 +274,7 @@ export function QueuedRunsControl({
   const draggedIndex = previewItems.findIndex((item) => item.runId === draggedRunId);
   if (draggedRunId !== null && draggedIndex >= 0) {
     const [dragged] = previewItems.splice(draggedIndex, 1);
-    const beforeIndex = previewItems.findIndex((item) => item.runId === dropBeforeRunId);
+    const beforeIndex = previewItems.findIndex((item) => item.runId === drag?.beforeRunId);
     previewItems.splice(beforeIndex < 0 ? previewItems.length : beforeIndex, 0, dragged!);
   }
   const collapsible = items.length > QUEUE_VISIBLE_ROWS;
@@ -288,8 +289,7 @@ export function QueuedRunsControl({
       className="relative flex w-full min-w-0 flex-col px-2 py-1 text-meta"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
-          setDraggedRunId(null);
-          setDropBeforeRunId(null);
+          setDrag(null);
         }
       }}
       onDragOver={(event) => {
@@ -300,13 +300,12 @@ export function QueuedRunsControl({
       }}
       onDrop={(event) => {
         event.preventDefault();
-        if (draggedRunId && draggedRunId !== dropBeforeRunId)
+        if (drag && drag.runId !== drag.beforeRunId)
           void reorder({
             environmentId: props.environmentId,
-            input: { threadId: props.threadId, runId: draggedRunId, beforeRunId: dropBeforeRunId },
+            input: { threadId: props.threadId, runId: drag.runId, beforeRunId: drag.beforeRunId },
           });
-        setDraggedRunId(null);
-        setDropBeforeRunId(null);
+        setDrag(null);
       }}
     >
       <span className="sr-only" aria-live="polite">
@@ -335,16 +334,18 @@ export function QueuedRunsControl({
                 draggedRunId === item.runId && "bg-foreground/8 shadow-md",
               )}
               onDragOver={(event) => {
-                if (draggedRunId && item.runId !== draggedRunId) {
+                if (drag && item.runId !== drag.runId) {
                   event.preventDefault();
                   const bounds = event.currentTarget.getBoundingClientRect();
-                  setDropBeforeRunId(
-                    event.clientY < bounds.top + bounds.height / 2
-                      ? item.runId
-                      : (previewItems
-                          .slice(position + 1)
-                          .find((next) => next.runId !== draggedRunId)?.runId ?? null),
-                  );
+                  setDrag({
+                    runId: drag.runId,
+                    beforeRunId:
+                      event.clientY < bounds.top + bounds.height / 2
+                        ? item.runId
+                        : (previewItems
+                            .slice(position + 1)
+                            .find((next) => next.runId !== drag.runId)?.runId ?? null),
+                  });
                 }
               }}
             >
@@ -361,13 +362,9 @@ export function QueuedRunsControl({
                   event.dataTransfer.setData("text/plain", item.runId);
                   event.dataTransfer.effectAllowed = "move";
                   setShowAll(true);
-                  setDraggedRunId(item.runId);
-                  setDropBeforeRunId(items[position + 1]?.runId ?? null);
+                  setDrag({ runId: item.runId, beforeRunId: items[position + 1]?.runId ?? null });
                 }}
-                onDragEnd={() => {
-                  setDraggedRunId(null);
-                  setDropBeforeRunId(null);
-                }}
+                onDragEnd={() => setDrag(null)}
                 onKeyDown={(event) => {
                   if (!item.runId || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
                   event.preventDefault();
