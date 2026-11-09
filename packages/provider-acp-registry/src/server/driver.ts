@@ -4,6 +4,7 @@ import {
   resolveOfficialAcpRegistryIconUrl,
   TextGenerationError,
   type AcpRegistryOperationError,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
@@ -63,6 +64,8 @@ const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const EMPTY_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
+// Qoder advertises this id and changes the choice list with the model.
+const PER_MODEL_REASONING_OPTION_ID = "reasoning_effort";
 const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
   provider: DRIVER_KIND,
   packageName: null,
@@ -86,17 +89,55 @@ const makeUnsupportedTextGeneration = (): ProviderTextGeneration => {
   };
 };
 
+function isPerModelReasoningDescriptor(descriptor: ProviderOptionDescriptor): boolean {
+  return descriptor.id === PER_MODEL_REASONING_OPTION_ID;
+}
+
+function capabilitiesFromDescriptors(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): ServerProviderModel["capabilities"] {
+  return descriptors.length === 0
+    ? EMPTY_CAPABILITIES
+    : createModelCapabilities({ optionDescriptors: descriptors });
+}
+
+/**
+ * `reasoning_effort` belongs to the model that advertised it. Other options, such as session
+ * mode, stay shared. A later selection keeps a model's levels after the session moves on.
+ */
+function descriptorsForDiscoveredModel(
+  modelId: string,
+  discovery: Pick<AcpRegistryLiveConfiguration, "currentModelId" | "configOptions">,
+  previousModels: ReadonlyArray<ServerProviderModel> | undefined,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  const shared = discovery.configOptions;
+  if (discovery.currentModelId == null || modelId === discovery.currentModelId) {
+    return shared;
+  }
+  const sharedWithoutReasoning = shared.filter(
+    (descriptor) => !isPerModelReasoningDescriptor(descriptor),
+  );
+  const kept = (
+    previousModels?.find((model) => model.slug === modelId)?.capabilities?.optionDescriptors ?? []
+  ).filter(isPerModelReasoningDescriptor);
+  return [...sharedWithoutReasoning, ...kept];
+}
+
 function modelsFromDiscovery(
   discovery:
     | Pick<AcpRegistryLiveConfiguration, "models" | "currentModelId" | "configOptions">
     | undefined,
   customModels: ReadonlyArray<string>,
+  previousModels?: ReadonlyArray<ServerProviderModel>,
 ): ReadonlyArray<ServerProviderModel> {
   const discovered = discovery?.models ?? [];
-  const capabilities =
-    discovery === undefined || discovery.configOptions.length === 0
+  const sharedCapabilities = capabilitiesFromDescriptors(discovery?.configOptions ?? []);
+  const capabilitiesFor = (modelId: string) =>
+    discovery === undefined
       ? EMPTY_CAPABILITIES
-      : createModelCapabilities({ optionDescriptors: discovery.configOptions });
+      : capabilitiesFromDescriptors(
+          descriptorsForDiscoveredModel(modelId, discovery, previousModels),
+        );
   const builtInModels: ReadonlyArray<ServerProviderModel> =
     discovered.length === 0
       ? [
@@ -105,7 +146,7 @@ function modelsFromDiscovery(
             name: "Default",
             isCustom: false,
             isDefault: true,
-            capabilities,
+            capabilities: capabilitiesFor("default"),
           },
         ]
       : discovered.map((model) => ({
@@ -113,9 +154,9 @@ function modelsFromDiscovery(
           name: model.name,
           isCustom: false,
           ...(model.id === discovery?.currentModelId ? { isDefault: true } : {}),
-          capabilities,
+          capabilities: capabilitiesFor(model.id),
         }));
-  return providerModelsFromSettings(builtInModels, customModels, capabilities);
+  return providerModelsFromSettings(builtInModels, customModels, sharedCapabilities);
 }
 
 function acpRegistrySnapshotReadiness(
@@ -281,7 +322,7 @@ export function applyAcpRegistryLiveConfiguration(
     models:
       configuration.models.length === 0 && configuration.configOptions.length === 0
         ? provider.models
-        : modelsFromDiscovery(discovery, customModels),
+        : modelsFromDiscovery(discovery, customModels, provider.models),
   };
 }
 

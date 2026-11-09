@@ -13,6 +13,24 @@ const MAX_OPTION_CHOICES = 64;
 const MAX_TEXT_LENGTH = 256;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 
+// Low through None, then Off. Extra-high aliases sit with xhigh, ahead of max.
+const THOUGHT_LEVEL_ORDER = [
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "extra-high",
+  "extra_high",
+  "max",
+  "none",
+  "off",
+] as const;
+
+const THOUGHT_LEVEL_RANK = new Map<string, number>(
+  THOUGHT_LEVEL_ORDER.map((id, index) => [id, index]),
+);
+
 const boundedText = (value: string | null | undefined, maximumLength: number): string =>
   (value ?? "").trim().slice(0, maximumLength);
 
@@ -50,6 +68,54 @@ function selectChoices(
     if (choices.length === MAX_OPTION_CHOICES) break;
   }
   return choices;
+}
+
+function thoughtLevelLabel(id: string, fallback: string, separateMax: boolean): string {
+  switch (id) {
+    case "minimal":
+      return "Minimal";
+    case "low":
+      return "Low";
+    case "medium":
+      return "Medium";
+    case "high":
+      return "High";
+    case "xhigh":
+    case "extra-high":
+    case "extra_high":
+      return "Extra High";
+    case "max":
+      // One top bucket is Extra High. Max stays Max only when Extra High is also offered.
+      return separateMax ? "Max" : "Extra High";
+    case "none":
+      return "None";
+    case "off":
+      return "Off";
+    default:
+      return fallback;
+  }
+}
+
+/**
+ * Agents omit a default flag. High is the column's Default badge when the model offers it;
+ * the check mark stays on `currentValue`, which may be a higher level.
+ */
+function presentThoughtLevelChoices(
+  choices: ReadonlyArray<ProviderOptionChoice>,
+): ReadonlyArray<ProviderOptionChoice> {
+  const ids = new Set(choices.map((choice) => choice.id));
+  const separateMax = ids.has("xhigh") || ids.has("extra-high") || ids.has("extra_high");
+  return [...choices]
+    .sort(
+      (left, right) =>
+        (THOUGHT_LEVEL_RANK.get(left.id) ?? THOUGHT_LEVEL_RANK.size) -
+        (THOUGHT_LEVEL_RANK.get(right.id) ?? THOUGHT_LEVEL_RANK.size),
+    )
+    .map((choice) => ({
+      ...choice,
+      label: thoughtLevelLabel(choice.id, choice.label, separateMax),
+      ...(choice.id === "high" ? { isDefault: true } : {}),
+    }));
 }
 
 export function acpProviderOptionDescriptors(input: {
@@ -91,18 +157,21 @@ export function acpProviderOptionDescriptors(input: {
       continue;
     }
     if (option.category === "mode") hasModeCategory = true;
-    if (option.category === "thought_level") {
+    const isThoughtLevel = option.category === "thought_level";
+    if (isThoughtLevel) {
       mirroredModeChoiceSets.push(new Set(choices.map((choice) => choice.id)));
     }
+    const presentedChoices = isThoughtLevel ? presentThoughtLevelChoices(choices) : choices;
     const currentValue = choiceId(option.currentValue);
     descriptors.push({
       ...base,
+      ...(isThoughtLevel ? { label: "Reasoning" } : {}),
       type: "select",
-      options: choices,
-      ...(currentValue && choices.some((choice) => choice.id === currentValue)
+      options: presentedChoices,
+      ...(currentValue && presentedChoices.some((choice) => choice.id === currentValue)
         ? { currentValue }
         : {}),
-      ...(option.category === "thought_level" ? { role: "reasoning" as const } : {}),
+      ...(isThoughtLevel ? { role: "reasoning" as const } : {}),
     });
     if (descriptors.length === MAX_OPTION_DESCRIPTORS) return descriptors;
   }

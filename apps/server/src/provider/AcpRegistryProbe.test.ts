@@ -229,7 +229,7 @@ describe("ACP Registry probe", () => {
         currentValue: "high",
         options: [
           { id: "medium", label: "Medium" },
-          { id: "high", label: "High" },
+          { id: "high", label: "High", isDefault: true },
         ],
         role: "reasoning",
       },

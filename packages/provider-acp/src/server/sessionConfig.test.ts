@@ -43,7 +43,7 @@ describe("acpProviderOptionDescriptors", () => {
     expect(descriptors).toEqual([
       {
         id: "reasoning_effort",
-        label: "Reasoning effort",
+        label: "Reasoning",
         type: "select",
         options: [
           { id: "low", label: "Low" },
@@ -53,6 +53,73 @@ describe("acpProviderOptionDescriptors", () => {
         role: "reasoning",
       },
     ]);
+  });
+
+  it("orders Qoder reasoning levels and badges High as the default", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "reasoning_effort",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "max",
+          options: [
+            { value: "high", name: "High" },
+            { value: "max", name: "Max" },
+            { value: "low", name: "Low" },
+            { value: "none", name: "None" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors).toEqual([
+      {
+        id: "reasoning_effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "max", label: "Extra High" },
+          { id: "none", label: "None" },
+        ],
+        currentValue: "max",
+        role: "reasoning",
+      },
+    ]);
+  });
+
+  it("keeps Max distinct when the model also offers Extra High", () => {
+    const descriptors = acpProviderOptionDescriptors({
+      configOptions: [
+        {
+          id: "reasoning",
+          name: "Reasoning Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "xhigh",
+          options: [
+            { value: "max", name: "Max" },
+            { value: "xhigh", name: "XHigh" },
+            { value: "low", name: "low" },
+          ],
+        },
+      ],
+      modeState: undefined,
+    });
+
+    expect(descriptors[0]).toMatchObject({
+      label: "Reasoning",
+      currentValue: "xhigh",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "xhigh", label: "Extra High" },
+        { id: "max", label: "Max" },
+      ],
+    });
   });
 
   it("flattens grouped select choices and drops empty or duplicate values", () => {

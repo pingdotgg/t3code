@@ -208,6 +208,86 @@ describe("acpRegistrySnapshotReadiness", () => {
     ]);
   });
 
+  it("keeps Qoder reasoning on the model that advertised it", () => {
+    const mode = {
+      id: "_t3/session-mode",
+      label: "Mode",
+      type: "select" as const,
+      options: [
+        { id: "default", label: "Default" },
+        { id: "yolo", label: "YOLO" },
+      ],
+      currentValue: "default",
+    };
+    const flashReasoning = {
+      id: "reasoning_effort",
+      label: "Reasoning",
+      type: "select" as const,
+      role: "reasoning" as const,
+      currentValue: "max",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "max", label: "Extra High" },
+        { id: "none", label: "None" },
+      ],
+    };
+    const snapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "qoder" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "qoder",
+        version: "1.1.81",
+        distribution: "local",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          models: [
+            { id: "auto", name: "Auto", description: null },
+            { id: "dfmodel", name: "DeepSeek-Flash", description: null },
+          ],
+          currentModelId: "dfmodel",
+          configOptions: [mode, flashReasoning],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+
+    expect(
+      snapshot.models.find((model) => model.slug === "auto")?.capabilities?.optionDescriptors,
+    ).toEqual([mode]);
+    expect(
+      snapshot.models.find((model) => model.slug === "dfmodel")?.capabilities?.optionDescriptors,
+    ).toEqual([mode, flashReasoning]);
+
+    const switched = applyAcpRegistryLiveConfiguration(
+      snapshot,
+      {
+        models: [
+          { id: "auto", name: "Auto", description: null },
+          { id: "dfmodel", name: "DeepSeek-Flash", description: null },
+        ],
+        currentModelId: "auto",
+        configOptions: [mode],
+      },
+      [],
+    );
+    expect(
+      switched.models.find((model) => model.slug === "auto")?.capabilities?.optionDescriptors,
+    ).toEqual([mode]);
+    expect(
+      switched.models.find((model) => model.slug === "dfmodel")?.capabilities?.optionDescriptors,
+    ).toEqual([mode, flashReasoning]);
+  });
+
   it("projects discovery without claiming authentication when no login methods are advertised", () => {
     const snapshot = buildCheckedAcpRegistrySnapshot({
       ...identity,
