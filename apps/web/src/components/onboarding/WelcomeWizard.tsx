@@ -1815,7 +1815,7 @@ function CliPathSetup() {
         )}
       </p>
       {setup.added ? null : (
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => run("addToPath")}>
           Add to PATH
         </Button>
       )}
