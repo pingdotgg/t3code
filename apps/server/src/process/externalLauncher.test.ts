@@ -471,16 +471,19 @@ for (const { layout, pathNames, fallbackNames, expected } of [
   );
 }
 
-it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directory", () =>
+it.effect.skipIf(windowsHost)("finds Zed, not ZFS zed, in Linux fallback directories", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-fallback-" });
     const localBin = path.join(home, ".local/bin");
     const systemBin = path.join(home, "system-bin");
+    const zfsBin = path.join(home, "sbin");
     for (const [dir, name] of [
       [localBin, "zed"],
       [systemBin, "zeditor"],
+      [zfsBin, "zed"],
+      [zfsBin, "zpool"],
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
@@ -488,7 +491,7 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
       yield* fs.chmod(executable, 0o755);
     }
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: "" }).pipe(
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: zfsBin }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, {
         ...path,
@@ -509,6 +512,8 @@ it.effect.skipIf(windowsHost)("prefers zeditor in a later Linux fallback directo
       yield* resolve,
       Option.some({ command: path.join(localBin, "zed"), baseArgs: [] }),
     );
+    yield* fs.remove(path.join(localBin, "zed"));
+    assert.deepEqual(yield* resolve, Option.none());
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

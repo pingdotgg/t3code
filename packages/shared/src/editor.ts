@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import * as HostProcess from "./HostProcess.ts";
-import { isCommandAvailable } from "./shell.ts";
+import { isCommandAvailable, resolveCommandPath } from "./shell.ts";
 
 type Editor = (typeof EDITORS)[number];
 
@@ -48,6 +48,11 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
   const candidates: string[] = [];
+  // OpenZFS installs its event daemon as zed beside zpool.
+  const isZfsEventDaemon = (command: string) =>
+    path.basename(command) === "zed"
+      ? fs.exists(path.join(path.dirname(command), "zpool")).pipe(Effect.orElseSucceed(() => false))
+      : Effect.succeed(false);
 
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];
@@ -144,13 +149,13 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
 
   if (preferBundle) candidates.push(...editor.commands);
   for (const candidate of candidates) {
-    if (yield* isCommandAvailable(candidate, { env })) {
-      return Option.some({
-        command: candidate,
-        baseArgs:
-          editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
-      });
-    }
+    const resolved = yield* resolveCommandPath(candidate, { env });
+    if (resolved === null || (editor.id === "zed" && (yield* isZfsEventDaemon(resolved)))) continue;
+    return Option.some({
+      command: candidate,
+      baseArgs:
+        editor.id === "kiro" && (platform === "darwin" || platform === "win32") ? [] : baseArgs,
+    });
   }
   return Option.none();
 });
