@@ -62,6 +62,39 @@ function project(id: string): Project {
 }
 
 describe("sidebar header new thread", () => {
+  it("does not render the thread list when terminal focus changes without held modifiers", async () => {
+    vi.mocked(useProjects).mockReturnValue([]);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+        <input aria-label="Outside" />
+        <div data-terminal-owner="drawer">
+          <input aria-label="Terminal" />
+        </div>
+      </SidebarProvider>,
+    );
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Outside"]')!.focus(),
+    );
+    vi.mocked(useProjects).mockClear();
+
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Terminal"]')!.focus(),
+    );
+    await act(() =>
+      screen.container.querySelector<HTMLInputElement>('[aria-label="Outside"]')!.focus(),
+    );
+
+    expect(useProjects).not.toHaveBeenCalled();
+  });
   it.each([
     { mode: "normal", count: 2, shift: false, picker: false },
     { mode: "boring", count: 2, shift: false, picker: false },
