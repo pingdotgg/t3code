@@ -37,16 +37,12 @@ import {
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
-/** Codex service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
+/** Service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
 function splitSpeed(
-  provider: TraitsSelectionInput["provider"],
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
-  const speedSelect =
-    provider === "codex"
-      ? (selects.find((descriptor) => descriptor.id === "serviceTier") ?? null)
-      : null;
+  const speedSelect = selects.find((descriptor) => descriptor.id === "serviceTier") ?? null;
   const fastToggle = toggles.find((descriptor) => descriptor.id === "fastMode") ?? null;
   const ultracodeToggle = toggles.find((descriptor) => descriptor.id === "ultracode") ?? null;
   return {
@@ -69,11 +65,10 @@ type ColumnControl =
  * such as an agent's session mode, sit below as one row each.
  */
 function columnControls(
-  provider: TraitsSelectionInput["provider"],
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
-  const { columnSelects, columnToggles } = splitSpeed(provider, selects, toggles);
+  const { columnSelects, columnToggles } = splitSpeed(selects, toggles);
   const controls: ReadonlyArray<ColumnControl> = [
     ...columnSelects.map((descriptor) => ({ kind: "select" as const, descriptor })),
     ...columnToggles.map((descriptor) => ({ kind: "boolean" as const, descriptor })),
@@ -96,8 +91,8 @@ export function describeComposerEffort(
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const reasoning =
-    columnControls(traits.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
-      .effort?.descriptor ?? null;
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
+      ?.descriptor ?? null;
   const descriptors = visibility.descriptors.filter(
     (descriptor) =>
       isReasoningControl(descriptor) ||
@@ -106,7 +101,6 @@ export function describeComposerEffort(
   );
   if (descriptors.length === 0) return { suffix: null, detail: null };
   const display = buildTraitsTriggerDisplay({
-    provider: traits.provider,
     descriptors,
     primarySelectDescriptorId: reasoning?.type === "select" ? reasoning.id : null,
     ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
@@ -169,8 +163,7 @@ export function hasComposerModelOptions(input: TraitsSelectionInput | null) {
   if (!input) return false;
   const visibility = getTraitsSectionVisibility(input);
   return (
-    columnControls(input.provider, visibility.selectDescriptors, visibility.booleanDescriptors)
-      .others.length > 0
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).others.length > 0
   );
 }
 
@@ -300,7 +293,6 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
 function EffortLevels(props: { traits: TraitsSelectionInput; optionsOnly?: boolean }) {
   const traits = useTraitsSelection(props.traits);
   const { effort: reasoning, others } = columnControls(
-    props.traits.provider,
     traits.selectDescriptors,
     traits.booleanDescriptors,
   );
@@ -567,11 +559,7 @@ export function ComposerEffortColumn(props: {
   const visibility = props.traits ? getTraitsSectionVisibility(props.traits) : null;
   const controls =
     props.traits && visibility
-      ? columnControls(
-          props.traits.provider,
-          visibility.selectDescriptors,
-          visibility.booleanDescriptors,
-        )
+      ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
       : null;
   return (
     <>

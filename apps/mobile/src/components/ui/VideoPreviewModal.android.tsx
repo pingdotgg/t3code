@@ -2,25 +2,25 @@ import { videoMimeType } from "@t3tools/shared/video";
 import { Modal, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppActivityIndicator } from "./ui/AppActivityIndicator";
-import { useLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { usePreviewPresentation, videoPreviewKey } from "../lib/previewPresentation";
-import { useMediaActions } from "../state/mediaActions";
-import { type MediaActionsSource } from "../lib/mediaActionsSource";
+import { AppActivityIndicator } from "./AppActivityIndicator";
+import { useLocalAttachmentPreview } from "../../lib/localAttachmentPreview";
+import { usePreviewPresentation, videoPreviewKey } from "../../lib/previewPresentation";
+import { useMediaActions } from "../../state/mediaActions";
+import { type MediaActionsSource } from "../../lib/mediaActionsSource";
 import {
   mediaVideoPreviewUri,
   mediaVideoThumbnailKey,
   type LocalVideoPreviewSource,
   type MediaVideoPreviewSource,
   type VideoPreviewSource,
-} from "../lib/videoPreviewSource";
-import { useAssetUrlState, useRefreshAssetUrl } from "../state/assets";
-import { usePreparedConnection } from "../state/session";
-import { AppText } from "./ui/AppText";
-import { MediaPreviewHeader } from "./MediaPreviewHeader";
-import { MediaVideoPlayer } from "./MediaVideoPlayer";
+} from "../../lib/videoPreviewSource";
+import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
+import { usePreparedConnection } from "../../state/session";
+import { AppText } from "./AppText";
+import { MediaPreviewHeader } from "../MediaPreviewHeader";
+import { MediaVideoPlayer } from "../MediaVideoPlayer";
 
-export type { VideoPreviewSource } from "../lib/videoPreviewSource";
+export type { VideoPreviewSource } from "../../lib/videoPreviewSource";
 
 interface PlaybackState {
   readonly uri: string | null;

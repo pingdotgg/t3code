@@ -6,7 +6,7 @@ import { Suspense, use, useRef, useState } from "react";
 import { PixelRatio, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { parse, Svg, SvgXml } from "react-native-svg";
 
-import { MediaImagePreview } from "../components/MediaImagePreview";
+import { FilePreviewModal } from "../components/ui/FilePreviewModal";
 import { SymbolView, type AppSymbolName } from "../components/ui/AppSymbol";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { mermaidSvgForNative, withDiagramBackground } from "../lib/mermaidSvg";
@@ -278,23 +278,20 @@ function MermaidBlock(props: MermaidCodeBlockProps & { readonly diagram: Diagram
         </View>
       ) : null}
       {expansion?.status === "open" ? (
-        <MediaImagePreview
+        <FilePreviewModal
           source={{
             kind: "image",
-            selectedIndex: 0,
-            images: [
-              {
-                kind: "image",
-                uri: expansion.uri,
-                name: "Mermaid diagram",
-                mimeType: "image/png",
-                actionsSource: {
-                  uri: expansion.uri,
-                  name: "Mermaid diagram.png",
-                  mimeType: "image/png",
-                },
-              },
-            ],
+            uri: expansion.uri,
+            // The viewer titles an image by a name with an extension.
+            name: "Mermaid diagram.png",
+            mimeType: "image/png",
+            // Alone, as on web, rather than paged with the thread's images.
+            gallery: [],
+            actionsSource: {
+              uri: expansion.uri,
+              name: "Mermaid diagram.png",
+              mimeType: "image/png",
+            },
           }}
           onRequestClose={() => setExpansion(null)}
         />
