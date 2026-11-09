@@ -3611,6 +3611,75 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect.each(["fresh", "warm", "vetoed"] as const)(
+    "rolls back a persisted thread on a %s runtime",
+    (runtimeState) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        const { runtime } = yield* openRuntime(fake);
+        const threadInput = {
+          threadId: THREAD_ID,
+          modelSelection: modelSelection("default"),
+          runtimePolicy,
+        };
+        // A fresh runtime is the one rollback opens after the previous Pi process went away.
+        const persisted =
+          runtimeState === "warm"
+            ? yield* runtime.ensureThread(threadInput)
+            : yield* (yield* openRuntime(yield* makeFakePi)).runtime.ensureThread(threadInput);
+        if (runtimeState === "vetoed") fake.vetoNextSwitch();
+        const result = yield* runtime
+          .rollbackThread({
+            providerThread: persisted,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("checkpoint-start"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [
+              {
+                id: ProviderTurnId.make("turn-1"),
+                providerThreadId: persisted.id,
+                nodeId: NodeId.make("node-1"),
+                runAttemptId: null,
+                nativeTurnRef: { driver: PI_PROVIDER, nativeId: "u1", strength: "strong" },
+                ordinal: 1,
+                status: "completed",
+                startedAt: persisted.createdAt,
+                completedAt: persisted.createdAt,
+              },
+            ],
+          })
+          .pipe(Effect.result);
+        const sessionRequests = fake
+          .allRequests()
+          .filter((request) => request.type === "switch_session" || request.type === "fork")
+          .map((request) => [request.type, request.sessionPath ?? request.entryId]);
+
+        if (runtimeState === "vetoed") {
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure")
+            assert.equal(result.failure._tag, "ProviderAdapterRollbackThreadError");
+          assert.deepEqual(sessionRequests, [["switch_session", FAKE_SESSION_FILE]]);
+          return;
+        }
+        assert.equal(result._tag, "Success");
+        if (result._tag === "Success") {
+          assert.equal(result.success.providerThread.id, persisted.id);
+          assert.equal(result.success.providerThread.nativeThreadRef?.nativeId, FAKE_SESSION_FILE);
+        }
+        assert.deepEqual(
+          sessionRequests,
+          runtimeState === "fresh"
+            ? [
+                ["switch_session", FAKE_SESSION_FILE],
+                ["fork", "u1"],
+              ]
+            : [["fork", "u1"]],
+        );
+      }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("settles a command-only prompt from its deferred ack and idle probe", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;
