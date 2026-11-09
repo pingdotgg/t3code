@@ -573,7 +573,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
-      input.skipNativeUsage
+      // Without an account (a custom model provider), Codex always rejects the read.
+      input.skipNativeUsage || !accountResponse.account
         ? Effect.undefined
         : withCodexDiscoveryDeadline(
             client.request("account/rateLimits/read", null),
@@ -841,22 +842,24 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-      : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
-        ? makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            ...(accountStatus.message ? { message: accountStatus.message } : {}),
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
-          })
-        : codexRateLimitsToLimits({
-            snapshot: snapshot.rateLimits.snapshot,
-            rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
-            resetCredits: snapshot.rateLimits.resetCredits,
-            checkedAt,
-          });
+  const hasNoSubscription =
+    snapshot.account.account?.type === "apiKey" ||
+    (!snapshot.account.account && !snapshot.account.requiresOpenaiAuth);
+  const usageLimits = hasNoSubscription
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
+      ? makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          ...(accountStatus.message ? { message: accountStatus.message } : {}),
+          ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
+        })
+      : codexRateLimitsToLimits({
+          snapshot: snapshot.rateLimits.snapshot,
+          rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
+          resetCredits: snapshot.rateLimits.resetCredits,
+          checkedAt,
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,

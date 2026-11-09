@@ -472,12 +472,14 @@ it.layer(
                 account: null,
                 requiresOpenaiAuth: false,
               },
+              rateLimits: { failure: "Codex could not read usage (JSON-RPC -32600)." },
             }),
           ),
         );
 
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.auth.status, "unknown");
+        assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
       }),
     );
 
