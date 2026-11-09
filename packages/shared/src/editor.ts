@@ -48,11 +48,15 @@ export const resolveEditorCommand = Effect.fn("editor.resolveEditorCommand")(fun
   const command = editor.commands[0];
   const jetbrains = editor.launchStyle === "line-column";
   const candidates: string[] = [];
-  // OpenZFS installs its event daemon as zed beside zpool.
-  const isZfsEventDaemon = (command: string) =>
-    path.basename(command) === "zed"
-      ? fs.exists(path.join(path.dirname(command), "zpool")).pipe(Effect.orElseSucceed(() => false))
-      : Effect.succeed(false);
+  // OpenZFS installs its event daemon as zed, in sbin or beside zpool. Nix links both into one bin.
+  const isZfsEventDaemon = Effect.fn("editor.isZfsEventDaemon")(function* (resolved: string) {
+    if (path.basename(resolved) !== "zed") return false;
+    const dir = path.dirname(
+      yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),
+    );
+    if (path.basename(dir) === "sbin") return true;
+    return yield* fs.exists(path.join(dir, "zpool")).pipe(Effect.orElseSucceed(() => false));
+  });
 
   if (platform === "darwin") {
     const roots = [...(home ? [path.join(home, "Applications")] : []), "/Applications"];

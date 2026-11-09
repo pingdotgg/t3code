@@ -471,27 +471,32 @@ for (const { layout, pathNames, fallbackNames, expected } of [
   );
 }
 
-it.effect.skipIf(windowsHost)("finds Zed, not ZFS zed, in Linux fallback directories", () =>
+it.effect.skipIf(windowsHost)("skips the OpenZFS zed on Linux but still finds Zed", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-zed-fallback-" });
     const localBin = path.join(home, ".local/bin");
+    const zedApp = path.join(home, ".local/zed.app/bin");
     const systemBin = path.join(home, "system-bin");
-    const zfsBin = path.join(home, "sbin");
+    const sbin = path.join(home, "sbin");
+    // Arch keeps OpenZFS zed beside zpool, Debian keeps it in sbin, and Nix links zpool beside Zed.
     for (const [dir, name] of [
-      [localBin, "zed"],
+      [zedApp, "zed"],
+      [localBin, "zpool"],
       [systemBin, "zeditor"],
-      [zfsBin, "zed"],
-      [zfsBin, "zpool"],
+      [systemBin, "zed"],
+      [systemBin, "zpool"],
+      [sbin, "zed"],
     ] as const) {
       yield* fs.makeDirectory(dir, { recursive: true });
       const executable = path.join(dir, name);
       yield* fs.writeFileString(executable, "#!/bin/sh\n");
       yield* fs.chmod(executable, 0o755);
     }
+    yield* fs.symlink(path.join(zedApp, "zed"), path.join(localBin, "zed"));
     const editor = EDITORS.find((editor) => editor.id === "zed")!;
-    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: zfsBin }).pipe(
+    const resolve = resolveEditorCommand(editor, { HOME: home, PATH: sbin }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(Path.Path, {
         ...path,
@@ -514,6 +519,11 @@ it.effect.skipIf(windowsHost)("finds Zed, not ZFS zed, in Linux fallback directo
     );
     yield* fs.remove(path.join(localBin, "zed"));
     assert.deepEqual(yield* resolve, Option.none());
+    yield* fs.remove(path.join(systemBin, "zpool"));
+    assert.deepEqual(
+      yield* resolve,
+      Option.some({ command: path.join(systemBin, "zed"), baseArgs: [] }),
+    );
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
