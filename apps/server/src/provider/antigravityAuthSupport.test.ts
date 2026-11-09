@@ -6,7 +6,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProviderInstanceId, type RuntimeMode } from "@t3tools/contracts";
+import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -119,15 +119,6 @@ describe("Antigravity process environment", () => {
     expect(spawn.args).toEqual(["acp"]);
     expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
-    const argsFor = (runtimeMode: RuntimeMode) =>
-      buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/usr/bin/agy", harnessPath: null },
-        profile,
-        cwd: "/project",
-        runtimeMode,
-      }).args;
-    expect(argsFor("full-access")).toEqual(["acp", "--dangerously-skip-permissions"]);
-    expect(argsFor("auto-accept-edits")).toEqual(["acp"]);
   });
 
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {

@@ -17,8 +17,6 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
-  antigravityPermissionMode,
-  antigravityRuntimeModeForSessionMode,
   antigravitySessionMeta,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
@@ -94,23 +92,6 @@ describe("Antigravity release gates", () => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
-});
-
-describe("Antigravity permission modes", () => {
-  // The agy CLI rejects `yolo` and `auto_edit`; its Full access is the spawn flag on `default`.
-  it.each([
-    { runtimeMode: "approval-required", managed: "default", cli: "default" },
-    { runtimeMode: "auto", managed: "default", cli: "default" },
-    { runtimeMode: "auto-accept-edits", managed: "auto_edit", cli: "accept-edits" },
-    { runtimeMode: "full-access", managed: "yolo", cli: "default" },
-  ] as const)("$runtimeMode: managed $managed, CLI $cli", ({ runtimeMode, managed, cli }) => {
-    expect(antigravityPermissionMode(runtimeMode)).toBe(managed);
-    expect(antigravityPermissionMode(runtimeMode, true)).toBe(cli);
-  });
-
-  it("maps the CLI's accept-edits mode back for policy ceilings", () => {
-    expect(antigravityRuntimeModeForSessionMode("accept-edits")).toBe("auto-accept-edits");
-  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

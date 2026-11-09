@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
 
-import type { AntigravityAuthMethod, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
+import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Digest from "effect/crypto/Digest";
@@ -456,7 +456,6 @@ export function buildAntigravityAcpSpawnInput(input: {
   };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
-  readonly runtimeMode?: RuntimeMode;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
@@ -466,10 +465,7 @@ export function buildAntigravityAcpSpawnInput(input: {
     // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
     args:
       input.installation.harnessPath === null
-        ? [
-            "acp",
-            ...(input.runtimeMode === "full-access" ? ["--dangerously-skip-permissions"] : []),
-          ]
+        ? ["acp"]
         : input.profile.platform === "linux"
           ? ["--uid="]
           : [],
