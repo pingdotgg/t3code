@@ -2590,7 +2590,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const preparedConnection = usePreparedConnection(environmentId);
   const resolveFolderTarget = () =>
     folderDropTarget({
-      localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+      localEnvironmentDisabled: localEnvironmentDisabledAtMount,
       environmentId,
       primaryEnvironmentId,
       connection: readPreparedConnection(environmentId),
@@ -2636,8 +2636,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // The desktop folder dialog returns a path on this computer, so it is only offered when the
   // thread's server shares this filesystem, the same rule as dropped folders.
   const pickFolder = window.desktopBridge?.pickFolder;
+  // The dialog refuses to open while the local environment is off, even for a loopback server.
   const canPickLocalFolder =
     pickFolder !== undefined &&
+    !localEnvironmentDisabledAtMount &&
     folderDropTarget({
       localEnvironmentDisabled: localEnvironmentDisabledAtMount,
       environmentId,

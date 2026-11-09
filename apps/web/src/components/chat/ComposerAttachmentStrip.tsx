@@ -693,9 +693,14 @@ export function ComposerAttachButton({
       type="button"
       variant="ghost"
       size="icon-sm"
-      onPointerDown={(event) => event.preventDefault()}
       aria-label={label}
-      {...(attachFolder ? {} : { onClick: () => inputRef.current?.click() })}
+      // Keeps editor focus for the direct picker; the menu opens on mousedown, which this would cancel.
+      {...(attachFolder
+        ? {}
+        : {
+            onPointerDown: (event: { preventDefault(): void }) => event.preventDefault(),
+            onClick: () => inputRef.current?.click(),
+          })}
     />
   );
   // The clip's weight sits in its upper loop; 1px down reads as centered on the row.
