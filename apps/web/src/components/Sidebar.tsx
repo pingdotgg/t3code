@@ -1898,17 +1898,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     restoreDragScroll();
     const threads = contextDragThreads();
-    const overComposer = moveThreadContextDragGhost(point, {
+    const composer = moveThreadContextDragGhost(point, {
       count: threads.length,
       width: threadListRef.current?.getBoundingClientRect().width ?? 0,
     });
     // One thread can also land in the layout (pen jVRc4). A composer under
-    // the pointer keeps the drop as context; the zones stay lit but idle.
+    // the pointer keeps the drop as context.
     const [thread] = threads;
     if (threads.length === 1 && thread) {
-      moveLayoutDrag({ kind: "thread", threadRef: thread }, point, {
-        allowTarget: !overComposer,
-      });
+      moveLayoutDrag({ kind: "thread", threadRef: thread }, point, { composer });
     } else {
       cancelLayoutDrag();
     }
