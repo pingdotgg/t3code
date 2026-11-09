@@ -117,6 +117,16 @@ describe("thread links", () => {
       relabelThreadLinks("[Kept label](<t3-thread://v2/local/t1>)", local, () => undefined),
     ).toBe("[Kept label](t3-thread://v2/local/t1)");
     expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
+    for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
+      const thread = ref("there", threadId);
+      const link = formatThreadLink(thread, "Original");
+      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
+      expect(threadLinkRefs(link, local)).toEqual([thread]);
+      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
+        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
+      );
+      expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
+    }
   });
 
   it("keeps a v2 link it cannot resolve as a labeled link and reports it", () => {
