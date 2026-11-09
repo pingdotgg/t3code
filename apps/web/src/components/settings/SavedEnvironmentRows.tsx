@@ -50,6 +50,7 @@ import {
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
+import { useT3ConnectTurnOn } from "~/cloud/useT3ConnectTurnOn";
 import { useCloudLinkController } from "~/cloud/useCloudLinkController";
 import { useManagedTunnelUsage } from "~/cloud/managedRelayState";
 import { useT3ConnectAccountPage } from "../clerk/T3ConnectAccountPages";
@@ -488,9 +489,13 @@ function T3ConnectTunnelUsage({ tunnelLimit }: { readonly tunnelLimit: number | 
         used={usage.used}
         limit={usage.limit}
         action={
-          // At the cap the alert below carries the same action.
-          usage.upgrade && openAccountPage && !showLimitAlert ? (
+          // At the cap the alert below carries the same actions.
+          !openAccountPage || showLimitAlert ? null : usage.upgrade ? (
             <InlineButton onClick={() => openAccountPage("t3-chat")}>Get more tunnels</InlineButton>
+          ) : usage.used >= usage.limit ? (
+            <InlineButton onClick={() => openAccountPage("t3-connect")}>
+              Manage tunnels
+            </InlineButton>
           ) : null
         }
       />
@@ -537,6 +542,9 @@ function ConfiguredCloudLinkRow({
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // The server unlinks and refuses relay changes under such a policy; unlinking stays possible.
   const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
+  const turnOn = useT3ConnectTurnOn(environmentId);
+  // Turning on links from this desktop's own backend only; turning off works from anywhere.
+  const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
@@ -646,7 +654,7 @@ function ConfiguredCloudLinkRow({
 
   return (
     <>
-      {isElectron ? (
+      {showSwitch ? (
         <SettingsRow
           title={searchableSetting("t3-connect").title}
           description={
@@ -690,8 +698,13 @@ function ConfiguredCloudLinkRow({
           title={searchableSetting("t3-connect").title}
           description={`This environment was removed from T3 Connect. Run \`${T3_LEARN_COMMAND} connect link\` on the host to link it again.`}
         />
+      ) : isElectron ? (
+        <SettingsRow
+          title={searchableSetting("t3-connect").title}
+          description="Run `t3 connect link` on the host, then restart T3 Code there."
+        />
       ) : null}
-      {signedOut && isElectron ? null : (
+      {signedOut && showSwitch ? null : (
         <SettingsRow
           title={searchableSetting("publish-agent-activity").title}
           description={

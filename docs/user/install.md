@@ -116,12 +116,15 @@ Nix manages both the desktop app and the bundled
 
 ### The `ominax` command
 
-The desktop app includes the `ominax` command-line tool. To run it from any
-terminal, open **Settings → About** and choose **Install** next to
-**ominax command**. On macOS and Linux it adds a `ominax` link to a folder on your
-`PATH`; on Windows it adds the app's command folder to your `PATH`. Open a new
-terminal afterwards. **Remove** takes it off again. If another `ominax`
-runs first in a new terminal, Settings → About says where it is.
+The desktop app includes the `ominax` command-line tool. A new install sets it up
+on first launch; after an update, or any time, choose **Install** next to
+**ominax command** in **Settings → About**. On macOS and Linux it adds an `ominax`
+link in `~/.local/bin` (or `~/bin`); on Windows it adds the app's command folder to
+your `PATH`. Open a new terminal afterwards. If the folder is not on your
+`PATH`, **Add to PATH** on the Welcome page or in **Settings → About** adds one
+line to your shell's startup file. **Remove** takes it off, and the app does not
+add it again. If another `ominax` runs first in a new terminal, it stays as it
+is and Settings → About says where it is.
 
 ### Windows Subsystem for Linux
 
