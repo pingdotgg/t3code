@@ -14,13 +14,15 @@ import {
 
 const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 
-// The final segment is optional so an explicit folder link may end in `/`
-// (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
+// Names may use any script (`線性代數/考試.pdf`) and routing punctuation (`posts.$id.tsx`,
+// `(group)/[id]/+page.svelte`, `@scope/pkg`). The final segment is optional so an explicit
+// folder link may end in `/` (`patches/`, `docs/My Folder/`). A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\/)+(?:[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*(?::\d+){0,2})?$/;
+  /^(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*\/)+(?:[\p{L}\p{M}\p{N}._$+@()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+@()[\]-]+)*(?::\d+){0,2})?$/u;
 
+// No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[A-Za-z0-9._-]+(?: +[A-Za-z0-9._-]+)*\.[A-Za-z0-9_-]+(?::\d+){0,2}$/;
+  /^[\p{L}\p{M}\p{N}._$+()[\]-]+(?: +[\p{L}\p{M}\p{N}._$+()[\]-]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
@@ -31,6 +33,8 @@ const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 
 const PATH_SEPARATOR_PATTERN = /[\\/]/;
+// Agents shorten long paths with a `...` or `…` segment, which no file chip can open.
+const ELIDED_PATH_SEGMENT_PATTERN = /(?:^|[\\/])(?:\.{3,}|…)(?:[\\/]|$)/;
 
 const FILE_EXTENSION_PATTERN = /\.[A-Za-z0-9_-]+$/;
 const VERSION_SUFFIX_PATTERN = /\d\.\d[^.]*$/;
@@ -112,7 +116,6 @@ const GENERIC_HOSTNAME_TLDS = new Set([
   "xyz",
   "me",
   "tv",
-  "cc",
   "gg",
   "chat",
   "cloud",
@@ -155,6 +158,8 @@ const COUNTRY_HOSTNAME_TLDS = new Set([
   "tr",
   "sg",
   "hk",
+  // C++ sources end in `.cc`, so `allocator.cc:217` names a file, not a host and port.
+  "cc",
 ]);
 
 function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
@@ -176,6 +181,7 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
   const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
+  if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(POSITION_SUFFIX_PATTERN, ""))) return null;
 
   const hasExplicitPathShape =
     RELATIVE_PATH_PREFIX_PATTERN.test(candidate) ||
@@ -224,6 +230,22 @@ export function splitMarkdownLinkSearchAndHash(value: string): {
     path: queryIndex >= 0 ? pathWithSearch.slice(0, queryIndex) : pathWithSearch,
     hash,
   };
+}
+
+/**
+ * The decoded path a markdown destination names on the host, before any workspace resolution, or
+ * null for a `file:` URL that does not parse. Clients and the guest media route both read it here.
+ */
+export function markdownDestinationHostPath(source: string): string | null {
+  if (/^file:/i.test(source)) {
+    const target = parseFileUrlHref(source);
+    return target === null
+      ? null
+      : stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(target.path));
+  }
+  return stripSlashPrefixedWindowsDrive(
+    safeDecodeURIComponent(splitMarkdownLinkSearchAndHash(source).path),
+  );
 }
 
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {

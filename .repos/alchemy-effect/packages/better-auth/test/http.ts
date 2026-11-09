@@ -19,10 +19,7 @@ export interface AuthHttpResponse {
   readonly setCookies: ReadonlyArray<string>;
 }
 
-const request = (
-  url: string,
-  init: RequestInit,
-): Effect.Effect<AuthHttpResponse, AuthHttpError> =>
+const request = (url: string, init: RequestInit): Effect.Effect<AuthHttpResponse, AuthHttpError> =>
   Effect.tryPromise({
     try: async (signal): Promise<AuthHttpResponse> => {
       const response = await fetch(url, { ...init, signal });
@@ -32,8 +29,7 @@ const request = (
         setCookies: response.headers.getSetCookie(),
       };
     },
-    catch: (cause) =>
-      new AuthHttpError({ url, status: 0, body: String(cause) }),
+    catch: (cause) => new AuthHttpError({ url, status: 0, body: String(cause) }),
   });
 
 export const postJson = (

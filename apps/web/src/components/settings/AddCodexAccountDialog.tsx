@@ -7,7 +7,7 @@ import {
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -31,6 +31,7 @@ export function AddCodexAccountDialog({
 }: {
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
+  // Told when the account is created; the dialog then runs its own sign-in.
   readonly onAccountCreated?:
     | ((instanceId: ProviderInstanceId, displayName: string) => void)
     | undefined;
@@ -45,11 +46,9 @@ export function AddCodexAccountDialog({
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
+  // Closes itself once the new account connects; the owner unmounts it after
+  // the close animation.
   const connected = usesChatGptSharing(provider);
-  const closeAfterConnection = useEffectEvent(onClose);
-  useEffect(() => {
-    if (connected) closeAfterConnection();
-  }, [connected]);
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
@@ -73,12 +72,8 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
@@ -88,6 +83,9 @@ export function AddCodexAccountDialog({
       open={!connected}
       onOpenChange={(open) => {
         if (!open) onClose();
+      }}
+      onOpenChangeComplete={(open) => {
+        if (!open && connected) onClose();
       }}
     >
       <WizardPopup size="wide">
