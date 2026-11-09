@@ -1,5 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -149,37 +149,59 @@ export function ComposerToolbarScroller(props: {
   readonly fadeSurface?: "card" | "sheet";
   readonly contentPaddingRight?: number;
 }) {
-  const [metrics, setMetrics] = useState({
+  const metricsRef = useRef({
     contentWidth: 0,
     offsetX: 0,
     viewportWidth: 0,
+    showLeftFade: false,
+    showRightFade: false,
+  });
+  const [scrollEdges, setScrollEdges] = useState({
+    showLeftFade: false,
+    showRightFade: false,
   });
 
-  const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
-  const scrollEdges = {
-    showLeftFade: metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON,
-    showRightFade: metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON,
-  };
+  const updateScrollEdges = useCallback(() => {
+    const metrics = metricsRef.current;
+    const maxOffset = Math.max(0, metrics.contentWidth - metrics.viewportWidth);
+    const showLeftFade = metrics.offsetX > COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    const showRightFade = metrics.offsetX < maxOffset - COMPOSER_TOOLBAR_SCROLL_EPSILON;
+    if (metrics.showLeftFade === showLeftFade && metrics.showRightFade === showRightFade) {
+      return;
+    }
+    metrics.showLeftFade = showLeftFade;
+    metrics.showRightFade = showRightFade;
+    setScrollEdges({ showLeftFade, showRightFade });
+  }, []);
 
-  const handleLayout = (event: LayoutChangeEvent) => {
-    const viewportWidth = event.nativeEvent.layout.width;
-    setMetrics((current) =>
-      current.viewportWidth === viewportWidth ? current : { ...current, viewportWidth },
-    );
-  };
+  const handleLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      const viewportWidth = event.nativeEvent.layout.width;
+      if (metricsRef.current.viewportWidth === viewportWidth) return;
+      metricsRef.current.viewportWidth = viewportWidth;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
-  const handleContentSizeChange = (contentWidth: number) => {
-    setMetrics((current) =>
-      current.contentWidth === contentWidth ? current : { ...current, contentWidth },
-    );
-  };
+  const handleContentSizeChange = useCallback(
+    (contentWidth: number) => {
+      if (metricsRef.current.contentWidth === contentWidth) return;
+      metricsRef.current.contentWidth = contentWidth;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
-  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const offsetX = event.nativeEvent.contentOffset.x;
-    setMetrics((current) =>
-      Math.abs(current.offsetX - offsetX) < 1 ? current : { ...current, offsetX },
-    );
-  };
+  const handleScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const offsetX = event.nativeEvent.contentOffset.x;
+      if (Math.abs(metricsRef.current.offsetX - offsetX) < 1) return;
+      metricsRef.current.offsetX = offsetX;
+      updateScrollEdges();
+    },
+    [updateScrollEdges],
+  );
 
   return (
     <View className="relative min-w-0 flex-1">

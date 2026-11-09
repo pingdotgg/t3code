@@ -1,0 +1,140 @@
+---
+title: Cloud Storage
+description: Create Cloud Storage buckets, read and write objects from Cloud Run with Read, Write, and ReadWrite bindings, and hand out signed download URLs.
+---
+
+Cloud Storage holds files. Declare a Bucket, bind it to your service,
+and `get`, `put`, `list`, and `delete` objects.
+
+## Create a Bucket
+
+```typescript
+// src/resources.ts
+import * as GCP from "@alchemy.run/gcp";
+
+export const Uploads = GCP.Storage.Bucket("Uploads", {});
+```
+
+Alchemy generates a globally unique name.
+
+## Bind it to a service
+
+Ask for the least access you need:
+
+| Binding | Methods | Role on the bucket |
+| --- | --- | --- |
+| `ReadBucket` | `head`, `get`, `list` | `roles/storage.objectViewer` |
+| `WriteBucket` | `put`, `delete` | `roles/storage.objectUser` |
+| `ReadWriteBucket` | all of the above | `roles/storage.objectUser` |
+
+```typescript
+// src/Api.ts
+import * as GCP from "@alchemy.run/gcp";
+import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http/HttpServerRequest";
+import * as HttpServerResponse from "effect/http/HttpServerResponse";
+import { Uploads } from "./resources.ts";
+
+export default class Api extends GCP.Function<Api>()(
+  "Api",
+  { main: import.meta.url, invokerIamDisabled: true },
+  Effect.gen(function* () {
+    const files = yield* GCP.Storage.ReadWriteBucket(Uploads);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const request = yield* HttpServerRequest;
+        const name = new URL(request.originalUrl, "http://localhost").pathname.slice(1);
+
+        if (request.method === "PUT") {
+          const body = new Uint8Array(yield* request.arrayBuffer);
+          yield* files.put(name, body, {
+            contentType: request.headers["content-type"],
+          });
+          return HttpServerResponse.empty({ status: 204 });
+        }
+
+        const object = yield* files.get(name);
+        if (object === undefined) {
+          return HttpServerResponse.text("Not found", { status: 404 });
+        }
+        return HttpServerResponse.uint8Array(object.body, {
+          contentType: object.contentType ?? "application/octet-stream",
+        });
+      }).pipe(Effect.orDie),
+    };
+  }).pipe(Effect.provide(GCP.Storage.ReadWriteBucketHttp)),
+) {}
+```
+
+## Read objects
+
+`get` returns the bytes and content type, or `undefined` when the
+object is missing:
+
+```typescript
+const object = yield* files.get("reports/2026.json");
+const text = object && new TextDecoder().decode(object.body);
+```
+
+`head` returns only the metadata.
+
+## Write objects
+
+```typescript
+yield* files.put("reports/2026.json", JSON.stringify(report), {
+  contentType: "application/json",
+});
+```
+
+`put` takes a string or bytes and overwrites any existing object.
+
+## List objects
+
+```typescript
+const { objects, prefixes, nextPageToken } = yield* files.list({
+  prefix: "reports/",
+  delimiter: "/",
+});
+```
+
+## Signed download URLs
+
+`SignGetObjectUrl` gives a browser a link to a private object:
+
+```typescript
+const sign = yield* GCP.Storage.SignGetObjectUrl(Uploads);
+// …
+const url = yield* sign({ object: "reports/2026.pdf", expiresIn: 3600 });
+```
+
+The URL is signed with the service's own identity. There's no key
+file. Provide `GCP.Storage.SignGetObjectUrlHttp`.
+
+## Destroying a Bucket with objects
+
+Cloud Storage won't delete a Bucket that still has objects. Set
+`forceDestroy` on Buckets whose contents you can lose:
+
+```typescript
+export const Cache = GCP.Storage.Bucket("Cache", { forceDestroy: true });
+```
+
+Leave it off for user data.
+
+## Upload files at deploy time
+
+`Storage.Files` uploads a local directory, one object per file, and
+only re-uploads what changed. See
+[Static sites](/gcp/frontend/static-site#from-a-cloud-storage-bucket).
+
+## React to uploads
+
+Run code when an object lands with
+[Storage events](/gcp/messaging/storage-events).
+
+## Where next
+
+- [Storage events](/gcp/messaging/storage-events) — index every upload.
+- [Storage reference](/providers/gcp/storage#bucket) — every prop and
+  attribute.

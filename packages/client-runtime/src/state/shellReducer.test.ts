@@ -87,22 +87,31 @@ describe("applyShellStreamEvent", () => {
   });
 
   it("authoritative lower-sequence reset replaces client-ahead structural state", () => {
+    const unchanged = { ...v2Project, id: ProjectId.make("project-unchanged"), repositoryIdentity };
     const previous = {
       ...v2ShellSnapshot,
       snapshotSequence: 9,
-      projects: [{ ...v2Project, title: "Client ahead", repositoryIdentity }],
+      projects: [{ ...v2Project, title: "Client ahead", repositoryIdentity }, unchanged],
       threads: [{ ...v2ThreadShell, title: "Local-only thread" }],
     };
     const next = mergeShellSnapshotProjects(previous, {
       ...v2ShellSnapshot,
       snapshotSequence: 3,
-      projects: [{ ...v2Project, title: "Server reset", repositoryIdentity: null }],
+      projects: [
+        { ...v2Project, title: "Server reset", repositoryIdentity: null },
+        { ...unchanged, scripts: [...unchanged.scripts] },
+      ],
       threads: [{ ...v2ThreadShell, title: "Server thread" }],
     });
 
     expect(next.snapshotSequence).toBe(3);
     expect(next.projects[0]?.title).toBe("Server reset");
     expect(next.projects[0]?.repositoryIdentity).toEqual(repositoryIdentity);
+    expect(next.projects[1]).toBe(unchanged);
+    expect(
+      mergeShellSnapshotProjects(next, { ...v2ShellSnapshot, projects: [...next.projects] })
+        .projects,
+    ).toBe(next.projects);
     expect(next.threads[0]?.title).toBe("Server thread");
   });
 
