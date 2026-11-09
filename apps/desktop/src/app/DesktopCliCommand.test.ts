@@ -431,6 +431,16 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       expect((yield* command.state).installedPath).toBeNull();
       yield* command.uninstall;
       expect(registry.path).toBe(userPath);
+
+      // A fresh install beside a standalone t3.cmd (from `t3 install`), even off PATH, leaves
+      // PATH alone.
+      const besideHome = yield* fs.makeTempDirectoryScoped();
+      yield* fs.makeDirectory(path.join(besideHome, ".local", "bin"), { recursive: true });
+      yield* fs.writeFileString(path.join(besideHome, ".local", "bin", "t3.cmd"), "@echo off\r\n");
+      const beside = fakePowerShell("C:\\Tools");
+      yield* (yield* commandIn({ home: besideHome, platform: "win32" }, beside.spawner))
+        .installOnFirstLaunch;
+      expect(beside.registry).toMatchObject({ path: "C:\\Tools", writes: 0 });
     }).pipe(Effect.scoped),
   );
 });
