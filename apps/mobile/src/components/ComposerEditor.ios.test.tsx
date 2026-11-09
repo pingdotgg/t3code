@@ -161,10 +161,12 @@ function ThreadComposer({
   draftKey = DRAFT_KEY,
   editorRef,
   locked = false,
+  hidden = false,
 }: {
   draftKey?: string;
   editorRef?: Ref<ComposerEditorHandle>;
   locked?: boolean;
+  hidden?: boolean;
 }) {
   const draft = useComposerDraft(draftKey);
   // Mirrors ThreadComposer's submission lock (e.g. while voice input is recording or transcribing).
@@ -174,6 +176,7 @@ function ThreadComposer({
       draftKey={draftKey}
       value={draft.text}
       readOnly={locked}
+      hidden={hidden}
       onChangeText={(text) => {
         if (!locked) setComposerDraftText(draftKey, text);
       }}
@@ -246,11 +249,11 @@ async function renderFlushableComposer(initialDraftKey = DRAFT_KEY) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const editor = createRef<ComposerEditorHandle>();
   const root = createRoot(document.createElement("div"));
-  const renderComposer = (locked: boolean, draftKey = initialDraftKey) =>
+  const renderComposer = (locked: boolean, draftKey = initialDraftKey, hidden = false) =>
     act(async () =>
       root.render(
         <RegistryContext.Provider value={appAtomRegistry}>
-          <ThreadComposer editorRef={editor} locked={locked} draftKey={draftKey} />
+          <ThreadComposer editorRef={editor} locked={locked} draftKey={draftKey} hidden={hidden} />
         </RegistryContext.Provider>,
       ),
     );
@@ -370,4 +373,21 @@ it("does not restore dropped text after switching to another empty draft while a
   await flushAcross(screen, () => screen.setLocked(false, other));
   expect(getComposerDraftSnapshot(first).text).toBe("");
   expect(getComposerDraftSnapshot(other).text).toBe("");
+});
+
+it("does not restore dropped text through an editor recreated while a flush waits", async () => {
+  const draftKey = "flush-recreate:draft";
+  await using screen = await renderFlushableComposer(draftKey);
+  await act(async () => emit("Draft"));
+  await screen.setLocked(true);
+  await act(async () => emit("Draft plus more"));
+  await screen.setLocked(false);
+
+  await flushAcross(screen, async () => {
+    // Hiding the composer recreates its editor.
+    await screen.setLocked(false, draftKey, true);
+    await screen.setLocked(false, draftKey, false);
+    await act(async () => emit("Newer parent text"));
+  });
+  expect(getComposerDraftSnapshot(draftKey).text).toBe("Newer parent text");
 });

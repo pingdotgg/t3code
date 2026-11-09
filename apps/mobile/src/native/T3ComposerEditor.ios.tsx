@@ -334,8 +334,9 @@ export function ComposerEditor({
       // Tapping outside the editor makes iOS accept a pending autocorrection, and that edit's
       // event can reach JS after the tap's handler has already read the draft.
       flushPendingInput: async () => {
+        const view = nativeRef.current;
         const state = await Promise.resolve()
-          .then(() => nativeRef.current?.readState())
+          .then(() => view?.readState())
           .catch(() => undefined);
         // Acknowledging past a paste JS has not received yet would get the paste rejected.
         if (!state || state.pasteEventCount > mostRecentEventCountRef.current) return;
@@ -344,7 +345,8 @@ export function ComposerEditor({
           state.eventCount === mostRecentEventCountRef.current &&
           controlledEventCount < mostRecentEventCount &&
           state.value !== props.value &&
-          // The parent may have edited, reset or switched the draft while native was read.
+          // The parent may have edited, reset or switched the draft, or recreated the editor, while native was read.
+          nativeRef.current === view &&
           renderedDraftRef.current.value === props.value &&
           renderedDraftRef.current.resetGeneration === resetGeneration &&
           readResetGeneration() === resetGeneration
