@@ -143,8 +143,16 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           node scripts/build-desktop-artifact.ts \
-            --platform win --target nsis --arch x64 \
+            --platform win --target nsis --arch x64 --keep-stage \
             --build-version "$VERSION" --output-dir "release/$VERSION"
+
+      - name: List packaged files
+        if: always()
+        run: |
+          tmp="$(node -p "require('os').tmpdir()")"
+          find "$tmp" -maxdepth 4 -type d -name win-unpacked | while read -r dir; do
+            echo "== $dir"; (cd "$dir" && find . -type f | sort)
+          done
 
       - uses: actions/upload-artifact@v4
         with:
