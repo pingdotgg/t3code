@@ -1,13 +1,32 @@
-import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AcpRegistryOperationError,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+} from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
   applyAcpRegistryAvailableCommands,
+  AcpRegistryDriver,
   applyAcpRegistryLiveConfiguration,
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
@@ -29,6 +48,220 @@ const noSessionManagement = {
   canDelete: false,
   canConfigureProviders: false,
 } as const;
+
+const cwdProbeAgent = String.raw`
+const fs = require("node:fs");
+const readline = require("node:readline");
+const cwd = fs.realpathSync(process.cwd());
+const entries = fs.readdirSync(cwd);
+let client;
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  if (request.method === "initialize") client = request.params.clientInfo.name;
+  fs.appendFileSync(process.argv.at(-1), JSON.stringify({
+    method: request.method, client, cwd, entries,
+    sessionCwd: request.params?.cwd === undefined ? undefined : fs.realpathSync(request.params.cwd),
+  }) + "\n");
+  let result = {};
+  if (request.method === "initialize") result = {
+    protocolVersion: 1,
+    agentCapabilities: { sessionCapabilities: { list: {} } },
+    authMethods: [{ id: "browser", name: "Browser" }],
+  };
+  if (request.method === "session/new") {
+    result = {
+      sessionId: "cwd-session",
+      models: { currentModelId: "test", availableModels: [{ modelId: "test", name: "Test" }] },
+    };
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: {
+      sessionId: "cwd-session", update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+    } }) + "\n");
+  }
+  if (request.method === "session/list") result = { sessions: [] };
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\n");
+});
+`;
+
+const decodeCwdLog = Schema.decodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      method: Schema.String,
+      client: Schema.String,
+      cwd: Schema.String,
+      entries: Schema.Array(Schema.String),
+      sessionCwd: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
+it.live("isolates background ACP probes while retaining explicit project working directories", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+    const serverCwd = path.join(root, "server-home");
+    const projectCwd = path.join(root, "project");
+    const logPath = path.join(root, "requests.jsonl");
+    const agentPath = path.join(root, "cwd-agent.cjs");
+    yield* fs.writeFileString(agentPath, cwdProbeAgent);
+    yield* fs.makeDirectory(serverCwd);
+    yield* fs.makeDirectory(projectCwd);
+    yield* fs.writeFileString(path.join(serverCwd, "server-data"), "");
+    const probeDirectories = new Set<string>();
+
+    for (const [source, resolution] of [
+      ["local", "absolute"],
+      ["registry", "absolute"],
+      ["local", "relative-command"],
+      ["registry", "relative-command"],
+      ["local", "relative-path"],
+      ["registry", "relative-path"],
+    ] as const) {
+      yield* Effect.gen(function* () {
+        const catalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: root,
+          toolsDir: path.join(root, "tools"),
+          registryUrl: "https://registry.test/registry.json",
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      version: "1.0.0",
+                      agents: [
+                        {
+                          id: "test-agent",
+                          name: "Test",
+                          version: "1.0.0",
+                          description: "Test agent",
+                          distribution: {
+                            npx: { package: "test-agent@1.0.0", args: [agentPath, logPath] },
+                          },
+                        },
+                      ],
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        if (source === "registry") yield* catalog.search({ query: "test" });
+        const commandPath =
+          resolution === "relative-command"
+            ? path.relative(process.cwd(), process.execPath)
+            : resolution === "relative-path"
+              ? path.basename(process.execPath)
+              : process.execPath;
+        const instance = yield* AcpRegistryDriver.create({
+          ...identity,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({
+            source,
+            agentId: "test-agent",
+            commandPath,
+            commandArgs: [agentPath, logPath],
+          }),
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+        const discovered = yield* Stream.concat(
+          Stream.fromEffect(instance.snapshot.getSnapshot),
+          instance.snapshot.streamChanges,
+        ).pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models.some((model) => model.slug === "test") ||
+              snapshot.status === "error" ||
+              (snapshot.installed && snapshot.status === "warning"),
+          ),
+          Stream.runHead,
+          Effect.timeout("10 seconds"),
+        );
+        const snapshot = Option.getOrThrow(discovered);
+        expect(snapshot, snapshot.message).toMatchObject({
+          status: "ready",
+          models: [expect.objectContaining({ slug: "test" })],
+        });
+        const auth = instance.auth!;
+        yield* auth.subscribe("test").pipe(
+          Stream.filter((state) => (state.methods?.length ?? 0) > 0),
+          Stream.runHead,
+          Effect.timeout("10 seconds"),
+        );
+        yield* auth.refreshMethods!;
+        const modelSelection = { instanceId: instance.instanceId, model: "test" };
+        const runtimePolicy = {
+          cwd: projectCwd,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+        };
+        const threadId = ThreadId.make("cwd-thread");
+        const runtime = yield* instance.orchestrationAdapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("cwd-provider-session"),
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
+        yield* instance.acpSessionManagement!.listSessions({ cwd: projectCwd });
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcess.Environment, {
+          ...process.env,
+          ...(resolution === "relative-path"
+            ? { PATH: path.relative(process.cwd(), path.dirname(process.execPath)) }
+            : {}),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: serverCwd })),
+      );
+    }
+    const records = (yield* fs.readFileString(logPath))
+      .trim()
+      .split("\n")
+      .map((line) => decodeCwdLog(line));
+    const background = records.filter(
+      (record) =>
+        record.client === "t3-code-provider-test" || record.client === "t3-code-provider-auth",
+    );
+    expect(background.filter((record) => record.method === "session/new")).toHaveLength(6);
+    expect(
+      background.filter((record) => record.client === "t3-code-provider-auth").length,
+    ).toBeGreaterThanOrEqual(12);
+    for (const record of background) {
+      expect(record.cwd).not.toBe(serverCwd);
+      expect(record.entries).toEqual([]);
+      if (record.method === "session/new") expect(record.sessionCwd).toBe(record.cwd);
+      probeDirectories.add(record.cwd);
+    }
+    for (const directory of probeDirectories) expect(yield* fs.exists(directory)).toBe(false);
+    const projectRecords = records.filter((record) => !background.includes(record));
+    expect(projectRecords.some((record) => record.method === "session/new")).toBe(true);
+    expect(projectRecords.some((record) => record.method === "session/list")).toBe(true);
+    for (const record of projectRecords) {
+      expect(record.cwd).toBe(projectCwd);
+      if (record.method === "session/new") expect(record.sessionCwd).toBe(projectCwd);
+    }
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    ),
+  ),
+);
 
 function catalogWithInspection(
   inspection: AcpRegistrySupport.AcpRegistryInspection,

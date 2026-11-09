@@ -15,6 +15,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -504,6 +505,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const hostEnvironment = yield* HostProcess.Environment;
     const host = yield* ProviderHost.ProviderHost;
+    const fileSystem = yield* FileSystem.FileSystem;
+    // Discovery agents may index their cwd at startup, before any session exists.
+    const probeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-acp-probe-" }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProviderDriverError({
+            driver: DRIVER_KIND,
+            instanceId,
+            detail: "Failed to create the ACP Registry probe directory.",
+            cause,
+          }),
+      ),
+    );
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -590,7 +604,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const enrichProvider = checkAcpRegistryProviderStatus(
       {
         ...readinessInput,
-        cwd: host.paths.cwd,
+        cwd: probeCwd,
       },
       probeAcpRegistryConfiguration,
     ).pipe(
@@ -783,7 +797,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
-      cwd: host.paths.cwd,
+      cwd: probeCwd,
       environment: processEnvironment,
       onChanged: (authenticated) =>
         confirmedAuthentication
