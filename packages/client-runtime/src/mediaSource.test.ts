@@ -7,6 +7,14 @@ const threadId = ThreadId.make("thread-1");
 
 describe("resolveMediaSource", () => {
   describe("direct URLs", () => {
+    it.each(["https://cdn.example.com/tone.mp3", "data:audio/wav;base64,AAAA"])(
+      "keeps %s out of the image and video viewer",
+      (href) => {
+        expect(resolveMediaSource(href, { threadId })).toBeNull();
+        expect(resolveMediaSource(href, { threadId, imageEmbed: true })).toBeNull();
+      },
+    );
+
     it("keeps the authored URL and decodes the display name once", () => {
       const href = "https://cdn.example.com/clip%20one%2520%2Emp4?signature=a%2fb#t=2";
       expect(resolveMediaSource(href, { threadId })).toEqual({
@@ -32,6 +40,20 @@ describe("resolveMediaSource", () => {
   });
 
   describe("host paths", () => {
+    it.each(["tone.wav", "tone.mp3", "tone.oga", "tone.webm-audio"])(
+      "keeps workspace audio %s out of the image fallback",
+      (path) => {
+        expect(resolveMediaSource(path, { threadId, imageEmbed: true })).toBeNull();
+        expect(
+          resolveMediaSource("authored.wav", {
+            threadId,
+            imageEmbed: true,
+            resolvedFilePath: path,
+          }),
+        ).toBeNull();
+      },
+    );
+
     it.each([
       ["/tmp/frame%23one.png:12", "/tmp/frame#one.png"],
       ["/tmp/frame%2523one.png:12", "/tmp/frame%23one.png"],

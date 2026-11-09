@@ -15,14 +15,19 @@ import {
   matchesKeybindingShortcutModifiers,
   normalizeEventKey,
   resolveEventKeys,
-  type ShortcutEventLike,
+  type ShortcutEventLike as SharedShortcutEventLike,
   type ShortcutModifierStateLike,
 } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
+import { isEditableFocused } from "./lib/editableFocus";
 import { projectScriptIdFromCommand } from "./projectScripts";
 
-export type { ShortcutEventLike, ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
+export type { ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
 export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
+
+export interface ShortcutEventLike extends SharedShortcutEventLike {
+  target?: EventTarget | null;
+}
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
@@ -107,8 +112,7 @@ export function shortcutConflictKey(
 
 function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
   const shortcut = binding.shortcut;
-  // Existing installs persist Mod+Enter. Resolve its alternate chord against
-  // the send preference without rewriting saved or remapped shortcuts.
+  // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
     context.composerRequiresModifier &&
     binding.command === "composer.sendAlternate" &&
@@ -178,6 +182,9 @@ export function resolveShortcutCommand(
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
+  if (options?.context?.editableFocus === undefined && typeof document !== "undefined") {
+    context.editableFocus = isEditableFocused(event.target ?? document.activeElement);
+  }
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
@@ -278,9 +285,7 @@ export function shouldShowThreadJumpHintsForModifiers(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // The embedded terminal owns keystrokes while it has focus: the Ghostty surface encodes the
-  // keydown and can write the pressed key into the shell before our window-level shortcut handling
-  // ever runs, regardless of any configured `when` clause on the jump command.
+  // Ghostty can write keys to the shell before window shortcuts run, regardless of the when clause.
   if (resolveContext(options).terminalFocus) {
     return false;
   }
@@ -371,15 +376,21 @@ export function isOpenFavoriteEditorShortcut(
 }
 
 /**
- * Whether the keypress is the rich-text bold chord (Mod+B without extra
- * modifiers). Tiptap binds the same chord, so app shortcuts captured ahead
- * of the editor must yield when the rich-text composer is focused.
+ * Whether the keypress should bold text in the rich-text composer: Mod+B
+ * without extra modifiers, with text selected. Tiptap binds the same chord, so
+ * app shortcuts captured ahead of the editor yield only in that case. With no
+ * selection the chord stays with the app (the sidebar toggle by default).
  */
-export function isRichTextBoldShortcut(event: ShortcutEventLike): boolean {
+export function isRichTextBoldShortcut(
+  event: ShortcutEventLike,
+  selection: Pick<Selection, "isCollapsed"> | null,
+): boolean {
   if (event.type !== undefined && event.type !== "keydown") {
     return false;
   }
   return (
+    selection !== null &&
+    !selection.isCollapsed &&
     resolveEventKeys(event).has("b") &&
     (event.metaKey || event.ctrlKey) &&
     !event.altKey &&
@@ -459,10 +470,6 @@ export function terminalNavigationShortcutData(
       return moveLine;
     }
     return null;
-  }
-
-  if (event.ctrlKey && !event.metaKey && !event.altKey) {
-    return moveWord;
   }
 
   if (event.altKey && !event.metaKey && !event.ctrlKey) {

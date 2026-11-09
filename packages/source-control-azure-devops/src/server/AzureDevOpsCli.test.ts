@@ -70,7 +70,20 @@ describe("AzureDevOpsCli.layer", () => {
       assert.strictEqual(result.headSha, "a".repeat(40));
       assert.strictEqual(result.state, "open");
       assert.deepStrictEqual(result.updatedAt._tag, Option.some(1)._tag);
-      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0], {
+      const { classifyFailure, ...call } = mockRun.mock.calls.at(-1)?.[0] ?? {};
+      assert.strictEqual(
+        classifyFailure?.("Please run az login to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("Please run 'az login' to setup account."),
+        "authentication",
+      );
+      assert.strictEqual(
+        classifyFailure?.("TF401180: The requested pull request was not found."),
+        "not-found",
+      );
+      assert.deepStrictEqual(call, {
         operation: "AzureDevOpsCli.execute",
         command: "az",
         args: [
@@ -86,6 +99,7 @@ describe("AzureDevOpsCli.layer", () => {
           "json",
         ],
         cwd: "/repo",
+        notFoundDetail: "Pull request not found.",
         timeoutMs: 30_000,
       });
       assert.strictEqual(result.isCrossRepository, false);
@@ -181,6 +195,73 @@ describe("AzureDevOpsCli.layer", () => {
         url: "https://dev.azure.com/acme/project/_git/repo",
         sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
       });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("looks up a project/repository path as that project's repository", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            JSON.stringify({
+              name: "repo",
+              webUrl: "https://dev.azure.com/acme/project/_git/repo",
+              remoteUrl: "https://dev.azure.com/acme/project/_git/repo",
+              sshUrl: "git@ssh.dev.azure.com:v3/acme/project/repo",
+              project: { name: "project" },
+            }),
+          ),
+        ),
+      );
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.getRepositoryCloneUrls({ cwd: "/somewhere", repository: "project/repo" });
+
+      assert.deepStrictEqual(mockRun.mock.calls.at(-1)?.[0].args, [
+        "repos",
+        "show",
+        "--detect",
+        "true",
+        "--repository",
+        "repo",
+        "--project",
+        "project",
+        "--only-show-errors",
+        "--output",
+        "json",
+      ]);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("percent-encodes the source branch while preserving recognized ref prefixes", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.listPullRequests({
+        cwd: "/somewhere",
+        headSelector: "user/feat/1-(#2)-slug",
+        state: "open",
+      });
+
+      const args = mockRun.mock.calls.at(-1)?.[0].args ?? [];
+      assert.strictEqual(args[args.indexOf("--source-branch") + 1], "user%2Ffeat%2F1-(%232)-slug");
+
+      for (const prefix of ["refs/heads/", "refs/pull/", "refs/tags/"]) {
+        mockRun.mockReturnValueOnce(Effect.succeed(processOutput("[]")));
+        yield* az.listPullRequests({
+          cwd: "/somewhere",
+          headSelector: "fallback",
+          source: { refName: `${prefix}user/feat/1-(#2)-slug` },
+          state: "open",
+        });
+
+        const refArgs = mockRun.mock.calls.at(-1)?.[0].args ?? [];
+        assert.strictEqual(
+          refArgs[refArgs.indexOf("--source-branch") + 1],
+          `${prefix}user%2Ffeat%2F1-(%232)-slug`,
+        );
+      }
     }).pipe(Effect.provide(layer)),
   );
 

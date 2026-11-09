@@ -1,15 +1,21 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
-  ExecutionEnvironmentCapabilities,
+  PullRequestSummary,
+  ThreadPullRequestKey,
   ThreadPullRequestLink,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 
 import {
+  legacyThreadPullRequestKey,
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
-} from "@t3tools/shared/threadPullRequests";
+  threadPullRequestKeyOf,
+} from "@t3tools/client-runtime/thread-pull-requests";
 
 export type ThreadPr = NonNullable<VcsStatusResult["pr"]>;
 
@@ -21,6 +27,7 @@ export interface ThreadPrPresentation {
   readonly isDraft: boolean;
   readonly updatedAt: string | null;
   readonly url: string;
+  readonly changeRequest: ChangeRequestTerminology;
   readonly label: string;
   readonly accessibilityLabel: string;
   readonly textClassName: string;
@@ -46,6 +53,7 @@ export function presentThreadPr(
     isDraft,
     updatedAt: pr.updatedAt ?? null,
     url: pr.url,
+    changeRequest,
     label: String(pr.number),
     accessibilityLabel: `#${pr.number} ${changeRequest.singular} ${isDraft ? "draft" : pr.state}`,
     textClassName: isDraft ? "text-foreground-muted" : PR_STATE_TEXT_CLASS[pr.state],
@@ -58,6 +66,8 @@ export function presentThreadLinkedPullRequests(
   const link = resolveThreadCurrentPullRequestLink(links);
   const badge = resolveThreadPullRequestBadge(links);
   if (link === null || badge === null) return null;
+  const { changeRequest } =
+    sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined);
   const snapshot = link.snapshot;
   const linkedCount = badge.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
   const isMultiple = badge.kind === "stack" || linkedCount !== null;
@@ -83,13 +93,14 @@ export function presentThreadLinkedPullRequests(
     isDraft,
     updatedAt: snapshot?.updatedAt ?? null,
     url: link.url,
+    changeRequest,
     label,
     accessibilityLabel:
       badge.kind === "stack"
-        ? `${badge.layers} pull requests in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
+        ? `${badge.layers} ${changeRequest.singular}s in stack, ${isDraft ? "draft" : (state ?? "status pending")}`
         : linkedCount !== null
-          ? `${linkedCount} linked pull requests, overall ${badge.state}`
-          : `#${link.number} pull request ${state === null ? "status pending" : isDraft ? "draft" : state}`,
+          ? `${linkedCount} linked ${changeRequest.plural}, overall ${badge.state}`
+          : `#${link.number} ${changeRequest.singular} ${state === null ? "status pending" : isDraft ? "draft" : state}`,
     textClassName:
       state === null || isDraft
         ? "text-foreground-muted"
@@ -101,11 +112,9 @@ export function presentThreadLinkedPullRequests(
 
 export function resolveThreadPrSource(
   thread: Pick<EnvironmentThreadShell, "pullRequests" | "linkedPullRequest" | "branchPullRequest">,
-  capabilities:
-    | Pick<ExecutionEnvironmentCapabilities, "threadPullRequests" | "threadPullRequestLinking">
-    | undefined,
+  /** False until the server config loads; the stored references serve until then. */
+  supportsSnapshots: boolean,
 ) {
-  const supportsSnapshots = capabilities?.threadPullRequests === true;
   const linkedPresentation = supportsSnapshots
     ? presentThreadLinkedPullRequests(thread.pullRequests)
     : null;
@@ -122,4 +131,71 @@ export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
   return pr.kind === "stack" || pr.others > 0
     ? { kind: "list" as const, accessibilityLabel: `Show ${pr.accessibilityLabel}` }
     : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
+}
+
+/** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */
+export function rememberBounded<V>(
+  current: ReadonlyMap<string, V>,
+  key: string,
+  value: V,
+  limit: number,
+): ReadonlyMap<string, V> {
+  const next = new Map(current);
+  next.delete(key);
+  next.set(key, value);
+  for (const oldest of next.keys()) {
+    if (next.size <= limit) break;
+    next.delete(oldest);
+  }
+  return next;
+}
+
+/** The newest summary held for `pullRequest`, matched strictly by host, repository and number. */
+export function knownPullRequestSummary(
+  pullRequest: ThreadPullRequestKey,
+  threads: Iterable<Pick<EnvironmentThreadShell, "projectId" | "pullRequests">>,
+  summaries: Iterable<PullRequestSummary>,
+): PullRequestSummary | undefined {
+  const key = threadPullRequestKeyOf(pullRequest);
+  let newest:
+    | { readonly summary: PullRequestSummary; readonly updatedAt: number; readonly readAt: number }
+    | undefined;
+  // Checks and reviews change without moving `updatedAt`, so equal versions prefer the later read.
+  const consider = (summary: PullRequestSummary, readAt = Number.NEGATIVE_INFINITY) => {
+    const updatedAt = Date.parse(summary.updatedAt);
+    if (
+      newest === undefined ||
+      updatedAt > newest.updatedAt ||
+      (updatedAt === newest.updatedAt && readAt > newest.readAt)
+    ) {
+      newest = { summary, updatedAt, readAt };
+    }
+  };
+  for (const summary of summaries) {
+    if (threadPullRequestKeyOf(legacyThreadPullRequestKey(summary)) === key) {
+      consider(summary, summary.observedAt);
+    }
+  }
+  for (const thread of threads) {
+    for (const link of thread.pullRequests) {
+      const snapshot = link.snapshot;
+      if (snapshot?.updatedAt == null || threadPullRequestKeyOf(link) !== key) continue;
+      consider(
+        {
+          ...snapshot,
+          updatedAt: snapshot.updatedAt,
+          provider: (
+            sourceControlClients.findByChangeRequestUrl(link.url) ??
+            sourceControlClients.get(undefined)
+          ).kind,
+          projectId: thread.projectId,
+          repository: link.repository,
+          number: link.number,
+          url: link.url,
+        },
+        Date.parse(snapshot.syncedAt),
+      );
+    }
+  }
+  return newest?.summary;
 }

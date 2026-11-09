@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NODE_BUNDLE_CONDITIONS } from "../../core/NodeServe.ts";
-import {
-  SERVER_ENTRYPOINT,
-  distilledNode,
-  makeNodeTarget,
-  target,
-} from "../node.ts";
+import { SERVER_ENTRYPOINT, distilledNode, makeNodeTarget, target } from "../node.ts";
 
 describe("makeNodeTarget", () => {
   it("declares the node platform, Node bundle conditions, and a finish pass", () => {

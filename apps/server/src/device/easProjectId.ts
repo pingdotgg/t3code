@@ -13,12 +13,9 @@ const CONFIG_FILES = [
 ];
 const JSON_CONFIG_FILES = ["app.config.json", "app.json"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-// A `projectId` whose whole value is one quoted string: the entry ends at the
-// quote, then after any space and comments a separator or the end of the
-// file; an operator may follow a line break or a comment. A comment is
-// matched whole (a line comment through its line break), so a separator
-// inside one cannot end the entry. An EAS project id is a UUID; another
-// service's (Firebase's, say) is not, and names no EAS project.
+// Only accept a quoted UUID as the whole value, followed by a separator or EOF.
+// Consume comments whole so separators inside them cannot end the entry;
+// an operator can follow a line break or comment.
 const QUOTED_PROJECT_ID =
   /\bprojectId["']?\s*:\s*["'`]([^"'`\n]*)["'`](?=(?:\s|\/\/[^\n\r\u2028\u2029]*(?:[\n\r\u2028\u2029]|$)|\/\*(?:[^*]|\*(?!\/))*\*\/)*(?:[,;})\]]|$))/gi;
 const PROJECT_ID_MENTION = /\bprojectId\b/gi;
@@ -29,12 +26,9 @@ const MAX_CONFIG_LENGTH = 256 * 1024;
 // quadratic; an app config mentions its project a few times at most.
 const MAX_MENTIONS = 32;
 
-// A spread after an entry may replace it from elsewhere: anywhere after it,
-// at any depth, since a spread in an enclosing object replaces the entry
-// too, and a comment or string could hide a brace from a scan of the
-// entry's own object. An assignment over the config may replace it from
-// anywhere: `Object.assign(defaults, overrides)` names the call before
-// both arguments.
+// A later spread at any depth can replace an entry through an enclosing object.
+// Assignments can replace the config from anywhere; Object.assign names its call
+// before either argument.
 const SPREAD_LATER = /\.\.\./;
 // Space, a comment, or an opening parenthesis: what may sit between `...`
 // and the thing spread. Sticky, so the scan moves through the file once.
@@ -56,15 +50,9 @@ const HOLDER_AT = {
 const CONFIG_AT = new RegExp("config" + HOLDER_END, "uy");
 
 /**
- * How a dynamic config with no EAS id of its own relates to app.json's:
- * `spreads` when it spreads `config`, the one Expo hands it (app.json's
- * entry carries through), and nothing else but `config`'s own `extra` or
- * `extra.eas`, which keep the entry wherever they land; `replaces` when it
- * spreads anything else (`config.extra.preview` too), which may replace
- * that entry; `unclear` when it spreads nothing,
- * since it may return `config` changed, or a config of its own that Expo
- * uses alone. A `...` inside a comment after a spread is skipped with the
- * comment, so the scan is linear.
+ * Only Expo's `config` and its own `extra`/`extra.eas` spreads can preserve app.json's id.
+ * Other spreads may replace it; no spreads leaves inheritance unclear.
+ * Skip comments whole after spreads to keep scanning linear.
  */
 const staticConfigUse = (source: string): "spreads" | "replaces" | "unclear" => {
   let spreads = 0;
@@ -96,13 +84,9 @@ const ASSIGNS_OVER = /\bObject\s*\.\s*assign\b|\bassign\s*\(/;
 // requires or imports.
 const REPLACES_HOLDER =
   /(?:\.\s*(?:extra|eas)|\[\s*["'`](?:extra|eas)["'`]\s*\])\s*=(?!=)|\bdelete\b|\brequire\s*\(|\bimport\s*\(/;
-// An `extra:` or `eas:` entry in a config that takes its id from app.json:
-// unless its value is an object that starts by spreading that same entry
-// of `config` (`config.extra`, `config.extra.eas`; spreading the whole
-// config there puts the id elsewhere), it replaces app.json's (`extra: {}`
-// drops the id). The key may be quoted
-// or computed; a shorthand `extra` or `eas` entry replaces it too. More
-// entries than mentions are allowed are not read.
+// An `extra`/`eas` object must start by spreading the matching `config` entry to keep app.json's id.
+// Spreading the whole config there puts the id elsewhere; shorthand entries replace it too.
+// Stop reading once entries exceed MAX_MENTIONS.
 const EXTRA_OR_EAS = /(?:\b(extra|eas)|["'`](extra|eas)["'`]\s*\]?)\s*:\s*/g;
 const SHORTHAND_EXTRA_OR_EAS = /(?<![.\p{ID_Continue}$])(?:extra|eas)\s*(?=[,}])/u;
 const keepsStaticExtra = (source: string): boolean => {
@@ -148,13 +132,9 @@ const decodeAppJson = Schema.decodeUnknownOption(
 );
 
 /**
- * The project ids a directory's app config names. Read, never run: a dynamic
- * config is the project's own code, which an agent may have written. Its text
- * is taken as it is, comments included, so an old id left in a comment makes
- * the answer ambiguous rather than wrong. app.config.json or app.json count
- * too: a dynamic config may only replace theirs on some builds. Null when
- * the project is unknown: the config sets or changes it some other way than
- * a literal, or a config cannot be read.
+ * Never execute dynamic configs. Keep ids in comments so stale ids make the answer ambiguous.
+ * Include JSON configs because dynamic configs may replace them only for some builds.
+ * Return null for unreadable configs or ids set or changed without a literal.
  */
 const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: string) {
   const fs = yield* FileSystem.FileSystem;
@@ -198,7 +178,7 @@ const projectIdsOf = Effect.fn("easProjectId.projectIdsOf")(function* (dir: stri
   }
   for (const file of JSON_CONFIG_FILES) {
     const json = yield* fs.readFileString(path.join(dir, file)).pipe(
-      Effect.map(Option.some),
+      Effect.asSome,
       Effect.catch((error) =>
         Effect.succeed(error.reason._tag === "NotFound" ? Option.none<string>() : null),
       ),

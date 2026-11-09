@@ -6,7 +6,7 @@ import {
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -44,9 +44,9 @@ export class DesktopAppUpdate extends Context.Service<
       reportProgress: (
         stage: ServerSelfUpdateProgressStage,
       ) => Effect.Effect<void, ServerSelfUpdateError>,
+      trackSwitch?: DesktopTelemetryReceiver.DesktopTrackSwitch,
     ) => Effect.Effect<ServerSelfUpdateResult, ServerSelfUpdateError>;
-    /** Success stops this server, so this effect
-        returns only when installation fails or times out. */
+    /** Success stops the server; returns only on installation failure or timeout. */
     readonly commit: (
       requestId: string,
       onHandoffAccepted?: () => Effect.Effect<void>,
@@ -56,7 +56,7 @@ export class DesktopAppUpdate extends Context.Service<
 
 export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* () {
   const config = yield* ServerConfig.ServerConfig;
-  const crypto = yield* Crypto.Crypto;
+  const random = yield* SecureRandom.SecureRandom;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
 
@@ -72,6 +72,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     reportProgress: (
       stage: ServerSelfUpdateProgressStage,
     ) => Effect.Effect<void, ServerSelfUpdateError>,
+    trackSwitch: boolean,
   ) {
     const lastStage = yield* Ref.make<ServerSelfUpdateProgressStage | null>(null);
     const emitStage = (
@@ -123,6 +124,11 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       return { targetVersion, method: "desktop-app" as const, desktopUpdateToken: requestId };
     }
     if (report.outcome === "up-to-date") {
+      // A switch's host already on the newest build of its track only saved the track.
+      if (trackSwitch) {
+        yield* Ref.set(inFlight, false);
+        return { targetVersion: report.state.currentVersion, method: "desktop-app" as const };
+      }
       return yield* failWith(
         `The T3 Code desktop app on this machine is already up to date on ${report.state.currentVersion}.`,
       );
@@ -133,7 +139,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   });
 
   const run: DesktopAppUpdate["Service"]["run"] = Effect.fn("desktopUpdate.desktopAppUpdate.run")(
-    function* (reportProgress) {
+    function* (reportProgress, trackSwitch) {
       if (!available) {
         return yield* failWith(
           "This server was not started by the T3 Code desktop app, so it cannot drive a desktop update.",
@@ -145,24 +151,28 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
 
       return yield* Effect.scoped(
         Effect.gen(function* () {
-          const requestId = yield* crypto
-            .randomUUIDv4()
+          const requestId = yield* random
+            .uuidV4()
             .pipe(
               Effect.mapError((error) =>
                 failWith("Could not generate a desktop update request id.", error),
               ),
             );
-          // Subscribe before sending the request so a fast first report
-          // cannot be missed.
+          // Subscribe before requesting to catch fast reports.
           const { changes } = yield* receiver.desktopUpdates;
           yield* receiver
-            .requestDesktopUpdate(requestId)
+            .requestDesktopUpdate(requestId, trackSwitch)
             .pipe(
               Effect.mapError((error) =>
                 failWith("Could not reach the T3 Code desktop app on this machine.", error),
               ),
             );
-          return yield* consumeReports(requestId, changes, reportProgress).pipe(
+          return yield* consumeReports(
+            requestId,
+            changes,
+            reportProgress,
+            trackSwitch !== undefined,
+          ).pipe(
             Effect.onInterrupt(() => receiver.cancelDesktopUpdate(requestId).pipe(Effect.ignore)),
           );
         }),

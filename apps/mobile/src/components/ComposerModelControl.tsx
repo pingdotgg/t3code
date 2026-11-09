@@ -28,7 +28,6 @@ export function ComposerModelControl(props: {
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
   const summary = props.provider
     ? buildTraitsTriggerDisplay({
-        provider: props.provider,
         descriptors,
         primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
         ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
@@ -70,7 +69,7 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={label}
+      label={props.modelOption?.shortName ?? label}
       iconOnly={props.iconOnly}
       suffix={
         summary ? (

@@ -1,16 +1,23 @@
 import {
   AuthMcpApprovalError,
-  type AuthMcpAuthorizationRequest,
+  AuthMcpAuthorizationRequest,
   AuthMcpClientAccess,
   EnvironmentHttpApi,
+  mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpEffect from "effect/http/HttpEffect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
-import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+import * as CloudLink from "../cloud/CloudLink.ts";
+import { hostedAppUrlConfig } from "../cloud/publicConfig.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpOAuth from "./McpOAuth.ts";
 import { renderErrorPage } from "./mcpOAuthHtml.ts";
 
@@ -25,7 +32,7 @@ const PAGE_HEADERS = {
   "x-content-type-options": "nosniff",
 };
 
-/** OAuth responses carry codes, tokens and client ids, none of which may be cached. */
+// OAuth responses contain credentials and must not be cached.
 const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
   Effect.succeed(
     HttpServerResponse.setHeaders(response, { "cache-control": "no-store", pragma: "no-cache" }),
@@ -33,6 +40,7 @@ const noStore = HttpEffect.appendPreResponseHandler((_request, response) =>
 );
 
 const requestUrls = Effect.map(HttpServerRequest.HttpServerRequest, McpOAuth.requestUrls);
+const decodeAuthorizationRequest = Schema.decodeEffect(AuthMcpAuthorizationRequest);
 
 /**
  * An unverified client or redirect is reported, never redirected; any other problem goes back to
@@ -60,6 +68,23 @@ export const layer = HttpApiBuilder.group(
   "mcpOAuth",
   Effect.fnUntraced(function* (handlers) {
     const oauth = yield* McpOAuth.McpOAuth;
+    const cloudLink = yield* CloudLink.CloudLink;
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+    const hostedAppUrl = yield* hostedAppUrlConfig.pipe(
+      Effect.orElseSucceed(() => DEFAULT_HOSTED_APP_URL),
+    );
+    // The hosted app returns a code only to the tunnel address, so other origins keep the code field.
+    const connectSignIn = (issuer: string) =>
+      cloudLink.linkState().pipe(
+        Effect.flatMap((state) =>
+          state.linked && !state.linkRevoked && state.tunnelHostname === new URL(issuer).hostname
+            ? serverEnvironment.getEnvironmentId.pipe(
+                Effect.map((environmentId) => Option.some({ environmentId, hostedAppUrl })),
+              )
+            : Effect.succeedNone,
+        ),
+        Effect.orElseSucceed(Option.none),
+      );
     const protectedResource = () =>
       requestUrls.pipe(Effect.map(McpOAuth.protectedResourceMetadata));
 
@@ -86,8 +111,11 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           const urls = yield* requestUrls;
           const url = new URL(request.url, urls.issuer);
+          const authorizationRequest = yield* decodeAuthorizationRequest(
+            Object.fromEntries(url.searchParams),
+          ).pipe(Effect.orDie);
           const authorization = yield* oauth
-            .validateAuthorization({ urls, request: Object.fromEntries(url.searchParams) })
+            .validateAuthorization({ urls, request: authorizationRequest })
             .pipe(Effect.result);
           const headers = { "cache-control": "no-store", "referrer-policy": "no-referrer" };
           if (Result.isSuccess(authorization)) {
@@ -111,19 +139,25 @@ export const layer = HttpApiBuilder.group(
           if ("redirectTo" in resolved) return resolved;
           const urls = yield* requestUrls;
           const session = yield* oauth.approvingBrowserSession(request, resolved);
+          // A link needs a plain pairing code, which T3 Connect does not mint.
+          const connect = resolved.client.peerLink
+            ? Option.none()
+            : yield* connectSignIn(urls.issuer);
           yield* noStore;
           return {
             clientName: resolved.client.name,
             redirectHost: new URL(resolved.redirectUri).host,
             environmentHost: new URL(urls.issuer).host,
+            ...(oauth.runtimeModeCeiling === undefined
+              ? {}
+              : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+            ...(Option.isSome(connect) ? { connectSignIn: connect.value } : {}),
             ...(session === undefined
               ? {}
               : {
                   csrfToken: session.csrfToken,
                   oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    EnvironmentAuth.mcpClientScopes(access).every((scope) =>
-                      session.scopes.includes(scope),
-                    ),
+                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
                   ),
                 }),
           };

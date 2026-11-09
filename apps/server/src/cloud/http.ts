@@ -16,8 +16,10 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
+import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -66,6 +68,8 @@ const connectErrorCases = {
   CloudLinkProofRejectedError: unauthorized,
   CloudLinkProofReplayedError: conflict,
   CloudLinkTunnelSupersededError: conflict,
+  ManagedPolicyRefusedError: (error: ManagedLimits.ManagedPolicyRefusedError) =>
+    Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
   CloudLinkInternalError: (error: CloudLink.CloudLinkInternalError) =>
     internalServerError(error, error.cause),
   RelayRequestError: relayFailure,
@@ -74,6 +78,7 @@ const connectErrorCases = {
 type ConnectFailure =
   | Exclude<CloudLink.CloudLinkError, CloudLink.CloudLinkEndpointUnavailableError>
   | EnvironmentAuth.ServerAuthInternalError
+  | ManagedLimits.ManagedPolicyRefusedError
   | RelayRequestError;
 
 const toHttpError = <A, R>(effect: Effect.Effect<A, ConnectFailure, R>) =>
@@ -125,9 +130,12 @@ export const layer = HttpApiBuilder.group(
         ),
       )
       .handle("linkState", () =>
-        requireEnvironmentScope(AuthRelayReadScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.linkState())),
-        ),
+        Effect.gen(function* () {
+          const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
+          const state = yield* toHttpError(cloudLink.linkState());
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+        }),
       )
       .handle("checkReachability", () =>
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
@@ -144,11 +152,6 @@ export const layer = HttpApiBuilder.group(
       )
       .handle("health", ({ payload }) =>
         toHttpError(cloudLink.answerHealthRequest(payload)).pipe(
-          Effect.tap(() => appendCloudCredentialResponseHeaders),
-        ),
-      )
-      .handle("mintCredential", ({ payload }) =>
-        toHttpError(cloudLink.mintCredential(payload)).pipe(
           Effect.tap(() => appendCloudCredentialResponseHeaders),
         ),
       )

@@ -1,6 +1,8 @@
 import {
   DesktopPreviewAnnotationSendEnabledInputSchema,
   DesktopPreviewAnnotationThemeInputSchema,
+  DesktopPreviewAnnotationVoiceStateSchema,
+  DesktopPreviewPickElementInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewConfigInputSchema,
   DesktopPreviewNavigateInputSchema,
@@ -9,6 +11,7 @@ import {
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
+  DesktopPreviewSetShownInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
@@ -46,9 +49,6 @@ export const installPreviewEventForwarding = Effect.fn(
   const manager = yield* PreviewManager.PreviewManager;
   yield* manager.subscribeStateChanges((tabId, state) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_STATE_CHANGE_CHANNEL, tabId, state),
-  );
-  yield* manager.subscribeRecordingFrames((frame) =>
-    electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_FRAME_CHANNEL, frame),
   );
   yield* manager.subscribeRecordingInputs((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_RECORDING_INPUT_CHANNEL, event),
@@ -196,6 +196,15 @@ const setAudioMuted = DesktopIpc.makeIpcMethod({
     yield* manager.setAudioMuted(tabId, audioMuted);
   }),
 });
+const setShown = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_SHOWN_CHANNEL,
+  payload: DesktopPreviewSetShownInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setShown")(function* ({ tabId, shown }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setShown(tabId, shown);
+  }),
+});
 const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -262,11 +271,7 @@ const clearCache = DesktopIpc.makeIpcMethod({
   }),
 });
 
-/**
- * The default profile keeps the bare environment id it used before profiles
- * existed, so upgrading does not strand anyone's existing logins in an orphaned
- * partition.
- */
+/** Keep the default profile's bare environment id so existing logins retain their partition. */
 export function resolvePartitionScope(
   environmentId: string,
   profileId: string | undefined,
@@ -278,9 +283,7 @@ export function resolvePartitionScope(
   if (profileId === undefined || profileId === DEFAULT_BROWSER_PROFILE_ID) {
     return { scope: environmentId, persistent: true };
   }
-  // JSON's tuple framing is injective for strings, including lone UTF-16
-  // surrogates (which it escapes). URI encoding throws on those supported ids,
-  // while replacing them with U+FFFD would collapse distinct identities.
+  // JSON framing preserves lone UTF-16 surrogates; URI encoding throws and replacement would collide.
   return {
     scope: JSON.stringify([environmentId, profileId]),
     persistent: profileId !== INCOGNITO_BROWSER_PROFILE_ID,
@@ -288,11 +291,7 @@ export function resolvePartitionScope(
   };
 }
 
-/**
- * Clearing without a profile keeps the historical "everything" behaviour for
- * an explicit all-profiles action; naming a profile confines it to that
- * profile's partition so one profile's sign-out cannot reach the others.
- */
+/** Omitting a profile clears every partition; a named profile clears only its own partition. */
 const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartitions")(function* (
   manager: PreviewManager.PreviewManager["Service"],
   environmentId: string,
@@ -300,10 +299,7 @@ const resolveClearPartitions = Effect.fn("desktop.ipc.preview.resolveClearPartit
 ) {
   if (profileId === undefined) return undefined;
   const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
-  // Loading the session is what puts the partition in the map the clear walks.
-  // Deriving the partition string alone leaves nothing to match, so clearing a
-  // profile with no tab open this run — after a restart, or when deleting a
-  // profile — would report success and delete nothing.
+  // getBrowserSession registers the partition; deriving its name alone leaves unopened profiles uncleared.
   yield* manager.getBrowserSession(scope, persistent, namespace);
   return [yield* manager.getBrowserPartition(scope, persistent, namespace)];
 });
@@ -315,9 +311,7 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
     const manager = yield* PreviewManager.PreviewManager;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
-    // Creating the session first is what installs the UA rewrite and permission
-    // handlers; a guest that attached to an untouched partition would run with
-    // Electron's default UA and Chromium's default permission behaviour.
+    // Session creation installs UA and permission handlers before a guest can attach.
     yield* manager.getBrowserSession(scope, persistent, namespace);
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
@@ -346,8 +340,6 @@ export const importBrowserCookies = DesktopIpc.makeIpcMethod({
     ...importInput
   }) {
     const browserImport = yield* BrowserImport.BrowserImport;
-    // Derived in main from the same helper the webview config uses, so cookies
-    // land in exactly the partition the profile's tabs attach to.
     const { scope, persistent, namespace } = resolvePartitionScope(
       environmentId,
       importInput.targetProfileId,
@@ -373,11 +365,21 @@ const setAnnotationTheme = DesktopIpc.makeIpcMethod({
 
 const pickElement = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL,
-  payload: DesktopPreviewTabInputSchema,
+  payload: DesktopPreviewPickElementInputSchema,
   result: Schema.NullOr(PreviewAnnotationSubmissionResultSchema),
-  handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId }) {
+  handler: Effect.fn("desktop.ipc.preview.pickElement")(function* ({ tabId, voice }) {
     const manager = yield* PreviewManager.PreviewManager;
-    return yield* manager.pickElement(tabId);
+    return yield* manager.pickElement(tabId, voice);
+  }),
+});
+
+const updateAnnotationVoice = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL,
+  payload: DesktopPreviewAnnotationVoiceStateSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.updateAnnotationVoice")(function* (state) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.updateAnnotationVoice(state);
   }),
 });
 
@@ -438,6 +440,7 @@ const saveRecording = DesktopIpc.makeIpcMethod({
 
 export const methods = [
   setForwardedShortcuts,
+  updateAnnotationVoice,
   createTab,
   closeTab,
   registerWebview,
@@ -452,6 +455,7 @@ export const methods = [
   setColorScheme,
   setZoomFactor,
   setAudioMuted,
+  setShown,
   openDevTools,
   clearCookies,
   clearCache,

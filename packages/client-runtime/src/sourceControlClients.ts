@@ -1,42 +1,66 @@
-import * as AzureDevOps from "@t3tools/source-control-azure-devops/client/definition";
-import * as Bitbucket from "@t3tools/source-control-bitbucket/client/definition";
+import { builtInSourceControlDefinitions } from "@t3tools/source-control-definitions/registry";
 import {
-  makeSourceControlClientRegistry,
+  HostCredentialSettings,
   readSourceControlHostSettings,
-} from "@t3tools/source-control-core/client/definition";
-import type { ServerSettings } from "@t3tools/contracts";
+  type SourceControlAppSignIn,
+  type SourceControlDefinition,
+} from "@t3tools/source-control-core/shared/definition";
+import type { ServerSettings, SourceControlAppAccessInput } from "@t3tools/contracts";
+import { parseGitRemoteRepository } from "@t3tools/shared/git";
 
 export {
+  isMonochromeSourceControlIcon,
   UNKNOWN_SOURCE_CONTROL_CLIENT,
+  type ChangeRequestLink,
   type ChangeRequestTerminology,
-  type SourceControlClientDefinition,
-} from "@t3tools/source-control-core/client/definition";
-import * as Forgejo from "@t3tools/source-control-forgejo/client/definition";
-import * as GitCafe from "@t3tools/source-control-gitcafe/client/definition";
-import * as GitHub from "@t3tools/source-control-github/client/definition";
-import * as GitLab from "@t3tools/source-control-gitlab/client/definition";
+  type HostAccountChoice,
+  type HostCredentialSettings,
+  type ParsedChangeRequestUrl,
+  type ReferenceAutolink,
+  type SourceControlAppSignIn,
+  type SourceControlDefinition,
+  type SourceControlHostCredentials,
+  type SourceControlIcon,
+} from "@t3tools/source-control-core/shared/definition";
 
-/**
- * GitHub comes first because a repository that has not reported its host yet reads as GitHub,
- * which is what clients have always shown there. A change request URL goes to the first host
- * whose shape it has, so GitCafe, which claims `/pulls/` only on its own hostnames, comes before
- * Forgejo, which claims it everywhere.
- */
-const BUILT_IN_SOURCE_CONTROL_CLIENTS = [
-  GitHub.definition,
-  GitLab.definition,
-  GitCafe.definition,
-  Forgejo.definition,
-  Bitbucket.definition,
-  AzureDevOps.definition,
-];
+export const sourceControlClients = builtInSourceControlDefinitions;
 
-export const sourceControlClients = makeSourceControlClientRegistry(
-  BUILT_IN_SOURCE_CONTROL_CLIENTS,
-);
+/** The saved per-hostname accounts and tokens of a host whose definition has `credentials`. */
+export function readHostCredentialSettings(
+  settings: Pick<ServerSettings, "sourceControlHosts">,
+  kind: string,
+): HostCredentialSettings {
+  return readSourceControlHostSettings(HostCredentialSettings, settings.sourceControlHosts[kind]);
+}
 
-export type { GitHubSettings } from "@t3tools/source-control-github/client/definition";
+/** A host's change request term where it opens a sentence: "Merge request merged". */
+export function capitalizeTerm(term: string): string {
+  return term.charAt(0).toUpperCase() + term.slice(1);
+}
 
-export function readGitHubSettings(settings: Pick<ServerSettings, "sourceControlHosts">) {
-  return readSourceControlHostSettings(GitHub.settings, settings.sourceControlHosts.github);
+/** The repository a remote names, when its host has an app sign-in that could reach it. */
+export function appSignInTargetForRemote(remoteUrl: string): {
+  readonly definition: SourceControlDefinition;
+  readonly appSignIn: SourceControlAppSignIn;
+  readonly input: SourceControlAppAccessInput;
+} | null {
+  const parsed = parseGitRemoteRepository(remoteUrl);
+  const provider = sourceControlClients.recognizeRemote(remoteUrl);
+  const definition = provider ? sourceControlClients.find(provider.kind) : undefined;
+  const appSignIn = definition?.credentials?.appSignIn;
+  if (parsed === null || definition === undefined || appSignIn === undefined) return null;
+  if (!appSignIn.hosts.includes(parsed.host)) return null;
+  // The parser lowercases; keep the remote's own casing for display when it names the same path.
+  const asWritten = remoteUrl
+    .trim()
+    .replace(/\.git\/?$/i, "")
+    .split(/[/:]/)
+    .slice(-2)
+    .join("/");
+  const repository = asWritten.toLowerCase() === parsed.path ? asWritten : parsed.path;
+  return {
+    definition,
+    appSignIn,
+    input: { provider: definition.kind, host: parsed.host, repository },
+  };
 }

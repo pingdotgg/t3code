@@ -34,8 +34,7 @@ const REPO_ROOT = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import
 const MOBILE_ROOT = NodePath.join(REPO_ROOT, "apps/mobile");
 const ANDROID_PACKAGE = "com.t3tools.t3code";
 const APP_SCHEME = "t3code";
-// expo-dev-launcher reads these off the manifest URL and updates the dev menu
-// preferences before the app loads, keeping captures free of dev chrome.
+// Manifest flags update expo-dev-launcher preferences before loading, hiding dev chrome in captures.
 const DEV_CLIENT_LAUNCH_FLAGS = "disableOnboarding=1&disableFab=1&disableAutoLaunch=1";
 const IOS_READY_FILENAME = "T3ShowcaseReadyScene";
 const SERVER_HOST = "0.0.0.0";
@@ -65,8 +64,7 @@ const MOBILE_BUILD_ENV = {
   ANDROID_HOME: ANDROID_SDK_ROOT,
   APP_VARIANT: "production",
   EXPO_NO_GIT_STATUS: "1",
-  // Lets the capture build require full screen on iPad so the app can rotate
-  // itself to landscape (see app.config.ts).
+  // iPad self-rotation needs the capture build's fullscreen mode (app.config.ts).
   T3_SHOWCASE_CAPTURE_BUILD: "1",
   JAVA_HOME:
     NodeProcess.env.JAVA_HOME ??
@@ -208,6 +206,11 @@ export function validateStoreAsset(
       throw new Error(`${label} must use Google Play's recommended portrait 9:16 aspect ratio.`);
     }
   }
+  try {
+    PNG.sync.read(Buffer.from(bytes));
+  } catch (cause) {
+    throw new Error(`${label} is not a valid PNG.`, { cause });
+  }
   return metadata;
 }
 
@@ -338,8 +341,7 @@ export function parseShowcaseCliArgs(args: ReadonlyArray<string>): CliOptions {
       } else if (SHOWCASE_THEMES.some((theme) => theme === value)) {
         themes.add(value as ShowcaseTheme);
       } else {
-        // The app silently falls back to its default palette for an unknown id,
-        // so reject it here rather than shipping a mislabeled screenshot.
+        // Unknown themes silently use the default palette; reject mislabeled captures.
         throw new Error(`Unsupported theme '${value}'. Use ${SHOWCASE_THEMES.join(", ")}, or all.`);
       }
       index += 1;
@@ -500,7 +502,7 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function stopProcess(child: NodeChildProcess.ChildProcess): Promise<void> {
+export async function stopProcess(child: NodeChildProcess.ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
 
   const exited = new Promise<void>((resolve) => {
@@ -514,7 +516,11 @@ async function stopProcess(child: NodeChildProcess.ChildProcess): Promise<void> 
   await Promise.race([exited, delay(1_000)]);
 }
 
-async function waitForPort(port: number, label = "Process", timeoutMs = 60_000): Promise<void> {
+export async function waitForPort(
+  port: number,
+  label = "Process",
+  timeoutMs = 60_000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const open = await new Promise<boolean>((resolve) => {
@@ -552,7 +558,7 @@ async function waitForFileContent(
   throw new Error(`${label} was not written to ${filePath} within ${timeoutMs}ms.`);
 }
 
-async function reserveAvailablePort(): Promise<number> {
+export async function reserveAvailablePort(): Promise<number> {
   return await new Promise<number>((resolve, reject) => {
     const server = NodeNet.createServer();
     server.once("error", reject);
@@ -638,6 +644,63 @@ function startShowcaseServer(
   );
 }
 
+export interface ShowcaseEnvironment {
+  readonly baseDir: string;
+  readonly environmentId: string;
+  readonly label: string;
+  readonly port: number;
+}
+
+/** Boot one seeded fixture server per showcase environment; `track` receives every spawned server. */
+export async function startShowcaseEnvironments(
+  rootDir: string,
+  track: (server: NodeChildProcess.ChildProcess) => void,
+  environments: ReadonlyArray<(typeof SHOWCASE_ENVIRONMENTS)[number]> = SHOWCASE_ENVIRONMENTS,
+): Promise<ShowcaseEnvironment[]> {
+  const started: ShowcaseEnvironment[] = [];
+  for (const environment of environments) {
+    const projectId = environment.projectIds[0];
+    const project = SHOWCASE_PROJECTS.find((candidate) => candidate.id === projectId);
+    if (!project) throw new Error(`Showcase environment '${environment.id}' has no project.`);
+
+    const baseDir = NodePath.join(rootDir, "environments", environment.id);
+    const workspaceRoot = NodePath.join(baseDir, "workspace", project.directory);
+    const port = await reserveAvailablePort();
+    await NodeFSP.mkdir(workspaceRoot, { recursive: true });
+    const shellPath = await createShowcaseShell(baseDir);
+    const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
+    const server = startShowcaseServer(
+      baseDir,
+      workspaceRoot,
+      port,
+      shellPath,
+      labelProbeDirectory,
+    );
+    track(server);
+    await waitForPort(port, `${environment.label} server`);
+    await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
+    // Legacy fixture threads are imported into V2 during server startup.
+    await stopProcess(server);
+    const seededServer = startShowcaseServer(
+      baseDir,
+      workspaceRoot,
+      port,
+      shellPath,
+      labelProbeDirectory,
+    );
+    track(seededServer);
+    await waitForPort(port, `${environment.label} seeded server`);
+    // The server begins listening before the ServerEnvironment layer
+    // persists the environment id, so poll rather than read once.
+    const environmentId = await waitForFileContent(
+      NodePath.join(baseDir, "userdata", "environment-id"),
+      `${environment.label} environment id`,
+    );
+    started.push({ baseDir, environmentId, label: environment.label, port });
+  }
+  return started;
+}
+
 export function parsePairingCredentialOutput(output: string): string {
   const jsonStart = output.indexOf("{");
   const jsonEnd = output.lastIndexOf("}");
@@ -653,7 +716,7 @@ export function parsePairingCredentialOutput(output: string): string {
   return parsed.credential;
 }
 
-async function issuePairingCredential(baseDir: string): Promise<string> {
+export async function issuePairingCredential(baseDir: string): Promise<string> {
   const output = await commandOutput(
     "node",
     ["apps/server/src/bin.ts", "auth", "pairing", "create", "--base-dir", baseDir, "--json"],
@@ -662,7 +725,7 @@ async function issuePairingCredential(baseDir: string): Promise<string> {
   return parsePairingCredentialOutput(output);
 }
 
-function buildShowcasePairingUrl(host: string, port: number, credential: string): string {
+export function buildShowcasePairingUrl(host: string, port: number, credential: string): string {
   const url = new URL(`http://${host}:${port}/`);
   url.hash = new URLSearchParams([["token", credential]]).toString();
   return url.toString();
@@ -809,11 +872,7 @@ async function iosSimulatorDataPath(udid: string): Promise<string> {
   return dataPath;
 }
 
-// generativeexperiencesd posts a "Ready for Apple Intelligence" follow-up
-// banner on an eligible device's first boot, and CoreFollowUp re-surfaces it on
-// every boot until the user dismisses it. Stamping the readiness marker before
-// boot makes the daemon skip the post, and dropping the CoreFollowUp store
-// clears a banner that a previous boot already queued.
+// Apple Intelligence posts persistent first-boot banners; mark readiness and clear queued CoreFollowUp notices.
 async function suppressIosSystemFollowUps(udid: string): Promise<void> {
   const dataPath = await iosSimulatorDataPath(udid);
   const preferences = NodePath.join(dataPath, "Library/Preferences");
@@ -838,9 +897,7 @@ async function suppressIosSystemFollowUps(udid: string): Promise<void> {
 
 async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: string): Promise<void> {
   await runCommand("xcrun", ["simctl", "ui", udid, "appearance", appearance]);
-  // Always-on displays (Pro Max) dim a locked screen instead of turning it
-  // off, which the lock-screen wake cannot tell from a lit one. Without it the
-  // locked display goes dark and the wake lights it fully.
+  // Disable always-on dimming so lock-screen wake can distinguish off from fully lit.
   await runCommand("xcrun", [
     "simctl",
     "spawn",
@@ -870,9 +927,7 @@ async function normalizeIosSimulator(appearance: ShowcaseAppearance, udid: strin
   ]);
 }
 
-// iPadOS 26 windowing ("Chamois") runs UIRequiresFullScreen apps in a fixed
-// portrait compatibility window, which defeats the in-app landscape rotation
-// the capture build relies on.
+// iPadOS 26 windowing forces fullscreen apps into portrait, defeating capture-build rotation.
 async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
   const current = await commandOutput("xcrun", [
     "simctl",
@@ -884,8 +939,7 @@ async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
     "SBChamoisWindowingEnabled",
   ]).catch(() => "");
   if (current.trim() === "0") return;
-  // The Settings toggle writes all three keys; SBChamoisWindowingEnabled
-  // alone is not honored on a freshly created device.
+  // Fresh devices honor the Settings toggle only when all three keys are written.
   for (const key of [
     "SBChamoisWindowingEnabled",
     "SBMedusaMultitaskingEnabled",
@@ -903,9 +957,7 @@ async function ensureIosFullScreenAppsMode(udid: string): Promise<void> {
       "false",
     ]);
   }
-  // A SpringBoard restart is not enough on a freshly created simulator (the
-  // first CI run captured with windowing still active), so reboot the device
-  // and verify the mode actually stuck.
+  // New simulators require a reboot, not just SpringBoard restart, before windowing settings take effect.
   await runCommand("xcrun", ["simctl", "shutdown", udid]);
   await runCommand("xcrun", ["simctl", "boot", udid]);
   await runCommand("xcrun", ["simctl", "bootstatus", udid, "-b"]);
@@ -978,10 +1030,7 @@ async function iosSimulatorLocked(udid: string): Promise<boolean> {
   return state.trim().endsWith(" 1");
 }
 
-/**
- * The staging app asks for notification permission; simctl has no privacy
- * service for it, so answer the prompt until the scene reports ready.
- */
+// simctl has no notification privacy service; answer the staging app's prompt until ready.
 async function allowIosNotificationsUntilReady(udid: string, ready: Promise<void>): Promise<void> {
   const state = { settled: false };
   const tapping = (async () => {
@@ -1025,11 +1074,7 @@ async function presentIosLockScreen(udid: string): Promise<void> {
   await runAxe(udid, ["tap", "--label", "Allow"]).catch(() => undefined);
 }
 
-/**
- * The alert usually wakes the display, but not always. A home press on a dark
- * display only wakes it, so press only after a screenshot proves it is dark;
- * pressing on a lit lock screen would unlock the device instead.
- */
+/** Press home only if a screenshot proves the lock screen is dark; a lit display would unlock instead. */
 async function wakeIosLockScreen(udid: string): Promise<void> {
   const probe = NodePath.join(NodeOS.tmpdir(), `t3-showcase-wake-${udid}.png`);
   try {
@@ -1089,6 +1134,23 @@ async function captureIos(
   if (capture.device.orientation === "landscape") {
     await ensureIosFullScreenAppsMode(simulator.udid);
   }
+  if (capture.device.fold) {
+    const command = NodeProcess.env.AGENT_DEVICE_PATH ?? "agent-device";
+    const target = [
+      "--platform",
+      "ios",
+      "--udid",
+      simulator.udid,
+      "--session",
+      `showcase-${simulator.udid}`,
+    ];
+    await runCommand(command, ["open", ...target]);
+    try {
+      await runCommand(command, ["fold", capture.device.fold, ...target]);
+    } finally {
+      await runCommand(command, ["close", ...target]);
+    }
+  }
   await normalizeIosSimulator(capture.appearance, simulator.udid);
   if (appPath) {
     await runCommand("xcrun", ["simctl", "uninstall", simulator.udid, ANDROID_PACKAGE]).catch(
@@ -1123,8 +1185,7 @@ async function captureIos(
       firstScene,
       "--showcaseTheme",
       capture.theme,
-      // The app rotates itself; Simulator menu UI scripting needs macOS
-      // Accessibility permission that CI runners do not grant to osascript.
+      // Simulator rotation UI scripting needs Accessibility permission unavailable on CI.
       "--showcaseOrientation",
       capture.device.orientation ?? "portrait",
     ]);
@@ -1145,9 +1206,7 @@ async function captureIos(
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const isLastAttempt = attempt === 1;
         try {
-          // A freshly installed Expo development build can spend well over 30s
-          // applying an already-bundled update after it reaches 100%. Killing it
-          // at that point sends the next capture back to the dev launcher.
+          // A fresh Expo build can spend over 30 s applying a bundled update; killing it returns to the launcher.
           await waitForScene(120_000);
           break;
         } catch (error) {
@@ -1164,14 +1223,19 @@ async function captureIos(
       showcaseCaptureDirectory(outputDirectory, capture),
       `${scene}.png`,
     );
-    await runCommand("xcrun", ["simctl", "io", simulator.udid, "screenshot", destination]);
+    await runCommand("xcrun", [
+      "simctl",
+      "io",
+      simulator.udid,
+      "screenshot",
+      ...(capture.device.fold ? ["--display", capture.device.fold === "closed" ? "1" : "3"] : []),
+      destination,
+    ]);
     if (capture.device.orientation === "landscape") {
-      // A headless simulator keeps its display portrait while the rotated app
-      // renders sideways inside it; with Simulator.app attached the display
-      // itself rotates. Only post-rotate the former.
+      // Headless displays stay portrait despite app rotation; post-rotate only captures still in portrait.
       const { width, height } = readPngDimensions(await NodeFSP.readFile(destination));
       if (height > width) {
-        await runCommand("sips", ["--rotate", "270", destination]);
+        await runCommand("sips", ["--rotate", capture.device.fold ? "90" : "270", destination]);
       }
     }
     if (scene === "agent-activity") await unlockIosSimulator(simulator.udid);
@@ -1191,11 +1255,7 @@ async function runAdb(serial: string, args: ReadonlyArray<string>): Promise<void
   await runCommand(androidSdkTool("platform-tools/adb"), ["-s", serial, ...args]);
 }
 
-/**
- * Emulator images post their own ongoing notices (keyboard configured, serial
- * console enabled) that would share the shade with the app's. Snoozing hides
- * them for the capture; they come back on their own an hour later.
- */
+/** Snooze emulator system notices for an hour so only app notifications appear in captures. */
 async function snoozeAndroidSystemNotifications(serial: string): Promise<void> {
   const keys = (await adbOutput(serial, ["shell", "cmd", "notification", "list"]))
     .split("\n")
@@ -1329,9 +1389,7 @@ async function writeAndroidShowcaseScene(serial: string, scene: ShowcaseScene): 
   ]);
 }
 
-// Gesture and key-command toggles have no launch-URL flag, so they still go
-// through the preferences file; onboarding, auto-launch and the floating button
-// come from DEV_CLIENT_LAUNCH_FLAGS on the launch URL.
+// Gesture/key-command toggles have no URL flags; set preferences separately from DEV_CLIENT_LAUNCH_FLAGS.
 async function prepareAndroidShowcaseApp(serial: string): Promise<void> {
   const preferences = `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <map>
@@ -1501,46 +1559,17 @@ async function main(): Promise<void> {
     NodePath.join(NodeOS.tmpdir(), "t3-mobile-showcase-"),
   );
   const showcaseServers: NodeChildProcess.ChildProcess[] = [];
-  const showcaseEnvironments: Array<{
-    readonly baseDir: string;
-    readonly environmentId: string;
-    readonly label: string;
-    readonly port: number;
-  }> = [];
+  const showcaseEnvironments: ShowcaseEnvironment[] = [];
   let metro: NodeChildProcess.ChildProcess | null = null;
   const iosCleanups: IosCaptureCleanup[] = [];
   const androidCleanups: AndroidCaptureCleanup[] = [];
 
   try {
-    for (const environment of SHOWCASE_ENVIRONMENTS) {
-      const projectId = environment.projectIds[0];
-      const project = SHOWCASE_PROJECTS.find((candidate) => candidate.id === projectId);
-      if (!project) throw new Error(`Showcase environment '${environment.id}' has no project.`);
-
-      const baseDir = NodePath.join(showcaseRootDir, "environments", environment.id);
-      const workspaceRoot = NodePath.join(baseDir, "workspace", project.directory);
-      const port = await reserveAvailablePort();
-      await NodeFSP.mkdir(workspaceRoot, { recursive: true });
-      const shellPath = await createShowcaseShell(baseDir);
-      const labelProbeDirectory = await createShowcaseLabelProbe(baseDir, environment.label);
-      const server = startShowcaseServer(
-        baseDir,
-        workspaceRoot,
-        port,
-        shellPath,
-        labelProbeDirectory,
-      );
-      showcaseServers.push(server);
-      await waitForPort(port, `${environment.label} server`);
-      await seedShowcaseEnvironment({ baseDir, projectIds: environment.projectIds });
-      // The server begins listening before the ServerEnvironment layer
-      // persists the environment id, so poll rather than read once.
-      const environmentId = await waitForFileContent(
-        NodePath.join(baseDir, "userdata", "environment-id"),
-        `${environment.label} environment id`,
-      );
-      showcaseEnvironments.push({ baseDir, environmentId, label: environment.label, port });
-    }
+    showcaseEnvironments.push(
+      ...(await startShowcaseEnvironments(showcaseRootDir, (server) =>
+        showcaseServers.push(server),
+      )),
+    );
 
     if (!options.skipMetro) {
       metro = startMetro(showcaseConfig);

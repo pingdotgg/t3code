@@ -33,8 +33,7 @@ export const layer = Layer.effectDiscard(
       ),
     );
     yield* runtime.tunnelConnected.pipe(
-      // cloudflared registers several connections per (re)connect within a
-      // few seconds; they are one wake.
+      // Coalesce cloudflared's several connections per reconnect into one wake.
       Stream.debounce("3 seconds"),
       Stream.runForEach(() => wake),
       Effect.forkScoped,

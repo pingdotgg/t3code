@@ -1,4 +1,4 @@
-import type { ComposerContextRecord } from "@t3tools/contracts";
+import type { ComposerContextRecord, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   composerChipSizeSuffix,
   contextChipIcon,
@@ -7,8 +7,16 @@ import {
   type ContextChipIconRef,
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
-import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
-import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
+import type {
+  SelectableMarkdownModel,
+  SelectableMarkdownSkill,
+} from "../native/SelectableMarkdownText.types";
+import {
+  formatComposerContextHref,
+  parseComposerContextHref,
+} from "@t3tools/shared/composerContextReferences";
+import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
 export function enrichedContextLinkPresentation(
   href: string,
@@ -27,6 +35,56 @@ export function enrichedContextLinkPresentation(
     icon: contextChipIcon(presentation, contextRecordFileName(record)),
     ...(record && size ? { label: `${record.label} · ${size}` } : {}),
   };
+}
+
+export function enrichedThreadLinkPresentation(
+  href: string,
+): { accent?: string; icon: ContextChipIconRef } | undefined {
+  if (!parseThreadLinkHref(href)) return undefined;
+  const presentation = contextChipPresentation("thread");
+  return {
+    ...(presentation.accent ? { accent: presentation.accent } : {}),
+    icon: contextChipIcon(presentation, ""),
+  };
+}
+
+export interface ThreadChipTarget {
+  readonly href: string;
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly link: boolean;
+}
+
+export function threadChipTargets(
+  environmentId: EnvironmentId,
+  markdown: string,
+  records?: ReadonlyArray<ComposerContextRecord>,
+): ReadonlyArray<ThreadChipTarget> {
+  const targets = new Map<string, ThreadChipTarget>();
+  if (hasThreadLinks(markdown)) {
+    for (const [, href = ""] of markdown.matchAll(/\]\(<?(t3-thread:\/\/v[12]\/[^\s>)]+)>?\)/g)) {
+      const link = parseThreadLinkHref(href);
+      if (link) {
+        targets.set(href, {
+          href,
+          environmentId: link.environmentId ?? environmentId,
+          threadId: link.threadId,
+          link: true,
+        });
+      }
+    }
+  }
+  for (const record of records ?? []) {
+    if (record.kind !== "thread" || !("threadId" in record)) continue;
+    const href = formatComposerContextHref("thread", record.contextId);
+    targets.set(href, {
+      href,
+      environmentId: record.environmentId,
+      threadId: record.threadId,
+      link: false,
+    });
+  }
+  return [...targets.values()];
 }
 
 export function enrichedLinkVariantPattern(url: string) {
@@ -68,4 +126,81 @@ export function enrichedSkillReference(
 
 export function enrichedSkillInstructionsPath(skill: SelectableMarkdownSkill) {
   return skill.path && !/^[a-z][a-z\d+.-]*:\/\//i.test(skill.path) ? skill.path : undefined;
+}
+
+export function buildEnrichedModelReferences(
+  providers: ReadonlyArray<{
+    readonly instanceId: string;
+    readonly driver: string;
+    readonly displayName?: string | undefined;
+    readonly iconUrl?: string | undefined;
+    readonly models: ReadonlyArray<{
+      readonly slug: string;
+      readonly name: string;
+      readonly subProvider?: string | undefined;
+    }>;
+  }>,
+  sources?: ReadonlySet<string>,
+): ReadonlyArray<SelectableMarkdownModel> {
+  return providers.flatMap((provider) =>
+    provider.models
+      .filter(
+        (model) =>
+          !sources || sources.has(formatComposerModelMention(provider.instanceId, model.slug)),
+      )
+      .map((model) => {
+        const qualifier = model.subProvider?.trim();
+        const label = qualifier
+          ? model.name
+              .replace(
+                new RegExp(
+                  `^${qualifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s*[.:/-]\\s*|\\s+)`,
+                  "iu",
+                ),
+                "",
+              )
+              .trim() || model.name
+          : model.name;
+        return {
+          source: formatComposerModelMention(provider.instanceId, model.slug),
+          label,
+          providerLabel: qualifier || provider.displayName || provider.instanceId,
+          driver: provider.driver,
+          iconUrl: provider.iconUrl,
+        };
+      }),
+  );
+}
+
+export function enrichedModelLinkRegex(models?: ReadonlyArray<SelectableMarkdownModel>) {
+  if (!models?.length) return null;
+  const alternatives = models
+    .map((model) => model.source)
+    .sort((a, b) => b.length - a.length)
+    .map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(
+    `(?<![^\\s,(\\["'])(?:${alternatives.join("|")})(?=$|[\\s,"']|[.;:!?\\)\\]]+(?=$|[\\s,"']))`,
+    "u",
+  );
+}
+
+export function enrichedModelReference(
+  source: string,
+  models?: ReadonlyArray<SelectableMarkdownModel>,
+) {
+  return models?.find((model) => model.source === source);
+}
+
+export function enrichedModelDetails(model: SelectableMarkdownModel) {
+  return `${model.providerLabel}\n${model.source}`;
+}
+
+export function enrichedTextLinkRegex(
+  skills?: ReadonlyArray<SelectableMarkdownSkill>,
+  models?: ReadonlyArray<SelectableMarkdownModel>,
+) {
+  const patterns = [enrichedSkillLinkRegex(skills), enrichedModelLinkRegex(models)]
+    .filter((pattern) => pattern !== null)
+    .map((pattern) => `(?:${pattern.source})`);
+  return patterns.length ? new RegExp(patterns.join("|"), "u") : null;
 }

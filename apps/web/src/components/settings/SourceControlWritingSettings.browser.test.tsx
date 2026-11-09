@@ -44,8 +44,6 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironmentProviders: () => new Map(),
 }));
-// The real row reads write permission and overrides from live environment state; this
-// suite is about how the section writes mixed writing styles.
 vi.mock(import("./settingsLayout"), async (original) => ({
   ...(await original()),
   SettingsRow: ({ title, control, resetAction, children }) => (
@@ -101,7 +99,11 @@ describe("mixed source control instructions", () => {
       customInstructions,
     }));
 
-    await userEvent.click(resetButton("change request templates"));
+    await userEvent.click(page.getByRole("button", { name: "Advanced" }));
+    // Mid-open, Playwright scrolls the clipped panel to reach the button, then the growing panel
+    // shifts it between press and release and the click misses. Wait until the panel shows it.
+    await expect.element(resetButton("pull request templates")).toBeInViewport({ ratio: 1 });
+    await userEvent.click(resetButton("pull request templates"));
 
     expect(state.updateSettings).toHaveBeenCalledTimes(1);
     expect(state.styles.map((style) => style.followChangeRequestTemplates)).toEqual([
