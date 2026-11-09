@@ -6,6 +6,7 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { HammerIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
@@ -18,7 +19,12 @@ import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { groupPullRequestChecks } from "./pullRequestDetail.logic";
+import {
+  groupPullRequestChecks,
+  isFailingCheck,
+  PULL_REQUEST_FIX_CHECKS_KEY,
+  pullRequestFindingKey,
+} from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -52,62 +58,126 @@ function LazyChecksBody({
   return <ChecksBody checks={detailQuery.data.checks} threadRef={threadRef} />;
 }
 
+export function useOpenPullRequestCheck(threadRef: ScopedThreadRef | null) {
+  const openLink = useOpenLink(threadRef);
+  return (url: string) => {
+    void openLink(url).catch((error: unknown) => {
+      console.error(error);
+      toastManager.add({ type: "error", title: "Unable to open check details" });
+    });
+  };
+}
+
+export function PullRequestFixButton({
+  pending,
+  disabled,
+  onClick,
+  "aria-label": ariaLabel,
+}: {
+  pending: boolean;
+  disabled: boolean;
+  onClick: () => void;
+  "aria-label": string;
+}) {
+  return (
+    <Button
+      size="xs"
+      variant="ghost"
+      className="shrink-0"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      <HammerIcon className="size-3" />
+      {pending ? "Preparing..." : "Fix"}
+    </Button>
+  );
+}
+
+export function PullRequestCheckRow({
+  check,
+  onOpen,
+  onFix,
+  pendingFix,
+}: {
+  check: PullRequestCheck;
+  onOpen: (url: string) => void;
+  onFix?: ((check: PullRequestCheck) => void) | undefined;
+  pendingFix?: string | null | undefined;
+}) {
+  const name = <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>;
+  return (
+    <div className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60">
+      <button
+        type="button"
+        disabled={!check.url}
+        onClick={() => check.url && onOpen(check.url)}
+        className={cn(
+          "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
+          check.url ? "cursor-pointer" : "cursor-default",
+        )}
+      >
+        <PullRequestCheckStatusIcon status={check.status} />
+        {check.description ? (
+          <Tooltip>
+            <TooltipTrigger render={name} />
+            <TooltipPopup side="top">{check.description}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          name
+        )}
+        <span className="shrink-0 text-muted-foreground">{pullRequestCheckStatusLabel(check)}</span>
+      </button>
+      {onFix && isFailingCheck(check) ? (
+        <PullRequestFixButton
+          aria-label={`Fix ${check.name}`}
+          pending={pendingFix === pullRequestFindingKey({ kind: "check", check })}
+          disabled={pendingFix !== null && pendingFix !== undefined}
+          onClick={() => onFix(check)}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+export interface PullRequestChecksFix {
+  readonly onFixCheck: (check: PullRequestCheck) => void;
+  readonly onFixAll: () => void;
+  readonly pending: string | null;
+}
+
 function ChecksBody({
   checks,
   threadRef,
+  fix,
 }: {
   checks: ReadonlyArray<PullRequestCheck>;
   threadRef: ScopedThreadRef | null;
+  fix?: PullRequestChecksFix | undefined;
 }) {
-  const openLink = useOpenLink(threadRef);
+  const openCheck = useOpenPullRequestCheck(threadRef);
   const [showAll, setShowAll] = useState(false);
   const { attention, running, completed } = groupPullRequestChecks(checks);
   const canCollapse = attention.length + running.length > 0 && completed.length > 0;
   const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
-  const hasDetails = visibleChecks.some((check) => check.url !== null);
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
     <>
-      <ScrollArea className="-me-3 w-auto max-h-64">
-        <ul
-          className={cn(
-            "grid gap-x-2 gap-y-1 pe-3",
-            hasDetails
-              ? "grid-cols-[auto_minmax(0,1fr)_auto_auto]"
-              : "grid-cols-[auto_minmax(0,1fr)_auto]",
-          )}
-        >
+      <ScrollArea className="-ms-2 -me-3 w-auto max-h-64">
+        <ul className="pe-3">
           {visibleChecks.map(
             (check, index) => (
               /* oxlint-disable react/no-array-index-key -- Check names can repeat; these status rows have no local state. */ <li
                 key={`${index}:${check.name}`}
-                className="col-span-full grid grid-cols-subgrid items-center text-xs"
               >
-                <PullRequestCheckStatusIcon status={check.status} />
-                <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 truncate">{check.name}</span>} />
-                  <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-                </Tooltip>
-                <span className="justify-self-end whitespace-nowrap text-muted-foreground">
-                  {pullRequestCheckStatusLabel(check)}
-                </span>
-                {check.url === null ? null : (
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    onClick={() => {
-                      if (!check.url) return;
-                      void openLink(check.url).catch((error: unknown) => {
-                        console.error(error);
-                        toastManager.add({ type: "error", title: "Unable to open check details" });
-                      });
-                    }}
-                  >
-                    Details
-                  </button>
-                )}
+                <PullRequestCheckRow
+                  check={check}
+                  onOpen={openCheck}
+                  onFix={fix?.onFixCheck}
+                  pendingFix={fix?.pending}
+                />
               </li>
             ) /* oxlint-enable react/no-array-index-key */,
           )}
@@ -134,6 +204,7 @@ export function PullRequestChecksPopover({
   environmentId,
   reference,
   threadRef = null,
+  fix,
   variant = "icon",
   className,
   render,
@@ -144,6 +215,7 @@ export function PullRequestChecksPopover({
   environmentId?: EnvironmentId;
   reference?: PullRequestRef;
   threadRef?: ScopedThreadRef | null;
+  fix?: PullRequestChecksFix | undefined;
   variant?: "icon" | "count";
   className?: string;
   render?: React.ReactElement;
@@ -192,14 +264,26 @@ export function PullRequestChecksPopover({
         ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" width="md" side="bottom">
-        <p className="mb-2 font-medium text-sm">{presentation.label}</p>
-        {summary === null ? null : <p className="mb-2 text-muted-foreground text-xs">{summary}</p>}
+        <div className="mb-2 flex items-start justify-between gap-2 pe-1">
+          <div className="min-w-0">
+            <p className="font-medium text-sm">{presentation.label}</p>
+            {summary === null ? null : <p className="text-muted-foreground text-xs">{summary}</p>}
+          </div>
+          {fix && !stale && failedCount > 0 ? (
+            <PullRequestFixButton
+              aria-label="Fix all failing checks"
+              pending={fix.pending === PULL_REQUEST_FIX_CHECKS_KEY}
+              disabled={fix.pending !== null}
+              onClick={fix.onFixAll}
+            />
+          ) : null}
+        </div>
         {stale ? (
           <p className="text-muted-foreground text-xs">
             Check details are out of date. Refresh the pull request to update them.
           </p>
         ) : checks !== undefined ? (
-          <ChecksBody checks={checks} threadRef={threadRef} />
+          <ChecksBody checks={checks} threadRef={threadRef} fix={fix} />
         ) : environmentId !== undefined && reference !== undefined ? (
           <LazyChecksBody
             environmentId={environmentId}

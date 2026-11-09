@@ -8,18 +8,26 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProjectId,
+  PullRequestCheck,
+  PullRequestRef,
+  ScopedThreadRef,
+} from "@t3tools/contracts";
 import {
   ArrowUpRightIcon,
   EyeIcon,
   EyeOffIcon,
   FileDiffIcon,
   GitBranchIcon,
+  HammerIcon,
   TriangleAlertIcon,
 } from "lucide-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import type { DraftId } from "~/composerDraftStore";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { cn } from "~/lib/utils";
@@ -33,7 +41,8 @@ import {
 } from "~/state/query";
 
 import {
-  buildFixFindingsHandoff,
+  buildFixChecksHandoff,
+  buildFixFindingHandoff,
   buildResolveConflictsPrompt,
   classifyPullRequestChecks,
   describePullRequestChecks,
@@ -41,6 +50,7 @@ import {
   resolvePullRequestMergeMethod,
   allowedPullRequestMergeMethods,
   resolveThreadPanelPullRequestAction,
+  type PullRequestFinding,
 } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
@@ -53,6 +63,8 @@ import {
   usePullRequestActionRunner,
   usePullRequestDefaultMergeMethodResolver,
   usePullRequestHandoffs,
+  writeHandoffToComposer,
+  type PullRequestThreadTask,
 } from "../pullRequest/usePullRequestActions";
 import {
   ChangeRequestStatusIcon,
@@ -69,6 +81,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -93,6 +106,8 @@ export function ThreadDetailsPrRow({
   onOpen,
   onActed,
   onStopWatching,
+  composerTarget,
+  threadRef = null,
 }: {
   environmentId: EnvironmentId;
   pr: ThreadPr;
@@ -105,6 +120,8 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
+  composerTarget: ScopedThreadRef | DraftId;
+  threadRef?: ScopedThreadRef | null;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -201,25 +218,29 @@ export function ThreadDetailsPrRow({
     });
   };
 
-  const startFixChecks = () => {
-    if (detail === null) return;
-    void startHandoff(
-      "findings",
-      buildFixFindingsHandoff({
-        number: detail.number,
-        title: detail.title,
-        url: detail.url,
-        headBranch: detail.headBranch,
-        baseBranch: detail.baseBranch,
-        state: detail.state,
-        isDraft: detail.isDraft,
-        reviewThreads: [],
-        comments: [],
-        checks: detail.checks,
-        commentsTruncated: false,
-      }),
-    );
+  const addToComposer = (task: PullRequestThreadTask) => {
+    writeHandoffToComposer(composerTarget, task);
+    toastManager.add({
+      type: "success",
+      title: "Added to the composer",
+      description: "The task is in the composer. Read it over, then send.",
+    });
   };
+  const fixAllChecks = () => {
+    if (detail === null) return;
+    addToComposer(buildFixChecksHandoff(detail));
+  };
+  const checksFix =
+    detail !== null && open
+      ? {
+          onFixCheck: (check: PullRequestCheck) => {
+            const finding: PullRequestFinding = { kind: "check", check };
+            addToComposer(buildFixFindingHandoff({ ...detail, finding }));
+          },
+          onFixAll: fixAllChecks,
+          pending: null,
+        }
+      : undefined;
 
   const statePresentation =
     detail === null
@@ -342,12 +363,13 @@ export function ThreadDetailsPrRow({
         : rowAction === "fix"
           ? {
               label: "Fix",
-              pendingLabel: "Preparing...",
-              pending: handoff === "findings",
+              pendingLabel: "Fix",
+              pending: false,
               destructive: true,
-              suffix: <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />,
-              tooltip: "Fix the failing checks in a new thread",
-              onClick: startFixChecks,
+              icon: <HammerIcon aria-hidden className="size-3 shrink-0" />,
+              suffix: null,
+              tooltip: "Add the failing checks to the composer",
+              onClick: fixAllChecks,
             }
           : rowAction === "merge"
             ? {
@@ -445,6 +467,8 @@ export function ThreadDetailsPrRow({
               <PullRequestChecksPopover
                 checksState={checksRollup}
                 checks={detail.checks}
+                threadRef={threadRef}
+                fix={checksFix}
                 variant="count"
                 render={<ThreadDetailsControl part="meta" />}
               />
@@ -466,6 +490,7 @@ export function ThreadDetailsPrRow({
                     />
                   }
                 >
+                  {trailingAction.icon}
                   {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
                   {trailingAction.suffix}
                 </TooltipTrigger>

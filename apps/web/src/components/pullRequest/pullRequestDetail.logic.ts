@@ -8,6 +8,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 import {
+  COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
   GitCommandError,
   PullRequestDetail,
   PullRequestOperationError,
@@ -41,6 +42,7 @@ import {
 } from "@t3tools/client-runtime/thread-pull-requests";
 
 import { inferReviewCommentFenceLanguage, type ReviewCommentContext } from "~/reviewCommentContext";
+import { PULL_REQUEST_CHECKS_SECTION_PREFIX } from "~/lib/composerContextRecords";
 
 export const PULL_REQUEST_MERGE_METHOD_LABELS: Record<PullRequestMergeMethod, string> = {
   merge: "Merge",
@@ -244,12 +246,10 @@ export function pullRequestHandoffLabels(inThisThread: boolean) {
   return inThisThread
     ? {
         fixFinding: "Fix",
-        fixCheck: "Fix in this thread",
         fixFindings: "Fix findings in this thread",
       }
     : {
         fixFinding: "Fix in a thread",
-        fixCheck: "Fix",
         fixFindings: "Fix findings in a thread",
       };
 }
@@ -860,6 +860,8 @@ function handoffPreamble(input: { readonly url: string }): ReadonlyArray<string>
 interface FixFindingsHandoff {
   readonly prompt: string;
   readonly reviewComments: ReadonlyArray<ReviewCommentContext>;
+  /** Joins what the draft holds instead of replacing the last handoff. */
+  readonly additive?: boolean;
 }
 
 export function appendHandoff(
@@ -938,7 +940,7 @@ export function buildFixFindingsHandoff(input: {
       return [`${boundedField(comment.author?.login ?? "ghost")}${where}: ${boundedField(body)}`];
     });
   const failingChecks = input.checks
-    .filter((check) => check.status === "failure" || check.status === "cancelled")
+    .filter(isFailingCheck)
     .map((check) =>
       boundedField(check.description ? `${check.name}: ${check.description}` : check.name),
     );
@@ -998,10 +1000,60 @@ export function buildFixFindingsHandoff(input: {
   };
 }
 
+export function isFailingCheck(check: PullRequestCheck): boolean {
+  return check.status === "failure" || check.status === "cancelled";
+}
+
+function checkListItem(check: PullRequestCheck): string {
+  const name = boundedField(check.description ? `${check.name}: ${check.description}` : check.name);
+  return check.url ? `- ${name} (${boundedField(check.url)})` : `- ${name}`;
+}
+
+const OMITTED_CHECKS_NOTE_MAX_LENGTH = 2_000;
+
+function omittedChecksNote(omitted: ReadonlyArray<PullRequestCheck>): string {
+  const names: string[] = [];
+  let namesLength = 0;
+  for (const check of omitted) {
+    const name = `\`${boundedField(check.name)}\``;
+    namesLength += name.length + 2;
+    if (namesLength > OMITTED_CHECKS_NOTE_MAX_LENGTH - 100) break;
+    names.push(name);
+  }
+  const unnamed = omitted.length - names.length;
+  const more = unnamed > 0 ? `, and ${unnamed} more` : "";
+  return `Failing checks that did not fit here: ${names.join(", ")}${more}.`;
+}
+
+function checksContextComment(
+  pullRequest: { readonly number: number; readonly url: string },
+  input: {
+    readonly id: string;
+    readonly label: string;
+    readonly status: string;
+    readonly text: ReadonlyArray<string>;
+  },
+): ReviewCommentContext {
+  const { shortLabel } = terminologyForUrl(pullRequest.url);
+  return {
+    id: input.id,
+    sectionId: `${PULL_REQUEST_CHECKS_SECTION_PREFIX}${pullRequest.number}`,
+    sectionTitle: `${shortLabel} #${pullRequest.number} checks`,
+    filePath: input.label,
+    startIndex: 0,
+    endIndex: 0,
+    rangeLabel: input.status,
+    text: input.text.join("\n"),
+    diff: "",
+  };
+}
+
 export type PullRequestFinding =
   | { readonly kind: "thread"; readonly thread: PullRequestReviewThread }
   | { readonly kind: "check"; readonly check: PullRequestCheck }
   | { readonly kind: "comment"; readonly comment: PullRequestComment };
+
+export const PULL_REQUEST_FIX_CHECKS_KEY = "finding:checks";
 
 export function pullRequestFindingKey(finding: PullRequestFinding): string {
   switch (finding.kind) {
@@ -1052,12 +1104,72 @@ export function buildFixFindingHandoff(input: {
   }
   const check = input.finding.check;
   return {
-    prompt: [
-      "Fix the failing check quoted below. Reproduce it locally first. The name is all the host reported, and the run may fail for a reason the code cannot show.",
-      ...preamble,
-      `> ${boundedField(check.description ? `${check.name}: ${check.description}` : check.name)}`,
-    ].join("\n"),
-    reviewComments: [pullRequestContextComment(input, [])],
+    prompt: "",
+    reviewComments: [
+      checksContextComment(input, {
+        // Outside the handoff prefix, so a later handoff keeps the checks already added.
+        id: `pr-check:${input.url}:${check.name}:${check.url ?? ""}`,
+        label: boundedField(check.name),
+        status: check.status === "cancelled" ? "Cancelled" : "Failed",
+        text: [
+          checkListItem(check),
+          "",
+          "Fix this failing check. Reproduce it locally first. The host may report little beyond its name, and the run may fail for a reason the code cannot show.",
+          ...preamble,
+        ],
+      }),
+      pullRequestContextComment(input, []),
+    ],
+    additive: true,
+  };
+}
+
+export function buildFixChecksHandoff(input: {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: PullRequestState;
+  readonly isDraft: boolean;
+  readonly checks: ReadonlyArray<PullRequestCheck>;
+}): FixFindingsHandoff {
+  const term = terminologyForUrl(input.url).singular;
+  const failing = input.checks.filter(isFailingCheck);
+  const instructions = [
+    `Fix every failing check on this ${term}. Fetch the current check results first, since more may have failed after this was attached. Reproduce each failure locally, and note that a run may fail for a reason the code cannot show.`,
+    ...handoffPreamble(input),
+  ];
+  // Sending clamps the end of the text, so budget here to keep the instructions whole.
+  const listBudget =
+    COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS -
+    instructions.join("\n").length -
+    OMITTED_CHECKS_NOTE_MAX_LENGTH;
+  const listed: string[] = [];
+  let listLength = 0;
+  for (const item of failing.slice(0, FINDING_LIMIT).map(checkListItem)) {
+    listLength += item.length + 1;
+    if (listLength > listBudget) break;
+    listed.push(item);
+  }
+  const omitted = failing.slice(listed.length);
+  return {
+    prompt: "",
+    reviewComments: [
+      checksContextComment(input, {
+        id: `pr-checks:${input.url}`,
+        label: `Failing checks on #${input.number}`,
+        status: `${failing.length} failing`,
+        text: [
+          ...listed,
+          "",
+          ...(omitted.length > 0 ? [omittedChecksNote(omitted)] : []),
+          ...instructions,
+        ],
+      }),
+      pullRequestContextComment(input, []),
+    ],
+    additive: true,
   };
 }
 

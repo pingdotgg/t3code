@@ -115,11 +115,13 @@ import {
   buildAskAboutGuideStopHandoff,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
+  buildFixChecksHandoff,
   buildFixFindingHandoff,
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
   buildPullRequestContext,
   buildResolveConflictsPrompt,
+  classifyPullRequestChecks,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
@@ -127,6 +129,7 @@ import {
   pullRequestActionNeedsHostRefresh,
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
+  PULL_REQUEST_FIX_CHECKS_KEY,
   pullRequestHandoffLabels,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   checkoutFailureDescription,
@@ -144,7 +147,7 @@ import {
   shouldRefreshPullRequestActivity,
 } from "./pullRequestDetail.logic";
 import { resolvePickableEnvironments } from "./pullRequestProjectAssignment.logic";
-import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
+import { PullRequestChecksPopover, PullRequestFixButton } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
   PullRequestMetaLine,
@@ -735,6 +738,7 @@ export function PullRequestDetailPanel({
   type ThreadTask = {
     prompt: string;
     reviewComments?: ReadonlyArray<ReviewCommentContext>;
+    additive?: boolean;
   };
 
   const attachTarget = composerDraftTarget ?? null;
@@ -826,7 +830,7 @@ export function PullRequestDetailPanel({
 
   const startHandoff = async (
     kind: string,
-    task: { prompt: string; reviewComments?: ReadonlyArray<ReviewCommentContext> } | null,
+    task: ThreadTask | null,
     mode: "worktree" | "local" = "worktree",
   ) => {
     if (!handoffSummary || handoff !== null) return;
@@ -1071,6 +1075,23 @@ export function PullRequestDetailPanel({
         state: detail.state,
         isDraft: detail.isDraft,
         finding,
+      }),
+    );
+  };
+
+  const startFixChecks = () => {
+    if (!detail) return;
+    void startHandoff(
+      PULL_REQUEST_FIX_CHECKS_KEY,
+      buildFixChecksHandoff({
+        number: detail.number,
+        title: detail.title,
+        url: detail.url,
+        headBranch: detail.headBranch,
+        baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
+        checks: detail.checks,
       }),
     );
   };
@@ -1590,31 +1611,52 @@ export function PullRequestDetailPanel({
             }}
           >
             {tab === "summary" ? (
-              showsApproveWorkflows ? (
-                <PullRequestApproveWorkflowsButton
-                  pullRequestKey={pullRequestKey}
-                  pendingAction={pendingAction}
-                  perform={perform}
-                />
-              ) : (
-                <PullRequestChecksStatusLine
-                  className="text-muted-foreground"
-                  aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
-                  icon={
-                    checksState !== null ? (
-                      <PullRequestChecksPopover
-                        checks={detail.checks}
-                        stale={checksStale}
-                        checksState={checksState}
-                        threadRef={threadRef}
-                      />
-                    ) : (
-                      <CircleDotIcon aria-hidden className="size-3.5" />
-                    )
-                  }
-                  label={checksSummary}
-                />
-              )
+              <>
+                {showsApproveWorkflows ? (
+                  <PullRequestApproveWorkflowsButton
+                    pullRequestKey={pullRequestKey}
+                    pendingAction={pendingAction}
+                    perform={perform}
+                  />
+                ) : (
+                  <PullRequestChecksStatusLine
+                    className="text-muted-foreground"
+                    aria-label={checksSummary ? `Checks: ${checksSummary}` : "Checks"}
+                    icon={
+                      checksState !== null ? (
+                        <PullRequestChecksPopover
+                          checks={detail.checks}
+                          stale={checksStale}
+                          checksState={checksState}
+                          threadRef={threadRef}
+                          fix={
+                            canFixFindings
+                              ? {
+                                  onFixCheck: (check) => startFixFinding({ kind: "check", check }),
+                                  onFixAll: startFixChecks,
+                                  pending: handoff,
+                                }
+                              : undefined
+                          }
+                        />
+                      ) : (
+                        <CircleDotIcon aria-hidden className="size-3.5" />
+                      )
+                    }
+                    label={checksSummary}
+                  />
+                )}
+                {canFixFindings &&
+                !checksStale &&
+                classifyPullRequestChecks(detail.checks) === "failing" ? (
+                  <PullRequestFixButton
+                    aria-label="Fix all failing checks"
+                    pending={handoff === PULL_REQUEST_FIX_CHECKS_KEY}
+                    disabled={handoff !== null}
+                    onClick={startFixChecks}
+                  />
+                ) : null}
+              </>
             ) : tab === "timeline" ? (
               <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                 <PullRequestMetaLine
@@ -1755,7 +1797,6 @@ export function PullRequestDetailPanel({
                   activityError={activityError}
                   pendingFinding={handoff}
                   fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                   onRefresh={refreshDetail}

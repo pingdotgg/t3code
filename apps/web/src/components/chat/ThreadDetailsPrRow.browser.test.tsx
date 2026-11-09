@@ -1,5 +1,5 @@
 import { EnvironmentId, ProjectId, ThreadId, type PullRequestCheck } from "@t3tools/contracts";
-import { DraftId } from "~/composerDraftStore";
+import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -120,6 +120,7 @@ it("merges with the last selected merge method", async () => {
         label="Test PR"
         openAriaLabel="Open PR"
         onOpen={vi.fn()}
+        composerTarget={DraftId.make("draft")}
       />,
     );
   });
@@ -136,6 +137,59 @@ it("merges with the last selected merge method", async () => {
   expect(state.perform).toHaveBeenCalledWith("merge", "squash");
 });
 
+it("adds fixes from the row and checks popover to this thread's composer without a new thread", async () => {
+  await using screen = await setup();
+  state.status = "failure";
+  const composerTarget = {
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+  };
+  await act(
+    async () =>
+      await screen.rerender(
+        <ThreadDetailsPrRow
+          environmentId={EnvironmentId.make("environment")}
+          pr={null}
+          number={1}
+          reference={{ repository: "owner/repo", number: 1 }}
+          status={null}
+          project={{ id: ProjectId.make("project") } as never}
+          label="Test PR"
+          openAriaLabel="Open PR"
+          onOpen={vi.fn()}
+          composerTarget={composerTarget}
+        />,
+      ),
+  );
+  const insertAtCaret = vi.fn(() => true);
+  const removeHandler = useComposerDraftStore
+    .getState()
+    .setContextInsertionHandler(composerTarget, insertAtCaret);
+  using _handler = { [Symbol.dispose]: () => removeHandler?.() };
+  await act(async () =>
+    [...screen.container.querySelectorAll("button")]
+      .find((button) => button.textContent?.trim() === "Fix")!
+      .click(),
+  );
+  await act(async () =>
+    screen.container.querySelector<HTMLElement>('[aria-label^="Open checks"]')!.click(),
+  );
+  await act(async () =>
+    document.querySelector<HTMLElement>('[aria-label="Fix CI-failure"]')!.click(),
+  );
+
+  const draft = useComposerDraftStore.getState().getComposerDraft(composerTarget);
+  const comments = draft?.reviewComments;
+  expect(comments?.map((comment) => comment.filePath)).toEqual([
+    "Failing checks on #1",
+    "CI-failure",
+    "PR #1",
+  ]);
+  expect(insertAtCaret).not.toHaveBeenCalled();
+  expect(draft?.prompt).toContain("Failing checks on #1");
+  expect(state.newThread).not.toHaveBeenCalled();
+});
+
 it("requires a new merge click after passing checks become pending and pass again", async () => {
   await using screen = await setup();
   const { container } = screen;
@@ -149,6 +203,7 @@ it("requires a new merge click after passing checks become pending and pass agai
       label="Test PR"
       openAriaLabel="Open PR"
       onOpen={vi.fn()}
+      composerTarget={DraftId.make("draft")}
     />
   );
   const clickMerge = async () =>
