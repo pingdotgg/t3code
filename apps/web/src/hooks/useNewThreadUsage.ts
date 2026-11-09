@@ -73,13 +73,24 @@ export function useNewThreadUsage(
         );
     },
     providers: (input?.providers ?? []).map((provider) => {
-      const reading =
+      const result =
         completed?.key === key &&
         (provider.instanceId === input?.defaultSelection?.instanceId ||
           provider.instanceId === input?.fallbackSelection?.instanceId)
           ? completed.providers.find((result) => result.instanceId === provider.instanceId)
-              ?.usageLimits
           : undefined;
+      const reading = result?.usageLimits;
+      if (
+        result &&
+        [
+          [result.auth.type, provider.auth.type],
+          [result.auth.email?.toLowerCase(), provider.auth.email?.toLowerCase()],
+          [result.auth.workspaceId, provider.auth.workspaceId],
+          [result.auth.usageRefreshKey, provider.auth.usageRefreshKey],
+          [reading?.credentialFingerprint, provider.usageLimits?.credentialFingerprint],
+        ].some(([next, current]) => next !== undefined && next !== current)
+      )
+        return result;
       const incomingFailed = reading?.unavailable?.reason === "probeFailed";
       const currentFailed = provider.usageLimits?.unavailable?.reason === "probeFailed";
       return reading &&

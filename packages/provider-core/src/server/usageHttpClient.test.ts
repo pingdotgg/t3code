@@ -57,18 +57,20 @@ it.effect(
     }),
 );
 
-it.effect.each(["seconds", "date", "missing"] as const)(
+it.effect.each(["seconds", "date", "missing", "short"] as const)(
   "enforces %s Retry-After across usage requests and manual refreshes",
   (kind) =>
     Effect.gen(function* () {
       let calls = 0;
       const now = yield* Clock.currentTimeMillis;
       const header =
-        kind === "seconds"
-          ? "600"
-          : kind === "date"
-            ? DateTime.toDateUtc(DateTime.makeUnsafe(now + 600_000)).toUTCString()
-            : undefined;
+        kind === "short"
+          ? "1"
+          : kind === "seconds"
+            ? "600"
+            : kind === "date"
+              ? DateTime.toDateUtc(DateTime.makeUnsafe(now + 600_000)).toUTCString()
+              : undefined;
       const client = yield* makeUsageHttpClient(
         HttpClient.make((input) =>
           Effect.sync(() => {
@@ -90,14 +92,13 @@ it.effect.each(["seconds", "date", "missing"] as const)(
       assert.strictEqual(calls, 1);
       yield* client.execute(request("b"));
       assert.strictEqual(calls, 2);
-      yield* TestClock.adjust(kind === "missing" ? "4 minutes" : "9 minutes");
+      const wait = kind === "short" ? 2_000 : kind === "missing" ? 240_000 : 540_000;
+      const deadline = kind === "short" || kind === "missing" ? 300_000 : 600_000;
+      yield* TestClock.adjust(wait);
       const synthesized = yield* client.execute(request("a", "?manual=1"));
-      assert.strictEqual(
-        usageReadRefreshAfter(synthesized),
-        now + (kind === "missing" ? 300_000 : 600_000),
-      );
+      assert.strictEqual(usageReadRefreshAfter(synthesized), now + deadline);
       assert.strictEqual(calls, 2);
-      yield* TestClock.adjust("1 minute");
+      yield* TestClock.adjust(deadline - wait);
       yield* client.execute(request("a", "?manual=2"));
       assert.strictEqual(calls, 3);
     }),

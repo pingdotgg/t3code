@@ -162,3 +162,48 @@ it("revalidates an open draft at submission without background polling", async (
   await userEvent.click(screen.getByRole("button", { name: "Send" }));
   await expect.element(screen.getByText("ready:claudeAgent")).toBeVisible();
 });
+
+it.each(["email", "workspace", "key", "fingerprint", "status"] as const)(
+  "reconciles quota ownership before freshness (%s)",
+  async (identity) => {
+    const { refresh } = setup();
+    const previous = {
+      ...provider(primary, true, "2026-06-10T00:02:00.000Z"),
+      auth: {
+        status: "authenticated" as const,
+        email: "first@example.com",
+        workspaceId: "workspace-a",
+        usageRefreshKey: "owner-a",
+      },
+    };
+    const incoming = {
+      ...provider(primary, false, "2026-06-10T00:01:00.000Z"),
+      auth: {
+        ...previous.auth,
+        status: identity === "status" ? ("unknown" as const) : ("authenticated" as const),
+        ...(identity === "email" ? { email: "second@example.com" } : {}),
+        ...(identity === "workspace" ? { workspaceId: "workspace-b" } : {}),
+        ...(identity === "key" ? { usageRefreshKey: "owner-b" } : {}),
+      },
+    };
+    if (identity === "fingerprint") {
+      previous.usageLimits = { ...previous.usageLimits!, credentialFingerprint: "owner-a" };
+      incoming.usageLimits = { ...incoming.usageLimits!, credentialFingerprint: "owner-b" };
+    }
+    if (identity === "status")
+      incoming.usageLimits = {
+        checkedAt: incoming.checkedAt,
+        windows: [],
+        unavailable: { reason: "probeFailed" },
+      };
+    const available = provider(fallback, false, previous.checkedAt);
+    refresh.mockResolvedValue([incoming, available]);
+    // This probe only observes draft quota reconciliation, without navigation.
+    await using screen = await render(<Probe providers={[previous, available]} />, {
+      router: false,
+    });
+    await expect
+      .element(screen.getByText(identity === "status" ? "ready:claudeAgent" : "ready:codex"))
+      .toBeVisible();
+  },
+);

@@ -150,9 +150,12 @@ export const makeUsageHttpClient = Effect.fn("makeUsageHttpClient")(function (
                   ) {
                     state.retryAt =
                       (yield* Clock.currentTimeMillis) +
-                      usageRetryDelay(
-                        response.headers["retry-after"],
-                        yield* Clock.currentTimeMillis,
+                      Math.max(
+                        TTL_MS,
+                        usageRetryDelay(
+                          response.headers["retry-after"],
+                          yield* Clock.currentTimeMillis,
+                        ),
                       );
                   }
                   return {
