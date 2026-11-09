@@ -11,7 +11,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
-import { AcpRequestError } from "effect-acp/errors";
+import { type AcpError, AcpRequestError } from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import { formatFailureDetail, makeAcpRegistryAuth } from "./auth.ts";
@@ -21,6 +21,8 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 const instanceId = ProviderInstanceId.make("acp-auth-test");
 const browserMethod = { id: "browser", name: "Browser", type: "agent" as const };
+// CodeBuddy Code 2.181.0 blocks in authenticate until browser login completes.
+const codebuddyMethod = { id: "internal", name: "CodeBuddy", type: "agent" as const };
 const terminalMethod = {
   id: "terminal",
   name: "Terminal",
@@ -79,6 +81,9 @@ const makeHarness = (
     let closedBeforeTerminal = false;
     const written: string[] = [];
     const sizes: number[][] = [];
+    const authenticating = yield* Deferred.make<void>();
+    const loginFinished = yield* Deferred.make<void>();
+    const extNotifications = new Map<string, (params: unknown) => Effect.Effect<void, AcpError>>();
     const controller = yield* makeAcpRegistryAuth({
       instanceId: providerInstanceId,
       settings,
@@ -104,8 +109,19 @@ const makeHarness = (
           let elicitation:
             | Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["handleElicitation"]>[0]
             | undefined;
+          const handleExtNotification: AcpSessionRuntime.AcpSessionRuntime["Service"]["handleExtNotification"] =
+            (method, payload, handler) =>
+              Effect.sync(() => {
+                extNotifications.set(method, (params) =>
+                  Schema.decodeUnknownEffect(payload)(params).pipe(
+                    Effect.orDie,
+                    Effect.flatMap(handler),
+                  ),
+                );
+              });
           return {
             initialize: () => Effect.succeed(initialized),
+            handleExtNotification,
             handleElicitation: (handler) =>
               Effect.sync(() => {
                 elicitation = handler;
@@ -115,6 +131,10 @@ const makeHarness = (
                 authenticated.push(methodId);
                 if (authenticateError !== undefined) {
                   return yield* authenticateError;
+                }
+                if (methodId === codebuddyMethod.id) {
+                  yield* Deferred.succeed(authenticating, undefined);
+                  return yield* Deferred.await(loginFinished);
                 }
                 if (elicitation)
                   yield* elicitation(
@@ -214,6 +234,10 @@ const makeHarness = (
       written,
       sizes,
       runtimes: () => runtimes,
+      authenticating,
+      // The ACP client drops extension notifications nobody registered for.
+      notify: (method: string, params: unknown) =>
+        extNotifications.get(method)?.(params) ?? Effect.void,
       setVersion: (value: string) => {
         version = value;
       },
@@ -272,6 +296,20 @@ it.effect(
       yield* h.controller.logout(Effect.void);
       assert.deepEqual(h.changed, [true, false]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("shows the login URL CodeBuddy sends while authenticate is still pending", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(codebuddyMethod);
+    const flow = yield* h.controller.start("owner", Effect.void, codebuddyMethod.id);
+    yield* Deferred.await(h.authenticating);
+    const authUrl = "https://copilot.tencent.com/login?platform=CLI&state=opaque&version=2.181.0";
+    yield* h.notify("_codebuddy.ai/authUrl", { authUrl, provider: "external" });
+    const current = yield* h.state(() => true);
+    assert.strictEqual(current.phase, "waiting");
+    assert.deepInclude(current.interaction, { type: "browser", url: authUrl });
+    yield* h.controller.cancel("owner", flow.flowId!);
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect(
