@@ -71,7 +71,8 @@ import {
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
 } from "./mcpInjection.ts";
-import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 import {
   isPiAsyncSubagentWidgetClear,
   isSettledPiAsyncSubagentStatus,
@@ -603,6 +604,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       );
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
+      // Pi reloads extensions (resetting the tier) on paths the adapter cannot see, so a chosen tier
+      // is resent every turn; Standard sends a clear only when an earlier tier may still be set.
+      let serviceTierMayBeSet = false;
       let appliedSessionName: string | null = null;
       const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
       let lastKnownLeaf: string | null = null;
@@ -2438,6 +2442,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
+            // Only id-less prompts own ACK slots; a late reply to an id-bearing request must not take one.
+            if (command === "prompt" && typeof event["id"] === "string") return;
             const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
@@ -2746,6 +2752,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         }
         if (baselineThinking === null && appliedThinking === null) {
           baselineThinking = recordString(stateData, "thinkingLevel") ?? null;
+          appliedThinking = baselineThinking;
         }
         // switch_session accepts a file path, not Pi's display session UUID.
         const nativeId = recordString(stateData, "sessionFile");
@@ -2808,6 +2815,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         if (modelSelection.model === PI_INHERIT_MODEL_SLUG) {
           if (appliedModel !== null && baselineModel !== null) {
             const restoredModel = yield* request({ type: "set_model", ...baselineModel });
+            appliedThinking = null;
             contextWindow = rememberModelContextWindow(restoredModel);
             appliedModel = null;
             const updatedAt = yield* DateTime.now;
@@ -2820,12 +2828,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           }
           if (
             thinking === undefined &&
-            appliedThinking !== null &&
             baselineThinking !== null &&
             appliedThinking !== baselineThinking
           ) {
             yield* request({ type: "set_thinking_level", level: baselineThinking });
-            appliedThinking = null;
+            appliedThinking = baselineThinking;
           }
         } else if (modelSelection.model !== appliedModel) {
           const parsed = parsePiModelSlug(modelSelection.model);
@@ -2839,6 +2846,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             provider: parsed.provider,
             modelId: parsed.modelId,
           });
+          // Pi resets thinking to the target model's configured default on set_model.
+          appliedThinking = null;
           contextWindow = rememberModelContextWindow(selectedModel);
           appliedModel = modelSelection.model;
           const updatedAt = yield* DateTime.now;
@@ -2856,6 +2865,24 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ) {
           yield* request({ type: "set_thinking_level", level: thinking });
           appliedThinking = thinking;
+        }
+        const requestedTier = getModelSelectionStringOptionValue(modelSelection, "serviceTier");
+        const serviceTier =
+          requestedTier === undefined || requestedTier === PI_STANDARD_SERVICE_TIER
+            ? null
+            : requestedTier;
+        if (serviceTier !== null || serviceTierMayBeSet) {
+          serviceTierMayBeSet = true;
+          const result = yield* request({
+            type: "prompt",
+            message: `/${PI_T3_SERVICE_TIER_COMMAND} ${serviceTier ?? ""}`.trimEnd(),
+          });
+          // Pi before 0.99 acknowledges a handled extension command without a disposition.
+          const disposition = recordString(result, "disposition");
+          if (disposition !== undefined && disposition !== "handled") {
+            return yield* protocolError("T3 Code's Pi extension did not apply the service tier");
+          }
+          serviceTierMayBeSet = serviceTier !== null;
         }
       });
 

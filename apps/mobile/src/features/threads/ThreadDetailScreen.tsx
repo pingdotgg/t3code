@@ -33,7 +33,7 @@ import {
   type CodexFeedbackSubmission,
   type EnvironmentThreadStatus,
 } from "@t3tools/client-runtime/state/threads";
-import { useKeyboardChatComposerInset, useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
+import { useKeyboardScrollToEnd } from "@legendapp/list/keyboard";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
@@ -41,7 +41,6 @@ import { deriveBottomControlInsets, type NativeLayoutMetrics } from "../../lib/r
 import type {
   EnvironmentId,
   MessageId,
-  ProviderInteractionMode,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerConfig as T3ServerConfig,
@@ -94,7 +93,6 @@ import {
   View,
   type GestureResponderEvent,
   type LayoutChangeEvent,
-  type ViewInstance,
 } from "react-native";
 import {
   KeyboardController,
@@ -107,7 +105,6 @@ import Animated, {
   FadeInDown,
   FadeOut,
   ReduceMotion,
-  runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
   useDerivedValue,
@@ -197,7 +194,7 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
-import { ThreadFeed, type ThreadFeedHandle, type ThreadFeedHistoryControls } from "./ThreadFeed";
+import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
 import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
@@ -205,7 +202,7 @@ import { useThreadQueuedCount } from "./ThreadQueueControl";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
+import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
@@ -301,7 +298,6 @@ export interface ThreadDetailScreenProps {
   ) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   readonly canSwitchThreadProvider: boolean;
-  readonly onUpdateThreadInteractionMode?: (interactionMode: ProviderInteractionMode) => void;
   readonly onRespondToApproval: ApprovalResponder;
   readonly onSelectUserInputOption: (
     requestId: RuntimeRequestId,
@@ -500,7 +496,6 @@ function ThreadDetailBody(
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [editingRunId, composerEditorRef]);
-  const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   // Aborted when this thread's body unmounts, so async work started for it
@@ -522,10 +517,9 @@ function ThreadDetailBody(
     }, COMPOSER_HEIGHT_SETTLE_MS);
   };
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
+  const [isAtEnd, setIsAtEnd] = useState(true);
   const [sendingWithKeyboard, setSendingWithKeyboard] = useState(false);
   if (sendingWithKeyboard && !isKeyboardVisible) setSendingWithKeyboard(false);
-  const feedRef = useRef<ThreadFeedHandle>(null);
-  const [endFollowEnabled, setEndFollowEnabled] = useState(true);
   // Keep the bottom padding fixed while the keyboard animates. Changing it at
   // keyboardDidHide makes the composer land low, then jump back above the safe area.
   const bottomBarInset = useDuoBottomBarInset();
@@ -1016,17 +1010,13 @@ function ThreadDetailBody(
       ? deviceType !== "duo-unfolded" || (composerOwnsKeyboard && !sidebarSearchActive)
       : !keyboardStateSuspect;
   const estimatedOverlayHeight = composerOverlapHeight;
-  // UIKit adds safe-area bottom to overlay insets; subtract here and include it in ThreadFeed scroll math.
-  const nativeInsetOvercount =
-    props.usesAutomaticContentInsets === true && Platform.OS === "ios" ? insets.bottom : 0;
-  const { contentInsetEndAdjustment, onComposerLayout } = useKeyboardChatComposerInset(
-    listRef,
-    composerOverlayRef,
-    Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
-    -nativeInsetOvercount,
-    // The composer already reports its animated height on each layout.
-    // Easing these samples again makes the feed trail behind it.
-    0,
+  const contentInsetEndAdjustment = useSharedValue(estimatedOverlayHeight);
+  const onComposerLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      // The composer already animates its measured height on each layout.
+      contentInsetEndAdjustment.set(event.nativeEvent.layout.height);
+    },
+    [contentInsetEndAdjustment],
   );
   // Android lays the screen out below its opaque header and reports a zero
   // header height, so the window height overstates the room by the header.
@@ -1118,47 +1108,14 @@ function ThreadDetailBody(
   const composerPopoverHeight = useSharedValue(0);
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
   const reduceMotion = useReducedMotion();
-  // Repin timers fire after the render that scheduled them, so they read follow
-  // state from the ref the writers below keep in step with it.
-  const endFollowEnabledRef = useRef(true);
-  const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleOverlayRepin = (delayMs: number) => {
-    if (overlayRepinTimerRef.current !== null) {
-      clearTimeout(overlayRepinTimerRef.current);
-    }
-    overlayRepinTimerRef.current = setTimeout(() => {
-      overlayRepinTimerRef.current = null;
-      const list = listRef.current;
-      if (!endFollowEnabledRef.current || !list || list.getState().isAtEnd) return;
-      void list.scrollToEnd({ animated: Platform.OS === "ios" && !reduceMotion });
-    }, delayMs);
-  };
-  // LegendList does not re-anchor short followed conversations when floating
-  // coverage changes after load. Re-pin each time it settles at a new value;
-  // the repin checks follow state so a user who scrolled up stays put.
-  const settledFloatingCoverageRef = useRef(0);
-  const repinAfterCoverageSettles = (coverage: number) => {
-    if (coverage === settledFloatingCoverageRef.current) return;
-    settledFloatingCoverageRef.current = coverage;
-    scheduleOverlayRepin(50);
-  };
   const floatingCoverageTarget = showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0;
   const floatingControlCoverage = useDerivedValue(
-    () =>
-      withTiming(
-        floatingCoverageTarget,
-        { duration: 180, reduceMotion: ReduceMotion.System },
-        (finished) => {
-          if (finished) runOnJS(repinAfterCoverageSettles)(floatingCoverageTarget);
-        },
-      ),
+    () => withTiming(floatingCoverageTarget, { duration: 180, reduceMotion: ReduceMotion.System }),
     [floatingCoverageTarget],
   );
   const userInputCoverageApplies = Platform.OS === "ios" && activeUserInputRequestId !== null;
   const questionStatusSpace = useAnimatedStyle(() => ({ height: floatingControlCoverage.value }));
-  const combinedContentInsetEndAdjustment = useSharedValue(
-    Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
-  );
+  const combinedContentInsetEndAdjustment = useSharedValue(estimatedOverlayHeight);
   useAnimatedReaction(
     () =>
       questionInFlow
@@ -1187,10 +1144,6 @@ function ThreadDetailBody(
       ),
     [userInputCoverageApplies],
   );
-  const handleEndFollowEnabledChange = (enabled: boolean) => {
-    endFollowEnabledRef.current = enabled;
-    setEndFollowEnabled(enabled);
-  };
   // A jump this thread never reached lets go when it closes.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the thread scope, clears its timers and ends a pending message jump when the thread changes
   useEffect(() => {
@@ -1198,7 +1151,6 @@ function ThreadDetailBody(
     const scope = threadScope.current;
     return () => {
       scope.abort();
-      if (overlayRepinTimerRef.current !== null) clearTimeout(overlayRepinTimerRef.current);
       if (composerHeightSettle.current !== null) clearTimeout(composerHeightSettle.current);
       finishThreadMessageJump(selectedThreadKey);
     };
@@ -1209,11 +1161,9 @@ function ThreadDetailBody(
     }
     if (userInputCollapsed) {
       setUserInputToggle({ requestId: activeUserInputRequestId, collapsed: false });
-      if (!questionInFlow) scheduleOverlayRepin(USER_INPUT_TOGGLE_DURATION_MS + 50);
     } else {
       Keyboard.dismiss();
       setUserInputToggle({ requestId: activeUserInputRequestId, collapsed: true });
-      if (!questionInFlow) scheduleOverlayRepin(60);
     }
   };
   const showContent = props.showContent ?? true;
@@ -1347,7 +1297,6 @@ function ThreadDetailBody(
       queuedMessageCount: props.selectedThreadQueueCount,
       deliveryDeferred: props.connectionStateLabel !== "connected",
     });
-    feedRef.current?.resetEndFollow();
     setAnchorMessageId(nextAnchorMessageId);
     if (!dismissingKeyboard) composerEditorRef.current?.blur();
     const followSubmission =
@@ -1360,7 +1309,7 @@ function ThreadDetailBody(
         // Scrolling freezes the keyboard inset, so wait until dismissal has removed it.
         void KeyboardController.dismiss()
           .then(() => {
-            if (!followSubmission || scope.aborted || !endFollowEnabledRef.current) return;
+            if (!followSubmission || scope.aborted) return;
             return scrollMessageToEnd({ animated: !reduceMotion, closeKeyboard: false });
           })
           .catch(() => {
@@ -1414,8 +1363,7 @@ function ThreadDetailBody(
     });
   };
 
-  const showScrollToEndButton =
-    !props.draftMode && contentPresentationKind === "ready" && !endFollowEnabled;
+  const showScrollToEndButton = !props.draftMode && contentPresentationKind === "ready" && !isAtEnd;
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
 
@@ -1517,7 +1465,6 @@ function ThreadDetailBody(
                 anchorMessageId={anchorMessageId}
                 jumpToMessageId={jumpMessageLoaded ? jumpMessageId : null}
                 onJumpedToMessage={() => finishThreadMessageJump(selectedThreadKey)}
-                ref={feedRef}
                 contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
                 keyboardOffset={composerKeyboardOffset}
                 sendingWithKeyboard={sendingWithKeyboard}
@@ -1535,7 +1482,7 @@ function ThreadDetailBody(
                 layoutVariant={layoutVariant}
                 usesAutomaticContentInsets={props.usesAutomaticContentInsets}
                 onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-                onEndFollowEnabledChange={handleEndFollowEnabledChange}
+                onIsAtEndChange={setIsAtEnd}
                 skills={selectedProviderSkills}
                 onUseArtifactTemplate={handleUseArtifactTemplate}
               />
@@ -1605,11 +1552,7 @@ function ThreadDetailBody(
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
-              <View
-                ref={composerOverlayRef}
-                onLayout={handleComposerOverlayLayout}
-                className="w-full"
-              >
+              <View onLayout={handleComposerOverlayLayout} className="w-full">
                 <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
                   <FloatingWorkingControl
                     colorScheme={isDarkMode ? "dark" : "light"}
@@ -1933,7 +1876,6 @@ function ThreadDetailBody(
                         onSendMessage={handleSendMessage}
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}
-                        onUpdateInteractionMode={props.onUpdateThreadInteractionMode}
                         onHeightChange={handleComposerHeightChange}
                         onEditorFocusChange={handleOwnedInputFocusChange}
                       />
