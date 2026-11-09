@@ -36,7 +36,7 @@ describe("buildRuntimeInstructions", () => {
     assert.notInclude(instructions, "On a wake");
     assert.include(
       instructions,
-      "Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch",
+      "Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do still waits on checks, reviews, or a merge (queue, auto-merge, or someone else), even after an earlier unwatch",
     );
     assert.notInclude(instructions, "merge it now");
     assert.include(instructions, "Otherwise act now or hand back.");

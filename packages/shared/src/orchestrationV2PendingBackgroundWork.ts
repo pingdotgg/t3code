@@ -306,7 +306,7 @@ export function pullRequestWatchHoldsThread(
     readonly watch?: unknown;
   },
 ): boolean {
-  // The watch reactor ends a merged PR's watch without waking the agent, so it holds nothing.
+  // A merged PR's watch ends at the next sweep, whose wake starts its own run, so it holds nothing.
   return (
     link.watch !== undefined &&
     link.source !== "stack-dismissed" &&

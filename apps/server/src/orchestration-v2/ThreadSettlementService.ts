@@ -205,6 +205,11 @@ export function resolveAutoSettlementAt(input: {
   let pullRequest = input.pullRequest;
   const links = settlementPullRequestLinks(thread.pullRequests ?? []);
   if (links.some((link) => link.snapshot === null)) return null;
+  // Settling drops watches, so a merged or closed link's watch would lose its wake. Pending work
+  // skips merged watches and every watch after a rolled-back run, so it cannot hold these.
+  if (links.some((link) => link.watch !== undefined && link.snapshot?.state !== "open")) {
+    return null;
+  }
   // An open link means the pull request has not finished, so only inactivity
   // can settle the thread, never a merged or closed lookup.
   const hasOpenLink = links.some((link) => link.snapshot?.state === "open");

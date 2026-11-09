@@ -3874,6 +3874,86 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("wakes once for a merge already in the link snapshot", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-merged-snapshot");
+      const projectId = ProjectId.make("pr-watch-merged-snapshot-project");
+      yield* seedProject({
+        projectId,
+        title: "Watch merged snapshot",
+        workspaceRoot: "/workspace/watch-merged-snapshot",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-merged-snapshot-create"),
+        threadId,
+        projectId,
+        title: "Watch merged snapshot",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = {
+        host: "github.com",
+        repository: "pingdotgg/t3code",
+        number: 15,
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("pr-watch-merged-snapshot-start"),
+        threadId,
+        ...key,
+        watching: true,
+        link: { url: "https://github.com/pingdotgg/t3code/pull/15", source: "agent" },
+      });
+      // The merge reached the link snapshot before the watch read it, as when sync runs first.
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("pr-watch-merged-snapshot-sync"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "merged",
+          title: "Merged PR",
+          headBranch: "feature/pr",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:00:00.000Z",
+        },
+        stack: null,
+      });
+      const reactor = yield* PullRequestWatchReactor.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            Layer.mock(PullRequestService.PullRequestService)({}),
+          ),
+        ),
+      );
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const sweep = reactor.sweep.pipe(Effect.andThen(worker.drain()));
+      yield* sweep;
+      yield* TestClock.adjust("10 minutes");
+      yield* sweep;
+      const thread = yield* orchestrator.getThreadShell(threadId);
+      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.deepEqual(
+        messages.flatMap((message) => message.notification?.summary ?? []),
+        ["#15: merged, stopped watching"],
+      );
+    }),
+  );
+
   // regression: #23701 a head no check runs on never woke the watch
   it.effect("wakes once when no checks report on the head, without saying they passed", () =>
     Effect.gen(function* () {
