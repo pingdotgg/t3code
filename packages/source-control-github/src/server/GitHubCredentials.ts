@@ -30,6 +30,9 @@ import * as GitHubClient from "../shared/definition.ts";
  */
 export const GH_PROCESS_CONCURRENCY = { key: "gh", limit: 4 } as const;
 
+/** A gh wrapper (a mise shim, say) can print its own lines before gh's output. */
+export const lastGhOutputLine = (stdout: string) => stdout.trim().split("\n").pop()?.trim() ?? "";
+
 const TOKEN_TTL = Duration.minutes(5);
 const MISSING_TTL = Duration.seconds(10);
 
@@ -179,8 +182,7 @@ export const make = Effect.gen(function* () {
               ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
               : new GitHubCliFailedError({ host, cause: error }),
         ),
-        // A gh wrapper (a mise shim, say) can print its own lines before the token line.
-        Effect.map((output) => output.stdout.trim().split("\n").pop()?.trim() ?? ""),
+        Effect.map((output) => lastGhOutputLine(output.stdout)),
         Effect.filterOrFail(
           (token) => token !== "",
           () => new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) }),
