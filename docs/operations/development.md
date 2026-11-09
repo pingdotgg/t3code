@@ -360,7 +360,7 @@ rustup target add aarch64-pc-windows-msvc
 
 NSIS is downloaded by electron-builder. Native Windows installers can be built on Windows
 without `--wsl-runtime`. Bundling WSL support needs the Linux CLI archive passed as
-`--wsl-runtime` and a Linux build host with GNU `tar` and GNU `gzip` on `PATH`.
+`--wsl-runtime` and a non-Windows build host with GNU `tar` and GNU `gzip` on `PATH`.
 Release builds bundle the runtime on Ubuntu runners; see the
 [release runbook](./release.md#windows-payload-topology-and-update-validation).
 

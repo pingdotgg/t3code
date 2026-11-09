@@ -536,7 +536,8 @@ for each release target must exercise the primary native-load probe.
 NSIS differential packaging remains enabled. When the cached installer,
 blockmaps, and HTTP range requests are usable, updates reuse matching installer
 blocks; otherwise the updater falls back to a full installer download. The app
-package compresses every entry with LZMA except `.tar.gz` files, which the `app-builder-lib` patch stores, so the
+package compresses every entry with LZMA except `.tar.gz` files, which the
+`app-builder-lib` patch stores, so the
 WSL archive's unchanged regions keep their bytes in the installer. A change to
 the app package's layout or compression can produce a larger one-time
 download.

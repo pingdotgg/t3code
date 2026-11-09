@@ -441,9 +441,6 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
   },
 ) {
   override get message(): string {
-    if (this.missing.includes("wsl-host")) {
-      return "Bundling the WSL runtime requires a Linux build host with GNU tar and GNU gzip. Release builds run this step on Ubuntu runners. Omit --wsl-runtime to build a native Windows installer without bundled WSL support.";
-    }
     const details = WINDOWS_DESKTOP_BUILD_PREREQUISITES.filter((requirement) =>
       this.missing.includes(requirement.id),
     )
@@ -460,6 +457,15 @@ export class WindowsDesktopBuildPrerequisitesMissingError extends Schema.TaggedE
       "",
       "Then rerun the desktop artifact command.",
     ].join("\n");
+  }
+}
+
+export class WindowsWslRuntimeBuildHostUnsupportedError extends Schema.TaggedError<WindowsWslRuntimeBuildHostUnsupportedError>()(
+  "WindowsWslRuntimeBuildHostUnsupportedError",
+  {},
+) {
+  override get message(): string {
+    return "Bundling the WSL runtime is not supported on Windows build hosts. Use a Linux build host with GNU tar and GNU gzip, as release builds do on Ubuntu runners, or omit --wsl-runtime to build without bundled WSL support.";
   }
 }
 
@@ -2052,13 +2058,10 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
-    const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
     if (input.bundlesWslRuntime) {
-      return yield* new WindowsDesktopBuildPrerequisitesMissingError({
-        missing: ["wsl-host"],
-        rustTarget,
-      });
+      return yield* new WindowsWslRuntimeBuildHostUnsupportedError({});
     }
+    const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
     const reuseResourceMonitor = yield* Config.Boolean(
       "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
     ).pipe(Config.withDefault(false));
@@ -3445,6 +3448,7 @@ export const validateWindowsPackagedPayload = Effect.fn(
   readonly appExecutableName: string;
   readonly targetArch: typeof BuildArch.Type;
   readonly expectWslRuntime?: boolean;
+  readonly target?: string;
   readonly fileLimit?: number;
   readonly verbose?: boolean;
 }) {
@@ -3636,27 +3640,32 @@ export const validateWindowsPackagedPayload = Effect.fn(
       );
     }
 
-    // NSIS embeds the app package as is, so a stored archive appears byte for byte in the
-    // installer. Recompressed, every update downloads the whole runtime again.
-    const installers = stageEntries.filter((entry) => entry.toLowerCase().endsWith(".exe"));
-    if (installers.length > 0) {
+    // NSIS preserves the package bytes, inline or in a separate web-installer archive.
+    const target = input.target ?? PLATFORM_CONFIG.win.defaultTarget;
+    const payloadExtension =
+      target === "nsis" ? ".exe" : target === "nsis-web" ? ".nsis.7z" : undefined;
+    const payloadFiles =
+      payloadExtension === undefined
+        ? []
+        : stageEntries.filter((entry) => entry.toLowerCase().endsWith(payloadExtension));
+    if (payloadFiles.length > 0) {
       const readBuffer = (filePath: string) =>
         fs.readFile(filePath).pipe(
           Effect.map((bytes) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength)),
           Effect.mapError(invalidWslRuntime),
         );
       const archive = yield* readBuffer(wslArchivePath);
-      for (const installer of installers) {
-        const installerBytes = yield* readBuffer(path.join(input.stageDistDir, installer));
-        const offset = installerBytes.indexOf(archive.subarray(0, 64 * 1024));
+      for (const payloadFile of payloadFiles) {
+        const payloadBytes = yield* readBuffer(path.join(input.stageDistDir, payloadFile));
+        const offset = payloadBytes.indexOf(archive.subarray(0, 64 * 1024));
         if (
           offset === -1 ||
-          !installerBytes.subarray(offset, offset + archive.length).equals(archive)
+          !payloadBytes.subarray(offset, offset + archive.length).equals(archive)
         ) {
           return yield* new WindowsPackagedPayloadValidationError({
             reason: "wsl-runtime-recompressed",
             packagedAppDir,
-            missingFiles: [installer],
+            missingFiles: [payloadFile],
           });
         }
       }
@@ -4211,6 +4220,7 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
       stageDistDir,
       appExecutableName: `${resolveDesktopProductName(appVersion)}.exe`,
       targetArch: options.arch,
+      target: options.target,
       expectWslRuntime: bundlesWslRuntime({
         platform: options.platform,
         runtimeArchivePath: options.wslRuntime,
