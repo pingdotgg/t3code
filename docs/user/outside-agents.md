@@ -9,19 +9,19 @@ in once, and you choose what it may do.
 ## Add T3 Code to an assistant app
 
 Open the command palette (`Cmd/Ctrl+K`) and choose **Use T3 Code in another
-app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the app, choose what it may do, and
-follow the step for that app. Assistants like Poke and Claude run in the cloud,
-so the wizard first asks you to sign in to T3 Connect and turn it on for the
-environment. Turn on **Linked environments** in Labs to reach your other
-machines through the same connection.
+app (MCP)**, or use the button in **Settings → Sharing & access**. Pick the
+app, choose what it may do, and follow the step for that app. Assistants like
+Poke and Claude run in the cloud, so the wizard first asks you to sign in to T3
+Connect and turn it on for the environment. Turn on **Linked environments** in
+Labs to reach your other machines through the same connection.
 
 When the app opens the sign-in page, choose **Get code** in the wizard and paste
 the code there. A code works once, for 5 minutes, and approves only the level
 you chose.
 
 For an app that is not listed, choose **Something else…**, add a remote MCP
-server with OAuth in that app, and paste the URL. Apps that ask for a client ID
-cannot connect.
+server with OAuth in that app, and paste the URL. Apps that require their own
+client ID cannot connect.
 
 ## Get the MCP URL
 

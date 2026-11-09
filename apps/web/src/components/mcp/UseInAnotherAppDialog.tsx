@@ -19,7 +19,7 @@ import { Atom } from "effect/reactivity";
 import * as Result from "effect/Result";
 import { type ReactNode, useEffect, useEffectEvent, useState } from "react";
 
-import { checkReachability } from "~/cloud/linkEnvironmentAtoms";
+import { checkReachability, readLinkState } from "~/cloud/linkEnvironmentAtoms";
 import { isManagedTunnelActive } from "~/cloud/t3ConnectState";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { readCachedCloudLinkState } from "~/cloud/cloudLinkState";
@@ -239,6 +239,7 @@ function useGate(environment: EnvironmentPresentation) {
     reportFailure: false,
   });
   const runCheck = useAtomCommand(checkReachability, { reportFailure: false });
+  const readState = useAtomCommand(readLinkState, { reportFailure: false });
   // The gate opens on a check it ran, or on a newer one the link state reports. A failed run
   // has no result, and counts only results newer than what the link state had then.
   const [check, setCheck] = useState<
@@ -287,10 +288,13 @@ function useGate(environment: EnvironmentPresentation) {
       setCheck({ result: result.value, since: result.value.checkedAt });
       return;
     }
-    // Only a check that finished after this failure counts.
-    const now = new Date().toISOString();
-    const latest = readCachedCloudLinkState({ environmentId })?.reachability?.checkedAt ?? "";
-    setCheck({ result: null, since: latest > now ? latest : now });
+    // Only a check newer than the server's latest, read after this failure, counts.
+    const fresh = await readState({ target: { environmentId } });
+    const latest =
+      fresh._tag === "Success"
+        ? fresh.value?.reachability
+        : readCachedCloudLinkState({ environmentId })?.reachability;
+    setCheck({ result: null, since: latest?.checkedAt ?? "" });
   };
   const turnOn = async () => {
     setConnecting(true);
@@ -400,7 +404,9 @@ function GateScreen({
         const reachability = gate.reachability;
         return (
           <GateMessage
-            title={`${name}'s T3 Connect is offline`}
+            title={
+              reachability ? `${name}'s T3 Connect is offline` : `Can't check T3 Connect on ${name}`
+            }
             lines={reachability ? [reachability.reason, `Fix: ${reachability.fix}`] : []}
           >
             {checkAgain}
@@ -549,7 +555,7 @@ function ConnectStep({
         </ol>
         {app === null ? (
           <p className="text-xs text-muted-foreground">
-            Apps that ask for a client ID cannot connect.
+            Apps that require their own client ID cannot connect.
           </p>
         ) : app.docs ? (
           <TextButton onClick={() => openLink(app.docs ?? "")}>{app.name} help</TextButton>
@@ -616,7 +622,7 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
               .commands(mcpUrl)
               .map((command) => <CommandBlock key={command} command={command} />)
           : null}
-        <p className="text-xs text-muted-foreground">Run them where {app.name} runs.</p>
+        <p className="text-xs text-muted-foreground">Run these where {app.name} runs.</p>
         {note}
       </div>
     );

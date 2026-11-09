@@ -136,8 +136,11 @@ export const MCP_APPS: readonly McpApp[] = [
     handoff: {
       kind: "commands",
       commands: (url) => [
+        // Its MCP commands refuse to write while the Gateway runs.
+        "openclaw gateway stop",
         `openclaw mcp add t3code --url ${url} --transport streamable-http --auth oauth`,
         "openclaw mcp login t3code",
+        "openclaw gateway start",
       ],
     },
     steps: ["Open the Control UI, then + and Plugins.", "Choose Add MCP server and paste the URL."],
@@ -150,8 +153,8 @@ export const MCP_APPS: readonly McpApp[] = [
     handoff: {
       kind: "commands",
       commands: (url) => [
+        // `add` signs in on its first connection; `login` would clear that and need a new code.
         `hermes mcp add t3code --url ${url} --auth oauth`,
-        "hermes mcp login t3code",
       ],
     },
     steps: [
