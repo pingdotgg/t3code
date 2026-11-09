@@ -1329,6 +1329,24 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
     { threadId: ThreadId.make("thread:archived"), worktreePath: "/worktrees/archived" },
   ]);
   assert.deepEqual(
+    yield* store.getThreadLinkMetadata([
+      deleted.id,
+      ThreadId.make("thread:active"),
+      ThreadId.make("thread:archived"),
+      ThreadId.make("unknown"),
+    ]),
+    {
+      [ThreadId.make("thread:active")]: {
+        title: "Title for thread:active",
+        projectId: ProjectId.make("project:worktree-paths"),
+      },
+      [ThreadId.make("thread:archived")]: {
+        title: "Title for thread:archived",
+        projectId: ProjectId.make("project:worktree-paths"),
+      },
+    },
+  );
+  assert.deepEqual(
     yield* store.getThreadTitles([
       deleted.id,
       ThreadId.make("thread:active"),
