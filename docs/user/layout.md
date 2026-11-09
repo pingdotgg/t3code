@@ -9,15 +9,15 @@ strip. Workspaces stack the strips vertically.
   were on, each with its letter key. `mod+n` starts a thread right away. The `+` in a
   chat's notch offers the same; right-click it for a terminal, browser, files or diff
   beside the chat.
-- **Split:** `mod+d` opens a new tab in a pane to the right, `mod+alt+shift+d` one below.
+- **Split:** `mod+\` opens a new tab in a pane to the right, `mod+alt+shift+d` one below.
   Or drag a tab onto a side of any pane, or onto the window's left or right edge for a
-  new column. Inside a terminal, the same keys split the terminal.
+  new column. Inside a terminal, `mod+d` and `mod+shift+d` split the terminal.
 - **Terminal and surfaces:** a diff, files, a browser, a terminal or a pull request is a
   tab of its own, named after its thread ("Diff · Fix login"), and moves like any tab.
-  `mod+j` puts the thread's terminal below its chat and `mod+alt+b` puts its other tabs
-  beside it, or a new tab there when it has nothing open yet; the same keys hide them
-  again, still running. A hidden terminal stays in the chat's notch. Closing a chat
-  leaves its surface tabs open.
+  `mod+j` puts the thread's terminal below its chat, `mod+d` its diff beside it, and
+  `mod+alt+b` its other tabs beside it, or a new tab there when it has nothing open yet;
+  the same keys hide them again, still running. A hidden terminal stays in the chat's
+  notch. Closing a chat leaves its surface tabs open.
 - **Closing:** `mod+w` or a tab's `x` closes any tab. The window's last tab leaves a
   new tab in its place, and an emptied workspace shows the same choices; pick one, use
   `mod+t`, or open a thread from the sidebar.
