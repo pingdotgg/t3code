@@ -53,6 +53,7 @@ function FileTab({ threadRef, path }: { threadRef: ScopedThreadRef; path: string
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const showSurface = useWorkspaceTabsStore((state) => state.showSurface);
+  const draftId = useComposerDraftStore((store) => store.getDraftIdByRef(threadRef));
   if (!project || !workspaceRoot) return null;
   return (
     <Suspense fallback={null}>
@@ -63,7 +64,7 @@ function FileTab({ threadRef, path }: { threadRef: ScopedThreadRef; path: string
         projectName={project.title}
         projectId={project.id}
         threadRef={threadRef}
-        composerDraftTarget={threadRef}
+        composerDraftTarget={draftId ?? threadRef}
         keybindings={keybindings}
         availableEditors={availableEditors}
         openInShortcutEnabled

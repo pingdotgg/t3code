@@ -178,14 +178,23 @@ export function WorkspaceTabs() {
   const routedKey = routeTarget?.kind === "server" ? scopedThreadKey(routeTarget.threadRef) : null;
   const activeKey = surfaceKey ?? routedKey;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread in the persisted tab store, and leaves a file or terminal tab once another thread is routed
+  const routedDraftId = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the routed thread in the persisted tab store, and leaves a file or terminal tab once another thread or draft is routed
   useEffect(() => {
-    if (!routedKey) return;
-    openTab(routedKey);
     const { surfaceKey: shown } = useWorkspaceTabsStore.getState();
     const surface = shown ? parseWorkspaceTab(shown) : null;
-    if (surface && scopedThreadKey(surface.threadRef) !== routedKey) hideSurface();
-  }, [routedKey, openTab, hideSurface]);
+    if (routedKey) {
+      openTab(routedKey);
+      if (surface && scopedThreadKey(surface.threadRef) !== routedKey) hideSurface();
+    } else if (
+      routedDraftId &&
+      surface &&
+      useComposerDraftStore.getState().getDraftIdByRef(surface.threadRef) !== routedDraftId
+    ) {
+      hideSurface();
+    }
+  }, [routedKey, routedDraftId, openTab, hideSurface]);
 
   const showThread = useShowThreadInMain();
   const splitShown = splitKey !== null && splitKey !== routedKey;
@@ -298,13 +307,15 @@ export function WorkspaceTabs() {
         );
       })}
       {routeTarget?.kind === "draft" ? (
-        <div
+        <button
+          type="button"
           aria-current={surfaceKey ? undefined : "page"}
+          onClick={hideSurface}
           className={cn(TAB_CLASS, surfaceKey ? IDLE_TAB_CLASS : ACTIVE_TAB_CLASS, "gap-1.5 px-2")}
         >
           <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="truncate">New thread</span>
-        </div>
+        </button>
       ) : null}
       <Menu>
         <MenuTrigger
