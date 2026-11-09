@@ -262,6 +262,22 @@ interface ChipDrag {
 
 type DividerDrag = { id: string; template: LayoutTemplate; share: number };
 
+/**
+ * A chip press, below the drag threshold or dragging. A drag that ended
+ * (dropped, or Escape) is "released" until the release's click, which must
+ * not also add a pane.
+ */
+type ChipGesture =
+  | { readonly phase: "idle" }
+  | {
+      readonly phase: "pressed";
+      readonly kind: LayoutPaneKind;
+      readonly x: number;
+      readonly y: number;
+    }
+  | { readonly phase: "dragging"; readonly drag: ChipDrag }
+  | { readonly phase: "released" };
+
 export function LayoutEditor({
   template,
   onChange,
@@ -312,9 +328,13 @@ export function LayoutEditor({
     );
   };
 
-  // Chip drags: window listeners while the pointer is down on a chip.
-  const chipPress = useRef<{ kind: LayoutPaneKind; x: number; y: number } | null>(null);
-  const suppressClick = useRef(false);
+  // Handlers read the gesture from the ref, so a release right after a move
+  // sees that move before it renders; the state is only what the canvas draws.
+  const chipGesture = useRef<ChipGesture>({ phase: "idle" });
+  const moveChipGesture = (next: ChipGesture) => {
+    chipGesture.current = next;
+    setChipDrag(next.phase === "dragging" ? next.drag : null);
+  };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own Escape and pointer capture cleanup only while a template chip is being dragged.
   useEffect(() => {
@@ -322,50 +342,50 @@ export function LayoutEditor({
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      chipPress.current = null;
       // The release still clicks the chip; that click must not add a pane.
-      suppressClick.current = true;
+      chipGesture.current = { phase: "released" };
       setChipDrag(null);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [chipDrag]);
+  }, [chipDrag, chipGesture]);
 
   const onChipPointerDown = (event: ReactPointerEvent<HTMLButtonElement>, kind: LayoutPaneKind) => {
     if (event.button !== 0 || event.pointerType === "touch") return;
-    chipPress.current = { kind, x: event.clientX, y: event.clientY };
+    moveChipGesture({ phase: "pressed", kind, x: event.clientX, y: event.clientY });
     event.currentTarget.setPointerCapture(event.pointerId);
   };
   const onChipPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const press = chipPress.current;
-    if (!press) return;
+    const gesture = chipGesture.current;
+    if (gesture.phase !== "pressed" && gesture.phase !== "dragging") return;
     const point = { x: event.clientX, y: event.clientY };
-    if (chipDrag === null && Math.hypot(point.x - press.x, point.y - press.y) < DRAG_THRESHOLD_PX) {
+    if (
+      gesture.phase === "pressed" &&
+      Math.hypot(point.x - gesture.x, point.y - gesture.y) < DRAG_THRESHOLD_PX
+    ) {
       return;
     }
-    setChipDrag({ kind: press.kind, point, target: resolveTarget(point) });
+    const kind = gesture.phase === "pressed" ? gesture.kind : gesture.drag.kind;
+    moveChipGesture({ phase: "dragging", drag: { kind, point, target: resolveTarget(point) } });
   };
   const onChipPointerUp = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    const drag = chipDrag;
-    chipPress.current = null;
+    const gesture = chipGesture.current;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    if (drag === null) return;
-    suppressClick.current = true;
-    setChipDrag(null);
+    if (gesture.phase === "pressed") moveChipGesture({ phase: "idle" });
+    if (gesture.phase !== "dragging") return;
+    moveChipGesture({ phase: "released" });
+    const { drag } = gesture;
     if (drag.target) {
       const next = applyDrop(template, drag.target, drag.kind, panes);
       if (next !== template) onChange(next);
     }
   };
-  const onChipPointerCancel = () => {
-    chipPress.current = null;
-    setChipDrag(null);
-  };
+  const onChipPointerCancel = () => moveChipGesture({ phase: "idle" });
   const onChipClick = (kind: LayoutPaneKind) => {
-    if (suppressClick.current) {
-      suppressClick.current = false;
+    if (chipGesture.current.phase === "released") {
+      moveChipGesture({ phase: "idle" });
       return;
     }
     // Without a drag (keyboard, or a plain click) the pane joins on the right.
@@ -374,7 +394,11 @@ export function LayoutEditor({
   };
 
   // Divider drags.
-  const dividerPress = useRef<DividerSlot | null>(null);
+  const dividerPress = useRef<{ divider: DividerSlot; drag: DividerDrag } | null>(null);
+  const moveDividerDrag = (next: { divider: DividerSlot; drag: DividerDrag } | null) => {
+    dividerPress.current = next;
+    setDividerDrag(next?.drag ?? null);
+  };
   const shareFromPointer = (divider: DividerSlot, point: { x: number; y: number }) => {
     const inner = innerRect();
     if (!inner) return null;
@@ -396,27 +420,25 @@ export function LayoutEditor({
   const onDividerPointerDown = (event: ReactPointerEvent<HTMLDivElement>, divider: DividerSlot) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    dividerPress.current = divider;
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDividerDrag({ id: divider.id, template, share: divider.share });
+    moveDividerDrag({ divider, drag: { id: divider.id, template, share: divider.share } });
   };
   const onDividerPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const divider = dividerPress.current;
+    const divider = dividerPress.current?.divider;
     if (!divider) return;
     const share = shareFromPointer(divider, { x: event.clientX, y: event.clientY });
     if (share === null) return;
     const next = resizeTo(template, divider, share);
     const actual =
       layoutTemplateSlots(next).dividers.find((entry) => entry.id === divider.id)?.share ?? share;
-    setDividerDrag({ id: divider.id, template: next, share: actual });
+    moveDividerDrag({ divider, drag: { id: divider.id, template: next, share: actual } });
   };
   const onDividerPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dividerPress.current = null;
+    const drag = dividerPress.current?.drag;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const drag = dividerDrag;
-    setDividerDrag(null);
+    moveDividerDrag(null);
     if (drag && drag.template !== template) onChange(drag.template);
   };
   const onDividerKeyDown = (event: KeyboardEvent<HTMLDivElement>, divider: DividerSlot) => {
