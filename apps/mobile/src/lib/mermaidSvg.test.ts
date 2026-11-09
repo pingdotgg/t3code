@@ -1,7 +1,7 @@
 import { render } from "pele";
 import { describe, expect, it } from "vite-plus/test";
 
-import { mermaidSvgForNative } from "./mermaidSvg";
+import { mermaidSvgForNative, withDiagramBackground } from "./mermaidSvg";
 
 describe("mermaidSvgForNative", () => {
   it("turns Pele's CSS variables and styles into attributes react-native-svg draws", () => {
@@ -24,5 +24,9 @@ describe("mermaidSvgForNative", () => {
     // Colors the theme leaves out keep Pele's fallback, and the corner radius becomes geometry.
     expect(native).toContain('fill="#f3f3f3"');
     expect(native).toMatch(/<rect[^>]* rx="4"/);
+    // The exported image fills the viewBox before anything else draws.
+    expect(withDiagramBackground(native, "#fafafa")).toMatch(
+      /^<svg[^>]*><rect x="0" y="0" width="\d+(\.\d+)?" height="\d+(\.\d+)?" fill="#fafafa"\/>/,
+    );
   });
 });

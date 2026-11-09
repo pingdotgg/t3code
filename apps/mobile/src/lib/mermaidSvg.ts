@@ -32,6 +32,18 @@ export function mermaidSvgForNative(svg: string, theme: Readonly<Record<string, 
   return root + resolve(body);
 }
 
+/** Fills the diagram's viewBox, so an exported image reads on any background. */
+export function withDiagramBackground(svg: string, color: string): string {
+  const rootTag = /^<svg\b[^>]*>/.exec(svg)?.[0];
+  const box = /\sviewBox="([^"]*)"/
+    .exec(rootTag ?? "")?.[1]
+    ?.trim()
+    .split(/[\s,]+/);
+  if (!rootTag || box?.length !== 4) return svg;
+  const [x, y, width, height] = box;
+  return `${rootTag}<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${color}"/>${svg.slice(rootTag.length)}`;
+}
+
 function styleDeclarations(style: string): Map<string, string> {
   const declarations = new Map<string, string>();
   for (const declaration of style.split(";")) {
