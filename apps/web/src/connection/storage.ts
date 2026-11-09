@@ -16,6 +16,7 @@ import {
   Persistence,
   makeStoredShellSnapshotEncoder,
   makeStoredThreadSnapshotEncoder,
+  makeThreadCacheWriteOrder,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -726,6 +727,7 @@ export const layer = Layer.effectContext(
       format: "full",
       yieldToHost: yieldToBrowserTask,
     });
+    const threadWriteOrder = makeThreadCacheWriteOrder();
 
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
@@ -952,11 +954,13 @@ export const layer = Layer.effectContext(
       saveThread: Effect.fn("storage.saveThread")(
         function* (environmentId, snapshot) {
           const key = threadCacheKey(environmentId, snapshot.projection.thread.id);
+          const isLatest = threadWriteOrder.beginSave(environmentId, snapshot.projection.thread.id);
           const encoded = yield* encodeStoredThreadSnapshot({
             environmentId,
             threadId: snapshot.projection.thread.id,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
+          if (!isLatest()) return;
           // An older copy of a thread now too large to keep would paint stale on reopen.
           yield* Option.match(encoded, {
             onNone: () => removeDatabaseValue(database, THREAD_STORE_NAME, key),
@@ -1038,6 +1042,7 @@ export const layer = Layer.effectContext(
       ),
       removeThread: Effect.fn("Persistence.EnvironmentCacheStore.removeThread")(
         function (environmentId, threadId) {
+          threadWriteOrder.removeThread(environmentId, threadId);
           return removeDatabaseValue(
             database,
             THREAD_STORE_NAME,
@@ -1046,6 +1051,7 @@ export const layer = Layer.effectContext(
         },
       ),
       clear: Effect.fn("Persistence.EnvironmentCacheStore.clear")(function (environmentId) {
+        threadWriteOrder.clearEnvironment(environmentId);
         return Effect.all(
           [
             Effect.promise(() => projectFaviconCache.clearEnvironment(environmentId)),

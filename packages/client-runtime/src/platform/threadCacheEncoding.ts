@@ -94,6 +94,32 @@ interface EncodedRow {
 }
 
 /**
+ * Thread saves yield while encoding, so they can finish after a later save, a
+ * removal, or an environment clear. Each takes a ticket when it starts; a save
+ * writes only while no newer ticket exists for its thread or environment.
+ */
+export function makeThreadCacheWriteOrder() {
+  let latest = 0;
+  const tickets = new Map<string, number>();
+  const threadKey = (environmentId: string, threadId: string) =>
+    `${environmentId}\u0000${threadId}`;
+  return {
+    beginSave: (environmentId: string, threadId: string) => {
+      const ticket = ++latest;
+      const key = threadKey(environmentId, threadId);
+      tickets.set(key, ticket);
+      return () => tickets.get(key) === ticket && (tickets.get(environmentId) ?? 0) < ticket;
+    },
+    removeThread: (environmentId: string, threadId: string) => {
+      tickets.set(threadKey(environmentId, threadId), ++latest);
+    },
+    clearEnvironment: (environmentId: string) => {
+      tickets.set(environmentId, ++latest);
+    },
+  };
+}
+
+/**
  * Turn items are immutable and the projection reducer keeps unchanged ones by
  * reference, so each encoder remembers the encoding of rows it has encoded and
  * runs the row codec only for new ones, yielding to the host between chunks.
