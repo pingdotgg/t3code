@@ -59,7 +59,6 @@ export function planClaudeSkillDispatch(
   if (!last) {
     return undefined;
   }
-  // Only the final skill gets native expansion.
   return {
     leadingText:
       prompt.slice(0, last.start).trim().length > 0
@@ -70,10 +69,15 @@ export function planClaudeSkillDispatch(
 }
 
 /** Tool results never expand skills, so an answer only names them for the agent to run. */
-export function claudeSkillMentionsInAnswer(
+export function rewriteClaudeSkillMentionsInAnswer(
   answer: string,
   skills: ReadonlyMap<string, ClaudeSkillTarget>,
 ): string {
-  const mentions = matchSkillMentions(answer, skills);
-  return mentions.length === 0 ? answer : inlineSkillMentions(answer, mentions, undefined);
+  // A leading `/name` invokes a skill in the composer, so it counts here too.
+  const leadingSlash = /^(\s*)\/(?=\S)/.exec(answer);
+  const source = leadingSlash
+    ? `${leadingSlash[1]}$${answer.slice(leadingSlash[0].length)}`
+    : answer;
+  const mentions = matchSkillMentions(source, skills);
+  return mentions.length === 0 ? answer : inlineSkillMentions(source, mentions, undefined);
 }

@@ -409,6 +409,8 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
           "Which approach?": ["Simple", "Safe"],
           "Deploy now?": "Yes",
           "Anything else?": "$wait-what then $review it",
+          "Typed command?": "/wait-what please",
+          "A path?": "/srv/wait-what",
         },
         new Map([
           ["wait-what", { path: "/skills/wait-what/SKILL.md", userInvocationOnly: true }],
@@ -420,6 +422,9 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
       "Deploy now?": "Yes",
       "Anything else?":
         "/wait-what [The user invoked this skill. Follow the instructions at: /skills/wait-what/SKILL.md] then /review it",
+      "Typed command?":
+        "/wait-what [The user invoked this skill. Follow the instructions at: /skills/wait-what/SKILL.md] please",
+      "A path?": "/srv/wait-what",
     });
     assert.isTrue(
       ClaudeAdapterV2.ClaudeProviderCapabilitiesV2.planning.supportsStructuredQuestions,

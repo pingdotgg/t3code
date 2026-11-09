@@ -160,7 +160,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 import {
-  claudeSkillMentionsInAnswer,
+  rewriteClaudeSkillMentionsInAnswer,
   planClaudeSkillDispatch,
   type ClaudeSkillTarget,
 } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
@@ -4642,12 +4642,12 @@ export function claudeUserInputQuestions(
 
 export function claudeSdkUserInputAnswers(
   answers: ProviderUserInputAnswers,
-  skills: ReadonlyMap<string, ClaudeSkillTarget> = new Map(),
+  skills: ReadonlyMap<string, ClaudeSkillTarget>,
 ): NonNullable<AskUserQuestionInput["answers"]> {
   return Object.fromEntries(
     Object.entries(answers).map(([question, answer]) => [
       question,
-      claudeSkillMentionsInAnswer(
+      rewriteClaudeSkillMentionsInAnswer(
         Array.isArray(answer)
           ? answer.filter((value): value is string => typeof value === "string").join(", ")
           : typeof answer === "string"
