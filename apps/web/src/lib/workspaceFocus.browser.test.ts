@@ -259,6 +259,31 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(clickedRow);
   });
 
+  it("waits for a side chat's composer instead of focusing Bring back", async () => {
+    using fixture = setup();
+    const mainComposer = fixture.area("composer", 2);
+    const panel = fixture.area("panel", 3);
+    panel.button.remove();
+    panel.element.insertAdjacentHTML(
+      "beforeend",
+      "<div data-right-panel-surface-content><div data-side-chat-pane><button>Bring back</button></div></div>",
+    );
+    const sideChat = panel.element.querySelector<HTMLElement>("[data-side-chat-pane]")!;
+    mainComposer.button.focus();
+    expect(fixture.controller.focus("panel")).toBe(false);
+    expect(document.activeElement).toBe(mainComposer.button);
+    fixture.controller.request({ area: "panel" });
+    const composer = fixture.area("composer", 2, sideChat);
+    const editor = document.createElement("div");
+    editor.contentEditable = "true";
+    editor.setAttribute("role", "textbox");
+    composer.element.append(editor);
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor));
+    sideChat.querySelector("button")!.focus();
+    expect(fixture.controller.focus("panel")).toBe(true);
+    expect(document.activeElement).toBe(editor);
+  });
+
   it("waits for a requested area to mount", async () => {
     using fixture = setup();
     fixture.area("composer", 2);
