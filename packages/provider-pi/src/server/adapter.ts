@@ -1644,11 +1644,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
-      /**
-       * Pi continues a session in a new file whose `parentSession` header names the old one, without
-       * copying its entries. Forks start from the nearest file in that chain holding the entry; an
-       * unreadable source is left for Pi to reject.
-       */
+      // Native session continuations can name an ancestor file without copying its entries.
       const forkSourceFileFor = Effect.fn("PiAdapter.forkSourceFile")(function* (
         sourceFile: string,
         entryId: string,
@@ -1661,11 +1657,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             Effect.map(piSessionFile),
             Effect.orElseSucceed(() => null),
           );
-          if (session === null) {
-            if (file === sourceFile) return sourceFile;
-            break;
-          }
-          if (session.entryIds.has(entryId)) return file;
+          if (session === null) break;
+          if (session.entries.get(entryId)?.isUserMessage) return file;
           file = session.parentSession;
         }
         return yield* protocolError(
@@ -3342,13 +3335,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   Effect.ignore,
                   Effect.forkScoped,
                 );
+                const historicalEntries =
+                  forkSourceFile !== sourceFile && boundary.type === "uncaptured"
+                    ? yield* forkConnection.request({ type: "get_entries" })
+                    : undefined;
                 const beforeEntry =
-                  boundary.type === "nothing"
+                  boundary.type === "nothing" ||
+                  (boundary.type === "uncaptured" &&
+                    piTerminalForkTarget(historicalEntries, boundary))
                     ? null
                     : yield* piForkEntry(
                         boundary,
                         source.createdAt,
-                        forkConnection.request({ type: "get_entries" }),
+                        historicalEntries === undefined
+                          ? forkConnection.request({ type: "get_entries" })
+                          : Effect.succeed(historicalEntries),
                       );
                 if (beforeEntry !== null) {
                   const result = yield* forkConnection.request({
@@ -3423,6 +3424,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 interface PiSessionEntry {
   readonly parentId: string | null;
   readonly isUserMessage: boolean;
+  readonly isAssistantMessage: boolean;
   /** Pi's `timestamp` as epoch milliseconds; null when missing or unparsable. */
   readonly timestamp: number | null;
 }
@@ -3432,34 +3434,47 @@ interface PiSessionListing {
   readonly leafId: string | null;
 }
 
-const decodePiSessionFileLine = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Union([
-      Schema.Struct({
-        type: Schema.Literal("session"),
-        parentSession: Schema.optional(Schema.String),
-      }),
-      Schema.Struct({ id: Schema.String }),
-    ]),
-  ),
-);
+const decodePiSessionFileLine = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 
 interface PiSessionFile {
   readonly parentSession: string | undefined;
-  readonly entryIds: ReadonlySet<string>;
+  readonly entries: ReadonlyMap<string, PiSessionEntry>;
 }
 
-/** Reads a Pi session file as Pi does: malformed lines are skipped, the header is required. */
+// Recovery must not let Pi's tolerant loader silently discard corrupt historical evidence.
 function piSessionFile(text: string): PiSessionFile | null {
-  let header: { readonly parentSession?: string | undefined } | undefined;
-  const entryIds = new Set<string>();
-  for (const line of text.split("\n")) {
-    const decoded = Option.getOrUndefined(decodePiSessionFileLine(line));
-    if (decoded === undefined) continue;
-    if (!("type" in decoded)) entryIds.add(decoded.id);
-    else header ??= decoded;
+  const lines = text.split("\n").filter((line) => line.trim().length > 0);
+  const header = Option.getOrUndefined(decodePiSessionFileLine(lines[0] ?? ""));
+  const parentSession = recordField(header, "parentSession");
+  if (
+    recordString(header, "type") !== "session" ||
+    !recordString(header, "id") ||
+    Option.isNone(DateTime.make(recordString(header, "timestamp") ?? "")) ||
+    (parentSession !== undefined &&
+      (typeof parentSession !== "string" || parentSession.length === 0))
+  ) {
+    return null;
   }
-  return header === undefined ? null : { parentSession: header.parentSession, entryIds };
+  const rawEntries: Array<unknown> = [];
+  for (const line of lines.slice(1)) {
+    const decoded = Option.getOrUndefined(decodePiSessionFileLine(line));
+    const type = recordString(decoded, "type");
+    if (type === undefined || type === "session") return null;
+    rawEntries.push(decoded);
+  }
+  const entries = piSessionEntries(rawEntries);
+  if (entries === null) return null;
+  const preceding = new Set<string>();
+  for (const [id, entry] of entries) {
+    if (
+      !id ||
+      entry.timestamp === null ||
+      (entry.parentId !== null && !preceding.has(entry.parentId))
+    )
+      return null;
+    preceding.add(id);
+  }
+  return { parentSession, entries };
 }
 
 function piSessionListing(data: unknown): PiSessionListing | null {
@@ -3484,6 +3499,9 @@ function piSessionEntries(entries: unknown): ReadonlyMap<string, PiSessionEntry>
       isUserMessage:
         recordField(entry, "type") === "message" &&
         recordString(recordField(entry, "message"), "role") === "user",
+      isAssistantMessage:
+        recordField(entry, "type") === "message" &&
+        recordString(recordField(entry, "message"), "role") === "assistant",
       timestamp:
         timestamp === undefined
           ? null
@@ -3555,6 +3573,36 @@ function piForkBoundary(input: {
 function piForkAnchor(boundary: PiForkBoundary): string | null {
   if (boundary.type === "entry") return boundary.entryId;
   return boundary.type === "uncaptured" ? boundary.stopAt : null;
+}
+
+/** CLI --fork retains the whole tree; only keep it intact when it proves the target is its end. */
+function piTerminalForkTarget(
+  data: unknown,
+  boundary: Extract<PiForkBoundary, { type: "uncaptured" }>,
+): boolean {
+  const target = boundary.target;
+  const listing = piSessionListing(data);
+  if (
+    listing === null ||
+    boundary.stopAt === null ||
+    target?.status !== "completed" ||
+    target.completedAt === null ||
+    !listing.entries.get(boundary.stopAt)?.isUserMessage
+  ) {
+    return false;
+  }
+  const full = walkPiBranch(listing.entries, listing.leafId, null);
+  if (full === null || !full.reachedStop || full.entryCount !== listing.entries.size) return false;
+  const end = DateTime.toEpochMillis(target.completedAt);
+  let current = listing.leafId;
+  let hasAnswer = false;
+  while (current !== null && current !== boundary.stopAt) {
+    const entry = listing.entries.get(current);
+    if (entry === undefined || entry.timestamp === null || entry.timestamp > end) return false;
+    hasAnswer ||= entry.isAssistantMessage;
+    current = entry.parentId;
+  }
+  return current === boundary.stopAt && hasAnswer;
 }
 
 /** Reads the session tree only for an uncaptured boundary. */
