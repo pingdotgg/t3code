@@ -6,6 +6,7 @@ import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as PlatformError from "effect/PlatformError";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -193,7 +194,11 @@ export const checkZcodeProviderStatus = Effect.fn("checkZcodeProviderStatus")(fu
 
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
-    yield* Effect.logWarning("ZCode CLI health check failed.", { errorTag: error._tag });
+    const detail =
+      error instanceof PlatformError.PlatformError
+        ? `${error.reason._tag}: ${error.message}`
+        : error._tag;
+    yield* Effect.logWarning("ZCode CLI health check failed.", { errorTag: error._tag, detail });
     return buildServerProvider({
       presentation: ZCODE_PRESENTATION,
       enabled: zcodeSettings.enabled,

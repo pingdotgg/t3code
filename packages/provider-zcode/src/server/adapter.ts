@@ -222,6 +222,17 @@ function contentText(content: unknown): string {
     .join("");
 }
 
+/**
+ * The CLI rejects a pinned model with this registry error when its account provisioning could
+ * not make any model executable — as of CLI 0.17.1 this happens for every push over this
+ * protocol, while the CLI's own headless runs resolve models fine.
+ */
+function isRegistryModelGapError(result: unknown): boolean {
+  if (!Predicate.isObject(result) || !Predicate.isObject(result["error"])) return false;
+  const message = zcodeRecordString(result["error"], "message") ?? "";
+  return message.includes("Provider Registry") && message.includes("Model");
+}
+
 function toolResultOutput(result: unknown): string | undefined {
   if (!Predicate.isObject(result)) return undefined;
   const direct = zcodeRecordString(result, "output") ?? zcodeRecordString(result, "text");
@@ -359,8 +370,13 @@ function zcodeFailureFromErrorDetail(error: unknown): OrchestrationV2ProviderFai
   const record = Predicate.isObject(error) ? error : {};
   const message = zcodeRecordString(record, "message") ?? "ZCode reported a turn error.";
   const usageLimited = USAGE_LIMIT_ERROR_PATTERN.test(message);
+  const configurationGap =
+    zcodeRecordString(record, "code") === "CONFIGURATION_ERROR" &&
+    message.toLowerCase().includes("select a model");
   return makeProviderFailure({
-    message,
+    message: configurationGap
+      ? "ZCode resolved no usable model for this environment. Update the ZCode CLI on the server machine, then refresh the provider. Model provisioning over the local protocol is broken in CLI 0.17.1."
+      : message,
     code: zcodeRecordString(record, "code") ?? null,
     class: usageLimited ? "usage_limit" : "provider_error",
     ...(usageLimited ? { retryable: true as const } : {}),
@@ -1588,7 +1604,23 @@ export const makeZcodeAdapterV2 = Effect.fn("makeZcodeAdapterV2")(function* (
         };
         const modelSelection = zcodeModelSelectionFromSlug(threadInput.modelSelection.model);
         if (modelSelection !== undefined) createParams["model"] = modelSelection;
-        const result = yield* request("session/create", createParams, SESSION_CREATE_TIMEOUT_MS);
+        let result = yield* request("session/create", createParams, SESSION_CREATE_TIMEOUT_MS);
+        if (
+          result !== undefined &&
+          isRegistryModelGapError(result) &&
+          modelSelection !== undefined
+        ) {
+          // CLI 0.17.1 cannot make pushed account models executable over this protocol, so the
+          // pinned model is rejected at create. Retry without it: turns then fail with the CLI's
+          // own "Select a model" error, and a CLI that fixes provisioning lights up unchanged.
+          yield* Effect.logWarning(
+            "ZCode rejected the pinned model; retrying session create without it.",
+            { providerId: modelSelection.providerId, modelId: modelSelection.modelId },
+          );
+          const fallbackParams: ZcodeRecord = { ...createParams };
+          delete fallbackParams["model"];
+          result = yield* request("session/create", fallbackParams, SESSION_CREATE_TIMEOUT_MS);
+        }
         const resultRecord = Predicate.isObject(result) ? result : {};
         const sessionRecord = zcodeRecordField(resultRecord, "session");
         const nativeSessionId = zcodeRecordString(sessionRecord ?? {}, "sessionId");

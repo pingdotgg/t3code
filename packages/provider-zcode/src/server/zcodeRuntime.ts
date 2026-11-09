@@ -286,9 +286,9 @@ export function zcodeSpawnArgs(launchArgs: string): ReadonlyArray<string> {
 }
 
 /**
- * Desktop installs ship the CLI as `~/.zcode/server/bin/zcode` and often leave it off the
- * server process's PATH, so a missing `zcode` falls back to that shim before failing.
- * PATH is probed manually: resolveSpawnCommand is a no-op on POSIX and defers to exec.
+ * Falls back to the desktop shim (`~/.zcode/server/bin/zcode`) when PATH lacks `zcode`; the
+ * bare "zcode" is the schema's decoded default, not an explicit choice. PATH is probed
+ * manually: resolveSpawnCommand is a no-op on POSIX and defers to exec.
  */
 export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCommand")(function* (
   settings: { readonly binaryPath: string },
@@ -296,7 +296,7 @@ export const resolveZcodeLaunchCommand = Effect.fn("ZcodeRuntime.resolveLaunchCo
   fileSystem: FileSystem.FileSystem,
 ) {
   const explicit = settings.binaryPath.trim();
-  if (explicit.length > 0) return explicit;
+  if (explicit.length > 0 && explicit !== DEFAULT_ZCODE_BINARY) return explicit;
   const onPath = yield* zcodeOnPath(environment, fileSystem);
   if (onPath) return DEFAULT_ZCODE_BINARY;
   const home = environment.ZCODE_DATA_BASE_DIR?.trim() || environment.HOME;

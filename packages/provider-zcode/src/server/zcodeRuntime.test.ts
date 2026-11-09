@@ -145,8 +145,9 @@ describe("resolveZcodeLaunchCommand", () => {
       const home = yield* fileSystem.makeTempDirectory();
       yield* fileSystem.makeDirectory(`${home}/.zcode/server/bin`, { recursive: true });
       yield* fileSystem.writeFileString(`${home}/.zcode/server/bin/zcode`, "#!/bin/sh\n");
+      // binaryPath decodes to the bare fallback when the user leaves the field empty.
       const command = yield* resolveZcodeLaunchCommand(
-        { binaryPath: "" },
+        { binaryPath: "zcode" },
         { HOME: home, PATH: "/nonexistent" },
         fileSystem,
       );
