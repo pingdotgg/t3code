@@ -1976,6 +1976,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           modelSelection: { instanceId: string; model: string };
         };
         assert.equal(request.modelSelection.instanceId, altInstanceId);
+
+        // A sandbox task launches in the child's project, so the source project's
+        // allow-list must still refuse an explicitly named disabled instance.
+        const sandbox = yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            target: { providerInstanceId: codexInstanceId },
+            isolation: "sandbox",
+            clientRequestId: "delegate-sandbox-disabled-1",
+          })
+          .pipe(Effect.flip);
+        assert.equal(sandbox.code, "invalid_request");
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );

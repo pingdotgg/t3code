@@ -2508,6 +2508,9 @@ const make = Effect.gen(function* () {
             "Sandbox isolation runs remotely and cannot block this turn. Use the default async mode.",
           );
         }
+        // The launch happens in the child's project, so the source project's
+        // provider allow-list is checked here instead of in dispatch.
+        yield* assertTargetEnabledForProject(parent, commandId, target);
         // Fleet primitive: every delegated task gets its own disposable sandbox.
         const workspaceId = stableSandboxWorkspaceId(scope, parent.thread.id, key);
         const delegated = yield* cloudWorkspaces
