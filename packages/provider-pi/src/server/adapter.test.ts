@@ -2605,6 +2605,87 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("natively forks a turn whose entry lives in the session its source continued", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const forkFake = yield* makeFakePi;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const dir = yield* fileSystem.makeTempDirectoryScoped();
+      const forkFile = `${dir}/forked.jsonl`;
+      const previousFile = `${dir}/previous.jsonl`;
+      const sourceFile = `${dir}/source.jsonl`;
+      const writeSession = (
+        file: string,
+        entries: ReadonlyArray<unknown>,
+        parentSession?: string,
+      ) =>
+        fileSystem.writeFileString(
+          file,
+          [
+            { type: "session", id: file, timestamp: DateTime.formatIso(at(0)), parentSession },
+            ...entries,
+          ]
+            .map((line) => `${encodeJsonLine(line)}\n`)
+            .join(""),
+        );
+      // Turn 1 and the wake prompt u2 are in the previous session; the source continued it empty.
+      yield* writeSession(previousFile, UNCAPTURED_TURN_TREE.entries);
+      yield* writeSession(
+        sourceFile,
+        [sessionMessage("w3", null, "user", 300), sessionMessage("a3", "w3", "assistant", 310)],
+        previousFile,
+      );
+      const { runtime } = yield* openRuntime(fake, "default", THREAD_ID, SESSION_ID, forkFake);
+      const live = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      const source = {
+        ...live,
+        nativeThreadRef: { driver: PI_PROVIDER, nativeId: sourceFile, strength: "strong" as const },
+      };
+      const turns = uncapturedTurns(source.id, { startedAt: 100, completedAt: 200 });
+      const forkAtFirst = () =>
+        runtime.forkThread({
+          sourceProviderThread: source,
+          sourceProviderTurns: turns,
+          providerTurnId: turns[0]!.id,
+          targetThreadId: ThreadId.make("fork-target"),
+        });
+      const sessionFiles = Effect.forEach([previousFile, sourceFile], (file) =>
+        fileSystem.readFileString(file),
+      );
+      const before = yield* sessionFiles;
+
+      forkFake.queueEntries(UNCAPTURED_TURN_TREE);
+      forkFake.queueState({ sessionFile: forkFile });
+      fake.queueState({ sessionFile: forkFile });
+      const forked = yield* forkAtFirst();
+      assert.equal(forked.nativeThreadRef?.nativeId, forkFile);
+      const args = forkFake.lastSpawn().args;
+      assert.equal(args[args.indexOf("--fork") + 1], previousFile);
+      assert.deepEqual(
+        forkFake
+          .allRequests()
+          .filter((request) => request.type === "fork")
+          .map((request) => request.entryId),
+        ["u2"],
+      );
+      assert.deepEqual(yield* sessionFiles, before);
+
+      // A missing or unreadable previous session fails before any fork process starts.
+      const spawnedArgs = forkFake.lastSpawn().args;
+      for (const previous of [null, "not a session line\n"]) {
+        if (previous === null) yield* fileSystem.remove(previousFile);
+        else yield* fileSystem.writeFileString(previousFile, previous);
+        const failed = yield* forkAtFirst().pipe(Effect.result);
+        assert.equal(failed._tag, "Failure");
+        assert.strictEqual(forkFake.lastSpawn().args, spawnedArgs);
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("natively forks before a running turn whose start entry was not captured yet", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

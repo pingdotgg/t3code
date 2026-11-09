@@ -1644,6 +1644,35 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         });
       });
 
+      /**
+       * Pi continues a session in a new file whose `parentSession` header names the old one, without
+       * copying its entries. Forks start from the nearest file in that chain holding the entry; an
+       * unreadable source is left for Pi to reject.
+       */
+      const forkSourceFileFor = Effect.fn("PiAdapter.forkSourceFile")(function* (
+        sourceFile: string,
+        entryId: string,
+      ) {
+        const visited = new Set<string>();
+        let file: string | undefined = sourceFile;
+        while (file !== undefined && !visited.has(file)) {
+          visited.add(file);
+          const session: PiSessionFile | null = yield* fileSystem.readFileString(file).pipe(
+            Effect.map(piSessionFile),
+            Effect.orElseSucceed(() => null),
+          );
+          if (session === null) {
+            if (file === sourceFile) return sourceFile;
+            break;
+          }
+          if (session.entryIds.has(entryId)) return file;
+          file = session.parentSession;
+        }
+        return yield* protocolError(
+          `Pi entry ${entryId} is not in the fork source session or a session it continued`,
+        );
+      });
+
       const listSessionEntries = (since: string | null, timeoutMs: number) =>
         request({ type: "get_entries", ...(since === null ? {} : { since }) }, timeoutMs).pipe(
           Effect.map(piSessionListing),
@@ -3286,6 +3315,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                     target: { type: "provider_turn", providerTurn: target },
                     providerThreadTurns: sourceTurns,
                   });
+            const anchor = piForkAnchor(boundary);
+            const forkSourceFile =
+              anchor === null ? sourceFile : yield* forkSourceFileFor(sourceFile, anchor);
             // CLI --fork uses Pi's own session format and sets the destination cwd. RPC
             // switch_session/clone alone would retain the source cwd.
             const forkLaunch = buildPiRpcLaunch({
@@ -3301,7 +3333,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               Effect.gen(function* () {
                 const forkConnection = yield* makePiRpcConnection({
                   command: options.settings.binaryPath || "pi",
-                  args: [...forkLaunch.args, "--fork", sourceFile],
+                  args: [...forkLaunch.args, "--fork", forkSourceFile],
                   cwd,
                   env: forkLaunch.env,
                 });
@@ -3329,7 +3361,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 }
                 const state = yield* forkConnection.request({ type: "get_state" });
                 const file = recordString(state, "sessionFile");
-                if (file === undefined || file === sourceFile) {
+                if (file === undefined || file === sourceFile || file === forkSourceFile) {
                   return yield* protocolError("Pi fork did not create a distinct session file");
                 }
                 return file;
@@ -3400,6 +3432,36 @@ interface PiSessionListing {
   readonly leafId: string | null;
 }
 
+const decodePiSessionFileLine = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("session"),
+        parentSession: Schema.optional(Schema.String),
+      }),
+      Schema.Struct({ id: Schema.String }),
+    ]),
+  ),
+);
+
+interface PiSessionFile {
+  readonly parentSession: string | undefined;
+  readonly entryIds: ReadonlySet<string>;
+}
+
+/** Reads a Pi session file as Pi does: malformed lines are skipped, the header is required. */
+function piSessionFile(text: string): PiSessionFile | null {
+  let header: { readonly parentSession?: string | undefined } | undefined;
+  const entryIds = new Set<string>();
+  for (const line of text.split("\n")) {
+    const decoded = Option.getOrUndefined(decodePiSessionFileLine(line));
+    if (decoded === undefined) continue;
+    if (!("type" in decoded)) entryIds.add(decoded.id);
+    else header ??= decoded;
+  }
+  return header === undefined ? null : { parentSession: header.parentSession, entryIds };
+}
+
 function piSessionListing(data: unknown): PiSessionListing | null {
   const leafId = recordField(data, "leafId");
   const entries = piSessionEntries(recordField(data, "entries"));
@@ -3461,6 +3523,8 @@ type PiForkBoundary =
       readonly type: "uncaptured";
       readonly turn: OrchestrationV2ProviderTurn;
       readonly target: OrchestrationV2ProviderTurn | null;
+      /** The target's captured entry, which the boundary search must reach. */
+      readonly stopAt: string | null;
     };
 
 /**
@@ -3480,9 +3544,17 @@ function piForkBoundary(input: {
     .sort((a, b) => a.ordinal - b.ordinal)[0];
   const ref = boundary?.nativeTurnRef;
   if (boundary === undefined || ref == null) return { type: "nothing" };
-  return ref.strength === "strong" && ref.nativeId !== null
-    ? { type: "entry", entryId: ref.nativeId }
-    : { type: "uncaptured", turn: boundary, target };
+  if (ref.strength === "strong" && ref.nativeId !== null)
+    return { type: "entry", entryId: ref.nativeId };
+  const targetRef = target?.nativeTurnRef;
+  const stopAt = targetRef?.strength === "strong" ? targetRef.nativeId : null;
+  return { type: "uncaptured", turn: boundary, target, stopAt };
+}
+
+/** The entry a fork's source session must contain, when the boundary names one. */
+function piForkAnchor(boundary: PiForkBoundary): string | null {
+  if (boundary.type === "entry") return boundary.entryId;
+  return boundary.type === "uncaptured" ? boundary.stopAt : null;
 }
 
 /** Reads the session tree only for an uncaptured boundary. */
@@ -3529,8 +3601,7 @@ function piUncapturedForkEntry(
       ? Math.min(DateTime.toEpochMillis(providerThreadCreatedAt), DateTime.toEpochMillis(startedAt))
       : DateTime.toEpochMillis(boundary.target.completedAt ?? startedAt);
   const to = completedAt === null ? Infinity : DateTime.toEpochMillis(completedAt);
-  const targetRef = boundary.target?.nativeTurnRef;
-  const stopAt = targetRef?.strength === "strong" ? targetRef.nativeId : null;
+  const { stopAt } = boundary;
   if (stopAt !== null && !listing.entries.has(stopAt)) return undefined;
   const walk = walkPiBranch(listing.entries, listing.leafId, stopAt);
   if (walk === null || !walk.reachedStop) return undefined;
