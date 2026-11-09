@@ -419,7 +419,7 @@ function HeadroomProxySettingsRow({
   return (
     <SettingsRow
       title="Headroom proxy URL"
-      description="The HTTP loopback origin for this environment's Headroom proxy. Use the base origin, such as http://127.0.0.1:8787; /v1 is not needed. Start an installed proxy from Status. T3 does not install Headroom or change provider configuration."
+      description="Loopback base origin of this environment's Headroom proxy, such as http://127.0.0.1:8787 (no /v1). Start an installed proxy from Status. T3 does not install Headroom or change provider config."
       status={error ? <span className="text-destructive">{error}</span> : undefined}
       resetAction={
         proxyUrl !== DEFAULT_HEADROOM_PROXY_URL ? (

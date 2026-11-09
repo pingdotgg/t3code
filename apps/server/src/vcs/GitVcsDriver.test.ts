@@ -193,6 +193,7 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
       `160000 commit ${nestedHead}\tcommitted\n`,
     );
     assert.deepEqual(yield* fileSystem.readFile(path.join(cwd, ".git", "index")), originalIndex);
+    assert.isTrue(yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef }));
     assert.strictEqual(
       yield* fileSystem.readFileString(path.join(cwd, nested, "private.txt")),
       "nested\n",
@@ -277,18 +278,11 @@ it.effect("checkpoint recovery discovers nested HEAD independently of inherited 
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
     yield* git(["init", "empty"]);
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
-    yield* Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const previous = process.env.GIT_DIR;
-        process.env.GIT_DIR = path.join(cwd, ".git");
-        return previous;
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }).pipe(
+      Effect.provideService(HostProcess.Environment, {
+        ...(yield* HostProcess.Environment),
+        GIT_DIR: path.join(cwd, ".git"),
       }),
-      () => driver.checkpoints.captureCheckpoint({ cwd, checkpointRef }),
-      (previous) =>
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env.GIT_DIR;
-          else process.env.GIT_DIR = previous;
-        }),
     );
     assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
     assert.strictEqual((yield* git(["ls-tree", "-r", checkpointRef, "--", "empty"])).stdout, "");
@@ -1133,6 +1127,8 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
       yield* fileSystem.writeFileString(path.join(cwd, "ignored.txt"), "keep\n");
       yield* fileSystem.makeDirectory(path.join(cwd, "untracked"));
       yield* fileSystem.writeFileString(path.join(cwd, "untracked", "file.txt"), "remove\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked", ".gitignore"), "hidden.txt\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked", "hidden.txt"), "remove\n");
       assert.isTrue(
         yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
       );
@@ -1149,6 +1145,43 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
           args: ["diff", "--cached", "--name-only"],
         });
         assert.strictEqual(staged.stdout.trim(), "outside.txt");
+      }
+      yield* fileSystem.writeFileString(path.join(cwd, "checkpoint.txt"), "checkpoint\n");
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      yield* fileSystem.writeFileString(path.join(cwd, "checkpoint.txt"), "later\n");
+      let deepest = cwd;
+      for (let depth = 0; depth < 4; depth++) {
+        yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "d/.gitignore\n");
+        deepest = path.join(deepest, "d");
+        yield* fileSystem.makeDirectory(deepest);
+      }
+      yield* fileSystem.writeFileString(path.join(deepest, ".gitignore"), "hidden.txt\n");
+      yield* fileSystem.writeFileString(path.join(deepest, "hidden.txt"), "remove\n");
+      const incomplete = yield* driver.checkpoints
+        .restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false })
+        .pipe(Effect.flip);
+      assert.strictEqual(incomplete._tag, "VcsProcessExitError");
+      assert.strictEqual(
+        yield* fileSystem.readFileString(path.join(cwd, "checkpoint.txt")),
+        "checkpoint\n",
+      );
+      assert.strictEqual(
+        (yield* driver.execute({
+          operation: "test",
+          cwd,
+          args: ["diff", "--cached", "--name-only", "--", "."],
+        })).stdout,
+        "",
+      );
+      if (nested) {
+        assert.strictEqual(
+          (yield* driver.execute({
+            operation: "test",
+            cwd: root,
+            args: ["diff", "--cached", "--name-only"],
+          })).stdout.trim(),
+          "outside.txt",
+        );
       }
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),

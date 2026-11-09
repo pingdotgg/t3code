@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseInlineMarkdown } from "./composer-rich-text";
+import { inlineMarkdownUnitMarks, parseInlineMarkdown } from "./composer-rich-text";
 
 describe("composer rich text markdown", () => {
   it("preserves unmatched markers, escaped markers, and identifiers", () => {
@@ -54,6 +54,24 @@ describe("composer rich text markdown", () => {
   it("keeps code span contents literal", () => {
     expect(parseInlineMarkdown("`**not bold**`")).toEqual([
       { text: "**not bold**", marks: ["code"] },
+    ]);
+  });
+
+  it("maps each source character to its marks, or null for a dropped delimiter", () => {
+    const bold = ["bold"];
+    expect(inlineMarkdownUnitMarks("**`*` w** \\*")).toEqual([
+      null,
+      null,
+      null,
+      ["bold", "code"],
+      null,
+      bold,
+      bold,
+      null,
+      null,
+      [],
+      [],
+      [],
     ]);
   });
 });

@@ -1,57 +1,89 @@
-import {
-  EnvironmentId,
-  ProjectId,
-  ThreadId,
-  type OrchestrationV2ThreadFamily,
-} from "@t3tools/contracts";
-import {
-  presentThreadShell,
-  type EnvironmentShellState,
-} from "@t3tools/client-runtime/state/shell";
+import { EnvironmentId, ProjectId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { v2ThreadShell } from "../../../../packages/client-runtime/src/state/orchestrationV2TestFixtures";
-import * as Option from "effect/Option";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 
-const fixture = vi.hoisted(() => ({ registry: null as AtomRegistry.AtomRegistry | null }));
-vi.mock("@effect/atom-react", () => ({
-  useAtomValue: <A>(atom: Atom.Atom<A>) => fixture.registry!.get(atom),
+const state = vi.hoisted(() => ({
+  reply: null as unknown,
+  registry: null as AtomRegistry.AtomRegistry | null,
 }));
-vi.mock("./atom-registry", () => ({ appAtomRegistry: {} }));
-vi.mock("./projects", () => ({ environmentProjects: {} }));
-vi.mock("./server", () => ({ environmentServerConfigsAtom: {}, serverEnvironment: {} }));
-vi.mock("./assets", () => ({ projectFaviconUrlAtom: {} }));
-vi.mock("../native/ProjectChipIconImages", () => ({
-  projectGlyphImageAtom: {},
-  projectGlyphKey: {},
+vi.mock("@effect/atom-react", () => ({
+  useAtomValue: <A>(atom: Atom.Atom<A>) => state.registry!.get(atom),
 }));
 vi.mock("./threads", async () => {
-  const { Atom, AsyncResult } = await import("effect/reactivity");
-  const shells = Atom.make<ReadonlyMap<string, ReturnType<typeof presentThreadShell>>>(new Map());
-  const family = Atom.make<AsyncResult.AsyncResult<OrchestrationV2ThreadFamily, string>>(
-    AsyncResult.initial(),
-  );
+  const { Atom } = await import("effect/reactivity");
+  const shells = Atom.make<ReadonlyMap<string, unknown>>(new Map());
   return {
     environmentThreadDetails: {},
     environmentThreadShells: {
       threadShellAtom: (ref: { threadId: string }) =>
         Atom.make((get) => get(shells).get(ref.threadId) ?? null),
-      threadRefsAtom: Atom.make([]),
+      threadRefsAtom: Atom.make([{ environmentId: "remote", threadId: "older-thread" }]),
     },
-    threadFamilies: { familyAtom: () => family },
-    testAtoms: { shells, family },
+    testShells: shells,
   };
 });
-vi.mock("./shell", async () => {
-  const { Atom } = await import("effect/reactivity");
-  const { EMPTY_SHELL_STATE } = await import("@t3tools/client-runtime/state/shell");
-  const state = Atom.make(EMPTY_SHELL_STATE);
-  return { environmentShell: { stateValueAtom: () => state }, testShell: state };
-});
+vi.mock(import("./orchestration"), () => ({
+  orchestrationEnvironment: { threadLinkMetadata: () => state.reply } as never,
+}));
+vi.mock(import("./atom-registry"), () => ({ appAtomRegistry: {} as never }));
+vi.mock(import("./projects"), () => ({ environmentProjects: {} as never }));
+vi.mock(import("./server"), () => ({
+  environmentServerConfigsAtom: {} as never,
+  serverEnvironment: {} as never,
+}));
+vi.mock(import("./assets"), () => ({ projectFaviconUrlAtom: (() => null) as never }));
+vi.mock(import("../native/ProjectChipIconImages"), () => ({
+  projectGlyphImageAtom: (() => null) as never,
+  projectGlyphKey: (() => "") as never,
+}));
 
 import { resolveThreadLink, useLiveThreadLinkLabels } from "./entities";
+
+function setup() {
+  const reply = Atom.make<
+    AsyncResult.AsyncResult<Record<string, { title: string; projectId: ProjectId | null }>, string>
+  >(AsyncResult.initial());
+  state.reply = reply;
+  const registry = AtomRegistry.make();
+  state.registry = registry;
+  return { registry, reply };
+}
+
+it("uses confirmed matches instead of provisional titles when resolving legacy links", () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const local: ScopedThreadRef = {
+    environmentId: EnvironmentId.make("local"),
+    threadId: ThreadId.make("older-thread"),
+  };
+  const remote: ScopedThreadRef = { ...local, environmentId: EnvironmentId.make("remote") };
+  const link = { environmentId: null, threadId: local.threadId };
+  const resolve = () => resolveThreadLink(registry.get.bind(registry), link, local.environmentId);
+  const release = registry.mount(reply);
+  try {
+    expect(resolve()).toEqual(remote);
+    registry.set(reply, AsyncResult.failure(Cause.fail("offline")));
+    expect(resolve()).toEqual(remote);
+    expect(resolveThreadLink(registry.get.bind(registry), local, remote.environmentId)).toEqual(
+      local,
+    );
+    registry.set(
+      reply,
+      AsyncResult.success({
+        [local.threadId]: { title: "Thread", projectId: ProjectId.make("project") },
+      }),
+    );
+    expect(resolve()).toEqual(local);
+    registry.set(reply, AsyncResult.success({}));
+    expect(resolve()).toEqual(remote);
+  } finally {
+    release();
+  }
+});
 
 const environmentId = EnvironmentId.make("7a31051f-0548-4565-b69f-360ed083efb5");
 const threadId = ThreadId.make("56032bd4-f15e-4d85-8e84-e3c1a58ae546");
@@ -65,125 +97,44 @@ const target = {
   lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
 } satisfies typeof v2ThreadShell;
 
-async function setup() {
-  const { testAtoms } = await vi.importMock<{
-    testAtoms: {
-      shells: Atom.Writable<ReadonlyMap<string, ReturnType<typeof presentThreadShell>>>;
-      family: Atom.Writable<AsyncResult.AsyncResult<OrchestrationV2ThreadFamily, string>>;
-    };
-  }>("./threads");
-  const { testShell } = await vi.importMock<{ testShell: Atom.Writable<EnvironmentShellState> }>(
-    "./shell",
+it("labels and opens a raw v2 link to an existing cross-project thread omitted from the shell", () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  registry.set(reply, AsyncResult.success({}));
+  expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
+    "Resumed Thread no longer available with Opus on high, fast mode off.",
   );
-  const registry = AtomRegistry.make();
-  fixture.registry = registry;
-  return { registry, testShell, ...testAtoms };
-}
-
-describe("mobile thread link resolution", () => {
-  it("labels and opens a raw v2 link to an existing cross-project thread omitted from the shell", async () => {
-    const { registry, family } = await setup();
-    try {
-      expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
-        "Resumed Thread no longer available with Opus on high, fast mode off.",
-      );
-      registry.set(family, AsyncResult.success({ snapshotSequence: 4, threads: [target] }));
-      expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
-        `Resumed [${target.title}](${href}) with Opus on high, fast mode off.`,
-      );
-      const link = parseThreadLinkHref(href);
-      expect(link).not.toBeNull();
-      expect(link && resolveThreadLink((atom) => registry.get(atom), link, environmentId)).toEqual({
-        environmentId,
-        threadId,
-      });
-    } finally {
-      registry.dispose();
-      fixture.registry = null;
-    }
+  registry.set(
+    reply,
+    AsyncResult.success({ [threadId]: { title: target.title, projectId: target.projectId } }),
+  );
+  expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
+    `Resumed [${target.title}](${href}) with Opus on high, fast mode off.`,
+  );
+  const link = parseThreadLinkHref(href);
+  expect(link && resolveThreadLink(registry.get.bind(registry), link, environmentId)).toEqual({
+    environmentId,
+    threadId,
   });
+});
 
-  it.each([
-    "pending",
-    "denied",
-    "missing",
-    "removed",
-    "reconnected",
-    "archived",
-    "deleted",
-  ] as const)("keeps an unresolved %s target unavailable and unopenable", async (state) => {
-    const { registry, family, testShell } = await setup();
-    try {
-      registry.set(
-        family,
-        state === "pending"
-          ? AsyncResult.initial(true)
-          : state === "denied"
-            ? AsyncResult.failure(Cause.fail("Unauthorized"))
-            : AsyncResult.success({
-                snapshotSequence: 4,
-                threads:
-                  state === "missing"
-                    ? []
-                    : [
-                        {
-                          ...target,
-                          archivedAt: state === "archived" ? target.createdAt : null,
-                          deletedAt: state === "deleted" ? target.createdAt : null,
-                        },
-                      ],
-              }),
-      );
-      if (state === "removed")
-        registry.set(testShell, {
-          ...registry.get(testShell),
-          removedAt: new Map([[threadId, 5]]),
-        });
-      if (state === "reconnected")
-        registry.set(testShell, {
-          ...registry.get(testShell),
-          snapshot: Option.some({
-            schemaVersion: 1,
-            snapshotSequence: 6,
-            projects: [],
-            threads: [],
-            archivedThreads: [],
-            olderSettled: { before: "2026-11-01T00:00:00.000Z", asOfSequence: 6, counts: [] },
-          }),
-        });
-      expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
-        "Resumed Thread no longer available with Opus on high, fast mode off.",
-      );
-      const link = parseThreadLinkHref(href);
-      expect(
-        link && resolveThreadLink((atom) => registry.get(atom), link, environmentId),
-      ).toBeNull();
-      const otherEnvironment = EnvironmentId.make("synthetic-other-environment");
-      expect(useLiveThreadLinkLabels(markdown, otherEnvironment)).toBe(
-        "Resumed Thread on another machine with Opus on high, fast mode off.",
-      );
-    } finally {
-      registry.dispose();
-      fixture.registry = null;
-    }
-  });
-
-  it("prefers the live shell title over an older family read", async () => {
-    const { registry, family, shells } = await setup();
-    try {
-      registry.set(family, AsyncResult.success({ snapshotSequence: 4, threads: [target] }));
-      registry.set(
-        shells,
-        new Map([
-          [threadId, presentThreadShell(environmentId, { ...target, title: "Renamed thread" })],
-        ]),
-      );
-      expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
-        `Resumed [Renamed thread](${href}) with Opus on high, fast mode off.`,
-      );
-    } finally {
-      registry.dispose();
-      fixture.registry = null;
-    }
-  });
+it("prefers the live shell title over the metadata lookup", async () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const { testShells } = await vi.importMock<{
+    testShells: Atom.Writable<ReadonlyMap<string, unknown>>;
+  }>("./threads");
+  registry.set(
+    reply,
+    AsyncResult.success({ [threadId]: { title: target.title, projectId: target.projectId } }),
+  );
+  registry.set(
+    testShells,
+    new Map([
+      [threadId, presentThreadShell(environmentId, { ...target, title: "Renamed thread" })],
+    ]),
+  );
+  expect(useLiveThreadLinkLabels(markdown, environmentId)).toBe(
+    `Resumed [Renamed thread](${href}) with Opus on high, fast mode off.`,
+  );
 });

@@ -6,8 +6,8 @@ import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
-import DesktopPairingMigration from "./Migrations/080_AuthDesktopPairingSessionTtl.ts";
-import RealtimeVoiceHistoryResumeMigration from "./Migrations/081_RealtimeVoiceHistoryResume.ts";
+import DesktopPairingMigration from "./Migrations/081_AuthDesktopPairingSessionTtl.ts";
+import RealtimeVoiceHistoryResumeMigration from "./Migrations/082_RealtimeVoiceHistoryResume.ts";
 import { reconcileForkMigrationLedger } from "./reconcileForkMigrationLedger.ts";
 
 const forkHistory = [
@@ -394,7 +394,7 @@ describe("desktop pairing backport upgrade", () => {
           "ScheduledTaskWebhooks",
         );
         assert.strictEqual(
-          history.find((row) => row.migration_id === 80)?.name,
+          history.find((row) => row.migration_id === 81)?.name,
           "AuthDesktopPairingSessionTtl",
         );
         assert.strictEqual(history.length, migrationManifest.length);
@@ -429,15 +429,16 @@ const forkRenumberTail = [
   [77, "RepairBooleanSettledOverride"],
   [78, "DropOrchestrationEventCorrelationIndex"],
   [79, "DelegatedRecoveryIndexes"],
-  [80, "AuthDesktopPairingSessionTtl"],
-  [81, "RealtimeVoiceHistoryResume"],
+  [80, "ScheduledTaskThreadMode"],
+  [81, "AuthDesktopPairingSessionTtl"],
+  [82, "RealtimeVoiceHistoryResume"],
 ];
 
 const readRenumberTail = Effect.map(readHistory, (history) =>
   history.filter((row) => row.migration_id >= 69).map((row) => [row.migration_id, row.name]),
 );
 
-// Upstream 070–079 must have run, not just been recorded.
+// Upstream 070–080 must have run, not just been recorded.
 const assertUpstreamSchema = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const hasColumn = (table: string, column: string) =>
@@ -450,6 +451,7 @@ const assertUpstreamSchema = Effect.gen(function* () {
     yield* hasColumn("orchestration_v2_projection_subagents", "completion_delivery_state"),
   );
   assert.isTrue(yield* hasColumn("projection_projects", "pinned_at"));
+  assert.isTrue(yield* hasColumn("scheduled_tasks", "thread_mode"));
   const indexes = yield* sql`
     SELECT name FROM sqlite_master
     WHERE type = 'index' AND name IN (
@@ -467,6 +469,7 @@ describe("fork migration renumber", () => {
     [69, 70, 71],
     [72, 73, 74],
     [76, 77, 78],
+    [79, 80, 81],
   ] as const)(
     "reruns fork migrations recorded after upstream migration %i",
     ([throughId, pairingId, voiceId]) =>
@@ -500,16 +503,16 @@ describe("fork migration renumber", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("adds only the fork migrations to an upstream database at 079", () =>
+  it.effect("adds only the fork migrations to an upstream database at 080", () =>
     Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 79 });
+      yield* runMigrations({ toMigrationInclusive: 80 });
       const before = yield* readHistory;
       const executed = yield* runMigrations();
       assert.deepStrictEqual(
         executed.map(([id, name]) => [id, name]),
         [
-          [80, "AuthDesktopPairingSessionTtl"],
-          [81, "RealtimeVoiceHistoryResume"],
+          [81, "AuthDesktopPairingSessionTtl"],
+          [82, "RealtimeVoiceHistoryResume"],
         ],
       );
       assert.deepStrictEqual((yield* readHistory).slice(0, before.length), before);

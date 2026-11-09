@@ -20,10 +20,12 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import { HttpBody, HttpClient, HttpClientRequest, HttpRouter } from "effect/http";
 
@@ -142,6 +144,26 @@ const serveSnapshots = (clientId: string, result: unknown) =>
     return inputs;
   });
 
+/** Records every span and the order spans start and end in, by span ID. */
+const recordSpans = () => {
+  const spans: Array<Tracer.NativeSpan> = [];
+  const order: Array<string> = [];
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options);
+      spans.push(span);
+      order.push(`start ${span.spanId}`);
+      const end = span.end.bind(span);
+      span.end = (endTime, exit) => {
+        end(endTime, exit);
+        order.push(`end ${span.spanId}`);
+      };
+      return span;
+    },
+  });
+  return { tracer, spans, order };
+};
+
 const callTool = (name: string, args: Record<string, unknown>) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -180,12 +202,14 @@ it.effect.each([
   ({ input, open, message, ...options }) =>
     Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
+      const traced = recordSpans();
       const result = yield* server.callTool({ name: "device_screenshot", arguments: input }).pipe(
         Effect.provideService(McpInvocationContext.McpInvocationContext, {
           ...invocation,
           capabilities: new Set(["device"] as const),
         }),
         Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.withTracer(traced.tracer),
       );
       expect(result.isError).toBe(true);
       expect(result.content).toEqual([{ type: "text", text: message }]);
@@ -193,6 +217,14 @@ it.effect.each([
         error: { message, operation: "screenshot" },
       });
       expect(JSON.stringify(result)).not.toContain("private hub output");
+      // The tool's span names it, never its arguments.
+      expect(
+        traced.spans
+          .filter((span) => span.name.startsWith("mcp.tool."))
+          .map((span) => Object.fromEntries(span.attributes)),
+      ).toEqual([
+        { "rpc.system": "mcp", "rpc.method": "tools/call", "mcp.tool.name": "device_screenshot" },
+      ]);
     }).pipe(
       Effect.provide(
         McpHttpServer.layerDeviceToolkit.pipe(
@@ -434,6 +466,57 @@ it.effect.each([
       expect(nextDefault.structuredContent).toMatchObject({ title: "Snapshot 7", screenshot });
       expect(nextDefault.structuredContent).not.toHaveProperty("accessibilityTree");
       expect(requests).toBe(7);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("saves the uncapped screenshot while the agent sees the capped one", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* McpServer.McpServer;
+      const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
+      const connected = yield* Deferred.make<void>();
+      const capped =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=";
+      const full =
+        "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVR4nGNgYGBgYAAAAAYAAXKCmeoAAAAASUVORK5CYII=";
+      const events = yield* broker.connect({ clientId: "mcp-save-client", environmentId });
+      yield* Stream.runForEach(events, (event) => {
+        if (event.type === "connected") return Deferred.succeed(connected, undefined);
+        expect(event.request.input).toEqual({ fullScreenshot: true });
+        return broker.respond({
+          clientId: "mcp-save-client",
+          connectionId: event.connectionId,
+          requestId: event.request.requestId,
+          ok: true,
+          result: {
+            ...snapshotResult,
+            screenshot: { mimeType: "image/png", data: capped, width: 1, height: 1 },
+            fullScreenshot: { data: full, width: 2, height: 2 },
+          },
+        });
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(connected);
+
+      const snapshot = yield* server
+        .callTool({
+          name: "preview_snapshot",
+          arguments: { tabId: alternateTabId, save: true, includeImage: true },
+        })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      const { screenshotPath } = snapshot.structuredContent as { readonly screenshotPath: string };
+      const saved = yield* (yield* FileSystem.FileSystem).readFile(screenshotPath);
+
+      expect(Buffer.from(saved).toString("base64")).toBe(full);
+      expect(snapshot.structuredContent).not.toHaveProperty("fullScreenshot");
+      expect(snapshot.content.at(-1)).toEqual({
+        type: "image",
+        mimeType: "image/png",
+        data: new Uint8Array(Buffer.from(capped, "base64")),
+      });
     }),
   ).pipe(Effect.provide(layerTest)),
 );
@@ -906,8 +989,10 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           }),
         ),
       );
+      const traced = recordSpans();
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
         Layer.build,
+        Effect.withTracer(traced.tracer),
       );
       const httpClient = yield* HttpClient.HttpClient;
       const call = (token: string | undefined) =>
@@ -938,6 +1023,21 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         });
 
       expect((yield* call(providerToken)).status).toBe(200);
+      // The tool gets its own span, without its arguments, which starts once authentication has ended.
+      const toolSpan = traced.spans.find((span) => span.name === "mcp.tool.probe");
+      expect(Object.fromEntries(toolSpan?.attributes ?? [])).toEqual({
+        "rpc.system": "mcp",
+        "rpc.method": "tools/call",
+        "mcp.tool.name": "probe",
+      });
+      const authSpan = traced.spans.find(
+        (span) =>
+          span.name === "McpHttpServer.authenticateRequest" && span.traceId === toolSpan?.traceId,
+      );
+      expect(authSpan).toBeDefined();
+      expect(traced.order.slice(0, traced.order.indexOf(`start ${toolSpan?.spanId}`))).toContain(
+        `end ${authSpan?.spanId}`,
+      );
       expect((yield* call(clientToken)).status).toBe(200);
       expect(seen.map((scope) => scope.requestNamespace)).toEqual([
         "provider-session",
@@ -954,9 +1054,22 @@ it.effect("admits provider and OAuth client credentials and points only clients 
       expect(expiredClient.headers["www-authenticate"]).toContain("resource_metadata=");
       expect(expiredClient.headers["www-authenticate"]).toContain('error="invalid_token"');
 
+      const spansBeforeRejection = traced.spans.length;
       const deadProvider = yield* call("deadProviderToken");
       expect(deadProvider.status).toBe(401);
       expect(deadProvider.headers["www-authenticate"]).toBe('Bearer error="invalid_token"');
+      // A rejected credential is recorded on the auth span, and nothing is handled.
+      const rejectedSpans = traced.spans.slice(spansBeforeRejection);
+      expect(
+        rejectedSpans
+          .filter((span) => span.name === "McpHttpServer.authenticateRequest")
+          .map((span) => span.events.map(([name]) => name)),
+      ).toEqual([[expect.stringContaining("unknown_or_expired_token")]]);
+      expect(
+        rejectedSpans.filter(
+          (span) => span.name.startsWith("mcp.tool.") || span.name.startsWith("McpServer."),
+        ),
+      ).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -56,6 +56,17 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
+const mockEventSink = (implementation: Partial<EventSink.EventSinkV2["Service"]>) =>
+  Layer.mock(EventSink.EventSinkV2)({
+    consumeProviderEvents: (source, process, after) =>
+      source.pipe(
+        Stream.mapEffect((event) => process(event).pipe(Effect.andThen(after))),
+        Stream.takeUntil(Boolean),
+        Stream.runDrain,
+      ),
+    ...implementation,
+  });
+
 const driver = ProviderDriverKind.make("codex");
 const rootAppThread = (id: ThreadId) =>
   ({
@@ -74,7 +85,7 @@ const layerRunExecutionTest = RunExecutionService.layer.pipe(
       PreviewAgentActivity.layer,
       Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
       layerTurnItemPositionsTest,
-      Layer.mock(EventSink.EventSinkV2)({}),
+      mockEventSink({}),
       IdAllocator.layer,
       Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
         ingestNormalized: () => Effect.succeed([]),
@@ -901,7 +912,7 @@ it.effect("passes the thread's MCP app context to the provider under a safe key"
               captureBaseline: () => Effect.void,
             }),
             layerTurnItemPositionsTest,
-            Layer.mock(EventSink.EventSinkV2)({}),
+            mockEventSink({}),
             IdAllocator.layer,
             Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
               ingestNormalized: () => Effect.succeed([]),
@@ -930,7 +941,7 @@ it.effect("fails the run when its ownership check cannot be read before calling 
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             writeIfRunCurrent: (input) =>
               Ref.update(writes, (current) => [...current, ...input.events]).pipe(
                 Effect.as({ committed: true, storedEvents: [] }),
@@ -1163,7 +1174,7 @@ it.effect("starts the provider when checkpoint baseline capture fails", () =>
               ),
           }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             writeWithEffects: (input) =>
               Ref.update(writes, (current) => [
                 ...current,
@@ -1277,7 +1288,7 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
                 scenario === "start-guard" ? Effect.void : Effect.die("not reached"),
             }),
             layerTurnItemPositionsTest,
-            Layer.mock(EventSink.EventSinkV2)({
+            mockEventSink({
               writeIfRunCurrent: (input) =>
                 Effect.gen(function* () {
                   assert.equal(input.threadId, threadId);
@@ -1457,7 +1468,7 @@ it.effect("ingests new member threads of an owned child after the root turn term
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {
@@ -1717,7 +1728,7 @@ it.effect("ends a nested native subagent and its thread when the root run is int
           PreviewAgentActivity.layer,
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.as(
@@ -2130,7 +2141,7 @@ it.effect(
               captureBaseline: () => Effect.void,
             }),
             layerTurnItemPositionsTest,
-            Layer.mock(EventSink.EventSinkV2)({
+            mockEventSink({
               write: () => Effect.succeed([]),
               writeWithEffects: (input) =>
                 Effect.gen(function* () {
@@ -3216,7 +3227,7 @@ function captureRootRunTermination(input: {
           }),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             write: (payload) =>
               Effect.gen(function* () {
                 for (const event of payload.events) {
@@ -3738,7 +3749,7 @@ function runBackgroundItemScenario(
           Layer.succeed(PreviewAgentActivity.PreviewAgentActivity, previewActivity),
           Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
           layerTurnItemPositionsTest,
-          Layer.mock(EventSink.EventSinkV2)({
+          mockEventSink({
             write: () => Effect.succeed([]),
             writeWithEffects: (input) =>
               Effect.gen(function* () {

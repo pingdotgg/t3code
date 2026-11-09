@@ -65,9 +65,6 @@ vi.mock("../../state/olderSettledShelf", () => ({ useOlderSettledCount: () => 0 
 vi.mock("../../state/project-grouping", () => ({
   useMobileProjectGroupingSettings: () => ({ sidebarProjectGroupingMode: "none" }),
 }));
-vi.mock("./use-legacy-plan-mode-enabled", () => ({
-  useLegacyPlanModeState: () => ({ enabled: false, loaded: true }),
-}));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("../../state/use-remote-environment-registry", () => ({

@@ -199,7 +199,7 @@ export function DelegationSettingsPanel() {
       <SettingsSection {...searchableSetting("delegation")}>
         <SettingsRow
           title="How tiers resolve"
-          description="An agent asked to spawn a child at a tier starts with the tier's first candidate. The server skips candidates whose provider is unavailable or whose remaining usage is below the candidate's minimum headroom, then falls through to the next."
+          description="A child spawned at a tier tries the tier's first candidate. Candidates whose provider is unavailable or whose remaining usage is below their minimum headroom are skipped for the next."
         />
       </SettingsSection>
       {TIERS.map((tier) => {

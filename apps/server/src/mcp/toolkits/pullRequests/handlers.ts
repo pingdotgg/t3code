@@ -32,6 +32,7 @@ import {
 } from "../../../sourceControl/threadPullRequests.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { threadNotFound } from "../../threadAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   type PullRequestChecksView,
@@ -49,7 +50,6 @@ import {
   type PullRequestTargetInput,
   PullRequestWatchFailedError,
   PullRequestWatchFromSubagentError,
-  PullRequestThreadNotFoundError,
   PullRequestThreadRequiredError,
   PullRequestGuideFailedError,
   PullRequestProjectNotFoundError,
@@ -284,7 +284,7 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => new Failure()),
     );
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
-      return yield* new PullRequestThreadNotFoundError({ threadId });
+      return yield* threadNotFound(engine, threadId, `Thread ${threadId} was not found.`);
     }
     return thread.value;
   });

@@ -128,6 +128,7 @@ export function ThreadSubagentGroup(props: {
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
       model: live?.model ?? null,
+      modelSelection: live?.modelSelection,
     };
   });
   const grouped = agents.length > 1;

@@ -3,6 +3,7 @@ import {
   applyShellEnvironment,
   buildEnvironmentCaptureCommand,
   listLoginShellCandidates,
+  readUserLoginShell,
   setWindowsPath,
 } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
@@ -79,6 +80,8 @@ export class DesktopShellEnvironment extends Context.Service<
     // Desktop owns discovery, including on cache misses; the backend receives updates over fd4.
     readonly installIntoProcess: Effect.Effect<boolean>;
     readonly awaitDiscovery: Effect.Effect<boolean>;
+    /** Whether the user's own login shell, not a fallback, gave the PATH a new terminal gets. */
+    readonly awaitUserShellDiscovery: Effect.Effect<boolean>;
     readonly updates: Stream.Stream<DesktopShellEnvironmentSnapshot>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
@@ -417,19 +420,24 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
   function* (
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
-    boolean,
+    ShellDiscovery,
     never,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
     const fileSystem = yield* FileSystem.FileSystem;
     const shellEnvironment: EnvironmentPatch = {};
+    const userShells = [config.env.SHELL?.trim(), readUserLoginShell()];
 
+    let answeredBy: string | undefined;
     for (const shell of listLoginShellCandidates(config.platform, config.env.SHELL)) {
       Object.assign(
         shellEnvironment,
         yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES, config.env),
       );
-      if (shellEnvironment.PATH) break;
+      if (shellEnvironment.PATH) {
+        answeredBy = shell;
+        break;
+      }
     }
 
     const launchctlPath =
@@ -518,24 +526,33 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       }
     }
 
-    return Option.isSome(trimNonEmpty(shellEnvironment.PATH));
+    const prepared = Option.isSome(trimNonEmpty(shellEnvironment.PATH));
+    return { prepared, fromUserShell: prepared && userShells.includes(answeredBy) };
   },
 );
+
+/** `fromUserShell` is false when only a fallback shell answered, whose PATH can miss folders. */
+interface ShellDiscovery {
+  readonly prepared: boolean;
+  readonly fromUserShell: boolean;
+}
 
 const installShellEnvironment = (
   config: ShellEnvironmentConfig,
 ): Effect.Effect<
-  boolean,
+  ShellDiscovery,
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
 > => {
   if (config.platform === "win32") {
-    return installWindowsEnvironment(config);
+    return installWindowsEnvironment(config).pipe(
+      Effect.map((prepared) => ({ prepared, fromUserShell: prepared })),
+    );
   }
   if (config.platform === "darwin" || config.platform === "linux") {
     return installPosixEnvironment(config);
   }
-  return Effect.succeed(false);
+  return Effect.succeed({ prepared: false, fromUserShell: false });
 };
 
 const ShellEnvironmentCache = Schema.fromJsonString(
@@ -578,7 +595,7 @@ export const make = Effect.gen(function* () {
   const cachePath = path.join(environment.stateDir, "shell-environment-cache.json");
   const changes = yield* PubSub.unbounded<DesktopShellEnvironmentSnapshot>();
   const latest = yield* Ref.make<Option.Option<DesktopShellEnvironmentSnapshot>>(Option.none());
-  const discovered = yield* Deferred.make<boolean>();
+  const discovered = yield* Deferred.make<ShellDiscovery>();
   const publish = Effect.fn("desktop.shellEnvironment.publish")(function* (
     patch: ShellEnvironmentPatch,
     discovered = false,
@@ -597,7 +614,11 @@ export const make = Effect.gen(function* () {
   const refresh = Effect.gen(function* () {
     // Refresh from the inherited baseline so removed cached paths and values do not survive.
     const fresh = { ...inherited };
-    const prepared = yield* installShellEnvironment({ env: fresh, platform: environment.platform });
+    const discovery = yield* installShellEnvironment({
+      env: fresh,
+      platform: environment.platform,
+    });
+    const { prepared } = discovery;
     const patch = Object.fromEntries(
       Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, fresh[name] ?? null]),
     );
@@ -616,7 +637,7 @@ export const make = Effect.gen(function* () {
         Effect.catch(() => Effect.logWarning("Could not cache shell environment")),
       );
     }
-    return prepared;
+    return discovery;
   }).pipe(
     Effect.provideService(FileSystem.FileSystem, fileSystem),
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -669,7 +690,14 @@ export const make = Effect.gen(function* () {
   );
   return DesktopShellEnvironment.of({
     installIntoProcess,
-    awaitDiscovery: installIntoProcess.pipe(Effect.andThen(Deferred.await(discovered))),
+    awaitDiscovery: installIntoProcess.pipe(
+      Effect.andThen(Deferred.await(discovered)),
+      Effect.map(({ prepared }) => prepared),
+    ),
+    awaitUserShellDiscovery: installIntoProcess.pipe(
+      Effect.andThen(Deferred.await(discovered)),
+      Effect.map(({ fromUserShell }) => fromUserShell),
+    ),
     updates,
   });
 });

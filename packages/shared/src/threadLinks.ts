@@ -12,9 +12,10 @@ const HOSTED_SEGMENT = "[A-Za-z0-9_%-]+";
 const HOSTED_LINK = `${HOSTED_PREFIX.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")}${HOSTED_SEGMENT}/${HOSTED_SEGMENT}`;
 // Code comes first in the alternation so a link written inside a code span or fence is skipped.
 // Hermes drops named groups from matchAll and replace results, so captures stay positional:
-// 1 fence, 3 span, 5 label, 6 href, 7 autolink, 8 bare.
+// 1 fence, 3 span, 5 label, 6 angle href, 7 href, 8 autolink, 9 bare.
+// A labeled link's destination may be angle-bracketed, as CommonMark allows: [label](<href>).
 const THREAD_LINK_OUTSIDE_CODE = new RegExp(
-  String.raw`((\`{3,}|~{3,})[\s\S]*?(?:\2|$))|((\`+)[^\n]*?\4)|\[([^\]\n]*)\]\((t3-thread:\/\/v[12]\/[^\s)]+|${HOSTED_LINK})\)|<(t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(${HOSTED_LINK})(?![\w%/?#-])`,
+  String.raw`((\`{3,}|~{3,})[\s\S]*?(?:\2|$))|((\`+)[^\n]*?\4)|\[([^\]\n]*)\]\((?:<(t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(t3-thread:\/\/v[12]\/[^\s>)]+|${HOSTED_LINK}))\)|<(t3-thread:\/\/v[12]\/[^\s<>]+|${HOSTED_LINK})>|(${HOSTED_LINK})(?![\w%/?#-])`,
   "g",
 );
 
@@ -73,7 +74,7 @@ export function parseThreadLinkHref(href: string): ThreadLink | null {
   return environmentId === null || threadId === null ? null : { environmentId, threadId };
 }
 
-export function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
+function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   try {
     const decoded = decodeURIComponent(threadId);
     return decoded === threadId ? null : Option.getOrNull(decodeThreadId(decoded));
@@ -127,7 +128,9 @@ const linkLabel = (label: string | undefined) =>
 /** Without a label, an autolink: clients show the thread's current title. */
 export function formatThreadLink(ref: ThreadLink, label?: string): string {
   const cleaned = linkLabel(label);
-  return cleaned ? `[${cleaned}](${threadLinkHref(ref)})` : `<${threadLinkHref(ref)}>`;
+  const href = threadLinkHref(ref);
+  const destination = /[()]/.test(href) ? `<${href}>` : href;
+  return cleaned ? `[${cleaned}](${destination})` : `<${href}>`;
 }
 
 /** What a person copies out of T3 Code: a Markdown link that opens the thread anywhere. */
@@ -152,7 +155,7 @@ export function threadLinkRefs(
 ): ReadonlyArray<ScopedThreadRef> {
   const refs = new Map<string, ScopedThreadRef>();
   for (const match of markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)) {
-    const href = match[6] ?? match[7] ?? match[8];
+    const href = match[6] ?? match[7] ?? match[8] ?? match[9];
     const link = href === undefined ? null : parseThreadLinkHref(href);
     if (link === null) continue;
     for (const ref of threadLinkCandidates(link, messageEnvironmentId)) {
@@ -186,11 +189,12 @@ export function replaceThreadLinks(
       _span: string | undefined,
       _spanMarker: string | undefined,
       label: string | undefined,
+      angleHref: string | undefined,
       labeledHref: string | undefined,
       autolink: string | undefined,
       bare: string | undefined,
     ) => {
-      const href = labeledHref ?? autolink ?? bare;
+      const href = angleHref ?? labeledHref ?? autolink ?? bare;
       const link = href === undefined ? null : parseThreadLinkHref(href);
       return (link && replace(link, label)) ?? source;
     },

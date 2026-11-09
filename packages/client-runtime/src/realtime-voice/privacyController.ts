@@ -77,11 +77,15 @@ const CONFIRM_MIN_GAP_MS = 3_000;
 // so this only covers room echo and output latency. Calibrate with a physical speaker test.
 const RESUME_ECHO_TAIL_MS = 2_000;
 const isVoiceError = Schema.is(ProviderRealtimeVoiceError);
-class VoiceOwnershipUnavailable extends Error {
-  constructor() {
-    super(VOICE_OWNERSHIP_REQUIRED);
+class VoiceOwnershipUnavailable extends Schema.TaggedError<VoiceOwnershipUnavailable>()(
+  "VoiceOwnershipUnavailable",
+  {},
+) {
+  override get message(): string {
+    return VOICE_OWNERSHIP_REQUIRED;
   }
 }
+const isOwnershipUnavailable = Schema.is(VoiceOwnershipUnavailable);
 
 type VoiceState = {
   readonly reason: string | null;
@@ -157,7 +161,7 @@ function readOwnership(
     result.expiresAt === undefined ||
     !Number.isFinite(Date.parse(result.expiresAt))
   ) {
-    throw new VoiceOwnershipUnavailable();
+    throw new VoiceOwnershipUnavailable({});
   }
   return Object.freeze({
     operationId: result.operationId,
@@ -483,10 +487,9 @@ export function createRealtimeVoiceController(deps: {
         const unstarted =
           !value.remoteRequested || (isVoiceError(error) && error.refusedBeforeStart === true);
         if (!unstarted)
-          value.reason =
-            error instanceof VoiceOwnershipUnavailable
-              ? VOICE_OWNERSHIP_REQUIRED
-              : `${VOICE_REPLACEMENT_GATE} ${deps.describeError(error)}`;
+          value.reason = isOwnershipUnavailable(error)
+            ? VOICE_OWNERSHIP_REQUIRED
+            : `${VOICE_REPLACEMENT_GATE} ${deps.describeError(error)}`;
         finish(value, unstarted);
       }
     } finally {

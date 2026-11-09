@@ -439,9 +439,10 @@ export const make = Effect.gen(function* () {
   /**
    * Reads run concurrently, and the caller stores updates in walk order rather
    * than completion order: saved records of deleted transcripts aggregate in
-   * cache order, where the first copy of a duplicate wins.
+   * cache order, where the first copy of a duplicate wins. Untraced: a scan
+   * reads thousands of files, so scanTranscriptDir records the counts instead.
    */
-  const readFileRecords = Effect.fn("UsageService.readFileRecords")(function* (
+  const readFileRecords = Effect.fnUntraced(function* (
     filePath: string,
     size: number,
     mtimeMs: number,
@@ -545,7 +546,6 @@ export const make = Effect.gen(function* () {
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
-    readonly action?: UsageSource["action"];
     readonly files:
       | readonly {
           readonly path: string;
@@ -597,6 +597,10 @@ export const make = Effect.gen(function* () {
       return { path, records, malformedRecords };
     });
     const unread = failedPaths + read.filter((file) => file.failed).length;
+    yield* Effect.annotateCurrentSpan({
+      "usage.files": files.length,
+      "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
+    });
     return {
       provider,
       dir,
@@ -797,7 +801,7 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, action, refreshing, hostId: sourceHostId },
+      { provider, dir, volumeId, files, status, message, refreshing, hostId: sourceHostId },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -861,7 +865,6 @@ export const make = Effect.gen(function* () {
                 .filter(Boolean)
                 .join(" ")
             : sourceMessage,
-        ...(action ? { action } : {}),
         ...(refreshing ? { refreshing } : {}),
       });
     }

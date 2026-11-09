@@ -168,7 +168,7 @@ export function CompletionAudioSettings() {
             ? "Update unsupported selected environments before changing defaults."
             : undefined
         }
-        description="Applies to future top-level threads. Subagents and forks start Off. Voice uses provider-owned hooks and cannot guarantee cancellation of speech already started. Sound plays on web and desktop; voice selection is not configured here."
+        description="Applies to future top-level threads; subagents and forks start Off. Voice uses provider hooks and cannot cancel speech already started. Sound plays on web and desktop."
         resetAction={
           mixedDefault || settings.defaultMode !== "off" ? (
             <SettingResetButton

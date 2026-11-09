@@ -44,6 +44,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PR filesystem ca
       const invalidate = yield* cache
         .invalidate("pr")
         .pipe(Effect.forkChild({ startImmediately: true }));
+      // Another PR's invalidation does not wait on this read; this one's does.
+      yield* cache.invalidate("other-pr");
+      assert.isUndefined(invalidate.pollUnsafe());
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(read);
       yield* Fiber.join(invalidate);

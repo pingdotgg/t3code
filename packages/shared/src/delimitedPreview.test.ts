@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { parseDelimitedPreview } from "./delimitedPreview.ts";
+import { filePreviewDelimiter, parseDelimitedPreview } from "./delimitedPreview.ts";
 
 describe("delimited file previews", () => {
+  it("falls back to the file name under generic MIME types", () => {
+    expect(filePreviewDelimiter({ name: "a.csv", mimeType: "binary/octet-stream" })).toBe(",");
+    expect(filePreviewDelimiter({ name: "a.tsv", mimeType: "application/unknown" })).toBe("\t");
+  });
   it("preserves quoted separators, escaped quotes, blank cells and line breaks", () => {
     expect(
       parseDelimitedPreview('\ufeffname,notes,empty\r\n"A, B","say ""hi""\nagain",\r\n', ","),

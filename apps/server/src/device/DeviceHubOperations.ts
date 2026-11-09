@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -13,6 +14,11 @@ import type { DeviceHostReady, DeviceOperations, HostDevice } from "./DeviceHost
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+// Let the hub's 30 s simctl timeout report its cause first.
+const LIST_TIMEOUT_SECONDS = 40;
+// expo-device-hub 0.19.1 reports a failed simulator listing only as text; its error ids are hashes.
+const SIMULATOR_LIST_FAILED =
+  /^\[apple-utils\] (?:Failed to (?:run `xcrun simctl list devices|parse JSON output:|list devices:)|`xcrun simctl list devices --json` did not respond within )/;
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -63,11 +69,24 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Whether to list AVDs, which the hub does not report until they boot. */
-  readonly androidAvailable: Effect.Effect<boolean>;
+  /** Android gates listing AVDs, which the hub does not report until they boot. */
+  readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
+
+  const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
+    request: HttpClientRequest.HttpClientRequest,
+    schema: Schema.Codec<A, I>,
+  ) {
+    return yield* httpClient
+      .execute(request)
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
+        Effect.scoped,
+      );
+  });
 
   const hubJson = <A, I>(
     request: HttpClientRequest.HttpClientRequest,
@@ -75,18 +94,10 @@ export const makeDeviceHubOperations = (options: {
     operation: string,
     timeout: Duration.Input = Duration.seconds(15),
   ) =>
-    httpClient.execute(request).pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(schema)),
-      Effect.scoped,
+    fetchJson(request, schema).pipe(
       Effect.timeout(timeout),
       Effect.mapError(
-        (cause) =>
-          new DeviceOperationError({
-            operation,
-            reason: "request_failed",
-            cause,
-          }),
+        (cause) => new DeviceOperationError({ operation, reason: "request_failed", cause }),
       ),
     );
 
@@ -106,13 +117,27 @@ export const makeDeviceHubOperations = (options: {
     );
 
   const list: DeviceOperations["list"] = Effect.gen(function* () {
-    const hubList = yield* hubJson(
+    const listed = yield* fetchJson(
       HttpClientRequest.get(`${origin}/api/devices`),
       HubDeviceList,
-      "list",
+    ).pipe(
+      Effect.mapError(
+        (cause) => new DeviceOperationError({ operation: "list", reason: "request_failed", cause }),
+      ),
+      Effect.timeoutOption(Duration.seconds(LIST_TIMEOUT_SECONDS)),
     );
+    if (Option.isNone(listed)) {
+      return {
+        devices: [],
+        detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
+        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
+          options.platformAvailable(platform),
+        ),
+      };
+    }
+    const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.androidAvailable;
+    const androidAvailable = yield* options.platformAvailable("android");
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
@@ -155,10 +180,14 @@ export const makeDeviceHubOperations = (options: {
         }
       }
     }
+    const simulatorsUnlisted =
+      hubList.simulators.length === 0 &&
+      (hubList.errors ?? []).some((error) => SIMULATOR_LIST_FAILED.test(error.message));
     return {
       devices,
       detail: details.join("\n") || undefined,
       androidDiscoveryIncomplete,
+      ...(simulatorsUnlisted ? { incompletePlatforms: ["ios"] as const } : {}),
     };
   }).pipe(Effect.withSpan("DeviceHubOperations.list"));
 

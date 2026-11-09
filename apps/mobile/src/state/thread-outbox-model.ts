@@ -13,6 +13,7 @@ import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell
 import type { ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -34,7 +35,6 @@ import { DraftComposerAttachmentSchema } from "../lib/composer-image-schema";
 import type { ComposerDispatchMode } from "@t3tools/client-runtime/state/composer-dispatch";
 import type { DraftComposerAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { resolveProviderInteractionMode } from "./legacy-plan-mode";
 
 // Keep current writes until a compatible native baseline includes the v4 reader.
 const THREAD_OUTBOX_SCHEMA_VERSION = 3;
@@ -62,6 +62,8 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
+  compactBeforeSend: Schema.optional(Schema.Boolean),
+  freshContext: Schema.optional(Schema.Boolean),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
   completionAudio: Schema.optional(
@@ -101,10 +103,14 @@ export interface QueuedThreadMessage {
   readonly modelSelection?: ModelSelectionType;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
-  readonly completionAudio?: typeof CompletionAudioMode.Type;
+  readonly completionAudio?: CompletionAudioMode;
   readonly voiceNotifications?: boolean;
   /** Captured at enqueue because draining may occur long after the tap. */
   readonly dispatchMode?: ComposerDispatchMode;
+  /** Sends "When you return"'s `/compact` ahead of the message, which queues behind it. */
+  readonly compactBeforeSend?: boolean;
+  /** Starts a new provider session (`/clear`). */
+  readonly freshContext?: boolean;
   readonly creation?: QueuedThreadCreation;
   readonly createdAt: string;
 }
@@ -113,6 +119,16 @@ export interface ThreadSettingsSnapshot {
   readonly modelSelection: ModelSelectionType;
   readonly runtimeMode: RuntimeModeType;
   readonly interactionMode: ProviderInteractionModeType;
+}
+
+// Providers without a Build/Plan toggle always run in build mode.
+function resolveProviderInteractionMode(
+  provider: Pick<ServerProvider, "showInteractionModeToggle"> | undefined,
+  interactionMode: ProviderInteractionModeType,
+): ProviderInteractionModeType {
+  return provider?.showInteractionModeToggle === false
+    ? DEFAULT_PROVIDER_INTERACTION_MODE
+    : interactionMode;
 }
 
 export function resolveQueuedThreadSettings(

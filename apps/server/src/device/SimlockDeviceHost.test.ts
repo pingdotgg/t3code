@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { SimlockDeviceHostConfig } from "@t3tools/contracts";
+import { SecretProviderId, type SimlockDeviceHostConfig } from "@t3tools/contracts";
+import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -143,9 +144,23 @@ const fakePool = (
     };
   });
 
-const layer = Layer.mergeAll(
-  ServerConfig.layerTest(process.cwd(), { prefix: "t3-simlock-host-" }),
-).pipe(Layer.provideMerge(NodeServices.layer));
+const makeSecretResolver = (values: Record<string, string> = {}) =>
+  Layer.succeed(SecretResolver.SecretResolver, {
+    read: (references) =>
+      Effect.succeed(references.map((reference) => values[reference.reference])),
+    invalidate: () => Effect.void,
+    label: (provider) => Effect.succeed(provider),
+  });
+
+const layerWith = (secrets: Layer.Layer<SecretResolver.SecretResolver>) =>
+  Layer.mergeAll(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-simlock-host-" }),
+    secrets,
+  ).pipe(Layer.provideMerge(NodeServices.layer));
+
+const layer = layerWith(makeSecretResolver());
+
+const tokenSource = { provider: SecretProviderId.make("homelab"), reference: "simlock#token" };
 
 const makeHost = (
   pool: Effect.Success<ReturnType<typeof fakePool>>,
@@ -296,7 +311,8 @@ describe("Simlock device host", () => {
         });
 
       expect(
-        SimlockDeviceHost.resolveSimlockToken(
+        yield* SimlockDeviceHost.resolveSimlockToken(
+          yield* SecretResolver.SecretResolver,
           "https://elsewhere.example:4700",
           config({ agentToken: "saved-token" }),
           {},
@@ -314,6 +330,41 @@ describe("Simlock device host", () => {
         reason: "Add an agent token for Device pool in Settings.",
       });
       expect(pool.requests).toHaveLength(requests);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.effect("reads its agent token from the secret provider the setting names", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config({ agentToken: tokenSource }), scope);
+      const ready = yield* host.ensureReady(() => Effect.void);
+      const [iphone] = (yield* ready.devices.list).devices;
+      const leaseId = yield* ready.devices.boot(iphone!);
+      expect(yield* ready.devices.agentEndpoint!(leaseId)).toMatchObject({ token: "agent-token" });
+      yield* Scope.close(scope, Exit.void);
+      expect(pool.ran("close")).toHaveLength(1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerWith(makeSecretResolver({ "simlock#token": "agent-token" }))),
+    ),
+  );
+
+  it.effect("fails instead of using this machine's token when its secret cannot be read", () =>
+    Effect.gen(function* () {
+      const pool = yield* fakePool();
+      const scope = yield* Scope.make();
+      const host = yield* makeHost(pool, config({ agentToken: tokenSource }), scope).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          AGENT_DEVICE_DAEMON_BASE_URL: `${GATEWAY}/v1/agent-device`,
+          AGENT_DEVICE_DAEMON_AUTH_TOKEN: "agent-token",
+        }),
+      );
+      const availability = yield* host.platformAvailability("ios");
+      expect(availability.available).toBe(false);
+      expect(availability.reason).toContain('secret provider "homelab"');
+      expect(pool.requests).toEqual([]);
+      yield* Scope.close(scope, Exit.void);
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

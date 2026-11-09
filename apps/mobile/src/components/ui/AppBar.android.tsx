@@ -2,20 +2,23 @@ import { type RefObject, use, useRef, useState } from "react";
 import { Keyboard, type TextInputInstance, View } from "react-native";
 import { useHardwareBack } from "../../lib/backHandler";
 import { useToolbarLayout } from "./useToolbarLayout";
+import { RoutedFormSheetContext } from "./RoutedFormSheetContext";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import { useSidebarToggle } from "../../features/layout/useSidebarToggle";
+import { useAdaptiveWorkspaceLayout } from "../../features/layout/adaptive-workspace-context";
 import { InspectorCloseContext } from "../../features/layout/inspector-bar-store";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader";
+import { AndroidHeaderIconButton, AndroidScreenHeader } from "./AndroidScreenHeader.android";
 import { ScreenHeaderButton } from "./ScreenHeaderButton.android";
 import { Menu } from "./Menu";
+import { Button } from "./Button";
 import { SearchField } from "./SearchField";
-import { androidHeaderMenuActions, findHeaderMenuAction } from "./headerMenu.android";
+import { findAppBarMenuItem, menuActionsFromAppBarItems } from "./menuActionItems";
 import type { AppBarMenuItem, AppBarProps, AppBarSearch } from "./AppBar.types";
 import { useHasWorkspaceAppBar, WorkspaceAppBar } from "./WorkspaceAppBar.android";
 
 function selectMenuItem(items: ReadonlyArray<AppBarMenuItem>, id: string) {
-  const action = findHeaderMenuAction(items, id);
+  const action = findAppBarMenuItem(items, id);
   if (action && !action.disabled) action.onPress();
 }
 
@@ -26,7 +29,14 @@ interface SearchState {
   readonly inputRef: RefObject<TextInputInstance | null>;
 }
 
-export function AppBar(props: AppBarProps) {
+export function AppBar(barProps: AppBarProps) {
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const props = {
+    ...barProps,
+    onBack:
+      barProps.onBack ??
+      (layout.usesSplitView ? barProps.backInSplitView?.onPress : barProps.onBackToList),
+  };
   return props.search ? (
     <SearchableAppBar {...props} search={props.search} />
   ) : (
@@ -66,7 +76,8 @@ function SearchableAppBar(props: AppBarProps & { readonly search: AppBarSearch }
 
 function AppBarView(props: AppBarProps & { readonly searchState?: SearchState }) {
   const { search, searchState } = props;
-  const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet);
+  const inFormSheet = use(RoutedFormSheetContext);
+  const { paddingTop, paddingBottom } = useToolbarLayout(props.sheet || inFormSheet);
   const { themeVariables } = useAppearancePreferences();
   const inWorkspace = useHasWorkspaceAppBar();
   const sidebarToggle = useSidebarToggle();
@@ -123,7 +134,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
             ? {
                 accessibilityLabel: menu.title,
                 customized: icon?.endsWith(".fill") === true,
-                actions: androidHeaderMenuActions(menu.items),
+                actions: menuActionsFromAppBarItems(menu.items),
                 onSelect: (id) => selectMenuItem(menu.items, id),
               }
             : undefined
@@ -135,7 +146,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
   const menuView = props.menus?.map((menu) => (
     <Menu
       key={menu.title}
-      actions={androidHeaderMenuActions(menu.items)}
+      actions={menuActionsFromAppBarItems(menu.items)}
       isAnchoredToRight
       title={menu.status ?? menu.title}
       onPressAction={({ nativeEvent }) => selectMenuItem(menu.items, nativeEvent.event)}
@@ -143,11 +154,21 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       <ScreenHeaderButton accessibilityLabel={menu.title} icon={menu.icon} />
     </Menu>
   ));
+  const confirmButton = props.confirm ? (
+    <View className="self-center">
+      <Button
+        label={props.confirm.label}
+        tone="text"
+        loading={props.confirm.loading}
+        disabled={props.confirm.disabled}
+        onPress={props.confirm.onPress}
+      />
+    </View>
+  ) : null;
   const options =
     props.embedded || props.sheet ? null : (
       <NativeStackScreenOptions
         options={{
-          ...props.options,
           ...(props.matchSearchSurface
             ? { contentStyle: { backgroundColor: themeVariables["--color-header"] } }
             : undefined),
@@ -162,8 +183,15 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
       title={props.title}
       titleContent={props.titleContent}
       subtitle={props.subtitle}
-      onBack={props.onBack}
+      onBack={props.onClose ? undefined : props.onBack}
       leading={
+        (props.onClose ? (
+          <AndroidHeaderIconButton
+            accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+            icon="xmark"
+            onPress={props.onClose}
+          />
+        ) : undefined) ??
         props.leading ??
         // Only a real button: any leading content takes the bar's navigation slot.
         (sidebarToggle && !props.sheet ? (
@@ -190,10 +218,11 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
           : actions
       }
       trailing={
-        menuView?.length || props.trailing || closeInspector ? (
+        menuView?.length || props.trailing || props.confirm || closeInspector ? (
           <>
             {menuView}
             {props.trailing}
+            {confirmButton}
             {closeInspector ? (
               <AndroidHeaderIconButton
                 accessibilityLabel="Close inspector"
@@ -234,7 +263,13 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
           >
             <View className="flex-1 flex-row items-center gap-1">
               {inline ? (
-                props.onBack ? (
+                props.onClose ? (
+                  <ScreenHeaderButton
+                    accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+                    icon="xmark"
+                    onPress={props.onClose}
+                  />
+                ) : props.onBack ? (
                   <ScreenHeaderButton
                     accessibilityLabel="Navigate up"
                     icon="arrow.left"
@@ -250,6 +285,7 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
               )}
               {searchField}
               {inline ? menuView : null}
+              {inline ? confirmButton : null}
             </View>
           </View>
         ) : null}

@@ -162,7 +162,7 @@ export function PullRequestMergeControls(props: {
       },
     });
     // A stack can partly merge before the provider reports a failure.
-    refreshDetail();
+    if (!AsyncResult.isSuccess(response)) refreshDetail();
     refreshActivity();
     stack.refresh();
     pending.current = false;

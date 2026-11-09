@@ -58,6 +58,7 @@ import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
+import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -68,20 +69,20 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
-import { useEnabledNavigationTabs } from "../workspace/navigation-tabs";
-import { FLOATING_TABS, floatingTabsMetrics } from "../workspace/floating-workspace-tabs";
+import { useEnabledNavigationTabs } from "./workspace/navigation-tabs";
+import { FLOATING_TABS, floatingTabsMetrics } from "./workspace/floating-workspace-tabs";
 import {
   AndroidWorkspaceNavigation,
   FloatingWorkspaceTabs,
   ANDROID_WORKSPACE_RAIL_WIDTH,
-} from "../workspace/AndroidWorkspaceNavigation";
+} from "./workspace/AndroidWorkspaceNavigation";
 import {
   selectWorkspaceDetail,
   type WorkspaceDetail,
   type WorkspaceDetailSheet,
-} from "../workspace/workspace-detail-selection";
-import { startOpeningDetail } from "../workspace/useSelectWorkspaceDetail";
-import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+} from "./workspace/workspace-detail-selection";
+import { startOpeningDetail } from "./workspace/useSelectWorkspaceDetail";
+import { useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
 import { HomeListOptionsProvider } from "../home/home-list-options";
 import { newTaskDestination } from "../threads/new-task-project-selection";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -102,20 +103,20 @@ import {
 import { useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { AndroidHingeObserver } from "../../native/AndroidHingeObserver";
 import { WindowHingeContext } from "../../native/window-hinge-context";
-import { useAndroidWorkspaceRoot } from "../workspace/AndroidWorkspaceTabsProvider";
+import { useAndroidWorkspaceRoot } from "./workspace/AndroidWorkspaceTabsProvider";
 import { dispatchRootStackReset, rootStackState } from "../../lib/root-stack-reset";
 import {
   currentWorkspaceSelections,
   workspaceSelectionCheck,
-} from "../workspace/workspace-selection-store";
+} from "./workspace/workspace-selection-store";
 import {
   workspaceTabColumns,
   workspaceTabNavigationState,
-} from "../workspace/workspace-tab-navigation";
-import type { WorkspaceTab } from "../workspace/workspace-tabs-state";
+} from "./workspace/workspace-tab-navigation";
+import type { WorkspaceTab } from "./workspace/workspace-tabs-state";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
-import { WorkspaceThreadSidebar } from "../workspace/WorkspaceThreadSidebar";
+import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
 
 export { useAdaptiveWorkspaceLayout };
 
@@ -244,10 +245,11 @@ function AdaptiveWorkspaceLayoutContent(
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
-  const nativeInspectorWidth = nativeInspectorColumnWidth(
-    viewportWidth,
-    nativeInspectorWidthFraction,
-  );
+  const horizontalSafeArea =
+    (nativeMetrics?.safeArea.left ?? 0) + (nativeMetrics?.safeArea.right ?? 0);
+  const inspectorWidthFor = (fraction: number) =>
+    nativeInspectorColumnWidth({ viewportWidth, horizontalSafeArea, fraction });
+  const nativeInspectorWidth = inspectorWidthFor(nativeInspectorWidthFraction);
   const [fileInspectorPreferredWidth, setFileInspectorPreferredWidth] = useState<number | null>(
     null,
   );
@@ -403,6 +405,7 @@ function AdaptiveWorkspaceLayoutContent(
       deriveWorkspacePaneLayout({
         layout,
         viewportWidth: width,
+        horizontalSafeArea,
         nativeWorkspace,
         primarySidebarFloats: sidebarFloats,
         primarySidebarPreferredVisible: showPrimarySidebar,
@@ -414,6 +417,7 @@ function AdaptiveWorkspaceLayoutContent(
       }),
     [
       nativeInspectorWidth,
+      horizontalSafeArea,
       fileInspectorPreferredVisible,
       fileInspectorPreferredWidth,
       inspectorActive,
@@ -433,6 +437,7 @@ function AdaptiveWorkspaceLayoutContent(
         : deriveWorkspacePaneLayout({
             layout,
             viewportWidth: width,
+            horizontalSafeArea,
             nativeWorkspace,
             primarySidebarFloats: sidebarFloats,
             primarySidebarPreferredVisible: sidebarWithoutKeyboard,
@@ -443,6 +448,7 @@ function AdaptiveWorkspaceLayoutContent(
           }).primarySidebarVisible,
     [
       nativeInspectorWidth,
+      horizontalSafeArea,
       fileInspectorPreferredVisible,
       fileInspectorPreferredWidth,
       inspectorActive,
@@ -585,6 +591,7 @@ function AdaptiveWorkspaceLayoutContent(
         columns: workspaceTabColumns(Platform.OS, tab, options?.columns ?? layout.usesSplitView),
         check: workspaceSelectionCheck,
         overlays,
+        seedPullRequest: withKnownPullRequestSummary,
       },
     );
     if (layout.variant === "medium") {
@@ -1000,9 +1007,7 @@ function AdaptiveWorkspaceLayoutContent(
     setAuxiliaryPaneWidth: setFileInspectorPreferredWidth,
     nativeInspectorWidth,
     setNativeInspectorWidth: (width: number) =>
-      setNativeInspectorWidthFraction(
-        nativeInspectorColumnWidth(viewportWidth, width / viewportWidth) / viewportWidth,
-      ),
+      setNativeInspectorWidthFraction(inspectorWidthFor(width / viewportWidth) / viewportWidth),
     composerKeyboardActive,
     keyboardHoldsSidebar,
     setComposerEditing,

@@ -170,8 +170,11 @@ Machines without npm check the public npm registry directly.
 
 **Settings → Providers** shows provider updates for the selected environment.
 **Update all** updates every outdated provider on every connected environment
-at once. Hover it to see which providers it will update. Providers that only
-offer a manual update command are not included.
+at once. Hover it to see which providers it will update. A provider is left out
+when any of its enabled, outdated instances offers only a manual update command,
+or when its instances use different update commands, such as two instances that
+run different CLI installs. Update those by hand, or point every instance of the
+provider at the same CLI.
 
 After a successful provider CLI update, T3 Code refreshes model discovery for
 every enabled instance of that provider using its own configuration. Connected

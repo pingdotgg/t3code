@@ -16,6 +16,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
+  antigravityClientInfo,
   antigravitySessionMeta,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
@@ -59,17 +60,19 @@ function makeModelRuntime(
 
 describe("Antigravity release gates", () => {
   it.each([
-    { version: "1.4.1", filter: false, native: false },
-    { version: "1.4.2", filter: true, native: false },
-    { version: "1.4.4", filter: true, native: false },
-    { version: "1.4.5", filter: true, native: true },
-    { version: "1.4.6", filter: false, native: false },
-    { version: "1.3.0", filter: false, native: false },
-    { version: undefined, filter: false, native: false },
-    { version: "unknown", filter: false, native: false },
+    { version: "1.4.1", filter: false, native: false, ownName: false },
+    { version: "1.4.2", filter: true, native: false, ownName: false },
+    { version: "1.4.4", filter: true, native: false, ownName: false },
+    { version: "1.4.5", filter: true, native: true, ownName: false },
+    { version: "1.4.6", filter: false, native: false, ownName: false },
+    { version: "1.5.0", filter: false, native: false, ownName: false },
+    { version: "1.5.1", filter: false, native: false, ownName: true },
+    { version: "1.3.0", filter: false, native: false, ownName: false },
+    { version: undefined, filter: false, native: false, ownName: false },
+    { version: "unknown", filter: false, native: false, ownName: false },
   ])(
-    "$version: workflow filter $filter, native reads and system prompt $native",
-    ({ version, filter, native }) => {
+    "$version: workflow filter $filter, native reads and system prompt $native, own client name $ownName",
+    ({ version, filter, native, ownName }) => {
       const initialize = {
         protocolVersion: 1,
         ...(version === undefined ? {} : { agentInfo: { name: "antigravity-acp", version } }),
@@ -86,6 +89,7 @@ describe("Antigravity release gates", () => {
         filter || native ? { antigravity } : undefined,
       );
       expect(isQualifiedAntigravityRelease(version)).toBe(native);
+      expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
 });

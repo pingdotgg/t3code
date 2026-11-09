@@ -1,6 +1,7 @@
 import { Toolbar } from "./Toolbar";
 import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
+import { NavigationContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect } from "react";
 import { View } from "react-native";
 import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
@@ -20,6 +21,7 @@ import { useAppearancePreferences } from "../../features/settings/appearance/App
 import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
+import { useControlTheme } from "./useControlTheme";
 
 function iosIcon(icon: AppSymbolName) {
   return typeof icon === "string" ? icon : icon.ios;
@@ -55,16 +57,24 @@ export function AppBar(props: AppBarProps) {
     setOptions({ headerShown: true });
     return () => setOptions({ headerShown: false });
   }, [ownsInspectorBar, setOptions]);
-  // The Duo's native columns show their own sidebar button while the sidebar is open.
-  const showsSidebarToggle =
-    sidebarToggle !== null &&
-    (!usesNativeWorkspaceColumns || deviceType === "pad" || !sidebarToggle.visible);
   const splitBackPress = props.backInSplitView?.onPress ?? props.onBack;
   const splitBack =
     layout.usesSplitView && props.backInSplitView && splitBackPress
       ? { ...props.backInSplitView, onPress: splitBackPress }
       : null;
+  const navigation = use(NavigationContext);
+  const rootBack =
+    !layout.usesSplitView && props.onBackToList && navigation?.canGoBack() === false
+      ? props.onBackToList
+      : props.guardBack && props.onBack
+        ? props.onBack
+        : null;
+  const compose =
+    layout.usesSplitView && !(usesNativeWorkspaceColumns && isDuoDevice(deviceType))
+      ? props.onCompose
+      : undefined;
   const { themeVariables } = useAppearancePreferences();
+  const { colors } = useControlTheme();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
   const menu = menus?.[0];
@@ -87,7 +97,12 @@ export function AppBar(props: AppBarProps) {
         optionsVersion={[props.optionsVersion, compactSearch ? menu : undefined]}
         options={{
           headerShown: true,
-          headerBackVisible: splitBack === null,
+          headerBackVisible:
+            props.onClose === undefined &&
+            splitBack === null &&
+            !(layout.usesSplitView && props.onBackToList) &&
+            !(props.guardBack && props.onBack),
+          ...(props.guardBack ? { gestureEnabled: false } : undefined),
           title: props.title,
           unstable_headerSubtitle: props.subtitle || undefined,
           ...(props.matchSearchSurface
@@ -132,14 +147,28 @@ export function AppBar(props: AppBarProps) {
                     },
               }
             : undefined),
-          ...props.options,
         }}
       />
-      {(splitBack || showsSidebarToggle) &&
-      props.options?.unstable_headerLeftItems === undefined ? (
+      {props.onClose ? (
         <Toolbar placement="left">
+          <Toolbar.Button
+            icon="xmark"
+            accessibilityLabel={props.closeAccessibilityLabel ?? "Close"}
+            onPress={props.onClose}
+          />
+        </Toolbar>
+      ) : rootBack || splitBack || sidebarToggle || compose ? (
+        <Toolbar placement="left">
+          {rootBack ? (
+            <ScreenHeaderButton
+              accessibilityLabel="Back"
+              icon="chevron.left"
+              onPress={rootBack}
+              separateBackground
+            />
+          ) : null}
           {splitBack ? <ScreenHeaderButton {...splitBack} /> : null}
-          {showsSidebarToggle ? (
+          {sidebarToggle ? (
             <ScreenHeaderButton
               axisBehavior={usesNativeWorkspaceColumns ? "horizontalOnly" : undefined}
               accessibilityLabel={sidebarToggle.accessibilityLabel}
@@ -148,10 +177,22 @@ export function AppBar(props: AppBarProps) {
               separateBackground={splitBack ? splitBack.separateBackground : true}
             />
           ) : null}
+          {compose ? (
+            <ScreenHeaderButton
+              accessibilityLabel="New task"
+              label="New task"
+              icon="square.and.pencil"
+              onPress={compose}
+              separateBackground
+            />
+          ) : null}
         </Toolbar>
       ) : null}
-      {(props.actions?.length || visibleMenus.length || props.trailing || closeInspector) &&
-      props.options?.unstable_headerRightItems === undefined ? (
+      {props.actions?.length ||
+      visibleMenus.length ||
+      props.trailing ||
+      props.confirm ||
+      closeInspector ? (
         <Toolbar placement="right">
           {props.actions?.map(({ loading, ...action }) =>
             loading ? (
@@ -168,12 +209,34 @@ export function AppBar(props: AppBarProps) {
                 key={action.accessibilityLabel}
                 {...action}
                 icon={iosIcon(action.icon)}
-                separateBackground
+                separateBackground={action.separateBackground ?? true}
               />
             ),
           )}
           {visibleMenus.map(createNativeHeaderMenu)}
           {props.trailing}
+          {props.confirm?.loading ? (
+            <Toolbar.Custom>
+              <View
+                className="size-11 items-center justify-center"
+                accessible
+                accessibilityLabel={props.confirm.label}
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator colorClassName="accent-prominent-action" />
+              </View>
+            </Toolbar.Custom>
+          ) : props.confirm ? (
+            <Toolbar.Button
+              icon="checkmark"
+              variant="prominent"
+              visibilityPriority="high"
+              tintColor={colors["--color-prominent-action"]}
+              accessibilityLabel={props.confirm.label}
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+            />
+          ) : null}
           {closeInspector ? (
             <ScreenHeaderButton
               accessibilityLabel="Close inspector"
@@ -195,6 +258,7 @@ export function AppBar(props: AppBarProps) {
 
 export type {
   AppBarAction,
+  AppBarConfirm,
   AppBarMenu,
   AppBarMenuItem,
   AppBarProps,

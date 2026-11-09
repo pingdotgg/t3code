@@ -17,3 +17,15 @@ Failed calls do not count as successful messages or creations. Waiting on a thre
 it finished, and an interrupt or cancellation request does not mean the thread stopped. When tool
 details are unavailable, summaries use a broader description instead of guessing how many threads
 were affected.
+
+## Hide tool calls
+
+**Tool calls in chat** in **Settings → Chat** (web and desktop) or **Settings → Appearance**
+(mobile) hides commands, file edits, searches, and MCP tool calls
+from the conversation. **Hide successful** shows a call while it runs and keeps
+it only if it fails. **Hide all** hides every call and shows **Thinking** while the agent works.
+**Zen** also hides the agent's in-between messages, so each turn shows your message
+and the agent's last reply, which appears when the turn ends. If you steer while the agent is
+answering, the answer it finished before reading your steer stays too. On web and desktop, Find
+shows the in-between messages while it is open. Approvals, questions, and errors always show. The
+setting applies to this browser or device only.

@@ -83,8 +83,9 @@ import Migration0076 from "./Migrations/076_ProjectionProjectsPinArchive.ts";
 import Migration0077 from "./Migrations/077_RepairBooleanSettledOverride.ts";
 import Migration0078 from "./Migrations/078_DropOrchestrationEventCorrelationIndex.ts";
 import Migration0079 from "./Migrations/079_DelegatedRecoveryIndexes.ts";
-import Migration0080 from "./Migrations/080_AuthDesktopPairingSessionTtl.ts";
-import Migration0081 from "./Migrations/081_RealtimeVoiceHistoryResume.ts";
+import Migration0080 from "./Migrations/080_ScheduledTaskThreadMode.ts";
+import Migration0081 from "./Migrations/081_AuthDesktopPairingSessionTtl.ts";
+import Migration0082 from "./Migrations/082_RealtimeVoiceHistoryResume.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -167,9 +168,10 @@ const migrationEntries = [
   [77, "RepairBooleanSettledOverride", Migration0077],
   [78, "DropOrchestrationEventCorrelationIndex", Migration0078],
   [79, "DelegatedRecoveryIndexes", Migration0079],
-  // Fork-only. Earlier fork builds recorded these as 69/70, 70/71, 73/74, then 77/78.
-  [80, "AuthDesktopPairingSessionTtl", Migration0080],
-  [81, "RealtimeVoiceHistoryResume", Migration0081],
+  [80, "ScheduledTaskThreadMode", Migration0080],
+  // Fork-only. Earlier fork builds recorded these as 69/70, 70/71, 73/74, 77/78, then 80/81.
+  [81, "AuthDesktopPairingSessionTtl", Migration0081],
+  [82, "RealtimeVoiceHistoryResume", Migration0082],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -249,8 +251,8 @@ const reconcileDesktopPairingBackport = Effect.fn("reconcileDesktopPairingBackpo
 });
 
 // Fork databases recorded the fork-only migrations under ids upstream later
-// took (69/70, 70/71, 73/74, then 77/78). Dropping those rows lets upstream's
-// migrations run at their ids; both fork migrations are idempotent and rerun as 80/81.
+// took (69/70, 70/71, 73/74, 77/78, then 80/81). Dropping those rows lets upstream's
+// migrations run at their ids; both fork migrations are idempotent and rerun as 81/82.
 const reconcileForkRenumber = Effect.fn("reconcileForkRenumber")(function* () {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql<{ readonly name: string }>`
@@ -259,8 +261,8 @@ const reconcileForkRenumber = Effect.fn("reconcileForkRenumber")(function* () {
   if (tables.length === 0) return;
   yield* sql`
     DELETE FROM effect_sql_migrations
-    WHERE (migration_id IN (69, 70, 73, 77) AND name = 'AuthDesktopPairingSessionTtl')
-      OR (migration_id IN (70, 71, 74, 78) AND name = 'RealtimeVoiceHistoryResume')
+    WHERE (migration_id IN (69, 70, 73, 77, 80) AND name = 'AuthDesktopPairingSessionTtl')
+      OR (migration_id IN (70, 71, 74, 78, 81) AND name = 'RealtimeVoiceHistoryResume')
   `;
 });
 

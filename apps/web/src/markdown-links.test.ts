@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isLocalEditorFileHref,
   resolveInlineCodeFileLinkMeta,
   resolveMarkdownFileLinkMeta,
   rewriteMarkdownFileUriHref,
@@ -10,6 +11,37 @@ import {
   markdownFileEditorTarget,
   resolveMarkdownFileHostPath,
 } from "./markdownFileHostPath";
+
+describe("isLocalEditorFileHref", () => {
+  it("accepts absolute file deep links of known editors", () => {
+    for (const href of [
+      "cursor://file/Users/me/repo/file.md:186",
+      "vscode://file/Users/me/repo/file.md:3:7",
+      "vscode-insiders://file/Users/me/repo/file.md",
+      "VSCODE://file/C:/Users/me/repo/file.md:3",
+    ]) {
+      expect(isLocalEditorFileHref(href), href).toBe(true);
+    }
+  });
+
+  it("rejects other hosts, userinfo, relative paths, and unknown schemes", () => {
+    for (const href of [
+      "cursor://anysphere.cursor-deeplink/prompt?text=hi",
+      "vscode://user@file/Users/me/repo/file.md",
+      "vscode://file:8080/Users/me/repo/file.md",
+      "vscode://vscode-remote/ssh-remote+example.com/home/user/project",
+      "cursor://file",
+      "cursor:file/Users/me/repo/file.md",
+      "foo://file/Users/me/repo/file.md",
+      "zed://file/Users/me/repo/file.md",
+      "javascript:alert(1)",
+      "./file.md",
+      "",
+    ]) {
+      expect(isLocalEditorFileHref(href), href).toBe(false);
+    }
+  });
+});
 
 describe("rewriteMarkdownFileUriHref", () => {
   it("preserves encoded octets so file paths are decoded only once later", () => {

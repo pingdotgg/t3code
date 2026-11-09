@@ -249,7 +249,7 @@ it.layer(
         expect(read?.encodedResult).toMatchObject({
           preferences: {
             newWorktreesStartFromOrigin: true,
-            sidebarAutoSettleAfterDays: 3,
+            sidebarAutoSettleAfterDays: 7,
             sidebarAutoSettleOnMerge: true,
             sidebarAutoSettleKeepPullRequests: false,
           },

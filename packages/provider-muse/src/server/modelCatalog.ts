@@ -4,7 +4,12 @@ import { MuseSettings } from "../settings.ts";
 import { createModelCapabilities, getProviderOptionDescriptors } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { createMuseSdkHost, createMuseSdkHostEffect, type MuseSdkHost } from "./sdk.ts";
+import {
+  createMuseSdkHost,
+  createMuseSdkHostEffect,
+  MuseSdkError,
+  type MuseSdkHost,
+} from "./sdk.ts";
 
 type MuseReasoningEffort = NonNullable<SendUserTurnOptions<never>["reasoningEffort"]>;
 
@@ -113,7 +118,10 @@ export const discoverMuseModels = Effect.fn("discoverMuseModels")(function* (
     (host: MuseSdkHost) => Effect.promise(() => host.close()),
     { interruptible: true },
   );
-  const result = yield* Effect.tryPromise(() => host.connection.request("model/list", {}));
+  const result = yield* Effect.tryPromise({
+    try: () => host.connection.request("model/list", {}),
+    catch: (cause) => new MuseSdkError({ operation: "model/list", cause }),
+  });
   const catalog = yield* decodeModelList(result);
   if (catalog.providerId !== "meta") {
     return yield* new MuseCatalogError({ detail: "Muse returned a catalog for another provider." });

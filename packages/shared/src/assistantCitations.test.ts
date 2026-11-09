@@ -9,6 +9,7 @@ import {
   type AssistantCitation,
 } from "@t3tools/contracts";
 import {
+  assistantCitationLabel,
   assistantCitationsToPlainText,
   collectAssistantCitations,
   expandAssistantCitationsForProvider,
@@ -226,6 +227,12 @@ describe("assistant citation references", () => {
 
     expect(assistantCitationsToPlainText(prompt)).toBe(
       `Before ${citation.text}\nComment: ${commented.comment}\n${citation.text}\nComment: ${commented.comment} After`,
+    );
+  });
+
+  it("shortens a long quote label without splitting an emoji", () => {
+    expect(assistantCitationLabel({ ...citation, text: `${"a".repeat(63)}😀 and more` })).toBe(
+      `${"a".repeat(63)}…`,
     );
   });
 
