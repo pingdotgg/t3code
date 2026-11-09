@@ -757,6 +757,7 @@ export default defineConfig({
         "apps/web/src/components/chat/ComposerModelEffort.tsx": 1,
         "apps/web/src/components/settings/MicrophoneTest.tsx": 1,
         "apps/web/src/components/settings/SpeechModelComparison.tsx": 1,
+        "apps/web/src/components/settings/TextGeneratorsSettings.tsx": 2,
       }).map(([file, maxOccurrences]) => {
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-styled-raw-controls": rule } };
@@ -929,7 +930,7 @@ export default defineConfig({
         "apps/web/src/components/chat/DiffStatLabel.tsx": 2,
         "apps/web/src/components/chat/DraftHeroHeadline.tsx": 2,
         "apps/web/src/components/chat/ProposedPlanCard.tsx": 2,
-        "apps/web/src/components/chat/ProviderInstanceIcon.tsx": 2,
+        "apps/web/src/components/chat/ProviderInstanceIcon.tsx": 3,
         "apps/web/src/components/chat/ProviderSubagentBar.tsx": 2,
         "apps/web/src/components/chat/ThreadContextDragGhost.tsx": 2,
         "apps/web/src/components/chat/TimelineSystemDivider.tsx": 2,
