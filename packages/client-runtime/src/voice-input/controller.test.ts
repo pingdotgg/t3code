@@ -93,9 +93,11 @@ describe("environment voice input", () => {
       .fn<PreparedVoiceTranscription["transcribe"]>()
       .mockRejectedValueOnce(new Error("inference failed"))
       .mockResolvedValueOnce("recovered text");
+    const onStateChange = vi.fn<VoiceInputControllerDependencies["onStateChange"]>();
     const harness = createHarness({
       retryFailedRecording: true,
       getTranscriber: () => ({ prepare: async () => preparedTranscription(transcribe) }),
+      onStateChange,
     });
     await harness.controller.start();
     await harness.controller.stop();
@@ -109,6 +111,10 @@ describe("environment voice input", () => {
       "file:///voice.m4a",
     ]);
     expect(harness.recorder.record).toHaveBeenCalledOnce();
+    // The web sound cue plays on this phase, so a retry must not announce a new recording.
+    expect(onStateChange.mock.calls.filter(([state]) => state.phase === "recording")).toHaveLength(
+      1,
+    );
     expect(harness.commits[0]?.text).toBe("updated recovered text");
     expect(harness.deleted).toEqual(["file:///voice.m4a"]);
   });

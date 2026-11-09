@@ -608,6 +608,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice keyboard hotkey hold toggle auto"],
   },
   {
+    id: "speech-recording-cue",
+    title: "Sound cue",
+    to: "/settings/voice",
+    searchTerms: ["speech voice dictation stt recording start audio feedback beep click chime"],
+  },
+  {
     id: "speech-language",
     title: "Transcription language",
     to: "/settings/voice",
