@@ -23,7 +23,7 @@ One gateway serves one beta domain. It is a single point of failure: when it res
      --cert-name <domain> -d "*.<domain>" --deploy-hook /usr/local/sbin/t3-caddy-cert-deploy
    ```
 
-4. Install Caddy and `deploy/Caddyfile`, with your domain. Caddy keeps Host, path, and query, and its logs drop paths, queries, and headers: these fields can carry environment credentials and webhook tokens. Allow only ports 22, 80, and 443 in the firewall.
+4. Install Caddy and `deploy/Caddyfile`, with your domain. Caddy keeps Host, path, and query, and its logs drop paths, queries, and headers: these fields can carry environment credentials and webhook tokens. Allow only ports 22, 80, and 443 in the firewall, and set `net.core.somaxconn=65535` so the socket can hold every host reconnecting at once.
 
 5. Generate a random secret of at least 32 characters. Set it as `RELAY_BETA_GATEWAY_SECRET` on the relay and `T3_CONNECT_RELAY_SECRET` on the gateway. For production, `RELAY_BETA_GATEWAY_SECRET` is a GitHub secret.
 

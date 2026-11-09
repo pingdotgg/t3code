@@ -8,6 +8,8 @@ ListenStream=/run/t3-connect-gateway.sock
 SocketUser=root
 SocketGroup=caddy
 SocketMode=0660
+# Holds a reconnect burst during a restart. The kernel caps it at net.core.somaxconn.
+Backlog=65535
 
 [Install]
 WantedBy=sockets.target

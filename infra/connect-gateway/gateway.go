@@ -26,7 +26,7 @@ const (
 	admitTimeout    = 5 * time.Second
 	relayCalls      = 8
 	// After a restart every host reconnects at once. They wait here and are checked in batches.
-	admitQueue = 4096
+	admitQueue = 1 << 16
 )
 
 type admission struct {
