@@ -3711,15 +3711,31 @@ function piAskUserQuestion(
   return {
     id: questionId,
     header: question.header?.trim() ? question.header : "Question",
-    question: question.question,
+    question: `${question.question}${piAskUserQuestionPreviews(question.options)}`,
     options: question.options.map((option, index) => ({
       label: option.label,
       description: option.description.trim().length > 0 ? option.description : option.label,
       value: piAskUserQuestionOptionLine(option, index),
-      ...(option.preview ? { preview: option.preview } : {}),
     })),
   };
 }
+
+/**
+ * Option previews as fenced blocks below the question. Clients render the question as markdown
+ * and show no `option.preview`, and the extension's own RPC dialog folds previews into the title.
+ */
+const piAskUserQuestionPreviews = (options: PiAskUserQuestion["options"]) =>
+  options
+    .flatMap((option, index) => {
+      if (!option.preview) return [];
+      const longestBacktickRun = Math.max(
+        2,
+        ...Array.from(option.preview.matchAll(/`+/g), ([run]) => run.length),
+      );
+      const fence = "`".repeat(longestBacktickRun + 1);
+      return [`\n\n**${index + 1}. ${option.label}**\n\n${fence}\n${option.preview}\n${fence}`];
+    })
+    .join("");
 
 function piUiResponse(
   pending: PendingPiPrompt,

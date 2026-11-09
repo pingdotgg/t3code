@@ -4156,7 +4156,7 @@ describe("PiAdapterV2", () => {
               header: "Layout",
               question: "Which layout?",
               options: [
-                { label: "Stacked", description: "One column", preview: "A\nB" },
+                { label: "Stacked", description: "One column", preview: "A\n```\nB" },
                 { label: "Split", description: "Two columns" },
               ],
             },
@@ -4205,7 +4205,7 @@ describe("PiAdapterV2", () => {
         type: "extension_ui_request",
         id: "ui-layout",
         method: "select",
-        title: "[Layout] Which layout?\n\n--- 1. Stacked preview ---\nA\nB",
+        title: "[Layout] Which layout?\n\n--- 1. Stacked preview ---\nA\n```\nB",
         options: ["1. Stacked — One column", "2. Split — Two columns", "3. Type something."],
       });
       const layout = yield* takeQuestion;
@@ -4213,14 +4213,9 @@ describe("PiAdapterV2", () => {
         {
           id: "ui-layout",
           header: "Layout",
-          question: "Which layout?",
+          question: "Which layout?\n\n**1. Stacked**\n\n````\nA\n```\nB\n````",
           options: [
-            {
-              label: "Stacked",
-              description: "One column",
-              value: "1. Stacked — One column",
-              preview: "A\nB",
-            },
+            { label: "Stacked", description: "One column", value: "1. Stacked — One column" },
             { label: "Split", description: "Two columns", value: "2. Split — Two columns" },
           ],
         },
