@@ -14,7 +14,6 @@ import { readThreadShell } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { isThreadlessSurfacesRef } from "../threadlessSurfaces";
 import type { ThreadRouteTarget } from "../threadRoutes";
-import { getLayoutBehavior } from "./layoutBehavior";
 import {
   createLayoutLauncherContent,
   findLayoutLauncherFor,
@@ -32,35 +31,15 @@ import { useLayoutStore } from "./layoutStore";
 import {
   findThreadChat,
   hideThreadTerminalPane,
+  layoutSurfaceDestination,
+  layoutSurfacePlacement,
   placeMissingSurfaceTabs,
   requestLayoutSurfacePlacement,
   shareWithChat,
 } from "./surfaceSync";
 
-function surfaceDestination(chat: LayoutTabLocation, terminal: boolean): LayoutTabDestination {
-  const behavior = getLayoutBehavior();
-  const placement = terminal ? behavior.terminalPlacement : behavior.sidePanePlacement;
-  if (placement === "new-tab") {
-    return {
-      kind: "pane",
-      paneId: chat.pane.id,
-      index: behavior.newTabPosition === "end" ? chat.pane.tabs.length : chat.tabIndex + 1,
-    };
-  }
-  if (placement === "new-column") {
-    return {
-      kind: "column",
-      workspaceId: chat.workspace.id,
-      index: terminal
-        ? chat.workspace.columns.findIndex((column) => column.id === chat.column.id) + 1
-        : chat.workspace.columns.length,
-    };
-  }
-  return { kind: "split", paneId: chat.pane.id, side: terminal ? "down" : "right" };
-}
-
 function atDestination(tab: LayoutTabLocation, chat: LayoutTabLocation, terminal: boolean) {
-  const destination = surfaceDestination(chat, terminal);
+  const destination = layoutSurfaceDestination(chat, terminal);
   if (destination.kind === "pane") return tab.pane.id === chat.pane.id;
   if (tab.workspace.id !== chat.workspace.id) return false;
   if (destination.kind === "column") {
@@ -74,18 +53,6 @@ function atDestination(tab: LayoutTabLocation, chat: LayoutTabLocation, terminal
     ? tab.column.id === chat.column.id &&
         chat.column.panes[chat.column.panes.indexOf(chat.pane) + 1]?.id === tab.pane.id
     : chat.workspace.columns[chat.workspace.columns.indexOf(chat.column) + 1]?.id === tab.column.id;
-}
-
-function requestSurfaceDestination(
-  threadRef: ScopedThreadRef,
-  chat: LayoutTabLocation,
-  terminal: boolean,
-) {
-  const destination = surfaceDestination(chat, terminal);
-  requestLayoutSurfacePlacement(
-    threadRef,
-    destination.kind === "split" ? { kind: terminal ? "below" : "beside" } : destination,
-  );
 }
 
 function onScreen(layout: LayoutState, location: LayoutTabLocation): boolean {
@@ -150,7 +117,7 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
       hideThreadSurfaces(threadRef);
       return;
     }
-    gatherAt(tabs, chat, surfaceDestination(chat, false));
+    gatherAt(tabs, chat, layoutSurfaceDestination(chat, false));
     return;
   }
   const launcher =
@@ -163,7 +130,7 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
     return;
   }
   const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, threadRef);
-  if (chat) requestSurfaceDestination(threadRef, chat, false);
+  if (chat) requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, false));
   if (state.surfaces.length > 0) {
     // Open in the store with no tab shown: showing again would change nothing.
     if (state.isOpen) placeMissingSurfaceTabs(threadRef, true);
@@ -174,8 +141,25 @@ export function toggleThreadSidePane(threadRef: ScopedThreadRef, openDefault: ()
   if (!chat || chat.tab.content.kind !== "chat") return;
   store.placeContent(
     createLayoutLauncherContent(chat.tab.content.target),
-    surfaceDestination(chat, false),
+    layoutSurfaceDestination(chat, false),
   );
+}
+
+/**
+ * cmd+D for a thread: a diff tab hidden behind another tab comes forward;
+ * otherwise `toggle` opens it where the side pane goes or hides it, as on main.
+ */
+export function toggleThreadDiff(threadRef: ScopedThreadRef, toggle: () => void): void {
+  const layout = useLayoutStore.getState().layout;
+  const tab = findLayoutSurfaceTabs(layout, threadRef).find(
+    (location) =>
+      location.tab.content.kind === "surface" && location.tab.content.surfaceId === "diff",
+  );
+  if (tab && !onScreen(layout, tab)) {
+    useLayoutStore.getState().focusTab(tab.tab.id);
+    return;
+  }
+  toggle();
 }
 
 /** cmd+J for a thread. `open` starts or reattaches its terminal sessions and shows them. */
@@ -188,7 +172,7 @@ export function toggleThreadTerminalPane(threadRef: ScopedThreadRef, open: () =>
       location.tab.content.surfaceId === THREAD_TERMINAL_SURFACE_ID,
   );
   if (!tab) {
-    if (chat) requestSurfaceDestination(threadRef, chat, true);
+    if (chat) requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, true));
     open();
     return;
   }
@@ -205,7 +189,7 @@ export function toggleThreadTerminalPane(threadRef: ScopedThreadRef, open: () =>
     return;
   }
   if (chat && !placed) {
-    gatherAt([tab], chat, surfaceDestination(chat, true));
+    gatherAt([tab], chat, layoutSurfaceDestination(chat, true));
     useLayoutStore.getState().showHint({ kind: "terminal", threadRef });
     return;
   }
@@ -319,7 +303,7 @@ function showCompanionsOf(threadRef: ScopedThreadRef) {
   if (!chat) return;
   if (hidden.panel) useRightPanelStore.getState().syncFromLayout(threadRef, { open: true });
   if (hidden.terminal) {
-    requestSurfaceDestination(threadRef, chat, true);
+    requestLayoutSurfacePlacement(threadRef, layoutSurfacePlacement(chat, true));
     useTerminalUiStateStore.getState().setTerminalOpen(threadRef, true);
   }
   if (focused) useLayoutStore.getState().focusTab(focused.id);
