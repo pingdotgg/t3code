@@ -247,18 +247,11 @@ function NativeSourceFileSurface(
         styleJson={styleJson}
         themeJson={themeJson}
         tokensJson={tokensJson}
-        {...(onLongPressLine
-          ? {
-              onPressLine: ({ nativeEvent }) => {
-                if (
-                  nativeEvent.gesture === "longPress" &&
-                  nativeEvent.newLineNumber !== undefined
-                ) {
-                  onLongPressLine(nativeEvent.newLineNumber);
-                }
-              },
-            }
-          : {})}
+        onPressLine={({ nativeEvent }) => {
+          if (nativeEvent.gesture === "longPress" && nativeEvent.newLineNumber !== undefined) {
+            onLongPressLine?.(nativeEvent.newLineNumber);
+          }
+        }}
         {...(onRefresh
           ? {
               refreshing: isPullRefreshing,
@@ -367,7 +360,6 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
 
   const webSelection = usesWebSelection ? (
     <WebView
-      testID="source-selectable-web-view"
       source={{
         html: selectableSourceHtml(normalizedContents, {
           foreground,
@@ -378,7 +370,6 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         }),
       }}
       originWhitelist={["*"]}
-      javaScriptEnabled
       // Android pastes copied HTML as styled text with collapsed whitespace, so copy plain text.
       // Wrapped text reflows once the WebView reaches its final width, so scroll again then.
       injectedJavaScript={`addEventListener("copy",(event)=>{event.clipboardData.setData("text/plain",getSelection().toString());event.preventDefault();});${
