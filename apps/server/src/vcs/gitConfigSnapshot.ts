@@ -8,9 +8,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import type * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as GitVcsDriver from "./GitVcsDriver.ts";
 
 export interface GitConfigEntry {
   readonly origin: string;
@@ -516,6 +517,12 @@ export const makeGitConfigSnapshots = Effect.fn("makeGitConfigSnapshots")(functi
     const environment = gitConfigEnvironmentSignature(yield* HostProcess.Environment);
     if (environment === null) return null;
     const key = snapshotKey(cwd, environment);
+    // Background work only reuses a current snapshot: a load in its small lane would hold up the
+    // reads that wait for it.
+    if (yield* GitVcsDriver.BackgroundGitWork) {
+      const cached = Option.getOrNull(yield* Cache.getOption(snapshots, key));
+      return cached !== null && (yield* isCurrent(cached)) ? cached.snapshot : null;
+    }
     if (!(yield* Cache.has(snapshots, key)) && !isReadAgain(key)) return null;
     const cached = yield* Cache.get(snapshots, key);
     if (cached === null) return null;

@@ -904,6 +904,43 @@ describe("config reads", () => {
     ).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("loads a snapshot only for reads outside background work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { driver, spawned } = yield* makeCountingDriver;
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["config", "t3.value", "first"]);
+        const read = driver.readConfigValue(cwd, "t3.value");
+        const readInBackground = read.pipe(
+          Effect.provideService(GitVcsDriver.BackgroundGitWork, true),
+        );
+        const getValue = ["config", "--get", "t3.value"];
+        spawned.length = 0;
+
+        for (const _ of [1, 2, 3]) assert.equal(yield* readInBackground, "first");
+        assert.deepStrictEqual(spawned, [getValue, getValue, getValue]);
+
+        assert.equal(yield* read, "first");
+        assert.equal(yield* read, "first");
+        spawned.length = 0;
+        assert.equal(yield* readInBackground, "first");
+        assert.deepStrictEqual(spawned, []);
+
+        yield* git(cwd, ["config", "t3.value", "second"]);
+        assert.equal(yield* readInBackground, "second");
+        assert.deepStrictEqual(spawned, [getValue]);
+        spawned.length = 0;
+        assert.equal(yield* read, "second");
+        assert.equal(yield* read, "second");
+        assert.isNotEmpty(spawned);
+        spawned.length = 0;
+        assert.equal(yield* readInBackground, "second");
+        assert.deepStrictEqual(spawned, []);
+      }),
+    ).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("reads what git config --get and git remote read", () =>
     Effect.scoped(
       Effect.gen(function* () {
