@@ -15,7 +15,7 @@ import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
-import { isModalDialogOpen } from "../lib/modalDialog";
+import { openLayerMatches } from "../lib/openLayers";
 
 function consume(event: KeyboardEvent): void {
   event.preventDefault();
@@ -104,7 +104,11 @@ export function installCommandPaletteCommands(
     },
     {
       ...options,
-      when: () => isCommandPaletteMounted() && !isModalDialogOpen(),
+      when: () =>
+        isCommandPaletteMounted() &&
+        !openLayerMatches(
+          '[data-slot="dialog-popup"][data-open]:not([data-app-modal]), [data-slot="alert-dialog-popup"][data-open]',
+        ),
       context: () => {
         const threadRef = readRouteThreadRef();
         return {
