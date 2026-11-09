@@ -3,6 +3,8 @@ import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { useMatches } from "@tanstack/react-router";
+import { isAppModalPage } from "../sidebar/mainAppLocation";
 import {
   resolveCompatibleRuntimeMode,
   runtimeModeConfig,
@@ -2352,7 +2354,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // The collapsed mobile web composer keeps a second controls row inside the card.
   const showInlineRestingControls = isComposerCollapsedMobile;
   const composerControlsHidden = showInlineRestingControls && !restingControlsVisible;
-  if (composerControlsHidden && isComposerModelPickerOpen) {
+  // The thread stays mounted (inert) under Settings or Usage, and its open picker would paint over them.
+  const appModalOpen = useMatches({
+    select: (matches) => matches.some((match) => isAppModalPage(match.pathname)),
+  });
+  if ((composerControlsHidden || appModalOpen) && isComposerModelPickerOpen) {
     setIsComposerModelPickerOpen(false);
   }
   const collapsedComposerImagePreviews =
