@@ -833,7 +833,12 @@ function nextQueuedRun(
 }
 
 function followsCurrentConversation(
-  message: OrchestrationV2ConversationMessage | undefined,
+  message:
+    | Pick<
+        OrchestrationV2ConversationMessage,
+        "createdBy" | "creationSource" | "notification" | "delegatedCompletion"
+      >
+    | undefined,
 ): boolean {
   return (
     message?.delegatedCompletion !== undefined ||
@@ -849,6 +854,20 @@ function queuedRunModelSelection(
   return followsCurrentConversation(message)
     ? projection.thread.modelSelection
     : run.modelSelection;
+}
+
+/** The selection the thread will be on once every queued run has started. */
+function queueTailModelSelection(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "messages">,
+): ModelSelection {
+  return (
+    queuedRunsInDeliveryOrder(projection).findLast(
+      (run) =>
+        !followsCurrentConversation(
+          projection.messages.find((message) => message.id === run.userMessageId),
+        ),
+    )?.modelSelection ?? projection.thread.modelSelection
+  );
 }
 
 function usageLimitHoldsQueue(
@@ -5926,7 +5945,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
       projection = applyToProjection(projection, event);
     }
-    const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+    let modelSelection = command.modelSelection ?? projection.thread.modelSelection;
     let dispatchMode = resolveMessageDispatchIntent(
       projection,
       command.dispatchMode,
@@ -6238,6 +6257,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: releasedAt,
         payload: { ...held, queueHeld: false },
       });
+    }
+    // An explicit pick queued ahead reaches the thread only when its run starts. A goal
+    // command that stops the active run goes first, so nothing queued applies before it.
+    if (
+      shouldQueue &&
+      command.modelSelection === undefined &&
+      goalStopRunId === undefined &&
+      !followsCurrentConversation({ ...command, delegatedCompletion })
+    ) {
+      modelSelection = queueTailModelSelection(projection);
+      yield* ensureGoalCommandSupported(command, command, modelSelection.instanceId);
     }
     if (shouldQueue) {
       if (pendingMergeBackTransfers.length > 0) {
