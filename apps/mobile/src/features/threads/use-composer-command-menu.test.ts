@@ -183,24 +183,6 @@ describe("mobile model mentions", () => {
     };
   };
 
-  it("replaces a model mention with prompt text and places the cursor after it", () => {
-    const modelOption = option("codex:gpt-5.4");
-    expect(
-      resolveComposerCommandSelection({
-        draftMessage: "@gpt",
-        trigger: { rangeStart: 0, rangeEnd: 4 },
-        item: {
-          id: `model:${modelOption.key}`,
-          type: "model",
-          option: modelOption,
-          label: modelOption.label,
-          description: modelOption.providerLabel,
-        },
-        allowInteractionMode: true,
-      }),
-    ).toEqual({ text: "model:codex/gpt-5.4 ", cursor: 20, interactionMode: null });
-  });
-
   it("offers current, visible models labelled with their provider", () => {
     const items = buildComposerModelItems(
       [

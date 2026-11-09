@@ -53,11 +53,14 @@ import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
 
 export type SkillMeta = { label: string; description: string | null };
 
-/** Decides which `$skill` and `model:` references become chips; the rest stay editable text. */
-export interface ComposerChipResolver {
+export type IsKnownModel = (instanceId: string, model: string) => boolean;
+
+interface ChipResolver {
   skill: (name: string) => SkillMeta | null;
-  model: (instanceId: string, model: string) => boolean;
+  model: IsKnownModel;
 }
+
+const NO_MODELS: IsKnownModel = () => false;
 
 const MARK_NESTING_ORDER: RichTextMark[] = ["strike", "bold", "italic", "code"];
 
@@ -627,7 +630,7 @@ interface DocLine {
 /** Null for a `$name` or `model:` reference the resolver does not know: it stays editable text. */
 function atomJsonForSegment(
   segment: Exclude<ReturnType<typeof splitPromptIntoComposerSegments>[number], { type: "text" }>,
-  chips: ComposerChipResolver,
+  chips: ChipResolver,
 ): AtomJson | null {
   if (segment.type === "mention") {
     return {
@@ -731,9 +734,16 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 /** Keeps literalLength leading characters unstyled so path queries reach file search unchanged. */
 export function buildTiptapContent(
   value: string,
-  chips: ComposerChipResolver,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  skillLabelFor: (name: string) => SkillMeta | null,
+  options?: {
+    styling?: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+    isKnownModel?: IsKnownModel;
+  },
 ): Record<string, unknown>[] {
+  const chips = { skill: skillLabelFor, model: options?.isKnownModel ?? NO_MODELS };
   if (options?.literalText) {
     return value.split("\n").map((line) => ({
       type: "paragraph",
@@ -969,10 +979,10 @@ export function buildTiptapContent(
 
 export function buildDocJson(
   value: string,
-  chips: ComposerChipResolver,
-  options?: { styling?: boolean; literalText?: boolean },
+  skillLabelFor: (name: string) => SkillMeta | null,
+  options?: { styling?: boolean; literalText?: boolean; isKnownModel?: IsKnownModel },
 ) {
-  const content = buildTiptapContent(value, chips, options);
+  const content = buildTiptapContent(value, skillLabelFor, options);
   if (content.at(-1)?.type === "horizontalRule") content.push({ type: "paragraph" });
   return { type: "doc", content };
 }
@@ -1548,13 +1558,13 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   };
 }
 
-export interface ComposerChipReplacement {
+export interface SkillChipReplacement {
   from: number;
   to: number;
   node: ProseMirrorNode;
 }
 
-function isStaleChip(node: ProseMirrorNode, chips: ComposerChipResolver): boolean {
+function isStaleChip(node: ProseMirrorNode, chips: ChipResolver): boolean {
   const { skillName, instanceId, model } = node.attrs as Record<string, unknown>;
   if (node.type.name === "composer-skill") {
     return typeof skillName === "string" && skillName !== "" && !chips.skill(skillName);
@@ -1567,12 +1577,14 @@ function isStaleChip(node: ProseMirrorNode, chips: ComposerChipResolver): boolea
  * Use the same Markdown token boundaries as draft restoration. Apply edits
  * last-first so positions stay valid and unrelated citation nodes keep their keys.
  */
-export function composerChipReplacements(
+export function skillChipReplacements(
   doc: ProseMirrorNode,
-  chips: ComposerChipResolver,
-): ComposerChipReplacement[] {
+  skillLabelFor: (name: string) => SkillMeta | null,
+  isKnownModel: IsKnownModel = NO_MODELS,
+): SkillChipReplacement[] {
+  const chips = { skill: skillLabelFor, model: isKnownModel };
   const schema = doc.type.schema;
-  const replacements: ComposerChipReplacement[] = [];
+  const replacements: SkillChipReplacement[] = [];
   doc.descendants((node, pos) => {
     if (!isStaleChip(node, chips)) return;
     replacements.push({

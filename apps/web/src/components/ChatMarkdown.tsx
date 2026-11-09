@@ -102,7 +102,7 @@ import {
   artifactTemplateFromHastProperties,
   renderCodexInlineDirectivesAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
-import { renderInlineChipMarkdownChildren } from "./chat/SkillInlineText";
+import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { MarkdownMath } from "./chat/MarkdownMath";
 import {
   resolveMarkdownMediaPreview,
@@ -981,7 +981,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const { skills, threadRef, environmentId } = use(ChatMarkdownRendererContext);
     return (
       <p {...props}>
-        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
       </p>
     );
   },
@@ -1023,7 +1023,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const isTaskItem = String(props.className ?? "").includes("task-list-item");
     return (
       <li {...props} data-list-item-offset={isTaskItem ? node?.position?.start.offset : undefined}>
-        {renderInlineChipMarkdownChildren(children, skills, threadRef, environmentId)}
+        {renderSkillInlineMarkdownChildren(children, skills, threadRef, environmentId)}
       </li>
     );
   },

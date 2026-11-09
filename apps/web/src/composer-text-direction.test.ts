@@ -9,14 +9,8 @@ import {
   ComposerCodeBlockExtension,
   ComposerCodeExtension,
   ComposerListExtensions,
-  type ComposerChipResolver,
 } from "./composer-rich-text-doc";
 import { composerTextDirections } from "./composer-text-direction";
-
-const knownChips: ComposerChipResolver = {
-  skill: (name) => ({ label: name, description: null }),
-  model: () => false,
-};
 
 const schema = getSchemaByResolvedExtensions(
   resolveExtensions([
@@ -38,7 +32,10 @@ const schema = getSchemaByResolvedExtensions(
 );
 
 function directions(value: string) {
-  const doc = ProseMirrorNode.fromJSON(schema, buildDocJson(value, knownChips));
+  const doc = ProseMirrorNode.fromJSON(
+    schema,
+    buildDocJson(value, (name) => ({ label: name, description: null })),
+  );
   return composerTextDirections(doc).blocks;
 }
 

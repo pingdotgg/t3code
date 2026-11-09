@@ -1,7 +1,7 @@
 import {
   collectComposerModelMentions,
   type ComposerModelMentionOccurrence,
-} from "@t3tools/client-runtime/composerModelMentions";
+} from "@t3tools/client-runtime/composer-model-mentions";
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { filePreviewKind } from "@t3tools/shared/filePreview";

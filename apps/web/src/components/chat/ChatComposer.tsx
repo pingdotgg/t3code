@@ -48,7 +48,7 @@ import {
 import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
-import { formatComposerModelMention } from "@t3tools/client-runtime/composerModelMentions";
+import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
@@ -1171,12 +1171,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
     workspaceSkillsScanning,
     questionAttachmentTarget,
-    modelMentions: !providerCatalogPending
-      ? {
-          instanceEntries: providerInstanceEntries,
-          modelOptionsByInstance,
-        }
-      : null,
+    modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
 
   const composerMenuOpen = Boolean(composerTrigger);

@@ -425,33 +425,6 @@ describe("ChatMarkdown skill chips", () => {
     expect(buttonsLabelled(screen.container, "Model gpt-4o. Show details")).toEqual([]);
     expect(screen.container.textContent).toBe("Ask (GPT-6.1), not model:openai/gpt-4o.");
   });
-
-  it("keeps chip sources in rich-text copies", async () => {
-    setup();
-    await using screen = await renderText("Run $review with model:codex/gpt-6.1 now", {
-      environmentId: EnvironmentId.make("models"),
-      skills: [{ name: "review", displayName: "Review", path: "/r/SKILL.md", enabled: true }],
-    });
-    await expect
-      .element(screen.getByRole("button", { name: "Model GPT-6.1. Show details" }))
-      .toBeVisible();
-
-    const paragraph = screen.container.querySelector("p")!;
-    window.getSelection()!.selectAllChildren(paragraph);
-    const copy = new ClipboardEvent("copy", {
-      bubbles: true,
-      cancelable: true,
-      clipboardData: new DataTransfer(),
-    });
-    paragraph.dispatchEvent(copy);
-
-    expect(copy.clipboardData!.getData("text/plain")).toBe(
-      "Run $review with model:codex/gpt-6.1 now",
-    );
-    expect(copy.clipboardData!.getData("text/html")).toContain(
-      "Run $review with model:codex/gpt-6.1 now",
-    );
-  });
 });
 
 describe("ChatMarkdown headings", () => {

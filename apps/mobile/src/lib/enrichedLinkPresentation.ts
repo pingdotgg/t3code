@@ -7,7 +7,7 @@ import {
   type ContextChipIconRef,
   UNAVAILABLE_CONTEXT_CHIP_PRESENTATION,
 } from "./composerChipPresentation";
-import { formatComposerModelMention } from "@t3tools/client-runtime/composerModelMentions";
+import { formatComposerModelMention } from "@t3tools/client-runtime/composer-model-mentions";
 import type {
   SelectableMarkdownModel,
   SelectableMarkdownSkill,

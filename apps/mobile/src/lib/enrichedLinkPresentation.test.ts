@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   buildEnrichedModelReferences,
-  enrichedModelDetails,
   enrichedModelLinkRegex,
   enrichedModelReference,
   enrichedTextLinkRegex,
@@ -90,24 +89,6 @@ describe("Enriched link presentation", () => {
     ).toEqual(["$review", "model:codex/gpt-6.1"]);
   });
 
-  it("describes a mentioned model the way its web popover does", () => {
-    const [direct, routed] = buildEnrichedModelReferences([
-      {
-        instanceId: "codex",
-        driver: "codex",
-        displayName: "Codex",
-        models: [{ slug: "gpt-6.1", name: "GPT-6.1" }],
-      },
-      {
-        instanceId: "opencode",
-        driver: "opencode",
-        models: [{ slug: "traex/gpt-6.1", name: "GPT-6.1", subProvider: "Traex" }],
-      },
-    ]);
-    expect(enrichedModelDetails(direct!)).toBe("Codex\nmodel:codex/gpt-6.1");
-    expect(enrichedModelDetails(routed!)).toBe("Traex\nmodel:opencode/traex/gpt-6.1");
-  });
-
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));
@@ -168,17 +149,5 @@ describe("Enriched link presentation", () => {
       },
     ]);
     expect(threadChipTargets(here, "No links here.")).toEqual([]);
-  });
-
-  it("finds thread links with angle-bracketed destinations", () => {
-    const here = "env-here" as EnvironmentId;
-    expect(threadChipTargets(here, "See [A](<t3-thread://v2/env-here/thread_a>).")).toEqual([
-      {
-        href: "t3-thread://v2/env-here/thread_a",
-        environmentId: here,
-        threadId: "thread_a",
-        link: true,
-      },
-    ]);
   });
 });

@@ -2,11 +2,14 @@ import { rankModelPickerSearch, type ModelPickerSearchableModel } from "./modelS
 
 const COMPOSER_MODEL_MENTION_LIMIT = 8;
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
 /** Mentions can't contain spaces, so `:`, `/` and `-` split words, as in `@gpt:traex`. */
 function mentionSearchQueries(query: string): ReadonlyArray<string> {
   const spaced = query.replace(/[:/]+/gu, " ").trim();
   const unhyphenated = spaced.replace(/-+/gu, " ").trim();
-  if (unhyphenated.length === 0) return [];
+  // One letter would fill the menu with models and push files out of it.
+  if (unhyphenated.replace(/\s+/gu, "").length < 2) return [];
   return unhyphenated === spaced ? [spaced] : [spaced, unhyphenated];
 }
 
@@ -17,8 +20,11 @@ export function rankComposerModelMentions<T>(
   toSearchable: (candidate: T) => ModelPickerSearchableModel,
 ): T[] {
   for (const words of mentionSearchQueries(query)) {
-    // Every word must match literally. Fuzzy model hits would push files out of the `@` menu.
-    const tokens = words.toLowerCase().split(/\s+/u);
+    // Every word must start a word of the model's names. Fuzzy hits would push files out of the `@` menu.
+    const tokens = words
+      .toLowerCase()
+      .split(/\s+/u)
+      .map((token) => new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapeRegExp(token)}`, "u"));
     const literal = candidates.filter((candidate) => {
       const model = toSearchable(candidate);
       const haystack = [
@@ -30,7 +36,7 @@ export function rankComposerModelMentions<T>(
       ]
         .join(" ")
         .toLowerCase();
-      return tokens.every((token) => haystack.includes(token));
+      return tokens.every((token) => token.test(haystack));
     });
     const ranked = rankModelPickerSearch(literal, words, toSearchable);
     if (ranked.length > 0) return ranked.slice(0, COMPOSER_MODEL_MENTION_LIMIT);

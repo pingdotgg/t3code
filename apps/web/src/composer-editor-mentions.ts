@@ -1,4 +1,4 @@
-import { collectComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
+import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { AssistantCitation } from "@t3tools/contracts";
 import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";

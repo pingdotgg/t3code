@@ -99,11 +99,10 @@ export function useComposerMenuItems({
   readonly showSkillsInSlashMenu: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
-  /** Null while the provider catalog is still loading. */
   readonly modelMentions: {
     readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
     readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
-  } | null;
+  };
 }) {
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
@@ -216,9 +215,11 @@ export function useComposerMenuItems({
               query: composerTrigger.query,
             })
           : []),
-        ...(modelMentions === null
-          ? []
-          : matchComposerModelItems({ ...modelMentions, query: composerTrigger.query })),
+        ...matchComposerModelItems({
+          instanceEntries: modelMentions.instanceEntries,
+          modelOptionsByInstance: modelMentions.modelOptionsByInstance,
+          query: composerTrigger.query,
+        }),
         ...workspaceEntries.entries.map((entry) => ({
           id: `path:${entry.kind}:${entry.path}`,
           type: "path" as const,

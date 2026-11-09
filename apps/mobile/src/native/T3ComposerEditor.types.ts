@@ -45,7 +45,6 @@ export interface ComposerEditorProps {
     > &
       Partial<Pick<ServerProviderSkill, "path">>
   >;
-  /** Models this environment knows; a reference to one of them shows as a chip. */
   readonly models?: ReadonlyArray<SelectableMarkdownModel>;
   readonly selection?: ComposerEditorSelection;
   readonly placeholder?: string;

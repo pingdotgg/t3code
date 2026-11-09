@@ -86,7 +86,7 @@ export function ModelMentionChip(props: {
 }) {
   const presentation = useAtomValue(
     modelMentionPresentationAtom(
-      `${props.environmentId ?? ""}\u0000${props.instanceId}\u0000${props.model}`,
+      `${props.environmentId ?? ""}\u0000${modelMentionKey(props.instanceId, props.model)}`,
     ),
   );
   if (!presentation) return props.source;

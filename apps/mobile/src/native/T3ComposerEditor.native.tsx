@@ -195,7 +195,7 @@ export function ComposerEditor({
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
         return {
-          // Native editors only need to know a chip is tappable; they have no model token type.
+          // Android taps only known token types; a model chip opens like a skill chip.
           type: token.type === "model" ? "skill" : token.type,
           source: token.source,
           start: token.start,

@@ -1,4 +1,4 @@
-import { rankComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
+import { rankComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { ProviderInstanceId } from "@t3tools/contracts";
 
 import { isProviderInstancePickerReady, type ProviderInstanceEntry } from "../../providerInstances";
@@ -7,24 +7,12 @@ import { getDisplayModelName, type ModelEsque } from "./providerIconUtils";
 
 type ComposerModelItem = Extract<ComposerCommandItem, { type: "model" }>;
 
-type ComposerModelMentionProvider = Pick<
-  ProviderInstanceEntry,
-  | "instanceId"
-  | "driverKind"
-  | "displayName"
-  | "acpRegistryAgentId"
-  | "acpRegistryIconUrl"
-  | "enabled"
-  | "isAvailable"
-  | "status"
->;
-
 export function matchComposerModelItems(input: {
-  readonly instanceEntries: ReadonlyArray<ComposerModelMentionProvider>;
+  readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   readonly query: string;
 }): ComposerModelItem[] {
-  const candidates: Array<{ entry: ComposerModelMentionProvider; option: ModelEsque }> = [];
+  const candidates: Array<{ entry: ProviderInstanceEntry; option: ModelEsque }> = [];
   for (const entry of input.instanceEntries) {
     if (!isProviderInstancePickerReady(entry)) continue;
     for (const option of input.modelOptionsByInstance.get(entry.instanceId) ?? []) {

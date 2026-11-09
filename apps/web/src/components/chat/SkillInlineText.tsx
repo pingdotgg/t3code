@@ -1,4 +1,4 @@
-import { collectComposerModelMentions } from "@t3tools/client-runtime/composerModelMentions";
+import { collectComposerModelMentions } from "@t3tools/client-runtime/composer-model-mentions";
 import type { EnvironmentId, ScopedThreadRef, ServerProviderSkill } from "@t3tools/contracts";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
@@ -67,7 +67,7 @@ function SkillInlineText(props: {
   return <>{nodes}</>;
 }
 
-export function renderInlineChipMarkdownChildren(
+export function renderSkillInlineMarkdownChildren(
   children: ReactNode,
   skills: ReadonlyArray<ServerProviderSkill>,
   threadRef: ScopedThreadRef | undefined,
@@ -98,7 +98,7 @@ export function renderInlineChipMarkdownChildren(
     return cloneElement(
       child,
       undefined,
-      renderInlineChipMarkdownChildren(child.props.children, skills, threadRef, environmentId),
+      renderSkillInlineMarkdownChildren(child.props.children, skills, threadRef, environmentId),
     );
   });
 }

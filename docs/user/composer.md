@@ -274,12 +274,6 @@ and your next message starts the agent again with the new setup.
 Provider commands must start the message to run. T3 Code commands such as
 `/model` and `/plan`, and skill mentions, work on any line.
 
-Type `@` followed by part of a model or provider name, such as `@opus` or `@gpt`,
-to insert a reference naming that model for the agent. This is useful for
-delegation, for example “delegate this to …”. It does not change the thread's
-model. Mentions can't contain spaces, so join words with `:`, `/` or `-`, for
-example `@gpt:traex`.
-
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it, even with the context meter turned off.
 
@@ -349,6 +343,10 @@ environment must be connected and up to date. The transcript includes the visibl
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
 file attachment limits apply.
+
+Type `@` and part of a model or provider name, such as `@opus`, to name that model for the
+agent, for example when delegating. It does not change the thread's model. Join words with
+`:`, `/` or `-`, as in `@opus:opencode`.
 
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
