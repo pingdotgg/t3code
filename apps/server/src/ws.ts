@@ -3570,16 +3570,28 @@ export const layer = Layer.unwrap(
         const liveness = yield* WsClientLiveness.make(() => ({
           pendingBytes: transport.writableLength,
           bytesWritten: transport.bytesWritten,
+          bytesRead: transport.bytesRead,
         }));
         // A WebSocket close frame would queue behind the backlog an unresponsive
         // client never drains. A TCP reset reaches a suspended phone at once, so
         // the app sees a dead socket on resume and reconnects instead of waiting.
         const resetUnresponsiveClient = liveness.awaitUnresponsive.pipe(
-          Effect.tap((reason) =>
-            Effect.logInfo("resetting unresponsive websocket client", {
-              reason,
-              sessionId: session.sessionId,
-            }),
+          Effect.tap((unresponsive) =>
+            Effect.all(
+              [
+                Effect.logInfo("resetting unresponsive websocket client", {
+                  ...unresponsive,
+                  sessionId: session.sessionId,
+                }),
+                Effect.annotateCurrentSpan({
+                  "ws.reset.reason": unresponsive.reason,
+                  "ws.reset.silent_for_ms": unresponsive.silentForMs,
+                  "ws.reset.bytes_read_while_silent": unresponsive.bytesReadWhileSilent,
+                  "ws.reset.pending_bytes": unresponsive.pendingBytes,
+                }),
+              ],
+              { discard: true },
+            ),
           ),
           Effect.andThen(Effect.sync(() => transport.resetAndDestroy())),
           Effect.as(HttpServerResponse.empty()),

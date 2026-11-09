@@ -12,6 +12,7 @@ const observedClient = (
   readProgress: () => WsClientLiveness.TransportProgress = () => ({
     pendingBytes: 0,
     bytesWritten: 0,
+    bytesRead: 0,
   }),
 ) =>
   Effect.gen(function* () {
@@ -40,7 +41,29 @@ it.effect("treats a client that stops sending as gone after the silence limit", 
     assert.isUndefined(unresponsive.pollUnsafe());
 
     yield* TestClock.adjust("5 seconds");
-    assert.strictEqual(yield* Fiber.join(unresponsive), "client-silent");
+    assert.deepStrictEqual(yield* Fiber.join(unresponsive), {
+      reason: "client-silent",
+      silentForMs: 90_000,
+      bytesReadWhileSilent: 0,
+      pendingBytes: 0,
+    });
+  }),
+);
+
+it.effect("reports bytes that arrived while no message was handled", () =>
+  Effect.gen(function* () {
+    const progress = { pendingBytes: 0, bytesWritten: 0, bytesRead: 100 };
+    const { ping, unresponsive } = yield* observedClient(() => progress);
+
+    yield* ping;
+    progress.bytesRead += 4_096;
+    yield* TestClock.adjust("90 seconds");
+    assert.deepStrictEqual(yield* Fiber.join(unresponsive), {
+      reason: "client-silent",
+      silentForMs: 90_000,
+      bytesReadWhileSilent: 4_096,
+      pendingBytes: 0,
+    });
   }),
 );
 
@@ -58,7 +81,7 @@ it.effect("keeps a pinging client connected", () =>
 
 it.effect("treats a send backlog that stops draining as a stalled client", () =>
   Effect.gen(function* () {
-    const progress = { pendingBytes: 0, bytesWritten: 0 };
+    const progress = { pendingBytes: 0, bytesWritten: 0, bytesRead: 0 };
     const { ping, unresponsive } = yield* observedClient(() => progress);
 
     // A slow reader still drains the queue, however little at a time.
@@ -77,6 +100,6 @@ it.effect("treats a send backlog that stops draining as a stalled client", () =>
     }
     assert.isUndefined(unresponsive.pollUnsafe());
     yield* TestClock.adjust("5 seconds");
-    assert.strictEqual(yield* Fiber.join(unresponsive), "send-stalled");
+    assert.strictEqual((yield* Fiber.join(unresponsive)).reason, "send-stalled");
   }),
 );

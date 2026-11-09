@@ -440,6 +440,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const isForeground = wakeups.isForeground ?? Effect.succeed(false);
   // The route of the latest attempt; the lease is already cleared when its failure is recorded.
   const lastRoute = yield* Ref.make<string | null>(null);
+  // What ended a live session. The state keeps no failure for it, but the log must say why.
+  const sessionEndedBy = yield* Ref.make<ConnectionAttemptError | null>(null);
   const routeDescription = (target: PreparedConnection) =>
     currentRoutes.pipe(
       Effect.map((routes) => {
@@ -470,9 +472,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         : {}),
       ...(lastConnected === null ? {} : { lastConnectedAt: lastConnected }),
     });
-    const kind = connectionLogKind(previous, next);
+    // Read on every transition so an ending error never outlives the one that follows it.
+    const endedBy = yield* Ref.getAndSet(sessionEndedBy, null);
+    // Reconnecting at once after an unanswered probe leaves "connected" for "connecting".
+    const kind =
+      endedBy !== null && previous.phase === "connected" && next.phase !== "connected"
+        ? "lost"
+        : connectionLogKind(previous, next);
     if (kind === null) return;
-    const failure = kind === "failed" || kind === "lost" ? next.lastFailure : null;
+    const failure =
+      kind === "failed" ? next.lastFailure : kind === "lost" ? (endedBy ?? next.lastFailure) : null;
     const event: ConnectionLogEvent = {
       ...(failure === null ? {} : { diagnostics: diagnostics.snapshot() }),
       ...(wakeups.applicationState === undefined
@@ -1186,6 +1195,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const error: ConnectionAttemptError = outcome.failure.error;
       if (!outcome.established) {
         latestFailure = error;
+      } else {
+        yield* Ref.set(sessionEndedBy, error);
       }
       if (error._tag === "ConnectionBlockedError") {
         const blockedIntent = yield* Ref.get(intent);

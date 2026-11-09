@@ -144,6 +144,19 @@ function awaitState(
   );
 }
 
+/** The supervisor appends to its log just after publishing the state, so wait on the log itself. */
+function awaitTrouble(
+  supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
+  count = 1,
+) {
+  return SubscriptionRef.changes(supervisor.log!).pipe(
+    Stream.map((log) => connectionTroubleSince(log, -1)),
+    Stream.filter((trouble) => trouble.length >= count),
+    Stream.runHead,
+    Effect.map(Option.getOrThrow),
+  );
+}
+
 const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?: {
   readonly networkStatus?: NetworkStatus;
   readonly prepare?: (
@@ -581,11 +594,16 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.closeLatestSession();
-      yield* awaitState(
+      const lost = yield* awaitState(
         supervisor.state,
         (state) => state.phase === "backoff" && state.attempt === 1,
       );
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
+      // The screen shows no failure for a lost session, but the log says what ended it.
+      expect(lost.lastFailure).toBeNull();
+      expect(yield* awaitTrouble(supervisor)).toEqual([
+        expect.objectContaining({ kind: "lost", reason: "transport", detail: "Session closed." }),
+      ]);
 
       yield* TestClock.adjust("3 seconds");
       yield* awaitState(
@@ -619,6 +637,13 @@ describe("EnvironmentSupervisor", () => {
       const lost = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
       // A short outage is still reported as reconnecting.
       expect(presentConnectionState(lost).phase).toBe("reconnecting");
+      // The loss names what ended the session; the failed retries after it name their own cause.
+      yield* TestClock.adjust("3 seconds");
+      const trouble = yield* awaitTrouble(supervisor, 2);
+      expect(trouble.map(({ kind, detail }) => ({ kind, detail }))).toEqual([
+        { kind: "lost", detail: "Session closed." },
+        { kind: "failed", detail: "Tunnel is down." },
+      ]);
 
       // Retries land at most 16 seconds apart this early, so one falls past the grace period.
       yield* TestClock.adjust("60 seconds");
@@ -1190,6 +1215,14 @@ describe("EnvironmentSupervisor", () => {
       expect(reconnecting.attempt).toBe(1);
       expect(reconnecting.lastFailure).toBeNull();
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
+      // Reconnecting at once still logs what ended the session.
+      expect(yield* awaitTrouble(supervisor)).toEqual([
+        expect.objectContaining({
+          kind: "lost",
+          reason: "transport",
+          detail: "The live session is stale.",
+        }),
+      ]);
 
       yield* Deferred.succeed(allowReconnect, undefined);
       yield* awaitState(
