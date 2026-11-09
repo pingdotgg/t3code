@@ -104,26 +104,30 @@ const isBoatApiError = Schema.is(BoatApiError);
  * - `limit_reached` — an organization-concurrent cap; a different condition than pacing.
  * The documented `Retry-After` header (IP-level) wins over any body-derived wait.
  */
+const parseRetryAfterMs = (header: string | undefined): number | undefined => {
+  if (header === undefined || header.trim() === "") return undefined;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1000)) : undefined;
+};
+
 const parseRateLimit = (
   body: unknown,
-  headers?: { readonly window?: string; readonly retryAfterSeconds?: number },
+  retryAfter: string | undefined,
 ): BoatApiError["rateLimit"] | undefined => {
-  if (body === undefined || body === null || typeof body !== "object") return undefined;
-  const record = body as Record<string, unknown>;
+  const record = body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const window =
     record.window === "minute" || record.window === "hour" || record.window === "day"
       ? record.window
       : undefined;
+  const waitMs = parseRetryAfterMs(retryAfter);
   const scope =
-    record.code === "limit_reached" ? ("capped" as const) : window ? ("paced" as const) : undefined;
+    record.code === "limit_reached"
+      ? ("capped" as const)
+      : window || waitMs !== undefined
+        ? ("paced" as const)
+        : undefined;
   if (!scope) return undefined;
-  return {
-    scope,
-    ...(window ? { window } : {}),
-    ...(headers?.retryAfterSeconds !== undefined
-      ? { waitMs: Math.round(headers.retryAfterSeconds * 1000) }
-      : {}),
-  };
+  return { scope, ...(window ? { window } : {}), ...(waitMs !== undefined ? { waitMs } : {}) };
 };
 const invalidResponse = (detail: unknown) =>
   new BoatApiError({
@@ -159,7 +163,10 @@ export function createBoatApiClient(options: BoatApiClientOptions): BoatApiClien
     if (response.status >= 400) {
       const rateLimit =
         response.status === 429
-          ? parseRateLimit(yield* response.json.pipe(Effect.orElseSucceed(() => undefined)))
+          ? parseRateLimit(
+              yield* response.json.pipe(Effect.orElseSucceed(() => undefined)),
+              response.headers["retry-after"],
+            )
           : undefined;
       return yield* new BoatApiError({
         status: response.status,

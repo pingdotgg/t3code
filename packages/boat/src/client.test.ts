@@ -12,7 +12,13 @@ const sandbox = {
   archiveAfter: "2026-11-05T01:00:00Z",
 };
 const details = { ok: true, sandbox };
-function setup(responses: readonly { readonly body: unknown; readonly status?: number }[]) {
+function setup(
+  responses: readonly {
+    readonly body: unknown;
+    readonly status?: number;
+    readonly headers?: Record<string, string>;
+  }[],
+) {
   const requests: {
     method: string;
     path: string;
@@ -38,7 +44,10 @@ function setup(responses: readonly { readonly body: unknown; readonly status?: n
         request,
         response.status === 204
           ? new Response(null, { status: 204 })
-          : Response.json(response.body, { status: response.status ?? 200 }),
+          : Response.json(response.body, {
+              status: response.status ?? 200,
+              ...(response.headers ? { headers: response.headers } : {}),
+            }),
       ),
     );
   });
@@ -79,6 +88,15 @@ describe("BoatApiClient", () => {
         const result = yield* client.listSandboxes().pipe(Effect.result);
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") expect(result.failure.status).toBe(status);
+      }
+    }),
+  );
+  it.effect("reports the Retry-After wait on a rate-limited request", () =>
+    Effect.gen(function* () {
+      for (const body of [{ ok: false, window: "minute" }, { ok: false }]) {
+        const { client } = setup([{ body, status: 429, headers: { "retry-after": "12" } }]);
+        const result = yield* client.listSandboxes().pipe(Effect.flip);
+        expect(result.rateLimit).toMatchObject({ scope: "paced", waitMs: 12_000 });
       }
     }),
   );
