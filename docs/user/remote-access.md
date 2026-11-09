@@ -249,8 +249,9 @@ To set it up, open **Settings → Environments → Add environment** and pick a 
 - an optional template snapshot to start from
 
 The API key stays on the server you set up. Nothing is provisioned during setup. Agents create
-a sandbox when they need one: `t3_delegate_task` starts a fresh sandbox for each task, and from
-inside a managed sandbox `t3_worktree_handoff` forks it, including uncommitted files.
+a sandbox when they need one. An agent that delegates a task to a sandbox gets a fresh sandbox
+for it, and an agent already working in a sandbox can hand its work off to a copy of that
+sandbox, uncommitted files included.
 
 If an agent's provider isn't available in a sandbox, use a template snapshot that has its CLI
 installed and signed in.
