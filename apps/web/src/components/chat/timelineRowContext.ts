@@ -8,6 +8,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type OrchestrationV2TurnItem,
+  type PlanId,
   type RunAttemptId,
   type ScopedThreadRef,
   type ServerProviderSkill,
@@ -63,6 +64,11 @@ export interface TimelineRowSharedState {
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onSendAppMessage: ((text: string) => Promise<void>) | undefined;
+  onBuildProposedPlan:
+    | ((plan: { readonly id: PlanId; readonly planMarkdown: string }) => Promise<boolean>)
+    | undefined;
+  /** True while the thread cannot start another Build (local send or active turn). */
+  isProposedPlanBuildBusy: boolean;
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
   findActive: boolean;

@@ -18,3 +18,12 @@ export function stripDisplayedPlanMarkdown(planMarkdown: string): string {
   }
   return lines.slice(start).join("\n");
 }
+
+export const PLAN_IMPLEMENTATION_PROMPT_PREFIX = "PLEASE IMPLEMENT THIS PLAN:";
+
+export function buildPlanImplementationPrompt(planMarkdown: string): string {
+  const title = proposedPlanTitle(planMarkdown)?.trim();
+  return title && title.length > 0
+    ? `${PLAN_IMPLEMENTATION_PROMPT_PREFIX} ${title}`
+    : `${PLAN_IMPLEMENTATION_PROMPT_PREFIX} the proposed plan`;
+}
