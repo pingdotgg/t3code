@@ -126,7 +126,10 @@ export function useAddProjectAtPath() {
         return true;
       }
       const navigationResult = await settlePromise(() =>
-        handleNewThread(scopeProjectRef(existing.environmentId, existing.id)),
+        handleNewThread(
+          scopeProjectRef(existing.environmentId, existing.id),
+          input.isCurrent ? { isCurrent: input.isCurrent } : undefined,
+        ),
       );
       if (navigationResult._tag === "Failure") {
         toastError(
@@ -165,7 +168,10 @@ export function useAddProjectAtPath() {
 
     if (input.isCurrent?.() === false) return false;
     const navigationResult = await settlePromise(() =>
-      handleNewThread(scopeProjectRef(input.environmentId, projectId)),
+      handleNewThread(
+        scopeProjectRef(input.environmentId, projectId),
+        input.isCurrent ? { isCurrent: input.isCurrent } : undefined,
+      ),
     );
     if (navigationResult._tag === "Failure") {
       toastError(

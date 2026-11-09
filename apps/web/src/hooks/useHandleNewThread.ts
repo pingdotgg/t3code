@@ -85,6 +85,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       replace?: boolean;
       /** Composer text for the draft, set before it shows. A draft with user text keeps it. */
       prompt?: string;
+      /** False once the caller gave up on landing here, such as a dismissed dialog. */
+      isCurrent?: () => boolean;
     },
   ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
     const projects = readProjects();
@@ -140,7 +142,9 @@ export function createNewThreadHandler(router: AnyRouter) {
         candidate.environmentId === projectRef.environmentId,
     );
     const abandonedSinceRequest = () =>
-      routeChangedSinceRequest() || (project !== undefined && readProject(projectRef) === null);
+      routeChangedSinceRequest() ||
+      options?.isCurrent?.() === false ||
+      (project !== undefined && readProject(projectRef) === null);
     const projectSettings = resolveProjectSettings(
       targetServerSettings,
       project?.id ?? null,

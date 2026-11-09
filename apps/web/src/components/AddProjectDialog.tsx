@@ -32,7 +32,7 @@ import { create } from "zustand";
 import { openCommandPalette } from "../commandPaletteBus";
 import { connectSshEnvironment as connectSshEnvironmentAtom } from "../connection/onboarding";
 import { useAddProjectAtPath } from "../hooks/useAddProjectAtPath";
-import { cn } from "../lib/utils";
+import { cn, isWindowsPlatform } from "../lib/utils";
 import { desktopSshHostsStateAtom } from "../state/desktopSshHosts";
 import {
   type EnvironmentPresentation,
@@ -61,6 +61,7 @@ import {
 } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 const useAddProjectDialog = create<{
   open: boolean;
@@ -94,12 +95,20 @@ type Step =
 const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
 
 // Only absolute and ~/ paths: a bare or ./ name would land in the server's working folder.
-// Dot segments are refused too, since they would miss an existing project's saved path.
+// Dot segments and doubled separators are refused too: the server normalizes them away,
+// so they would miss an existing project's saved path.
 function isHostPath(value: string, platform: string) {
+  const separator = isWindowsPlatform(platform) ? /[\\/]/ : /\//;
+  const segments = value.split(separator);
   return (
     getFilesystemBrowsePath(value, platform).isBrowsing &&
     !isExplicitRelativeProjectPath(value) &&
-    !value.split(/[\\/]/).some((segment) => segment === "." || segment === "..")
+    !segments.some(
+      (segment, index) =>
+        segment === "." ||
+        segment === ".." ||
+        (segment === "" && index > 0 && index < segments.length - 1 && segments[index - 1] !== ""),
+    )
   );
 }
 const EMPTY_SSH_HOSTS: ReadonlyArray<DesktopDiscoveredSshHost> = [];
@@ -481,6 +490,15 @@ function FolderStep({
       platform,
       currentProjectCwd: null,
       isCurrent,
+    }).catch((cause: unknown) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to add project",
+          description: cause instanceof Error ? cause.message : "An error occurred.",
+        }),
+      );
+      return false;
     });
     if (!isCurrent()) return;
     useAddProjectDialog.setState({ submitting: null });
