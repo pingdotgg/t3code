@@ -1,4 +1,10 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { groupWelcomeAgents } from "./welcomeAgents.logic";
@@ -36,6 +42,7 @@ describe("groupWelcomeAgents", () => {
         provider("Claude"),
         provider("Cursor", { installed: false, status: "warning", auth: { status: "unknown" } }),
       ],
+      undefined,
       nameOf,
       allowAll,
     );
@@ -47,9 +54,53 @@ describe("groupWelcomeAgents", () => {
     expect(groups.readyCount).toBe(2);
   });
 
+  it("uses this computer's settings and keeps agents that failed to load with the found ones", () => {
+    const acpRegistry = ProviderDriverKind.make("acpRegistry");
+    const settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides"> = {
+      providerInstances: {
+        [ProviderInstanceId.make("pi")]: { driver: ProviderDriverKind.make("pi") },
+        [ProviderInstanceId.make("registry")]: { driver: acpRegistry },
+      },
+      projectSettingsOverrides: {
+        [ProjectId.make("project-a")]: {
+          providerInstances: { [ProviderInstanceId.make("pi")]: { enabled: true } },
+        },
+      },
+    };
+    const groups = groupWelcomeAgents(
+      [
+        // The server checks Pi because project A turns it on; new projects still cannot use it.
+        provider("Pi"),
+        provider("Broken", {
+          enabled: false,
+          installed: false,
+          status: "error",
+          availability: "unavailable",
+          unavailableReason: "Invalid config for instance 'broken'.",
+        }),
+        // An ACP agent that is not prepared looks like one still being checked.
+        provider("Registry", {
+          driver: acpRegistry,
+          installed: false,
+          status: "warning",
+          auth: { status: "unknown" },
+        }),
+      ],
+      settings,
+      nameOf,
+      allowAll,
+    );
+
+    expect(names(groups.found)).toEqual(["Broken", "Registry"]);
+    expect(names(groups.available)).toEqual(["Pi"]);
+    expect(groups.readyCount).toBe(0);
+    expect(groups.checking).toBe(false);
+  });
+
   it("leaves out agents the computer's policy does not allow, ready or not", () => {
     const groups = groupWelcomeAgents(
       [provider("Codex"), provider("Blocked")],
+      undefined,
       nameOf,
       (entry) => entry.driver !== "blocked",
     );
@@ -59,7 +110,7 @@ describe("groupWelcomeAgents", () => {
   });
 
   it("reports checking before the computer has sent its providers", () => {
-    expect(groupWelcomeAgents(undefined, nameOf, allowAll)).toEqual({
+    expect(groupWelcomeAgents(undefined, undefined, nameOf, allowAll)).toEqual({
       checking: true,
       readyCount: 0,
       found: [],

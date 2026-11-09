@@ -9,6 +9,7 @@ import {
   type AgentSessionProjectCandidate,
   type AuthEnvironmentScope,
   type AuthSessionState,
+  type EnvironmentCloudLinkStateResult,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -37,6 +38,9 @@ const state = vi.hoisted(() => ({
   scan: vi.fn(),
   refreshScan: vi.fn(),
   waitForProject: vi.fn(),
+  cloud: false,
+  auth: { isLoaded: true, isSignedIn: false, userId: null as string | null },
+  linkState: null as unknown,
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
@@ -51,8 +55,25 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
 });
 vi.mock(import("../../cloud/publicConfig"), async (original) => ({
   ...(await original()),
-  hasCloudPublicConfig: () => false,
+  hasCloudPublicConfig: () => state.cloud,
 }));
+vi.mock(import("@clerk/react"), async (original) => ({
+  ...(await original()),
+  useAuth: (() => state.auth) as never,
+}));
+vi.mock(import("../clerk/useT3ConnectAuthPrompt"), async (original) => ({
+  ...(await original()),
+  useT3ConnectAuthPrompt: (() => ({ openAuthPrompt: () => {} })) as never,
+}));
+vi.mock(import("../../cloud/cloudLinkState"), async (original) => {
+  const { useAtomValue } = await import("@effect/atom-react");
+  return {
+    ...(await original()),
+    useCloudLinkState: (() => ({
+      data: useAtomValue(state.linkState as Atom.Atom<EnvironmentCloudLinkStateResult | null>),
+    })) as never,
+  };
+});
 vi.mock(import("../../onboarding/firstRun"), async (original) => ({
   ...(await original()),
   completeOnboarding: state.completeOnboarding,
@@ -269,6 +290,9 @@ function setup() {
   state.scan.mockReset();
   state.refreshScan.mockReset();
   state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
+  state.cloud = false;
+  state.auth = { isLoaded: true, isSignedIn: false, userId: null };
+  state.linkState = Atom.make<EnvironmentCloudLinkStateResult | null>(null).pipe(Atom.keepAlive);
   return now;
 }
 
@@ -350,25 +374,76 @@ it("waits for a ready agent to start, and Start without an agent still finishes 
   expect(state.createProject).toHaveBeenCalledTimes(2);
 });
 
-it("stays on the page while projects import, then lands as usual", async () => {
+it("blocks leaving the page until the imported projects have landed", async () => {
   using _now = setup();
   const creation = deferred<void>();
   state.createProject.mockImplementationOnce(async (input: CreateProjectInput) => {
     await creation.promise;
     return recordProject(input);
   });
+  const landing = deferred<void>();
+  state.waitForProject.mockImplementation(
+    async (ref: { environmentId: EnvironmentId; projectId: string }) => {
+      await landing.promise;
+      return waitForRecordedProject(ref);
+    },
+  );
   await using screen = await mountWelcome();
   await click("Add 2 projects and start");
 
   // A blocked navigation never settles, so it is not awaited.
-  await act(async () => {
-    void screen.router?.navigate({ to: "/settings" });
-  });
+  const leave = () =>
+    act(async () => {
+      void screen.router?.navigate({ to: "/settings" });
+    });
+  await leave();
   await act(async () => {
     creation.resolve();
     await creation.promise;
   });
+  await vi.waitFor(() => expect(state.waitForProject).toHaveBeenCalledOnce());
+  await leave();
+  expect(screen.router?.state.location.pathname).toBe("/");
+
+  await act(async () => {
+    landing.resolve();
+    await landing.promise;
+  });
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(screen.router?.state.location.pathname).toBe("/");
   expect(state.createProject).toHaveBeenCalledTimes(2);
+});
+
+it("starts without importing when this connection cannot import projects", async () => {
+  using _now = setup();
+  setGrant(primaryId, false);
+  await using _screen = await mountWelcome();
+  expect(pageText()).not.toContain("Review all");
+
+  await click("Start");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.createProject).not.toHaveBeenCalled();
+});
+
+it("says the phone is set up only once this computer is shared with the signed-in account", async () => {
+  using _now = setup();
+  state.cloud = true;
+  state.auth = { isLoaded: true, isSignedIn: true, userId: "user_1" };
+  await using _screen = await mountWelcome();
+  await click("Set up");
+  // Signed in, but "Not now" on the share step left this computer unreachable.
+  expect(pageText()).toContain("Set up T3 Connect");
+
+  await act(async () =>
+    appAtomRegistry.set(state.linkState as Atom.Writable<EnvironmentCloudLinkStateResult | null>, {
+      linked: true,
+      cloudUserId: "user_1",
+      relayUrl: null,
+      relayIssuer: null,
+      managedTunnelActive: true,
+      publishAgentActivity: true,
+    }),
+  );
+  expect(pageText()).toContain("Your phone can reach this computer.");
+  expect(pageText()).not.toContain("Set up T3 Connect");
 });

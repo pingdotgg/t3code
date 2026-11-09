@@ -36,6 +36,7 @@ import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
+import { useCloudLinkState } from "../../cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
@@ -51,11 +52,10 @@ import {
   splitOnboardingProjectPath,
 } from "../../onboarding/projectImport.logic";
 import {
-  getOnboardingProviderState,
   resolveOnboardingProviderInstallCommand,
   resolveOnboardingProviderLoginCommand,
 } from "../../onboarding/providerReadiness.logic";
-import { groupWelcomeAgents } from "../../onboarding/welcomeAgents.logic";
+import { groupWelcomeAgents, welcomeAgentState } from "../../onboarding/welcomeAgents.logic";
 import { newProjectId, randomUUID } from "../../lib/utils";
 import { agentSessionImport } from "../../state/agentSessions";
 import { readProjects, waitForProject } from "../../state/entities";
@@ -98,8 +98,8 @@ const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
 /**
- * First-run page for one computer: its agents, the projects found in Claude Code and Codex
- * history, and the phone app. Every part is optional except one ready agent to start chatting.
+ * First-run page for one computer: its agents, the projects found in agent history, and the
+ * phone app. Every part is optional except one ready agent to start chatting.
  */
 export function WelcomePage({
   environmentId,
@@ -205,13 +205,17 @@ export function WelcomePage({
               Setting up <span className="font-medium text-foreground">{label}</span>. You can
               change any of this later in Settings.
             </p>
-            <AgentsSection environmentId={environmentId} label={label} />
+            <AgentsSection
+              environmentId={environmentId}
+              label={label}
+              onImportSourceEnabled={() => scans[0]?.refresh()}
+            />
             <ProjectsSection
               scan={scans[0]}
               projectImport={projectImport}
               isImporting={isImporting}
             />
-            <PhoneSection />
+            <PhoneSection environmentId={environmentId} />
             <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-border/70 pt-6">
               {agentReady ? (
                 <span />
@@ -312,20 +316,28 @@ function useWelcomeAgents(environmentId: EnvironmentId) {
   return {
     providers,
     serverConfig,
-    ...groupWelcomeAgents(providers, agentName, (provider) =>
+    ...groupWelcomeAgents(providers, serverConfig?.settings, agentName, (provider) =>
       isManagedDriverAllowed(managedPolicy, provider.driver),
     ),
   };
 }
+
+const isImportSource = Schema.is(AgentSessionSource);
+
+// The setup card opens below a long list, so bring it into view once.
+const revealOnMount = (node: HTMLElement | null) => node?.scrollIntoView({ block: "nearest" });
 
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 
 function AgentsSection({
   environmentId,
   label,
+  onImportSourceEnabled,
 }: {
   readonly environmentId: EnvironmentId;
   readonly label: string;
+  // The project scan only reads agents that are on, so turning one on can find more history.
+  readonly onImportSourceEnabled: () => void;
 }) {
   const { providers, serverConfig, checking, readyCount, found, available } =
     useWelcomeAgents(environmentId);
@@ -348,12 +360,16 @@ function AgentsSection({
   // With nothing on this computer yet, the list of agents to add is the main task.
   const showMore = moreOpen ?? found.length === 0;
   const acpAllowed = isManagedDriverAllowed(serverConfig?.managedPolicy, ACP_REGISTRY_DRIVER_KIND);
+  const stateOf = (provider: ServerProvider) => welcomeAgentState(provider, serverConfig?.settings);
+  const needsInstallOrSignIn = (provider: ServerProvider) => {
+    const state = stateOf(provider);
+    return isInstallableDriver(provider.driver) && (state === "install" || state === "signIn");
+  };
   // Codex setup stays mounted by instance while its status changes, so a sign-in that
   // starts after an install is not lost when the agent moves between groups.
   const codexSetupProvider =
     providers?.find(
-      (provider) =>
-        provider.instanceId === codexSetupId && getOnboardingProviderState(provider) !== "ready",
+      (provider) => provider.instanceId === codexSetupId && stateOf(provider) !== "ready",
     ) ?? null;
 
   const openTerminal = (provider: ServerProvider) => {
@@ -396,12 +412,13 @@ function AgentsSection({
       toastManager.add({ type: "error", title: `Could not turn on ${agentName(provider)}` });
       return;
     }
-    void refreshProviders({ environmentId, input: {} });
+    void refreshProviders({ environmentId, input: { instanceId: provider.instanceId } });
+    if (isImportSource(provider.driver)) onImportSourceEnabled();
   };
 
   // One action per agent, the same in the list and in the grid.
   const actionFor = (provider: ServerProvider) => {
-    const state = getOnboardingProviderState(provider);
+    const state = stateOf(provider);
     if (state === "disabled") {
       return (
         <Button
@@ -414,7 +431,7 @@ function AgentsSection({
         </Button>
       );
     }
-    if (provider.driver === "codex" && serverConfig !== null) {
+    if (provider.driver === "codex" && serverConfig !== null && needsInstallOrSignIn(provider)) {
       const open = codexSetupId === provider.instanceId;
       return (
         <Button
@@ -427,10 +444,10 @@ function AgentsSection({
         </Button>
       );
     }
-    if (isInstallableDriver(provider.driver) && (state === "install" || state === "signIn")) {
+    if (needsInstallOrSignIn(provider)) {
       return (
         <TerminalAction
-          provider={provider}
+          signIn={state === "signIn"}
           disabled={
             terminalSession?.providerInstanceId === provider.instanceId ||
             serverConfig === null ||
@@ -470,11 +487,16 @@ function AgentsSection({
       {found.length > 0 ? (
         <div className="space-y-1.5">
           {found.map((provider) => (
-            <AgentCard key={provider.instanceId} provider={provider} action={actionFor(provider)} />
+            <AgentCard
+              key={provider.instanceId}
+              provider={provider}
+              state={stateOf(provider)}
+              action={actionFor(provider)}
+            />
           ))}
         </div>
       ) : null}
-      {!canOperateTerminal ? (
+      {!canOperateTerminal && [...found, ...available].some(needsInstallOrSignIn) ? (
         <p className="mt-2 text-sm text-muted-foreground">
           This connection cannot control terminals.
         </p>
@@ -504,6 +526,7 @@ function AgentsSection({
                 <AgentCard
                   key={provider.instanceId}
                   provider={provider}
+                  state={stateOf(provider)}
                   compact
                   action={actionFor(provider)}
                 />
@@ -529,12 +552,11 @@ function AgentsSection({
         </CollapsiblePanel>
       </Collapsible>
       {codexSetupProvider !== null && serverConfig !== null ? (
-        <div className="mt-2">
+        <div key={codexSetupProvider.instanceId} ref={revealOnMount} className="mt-2">
           <OnboardingCodexSetup
             environmentId={environmentId}
             provider={codexSetupProvider}
             serverConfig={serverConfig}
-            terminalOpen={terminalSession?.providerInstanceId === codexSetupProvider.instanceId}
             onOpenTerminal={() => openTerminal(codexSetupProvider)}
           />
         </div>
@@ -611,7 +633,7 @@ function ProjectsSection({
     return (
       <WelcomeSection title="Projects">
         <p className="text-sm text-muted-foreground">
-          Looking for projects in your Claude Code and Codex history…
+          Looking for projects in your {IMPORT_SOURCES_LABEL} history…
         </p>
       </WelcomeSection>
     );
@@ -644,7 +666,7 @@ function ProjectsSection({
   const allKeys = candidates.map((candidate) => candidate.key);
   const defaultKeys = recent.length > 0 ? recent.map((candidate) => candidate.key) : allKeys;
   return (
-    <WelcomeSection title="Projects" status="From your Claude Code and Codex history">
+    <WelcomeSection title="Projects" status={`From your ${IMPORT_SOURCES_LABEL} history`}>
       <div className="flex items-center gap-3 rounded-lg border border-border bg-background px-4 py-3">
         <Checkbox
           aria-label="Bring in projects"
@@ -657,17 +679,19 @@ function ProjectsSection({
             ? `Bring in ${selected.length} ${selected.length === 1 ? "project" : "projects"} and their threads`
             : "Bring in projects and their threads"}
         </span>
-        <Button
-          variant="ghost-muted"
-          size="xs"
-          aria-expanded={reviewing}
-          onClick={() => setReviewing((open) => !open)}
-        >
-          {reviewing ? "Hide" : `Review all ${candidates.length}`}
-          <ChevronDownIcon className={cn("size-3.5", reviewing && "rotate-180")} />
-        </Button>
+        {canWrite ? (
+          <Button
+            variant="ghost-muted"
+            size="xs"
+            aria-expanded={reviewing}
+            onClick={() => setReviewing((open) => !open)}
+          >
+            {reviewing ? "Hide" : `Review all ${candidates.length}`}
+            <ChevronDownIcon className={cn("size-3.5", reviewing && "rotate-180")} />
+          </Button>
+        ) : null}
       </div>
-      {reviewing ? (
+      {reviewing && canWrite ? (
         <fieldset className="mt-2 min-w-0" disabled={isImporting}>
           <div className="flex items-center justify-between gap-3 px-1 text-xs text-muted-foreground">
             <span role="status">
@@ -715,7 +739,7 @@ function ProjectsSection({
   );
 }
 
-function PhoneSection() {
+function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const [open, setOpen] = useState(false);
   return (
     <WelcomeSection title="Phone" status="Optional">
@@ -754,7 +778,7 @@ function PhoneSection() {
             </div>
             <div className="flex flex-col justify-center gap-2 rounded-lg border border-border bg-background p-3.5">
               {hasCloudPublicConfig() ? (
-                <PhoneConnectLink />
+                <PhoneConnectLink environmentId={environmentId} />
               ) : (
                 <>
                   <span className="text-sm text-muted-foreground">
@@ -778,15 +802,41 @@ function PhoneSection() {
   );
 }
 
-function PhoneConnectLink() {
-  const { isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
+function PhoneConnectLink({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const { isLoaded, isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
-  if (isSignedIn) {
+  const link = useCloudLinkState(environmentId).data;
+  // The phone reaches this computer through its tunnel; older servers leave that flag out.
+  const shared =
+    link !== null &&
+    link.linked &&
+    link.linkRevoked !== true &&
+    link.cloudUserId === userId &&
+    link.managedTunnelActive !== false;
+  if (isSignedIn && shared) {
     return (
       <span className="inline-flex items-center gap-1.5 text-sm text-foreground">
-        <CheckIcon className="size-4 text-success-foreground" />
-        Signed in to T3 Connect. Use the same account in the app.
+        <CheckIcon className="size-4 shrink-0 text-success-foreground" />
+        Your phone can reach this computer. Sign in to the app with the same account.
       </span>
+    );
+  }
+  if (isSignedIn) {
+    // Signing in alone does not share this computer, for example after "Not now".
+    return (
+      <>
+        <span className="text-sm text-muted-foreground">
+          Signed in. Share this computer so the app can reach it.
+        </span>
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          render={<Link to="/settings/access" />}
+        >
+          Set up T3 Connect
+        </Button>
+      </>
     );
   }
   return (
@@ -807,36 +857,32 @@ function PhoneConnectLink() {
   );
 }
 
+// The ChatGPT card and the CLI card stay one card, so either choice can be undone here.
 function OnboardingCodexSetup({
   environmentId,
   provider,
   serverConfig,
-  terminalOpen,
   onOpenTerminal,
 }: {
   readonly environmentId: EnvironmentId;
   readonly provider: ServerProvider;
   readonly serverConfig: ServerConfig;
-  readonly terminalOpen: boolean;
   readonly onOpenTerminal: () => void;
 }) {
-  const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
   const instanceId = provider.instanceId;
   const instance = serverConfig.settings.providerInstances[instanceId] ?? {
     driver: provider.driver,
     config: {},
   };
-  const mode = readCodexSetupMode(instance.config);
-  const existingChosen =
-    mode === "existing" &&
-    instance.config !== null &&
-    typeof instance.config === "object" &&
-    "setupMode" in instance.config &&
-    instance.config.setupMode === "existing";
+  const config =
+    instance.config !== null && typeof instance.config === "object" ? instance.config : {};
+  const mode = readCodexSetupMode(config);
   const changeMode = (setupMode: "managed" | "existing") => {
-    const config =
-      instance.config !== null && typeof instance.config === "object" ? instance.config : {};
+    // On the CLI card, "Use existing CLI" also opens a terminal to install or sign in.
+    if (setupMode === "existing" && mode === "existing") onOpenTerminal();
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     // One-instance upsert keeps a provider another client added in the meantime.
     void persistProviderInstance({
       operation: "upsert",
@@ -848,18 +894,7 @@ function OnboardingCodexSetup({
       }
     });
   };
-  return existingChosen ? (
-    <AgentCard
-      provider={provider}
-      action={
-        <TerminalAction
-          provider={provider}
-          disabled={terminalOpen || !canOperateTerminal}
-          onClick={onOpenTerminal}
-        />
-      }
-    />
-  ) : (
+  return (
     <CodexSetupSection
       presentation="onboarding"
       environmentId={environmentId}
@@ -867,39 +902,41 @@ function OnboardingCodexSetup({
       provider={provider}
       mode={mode}
       enabled={provider.enabled}
+      readOnly={!canManageProviders}
       onModeChange={changeMode}
     />
   );
 }
 
 function TerminalAction({
-  provider,
+  signIn,
   disabled,
   onClick,
 }: {
-  readonly provider: ServerProvider;
+  readonly signIn: boolean;
   readonly disabled: boolean;
   readonly onClick: () => void;
 }) {
   return (
     <Button size="xs" variant="outline" disabled={disabled} onClick={onClick}>
       <TerminalIcon className="size-3.5" />
-      {getOnboardingProviderState(provider) === "signIn" ? "Sign in" : "Install"}
+      {signIn ? "Sign in" : "Install"}
     </Button>
   );
 }
 
 function AgentCard({
   provider,
+  state,
   action,
   compact = false,
 }: {
   readonly provider: ServerProvider;
+  readonly state: ReturnType<typeof welcomeAgentState>;
   readonly action?: ReactNode;
   // A tile for the "Add more agents" grid: the button carries the state, so no detail line.
   readonly compact?: boolean;
 }) {
-  const state = getOnboardingProviderState(provider);
   const name = agentName(provider);
   const detail =
     compact || state === "ready" || state === "checking"
@@ -908,7 +945,7 @@ function AgentCard({
         ? "Not installed"
         : state === "disabled"
           ? "Off"
-          : getProviderSummary(provider).headline;
+          : (provider.unavailableReason ?? getProviderSummary(provider).headline);
   return (
     <div
       className={cn(
@@ -1147,11 +1184,16 @@ function useProjectImport({
     new Map<string, { readonly projectId: ProjectId; readonly commandId: CommandId }>(),
   );
   const importGenerationRef = useRef(0);
-  const importLoopRef = useRef(false);
-  // Leaving mid-import would abandon the remaining projects and their retry state.
+  // True from the first project until the landing; leaving earlier drops the rest of the import.
+  const holdPageRef = useRef(false);
   useBlocker({
-    shouldBlockFn: () => importLoopRef.current,
-    enableBeforeUnload: () => importLoopRef.current,
+    shouldBlockFn: () => {
+      if (!holdPageRef.current) return false;
+      toastManager.add({ type: "info", title: "Importing projects", description: "One moment." });
+      return true;
+    },
+    // Electron cancels a quit silently when unload is blocked. A later visit resumes the import.
+    enableBeforeUnload: false,
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- bumps the import generation on mount and unmount so in-flight imports drop stale results
@@ -1207,6 +1249,7 @@ function useProjectImport({
       return;
     }
     setIsImporting(true);
+    holdPageRef.current = true;
     const importGeneration = importGenerationRef.current;
     // waitForProject gives up after its timeout, so a project that never reaches the client
     // still finishes setup, just without landing in it.
@@ -1216,6 +1259,8 @@ function useProjectImport({
         () => undefined,
       )
       .then(async (landing) => {
+        // Release before onDone so its own navigation is not blocked.
+        holdPageRef.current = false;
         if (importGeneration !== importGenerationRef.current) return;
         const completed = await onDone(
           landing,
@@ -1345,9 +1390,9 @@ function useProjectImport({
       }
       return true;
     };
-    importLoopRef.current = true;
+    holdPageRef.current = true;
     const completed = await importEach().finally(() => {
-      importLoopRef.current = false;
+      holdPageRef.current = false;
     });
     if (!completed) return;
     for (const scan of scans) {
@@ -1583,6 +1628,9 @@ const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
   codex: "Codex",
   pi: "Pi",
 };
+const IMPORT_SOURCES_LABEL = new Intl.ListFormat("en", { type: "conjunction" }).format(
+  AgentSessionSource.literals.map((source) => IMPORT_SOURCE_NAMES[source]),
+);
 
 function ImportRowMeta({
   sources,
