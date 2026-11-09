@@ -20,7 +20,8 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-// `refreshModels` is the only refresh that drops the server's hour-long latest-version cache.
+// `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
+// drops it only when the model manifest changed.
 export function useCheckProviderUpdates() {
   const { environments } = useEnvironments();
   const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
@@ -29,7 +30,7 @@ export function useCheckProviderUpdates() {
   });
   const inFlight = useRef<Promise<void> | null>(null);
 
-  const check = async () => {
+  const check = async (quiet: boolean) => {
     const failures = await Promise.all(
       environments
         .filter(
@@ -45,7 +46,7 @@ export function useCheckProviderUpdates() {
         }),
     );
     const lines = failures.flat();
-    if (lines.length === 0) return;
+    if (quiet || lines.length === 0) return;
     toastManager.add(
       stackedThreadToast({
         type: "error",
@@ -56,9 +57,9 @@ export function useCheckProviderUpdates() {
   };
 
   // A repeat click must not start a second model rediscovery while one is running.
-  return () => {
+  return ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
     if (inFlight.current) return inFlight.current;
-    const running = check().finally(() => {
+    const running = check(quiet).finally(() => {
       inFlight.current = null;
     });
     inFlight.current = running;

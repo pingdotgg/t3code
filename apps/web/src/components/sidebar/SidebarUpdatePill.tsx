@@ -201,7 +201,8 @@ function SidebarUpdateControl() {
   // The desktop updates this machine, whose policy the primary environment reports.
   const updatesDenial = managedUpdatesDenial(usePrimaryManagedPolicy());
   const [isActionPending, setIsActionPending] = useState(false);
-  const [isCheckingProviders, setIsCheckingProviders] = useState(false);
+  const [providerCheck, setProviderCheck] = useState<"button" | "dialog" | null>(null);
+  const isCheckingProviders = providerCheck === "button";
   const [isConfirmingEverything, setIsConfirmingEverything] = useState(false);
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
@@ -286,6 +287,9 @@ function SidebarUpdateControl() {
 
     if (runsEverything) {
       setIsConfirmingEverything(true);
+      // Machines that still cache an older latest version add their rows while the dialog is open.
+      setProviderCheck("dialog");
+      void checkProviderUpdates({ quiet: true }).finally(() => setProviderCheck(null));
       return;
     }
 
@@ -352,9 +356,9 @@ function SidebarUpdateControl() {
           }),
         );
       });
-    setIsCheckingProviders(true);
-    const providerCheck = checkProviderUpdates().finally(() => setIsCheckingProviders(false));
-    void Promise.allSettled([appCheck, providerCheck]).then(() => setIsActionPending(false));
+    setProviderCheck("button");
+    const providersChecked = checkProviderUpdates().finally(() => setProviderCheck(null));
+    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
   };
 
   const runEverything = async () => {
@@ -415,6 +419,7 @@ function SidebarUpdateControl() {
       providerCount={everything.providerCount}
       rows={everything.rows}
       restarts={everything.restarts}
+      checking={providerCheck === "dialog"}
       onConfirm={() => void runEverything()}
     />
   );
