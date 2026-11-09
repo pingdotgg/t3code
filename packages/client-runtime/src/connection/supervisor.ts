@@ -414,10 +414,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       return { generation: previous.generation, routes };
     });
-    const index = results.indexOf("ready");
-    if (index === -1) return;
     const live = yield* SubscriptionRef.get(session);
     if (Option.isNone(live) || live.value !== lease.session) return;
+    const connected = yield* SubscriptionRef.get(state);
+    const refused = better
+      .filter((_route, position) => results[position] === "refused")
+      .map((route) => connectionRouteId(route.target))
+      .filter((id) => !connected.refusedRouteIds.includes(id));
+    if (connected.phase === "connected" && refused.length > 0) {
+      yield* setState({
+        ...connected,
+        refusedRouteIds: [...connected.refusedRouteIds, ...refused],
+      });
+    }
+    const index = results.indexOf("ready");
+    if (index === -1) return;
     yield* signal({
       _tag: "BetterRouteAvailable",
       routeId: connectionRouteId(better[index]!.target),

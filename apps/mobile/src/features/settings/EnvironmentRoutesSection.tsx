@@ -246,6 +246,10 @@ function RouteRow(props: {
   const { route, lifted, offset } = props;
   const label = connectionRouteLabel(route);
   const address = connectionRouteAddress(route);
+  const refusedHint =
+    props.refused && address !== null
+      ? "The host refused this device's sign-in. Pair this address again with Add route."
+      : null;
   const style = useAnimatedStyle(() => ({
     transform: [
       {
@@ -289,6 +293,7 @@ function RouteRow(props: {
           props.inUse ? "In use" : null,
           props.refused ? "Sign-in refused" : null,
           `Route ${props.position} of ${props.count}`,
+          refusedHint,
         ]
           .filter((part) => part !== null)
           .join(", ")}
@@ -322,10 +327,8 @@ function RouteRow(props: {
               {isLearned(route) ? `${address} · found automatically` : address}
             </Text>
           ) : null}
-          {props.refused && address !== null ? (
-            <Text className="text-sm text-foreground-muted">
-              This device's sign-in expired or was revoked. Pair this address again with Add route.
-            </Text>
+          {refusedHint !== null ? (
+            <Text className="text-sm text-foreground-muted">{refusedHint}</Text>
           ) : null}
         </View>
       </View>

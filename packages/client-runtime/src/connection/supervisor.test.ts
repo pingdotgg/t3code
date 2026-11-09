@@ -131,6 +131,14 @@ function blocked(message = "Authentication required.") {
   });
 }
 
+function hostRefusal() {
+  return new ConnectionBlockedError({
+    reason: "authentication",
+    detail: "The environment credential is invalid.",
+    hop: "server",
+  });
+}
+
 function awaitState(
   state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
   predicate: (value: SupervisorConnectionState) => boolean,
@@ -1702,7 +1710,7 @@ describe("EnvironmentSupervisor routes", () => {
         checkRoute: () => Effect.succeed("answered"),
         prepare: (_attempt, target) =>
           connectionRouteId(target) === loopbackTarget.connectionId
-            ? Effect.fail(blocked("The environment credential is invalid."))
+            ? Effect.fail(hostRefusal())
             : Effect.succeed(preparedFor(target)),
       });
       const supervisor = yield* EnvironmentSupervisor.make(entry, {
@@ -1716,6 +1724,86 @@ describe("EnvironmentSupervisor routes", () => {
         ),
       ).toBe(LAN_TARGET.connectionId);
       expect(state.refusedRouteIds).toEqual([loopbackTarget.connectionId]);
+    }),
+  );
+
+  it.effect("does not report a route that failed before reaching its host's sign-in", () =>
+    Effect.gen(function* () {
+      const failures = [
+        new ConnectionBlockedError({
+          reason: "permission",
+          detail: "T3 Connect is not enabled on this machine.",
+          hop: "tunnel",
+          failureCause: "tunnel_not_enabled",
+        }),
+        new ConnectionBlockedError({
+          reason: "authentication",
+          detail: "This device's clock is wrong.",
+          hop: "server",
+          failureCause: "clock_skew",
+        }),
+      ];
+      for (const failure of failures) {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "BearerConnectionTarget"
+              ? Effect.fail(failure)
+              : Effect.succeed(preparedFor(target)),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "connected");
+        expect(state.refusedRouteIds).toEqual([]);
+      }
+    }),
+  );
+
+  it.effect("reports a preferred route whose host refuses sign-in once it answers again", () =>
+    Effect.gen(function* () {
+      const lanReachable = yield* Ref.make(false);
+      const checkRoute = (route: ConnectionRoute) =>
+        route.target._tag === "BearerConnectionTarget"
+          ? Ref.get(lanReachable).pipe(
+              Effect.map((reachable): ConnectionDriver.RouteCheck =>
+                reachable ? "answered" : "silent",
+              ),
+            )
+          : Effect.succeed<ConnectionDriver.RouteCheck>("unchecked");
+      const harness = yield* makeHarness({
+        checkRoute,
+        preflight: (route) =>
+          ConnectionDriver.preflightRoute(
+            checkRoute(route),
+            route.target._tag === "BearerConnectionTarget"
+              ? Effect.fail(hostRefusal())
+              : Effect.succeed(preparedFor(route.target)),
+          ),
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      const connected = yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(connected.refusedRouteIds).toEqual([]);
+
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("network-changed");
+      const state = yield* awaitState(
+        supervisor.state,
+        (value) => value.refusedRouteIds.length > 0,
+      );
+      expect(state).toMatchObject({
+        phase: "connected",
+        generation: connected.generation,
+        refusedRouteIds: [LAN_TARGET.connectionId],
+      });
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "RelayConnectionTarget",
+      );
     }),
   );
 

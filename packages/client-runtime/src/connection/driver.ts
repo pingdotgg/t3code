@@ -14,6 +14,7 @@ import type {
   PreparedConnection,
 } from "./model.ts";
 import { ConnectionTransientError } from "./model.ts";
+import { isHostCredentialRefusal } from "./errors.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import {
   connectionRouteId,
@@ -47,8 +48,11 @@ export interface EnvironmentConnectionLease extends RouteConnection {
 }
 
 export type RouteCheck = "answered" | "silent" | "unchecked";
-/** "unprepared" means the route answered its check but could not be prepared. */
-export type RoutePreflight = "ready" | "unprepared" | "silent" | "unchecked";
+/**
+ * "unprepared" means the route answered its check but could not be prepared;
+ * "refused" means its host refused this device's credential.
+ */
+export type RoutePreflight = "ready" | "refused" | "unprepared" | "silent" | "unchecked";
 
 const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // Preferred direct routes share one head start, so a relay connection does not
@@ -100,9 +104,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
       else blocked ??= result.failure;
-      if (result.failure.reason === "authentication" || result.failure.reason === "permission") {
+      if (isHostCredentialRefusal(result.failure))
         refusedRouteIds.push(connectionRouteId(route.target));
-      }
     }
     return result;
   });
@@ -147,6 +150,25 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
       })
   );
 });
+
+export const preflightRoute = (
+  check: Effect.Effect<RouteCheck>,
+  prepare: Effect.Effect<unknown, ConnectionAttemptError>,
+): Effect.Effect<RoutePreflight> =>
+  check.pipe(
+    Effect.filterOrElse(
+      (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
+      () =>
+        prepare.pipe(
+          Effect.as<RoutePreflight>("ready"),
+          Effect.catch((error) =>
+            Effect.succeed<RoutePreflight>(
+              isHostCredentialRefusal(error) ? "refused" : "unprepared",
+            ),
+          ),
+        ),
+    ),
+  );
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -228,20 +250,12 @@ export const make = Effect.gen(function* () {
   });
 
   const preflight = (entry: ConnectionCatalogEntry, route: ConnectionRoute) =>
-    (sendsTokenInClear(connectionRoutes(entry), route)
-      ? Effect.succeed("silent" as const)
-      : checkRoute(entry, route)
-    ).pipe(
-      Effect.filterOrElse(
-        (check): check is Exclude<RouteCheck, "answered"> => check !== "answered",
-        () =>
-          resolver.prepare(routeEntry(entry, route)).pipe(
-            Effect.as<RoutePreflight>("ready"),
-            Effect.orElseSucceed((): RoutePreflight => "unprepared"),
-          ),
-      ),
-      Effect.withSpan("ConnectionDriver.preflight"),
-    );
+    preflightRoute(
+      sendsTokenInClear(connectionRoutes(entry), route)
+        ? Effect.succeed("silent" as const)
+        : checkRoute(entry, route),
+      resolver.prepare(routeEntry(entry, route)),
+    ).pipe(Effect.withSpan("ConnectionDriver.preflight"));
 
   return ConnectionDriver.of({ connect, preflight, checkHost });
 });

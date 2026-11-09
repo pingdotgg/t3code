@@ -185,7 +185,7 @@ function SortableRouteRow({
         ) : null}
         {refused && address !== null ? (
           <p className="text-2xs text-muted-foreground">
-            This device's sign-in expired or was revoked. Pair this address again with Add route.
+            The host refused this device's sign-in. Pair this address again with Add route.
           </p>
         ) : null}
       </div>
