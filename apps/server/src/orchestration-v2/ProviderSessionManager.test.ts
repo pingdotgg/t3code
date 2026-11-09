@@ -2117,6 +2117,24 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         turnItem: retryItem("interrupted"),
       });
       yield* Queue.offer(adapterQueue!, {
+        type: "provider_turn.updated",
+        driver: CODEX_DRIVER,
+        threadId,
+        providerTurn: {
+          id: providerTurnId,
+          providerThreadId: providerThread.id,
+          nodeId: idAllocator.derive.rootNode({
+            runId: idAllocator.derive.run({ threadId, ordinal: 1 }),
+          }),
+          runAttemptId: null,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "interrupted",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      yield* Queue.offer(adapterQueue!, {
         type: "turn.terminal",
         driver: CODEX_DRIVER,
         providerThreadId: providerThread.id,
@@ -2135,6 +2153,11 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
 
       const events = Array.from(yield* Fiber.join(collected));
       const terminal = events.find((event) => event.type === "turn.terminal");
+      const providerTurn = events.find((event) => event.type === "provider_turn.updated");
+      assert.equal(
+        providerTurn?.type === "provider_turn.updated" ? providerTurn.providerTurn.status : null,
+        "failed",
+      );
       assert.deepEqual(terminal, {
         type: "turn.terminal",
         driver: CODEX_DRIVER,
