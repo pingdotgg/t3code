@@ -23,7 +23,7 @@ import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
-import { formatContextWindowCompactionMessage } from "./ContextWindowMeter.logic";
+import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const PACE_LABEL: Record<LimitPace, string> = {
@@ -140,7 +140,7 @@ export function ThreadDetailsContext({
               </span>
             ) : null}
             {threshold !== null && threshold > 0 ? (
-              <span>{formatContextWindowCompactionMessage(null, threshold)}</span>
+              <span>{formatContextWindowCompactionMessage(threshold)}</span>
             ) : null}
             {compactDisabled && compactDisabledReason ? <span>{compactDisabledReason}</span> : null}
           </>

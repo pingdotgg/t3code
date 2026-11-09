@@ -29,7 +29,6 @@ import type {
   PreviewAnnotationPayload,
   ThreadContextRecord,
   EnvironmentContextRecord,
-  ProviderInteractionMode,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ProviderApprovalDecision,
@@ -52,6 +51,7 @@ import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { splitTransferredFiles } from "./workspaceFileDrop";
@@ -84,12 +84,7 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
-import {
-  deriveComposerSendState,
-  getAntigravitySendBlockReason,
-  resolveComposerInteractionMode,
-  threadShellHasStarted,
-} from "../ChatView.logic";
+import { deriveComposerSendState, getAntigravitySendBlockReason } from "../ChatView.logic";
 import {
   dataTransferHasComposerMention,
   makeComposerMentionDragHandlers,
@@ -122,7 +117,6 @@ import {
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
-import type { ThreadSyncPhase } from "../../threadSync";
 import { ComposerBanner } from "./ComposerBanner";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -214,16 +208,10 @@ import {
 } from "./ComposerAttachmentStrip";
 import { ComposerFooterPrimaryActions } from "./ComposerFooterControls";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
-import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
-import {
-  providerSupportsManualCompaction,
-  resolveContextWindowModelDisplayName,
-  shouldReserveContextWindowMeter,
-} from "./ContextWindowMeter.logic";
 import {
   buildAttachmentVideoPreview,
   buildExpandedImagePreview,
@@ -245,31 +233,24 @@ import { toastManager } from "../ui/toast";
 import { BuildingIcon, PaperclipIcon, PlayIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
-import { proposedPlanTitle } from "@t3tools/shared/proposedPlanText";
-import { proposedPlanStepCount } from "../../proposedPlan";
 import { hasProviderSetup } from "./ProviderStatusBanner";
 import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
-import { isVideoAttachment, type SessionPhase, type Thread, type ThreadShell } from "../../types";
+import { isVideoAttachment, type SessionPhase, type Thread } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
 import type { PendingUserInputDraftAnswer } from "@t3tools/client-runtime/state/pending-user-input";
-import type {
-  LatestProposedPlanState,
-  PendingApproval,
-  PendingUserInput,
-  TimelineEntry,
-} from "../../session-logic";
+import type { PendingApproval, PendingUserInput, TimelineEntry } from "../../session-logic";
 import {
   resolveComposerDispatchMode,
   type ComposerDispatchMode,
 } from "@t3tools/client-runtime/state/composer-dispatch";
-import { deriveLatestContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
 import { useEnvironmentDisconnectDelay } from "../../hooks/useEnvironmentDisconnectDelay";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { Kbd } from "../ui/kbd";
 import { useSoftwareKeyboardOpen } from "../../hooks/useSoftwareKeyboardOpen";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { usePanelAnimationSettings } from "../../panelAnimations";
@@ -290,6 +271,8 @@ import {
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
+import { usePromptSuggestion } from "./usePromptSuggestion";
+import { useFreshSessionArmed } from "./freshSessionArms";
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -348,8 +331,6 @@ export interface ChatComposerHandle {
     selectedProvider: ProviderDriverKind;
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
-    interactionMode: ProviderInteractionMode;
-    interactionModeEnabled: boolean;
     shownPendingApprovalIds: ReadonlyArray<RuntimeRequestId>;
   };
   validateProviderInput: (providerInput: string) => boolean;
@@ -375,7 +356,6 @@ export interface ChatComposerProps {
 
   activeThreadId: ThreadId | null;
   activeThread: Thread | undefined;
-  activeThreadShell: ThreadShell | null;
   promptHistoryEntries: ReadonlyArray<TimelineEntry>;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
@@ -428,15 +408,11 @@ export interface ChatComposerProps {
   activePendingQuestionIndex: number;
   respondingRequestIds: RuntimeRequestId[];
 
-  showPlanFollowUpPrompt: boolean;
-  activeProposedPlan: LatestProposedPlanState | null;
-  threadSyncPhase: ThreadSyncPhase | null;
   /** A file drag is over the chat workspace; the composer shows as its drop target. */
   workspaceFileDragActive: boolean;
 
   runtimeMode: RuntimeMode;
   defaultRuntimeMode?: RuntimeMode;
-  interactionMode: ProviderInteractionMode;
 
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
@@ -447,12 +423,8 @@ export interface ChatComposerProps {
   activeProjectId: ProjectId | null;
   projectName?: string | undefined;
 
-  contextWindowEntries: Parameters<typeof deriveLatestContextWindowSnapshot>[0];
-  contextWindowLiveUsage: Parameters<typeof deriveLatestContextWindowSnapshot>[1];
-  contextWindowProviderThread: Parameters<typeof deriveLatestContextWindowSnapshot>[2];
   compactThreadUnavailable: boolean;
   compactDisabled: boolean;
-  compactDisabledReason: string | null;
 
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
@@ -494,7 +466,6 @@ export interface ChatComposerProps {
   ) => void;
   onResume: () => void;
   onInterrupt: () => void;
-  onImplementPlanInNewThread: () => void;
   onSelectActivePendingUserInputOption: (questionId: string, optionValue: string) => void;
   onAdvanceActivePendingUserInput: () => void;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
@@ -514,9 +485,7 @@ export interface ChatComposerProps {
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
-  toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
-  handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -567,10 +536,7 @@ export function ChatComposer(props: ChatComposerProps) {
     activePendingDraftAnswers,
     activePendingQuestionIndex,
     respondingRequestIds,
-    showPlanFollowUpPrompt,
-    activeProposedPlan,
     runtimeMode,
-    interactionMode: requestedInteractionMode,
     lockedProvider,
     providerStatuses,
     providerCatalogKnown,
@@ -579,12 +545,8 @@ export function ChatComposer(props: ChatComposerProps) {
     reportedModelSelection,
     activeProjectId,
     projectName,
-    contextWindowEntries,
-    contextWindowLiveUsage,
-    contextWindowProviderThread,
     compactThreadUnavailable,
     compactDisabled,
-    compactDisabledReason,
     resolvedTheme,
     settings,
     keybindings,
@@ -607,7 +569,6 @@ export function ChatComposer(props: ChatComposerProps) {
     onSend,
     onResume,
     onInterrupt,
-    onImplementPlanInNewThread,
     onSelectActivePendingUserInputOption,
     onAdvanceActivePendingUserInput,
     onDismissActivePendingUserInput,
@@ -616,9 +577,7 @@ export function ChatComposer(props: ChatComposerProps) {
     onProviderModelSelect,
     onOpenProviderSetup,
     getModelDisabledReason,
-    toggleInteractionMode,
     handleRuntimeModeChange,
-    handleInteractionModeChange,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -631,11 +590,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const environmentDisconnected = useEnvironmentDisconnectDelay(
     environmentUnavailable === null ? null : environmentId,
   );
-  const activeContextWindow = deriveLatestContextWindowSnapshot(
-    contextWindowEntries,
-    contextWindowLiveUsage,
-    contextWindowProviderThread,
-  );
+
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
   const {
@@ -942,8 +897,6 @@ export function ChatComposer(props: ChatComposerProps) {
         ? providerInstanceEntries.find((entry) => hasProviderSetup(entry.snapshot))?.instanceId
         : undefined))
     : undefined;
-  const resolvedCompactDisabledReason =
-    compactDisabledReason ?? (noProviderAvailable ? "Compacting is unavailable right now" : null);
   const { modes: compatibleRuntimeModes, mode: compatibleRuntimeMode } =
     resolveCompatibleRuntimeMode(
       runtimeMode,
@@ -981,7 +934,6 @@ export function ChatComposer(props: ChatComposerProps) {
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
   const selectedProviderStatus = selectedProviderEntry?.snapshot ?? null;
-  const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
     : NO_PROVIDER_SKILLS;
@@ -997,11 +949,6 @@ export function ChatComposer(props: ChatComposerProps) {
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-  const { enabled: planModeUiEnabled, interactionMode } = resolveComposerInteractionMode({
-    planModeEnabled: settings.planModeEnabled,
-    provider: selectedProviderStatus,
-    interactionMode: requestedInteractionMode,
-  });
   const selectedModelSelection: ModelSelection = createModelSelection(
     selectedInstanceId,
     selectedModel,
@@ -1026,19 +973,6 @@ export function ChatComposer(props: ChatComposerProps) {
       ? selectedModelForPicker
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   })();
-
-  const activeThreadModelDisplayName = resolveContextWindowModelDisplayName(
-    activeThreadModelSelection,
-    modelOptionsByInstance,
-  );
-  const reserveContextWindowMeter = shouldReserveContextWindowMeter({
-    meterEnabled: settings.contextWindowMeterEnabled,
-    detailLoading: props.threadSyncPhase === "loading",
-    threadStarted: threadShellHasStarted(props.activeThreadShell),
-    providerReportsContextWindow: selectedProviderStatus
-      ? selectedProviderStatus.reportsContextWindow === true
-      : null,
-  });
 
   const [composerCursor, setComposerCursor] = useState(() => {
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
@@ -1226,7 +1160,6 @@ export function ChatComposer(props: ChatComposerProps) {
     pullRequestProjectId,
     pullRequestRepository,
     threadPullRequests,
-    planModeUiEnabled,
     sideChatAvailable: props.sideChatAvailable === true,
     sideChatDisabledReason: props.sideChatDisabledReason ?? null,
     freshSessionAvailable: props.onFreshSession !== undefined,
@@ -1284,7 +1217,6 @@ export function ChatComposer(props: ChatComposerProps) {
     (!activePendingProgress ||
       (supportsQuestionAttachments &&
         activePendingProgress.activeQuestion?.allowCustomAnswer !== false));
-  const composerFooterHasWideActions = showPlanFollowUpPrompt;
 
   const editPromptFromTraits = (edit: (prompt: string) => string) => {
     const currentPrompt = getComposerDraft(composerDraftTarget)?.prompt ?? "";
@@ -1604,7 +1536,7 @@ export function ChatComposer(props: ChatComposerProps) {
     if (!composerForm) return;
     const measurePrimaryActionsCompact = () => {
       const composerFormWidth = composerForm.clientWidth;
-      const options = { hasWideActions: composerFooterHasWideActions };
+      const options = { hasWideActions: false };
       return (
         shouldUseCompactComposerFooter(composerFormWidth, options) &&
         shouldUseCompactComposerPrimaryActions(composerFormWidth, options)
@@ -1615,7 +1547,7 @@ export function ChatComposer(props: ChatComposerProps) {
     return observeResize(composerForm, () => {
       setIsComposerPrimaryActionsCompact(measurePrimaryActionsCompact());
     });
-  }, [composerFooterHasWideActions]);
+  }, []);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads draft images as data URLs and persists them to the draft store, dropping stale results on cleanup
   useEffect(() => {
@@ -2025,14 +1957,6 @@ export function ChatComposer(props: ChatComposerProps) {
         if (applied) setComposerHighlightedItemId(null);
         return;
       }
-      if (!planModeUiEnabled) return;
-      void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
-      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-      });
-      if (applied) {
-        setComposerHighlightedItemId(null);
-      }
       return;
     }
     if (item.type === "provider-slash-command") {
@@ -2194,7 +2118,7 @@ export function ChatComposer(props: ChatComposerProps) {
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+    return composerSendState.hasSendableContent;
   };
 
   const submitComposerRef = useRef<
@@ -2372,6 +2296,27 @@ export function ChatComposer(props: ChatComposerProps) {
   };
   const expandMobileComposerStable = useStableCallback(expandMobileComposer);
 
+  // Escape dismisses the suggestion so Tab moves focus again.
+  const { suggestion: promptSuggestion, dismiss: dismissPromptSuggestion } = usePromptSuggestion(
+    environmentId,
+    activeThread,
+  );
+  // After /clear the next message starts a fresh session that cannot see what the suggestion refers to.
+  const freshSessionArmed = useFreshSessionArmed(scopedThreadKey(routeThreadRef));
+  // Offered only where the default placeholder would show, so it never hides a pending question.
+  const offeredPromptSuggestion =
+    phase !== "running" &&
+    !isSendBusy &&
+    !freshSessionArmed &&
+    !speechInput.freezesEditor &&
+    composerContextRecords.size === 0 &&
+    !isComposerApprovalState &&
+    !activePendingProgress &&
+    !projectSelectionRequired &&
+    !showProviderUnavailable
+      ? promptSuggestion
+      : null;
+
   const onComposerCommandKey = (key: string, event: KeyboardEvent, isTaskItem?: boolean) =>
     composerCommandKeyHandler({
       keybindings,
@@ -2381,7 +2326,6 @@ export function ChatComposer(props: ChatComposerProps) {
       isCompacting,
       followUpBehavior,
       isSoftwareKeyboardOpen,
-      planModeUiEnabled,
       isLiteralPendingAnswer,
       pendingUserInputs,
       promptHistoryEntries,
@@ -2402,13 +2346,14 @@ export function ChatComposer(props: ChatComposerProps) {
       setComposerTrigger,
       setComposerHighlightedItemId,
       dismissComposerTrigger,
-      toggleInteractionMode,
       nudgeComposerMenuHighlight,
       onSelectComposerItem,
       resolveActiveComposerTrigger,
       readComposerSnapshot,
       applyPromptReplacement,
       submitComposer,
+      promptSuggestion: offeredPromptSuggestion,
+      dismissPromptSuggestion,
     })(key, event, isTaskItem);
 
   const {
@@ -2484,13 +2429,9 @@ export function ChatComposer(props: ChatComposerProps) {
       reportedModelSelection={reportedModelSelection}
       promptUltrathink={promptUltrathink}
       onPromptEdit={editPromptFromTraitsStable}
-      planModeEnabled={settings.planModeEnabled}
-      planModeUiEnabled={planModeUiEnabled}
-      interactionMode={interactionMode}
       compatibleRuntimeMode={compatibleRuntimeMode}
       defaultRuntimeMode={props.defaultRuntimeMode}
       compatibleRuntimeModeOptions={compatibleRuntimeModeOptions}
-      toggleInteractionMode={toggleInteractionMode}
       handleRuntimeModeChange={handleRuntimeModeChange}
       composerControlsCollapsed={composerControlsCollapsed}
       effortDisplay={settings.effortDisplay}
@@ -2925,12 +2866,6 @@ export function ChatComposer(props: ChatComposerProps) {
     void onInterrupt();
   };
   const handleInterruptPrimaryActionStable = useStableCallback(handleInterruptPrimaryAction);
-  const handleImplementPlanInNewThreadPrimaryAction = () => {
-    void onImplementPlanInNewThread();
-  };
-  const handleImplementPlanInNewThreadPrimaryActionStable = useStableCallback(
-    handleImplementPlanInNewThreadPrimaryAction,
-  );
   const scheduleComposerCollapseCheck = () => {
     if (!isMobileViewport || mobileComposerExpandInFlightRef.current) {
       return;
@@ -3050,7 +2985,6 @@ export function ChatComposer(props: ChatComposerProps) {
           reportedModelSelection,
           prompt: promptRef.current,
           cursor: readComposerSnapshotStable().expandedCursor,
-          planModeEnabled: settings.planModeEnabled,
           direction,
         });
         if (!change) return;
@@ -3188,8 +3122,6 @@ export function ChatComposer(props: ChatComposerProps) {
         selectedProvider,
         selectedModel,
         selectedProviderModels,
-        interactionMode,
-        interactionModeEnabled: planModeUiEnabled,
       }),
       setMultipleModelSelections,
       validateProviderInput: (providerInput: string) => {
@@ -3243,7 +3175,6 @@ export function ChatComposer(props: ChatComposerProps) {
       selectedModel,
       selectedInstanceId,
       reportedModelSelection,
-      settings.planModeEnabled,
       selectedModelSelection,
       multipleModelSelections,
       setMultipleModelSelections,
@@ -3253,8 +3184,6 @@ export function ChatComposer(props: ChatComposerProps) {
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
-      interactionMode,
-      planModeUiEnabled,
       compactThreadContextStable,
     ],
   );
@@ -3331,25 +3260,6 @@ export function ChatComposer(props: ChatComposerProps) {
         onSubmit={submitComposerStable}
         onPrevious={onPreviousActivePendingUserInputQuestion}
         onWriteAnswer={focusComposer}
-      />
-    ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
-      <ComposerPlanFollowUpBanner
-        key={activeProposedPlan.id}
-        planMarkdown={activeProposedPlan.planMarkdown}
-        planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
-        stepCount={proposedPlanStepCount(activeProposedPlan.planMarkdown)}
-        disabled={
-          composerSendState.hasSendableContent ||
-          isSendBusy ||
-          isSendDisabled ||
-          environmentUnavailable !== null ||
-          noProviderAvailable ||
-          projectSelectionRequired
-        }
-        isSending={isSendBusy}
-        onBuild={submitComposerStable}
-        onBuildInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-        onRevise={focusComposer}
       />
     ) : activePendingApproval && props.onRespondToApproval ? (
       <ComposerApprovalPanel
@@ -3672,21 +3582,27 @@ export function ChatComposer(props: ChatComposerProps) {
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
                             : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Refine the plan, or leave blank to implement"
-                            : projectSelectionRequired
-                              ? "Choose a project above to start a thread"
-                              : showProviderUnavailable
-                                ? "Enable a provider in Settings to send a message"
-                                : environmentDisconnected
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                          : projectSelectionRequired
+                            ? "Choose a project above to start a thread"
+                            : showProviderUnavailable
+                              ? "Enable a provider in Settings to send a message"
+                              : environmentDisconnected
+                                ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                : (offeredPromptSuggestion ??
+                                  "Ask anything, @tag files/folders, $use skills, or / for commands")
+                    }
+                    placeholderSuffix={
+                      offeredPromptSuggestion !== null ? (
+                        <span className="ml-2 inline-flex align-[1px]">
+                          <Kbd variant="outline">⇥ Tab</Kbd>
+                        </span>
+                      ) : undefined
                     }
                     placeholderClassName="truncate"
                     narrowPlaceholder={
                       !isComposerApprovalState &&
                       !activePendingProgress &&
-                      !showPlanFollowUpPrompt &&
+                      offeredPromptSuggestion === null &&
                       !projectSelectionRequired &&
                       !showProviderUnavailable &&
                       !environmentDisconnected
@@ -3711,11 +3627,6 @@ export function ChatComposer(props: ChatComposerProps) {
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   canOperateThread={canOperateThread}
-                  activeContextWindow={
-                    settings.contextWindowMeterEnabled ? activeContextWindow : null
-                  }
-                  reserveContextWindowMeter={reserveContextWindowMeter}
-                  activeThreadModelDisplayName={activeThreadModelDisplayName}
                   pendingAction={requestCard && requestCardHost ? null : pendingPrimaryAction}
                   isRunning={phase === "running"}
                   canInterrupt={canInterrupt}
@@ -3736,9 +3647,6 @@ export function ChatComposer(props: ChatComposerProps) {
                       },
                     },
                   )}
-                  onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                  showPlanFollowUpPrompt={pendingUserInputs.length === 0 && showPlanFollowUpPrompt}
-                  promptHasText={prompt.trim().length > 0 || voiceInputActive}
                   voiceInputActive={voiceInputActive}
                   isSendBusy={isSendBusy}
                   sendDisabledReason={voiceSendDisabledReason}
@@ -3759,11 +3667,6 @@ export function ChatComposer(props: ChatComposerProps) {
                   compactBeforeSendTokens={props.resumeCompactionTokens}
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-                  compactDisabled={compactDisabled || noProviderAvailable || isSendBusy}
-                  compactDisabledReason={resolvedCompactDisabledReason}
-                  {...(compactCommandAvailable
-                    ? { onCompactContext: compactThreadContextStable }
-                    : {})}
                 >
                   {speechInput.available ? (
                     <>
