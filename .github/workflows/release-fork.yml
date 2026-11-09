@@ -166,6 +166,7 @@ jobs:
   publish:
     name: Publish release
     needs: [version, linux, windows]
+    if: false
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
