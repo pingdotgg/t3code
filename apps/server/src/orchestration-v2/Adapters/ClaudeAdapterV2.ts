@@ -5407,7 +5407,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return { kind: "command", label, outcome };
           }
         });
-        const requestedContinuations = yield* Ref.make(new Set<string>());
+        const requestedContinuations = yield* Ref.make(new Map<string, symbol>());
         const absorbedWakes = yield* Ref.make(new Set<string>());
         const heldProposedPlansByToolUseId = new Map<string, string>();
         const runtimeContext = yield* Effect.context<never>();
@@ -5865,6 +5865,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return updated;
           });
 
+        const releaseContinuationRequest = (nativeThreadId: string, request?: symbol) =>
+          Ref.update(requestedContinuations, (current) => {
+            const held = current.get(nativeThreadId);
+            if (held === undefined || (request !== undefined && held !== request)) return current;
+            const updated = new Map(current);
+            updated.delete(nativeThreadId);
+            return updated;
+          });
+
         const clearWakeStateForNativeThread =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (nativeThreadId: string) {
@@ -5877,14 +5886,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(nativeThreadId);
               return updated;
             });
-            yield* Ref.update(requestedContinuations, (current) => {
-              if (!current.has(nativeThreadId)) {
-                return current;
-              }
-              const updated = new Set(current);
-              updated.delete(nativeThreadId);
-              return updated;
-            });
+            yield* releaseContinuationRequest(nativeThreadId);
             yield* forgetAbsorbedWake(nativeThreadId);
           });
 
@@ -8633,8 +8635,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (current.has(wakeInput.nativeThreadId)) {
               return [false, current] as const;
             }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
+            const updated = new Map(current);
+            updated.set(wakeInput.nativeThreadId, Symbol("continuation request"));
             return [true, updated] as const;
           });
           if (!shouldOffer) {
@@ -10841,10 +10843,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
+          // A continuation keeps the process its wake turn still runs in: a replacement would never finish that turn.
+          const keepsRunningWake = Effect.gen(function* () {
+            if (
+              existing === null ||
+              existing.nativeThreadId !== nativeThreadId ||
+              existing.stopping ||
+              !isClaudeProviderContinuationTurn(turnInput) ||
+              (yield* Ref.get(absorbedWakes)).has(nativeThreadId)
+            ) {
+              return false;
+            }
+            const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
+            return buffered
+              .slice(buffered.findLastIndex((entry) => entry.type === "result") + 1)
+              .some(isClaudeRootTurnFrame);
+          });
           // Continuations drain existing output without prompting; retain the live process regardless of selection.
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            (existing.settingsCwd === turnInput.runtimePolicy.cwd || (yield* keepsRunningWake)) &&
             !existing.stopping &&
             isClaudeProviderContinuationTurn(turnInput)
           ) {
@@ -10853,6 +10872,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            existing.settingsCwd === turnInput.runtimePolicy.cwd &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
@@ -10882,6 +10902,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
+            existing.settingsCwd === turnInput.runtimePolicy.cwd &&
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
@@ -10907,15 +10928,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           // Replacing this thread's process kills its background work, even with a new native identity.
-          if (
-            existing !== null &&
-            (existing.nativeThreadId === nativeThreadId ||
-              existing.lastTurn?.input.threadId === turnInput.threadId) &&
-            !existing.stopping &&
-            (yield* liveProcessRunsBackgroundWork(existing))
-          ) {
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
-          }
+          const refuseIfBackgroundWorkRuns = Effect.gen(function* () {
+            if (
+              existing !== null &&
+              (existing.nativeThreadId === nativeThreadId ||
+                existing.lastTurn?.input.threadId === turnInput.threadId) &&
+              !existing.stopping &&
+              (yield* liveProcessRunsBackgroundWork(existing))
+            ) {
+              return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+            }
+          });
+          yield* refuseIfBackgroundWorkRuns;
 
           // Read before closing the live process so a bad path leaves it running.
           const appendSystemPromptFileText = yield* readClaudeAppendSystemPromptFile({
@@ -10932,7 +10956,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           if (existing !== null) {
-            yield* existing.query.close.pipe(Effect.ignore);
+            // SDK frames land under the SDK message lock; decide and close under it so a wake turn or
+            // background work that started during the reads above keeps its process. A stopping query may
+            // be closing under that lock already.
+            const closeUnlessWorkRuns = Effect.gen(function* () {
+              if (yield* keepsRunningWake) return true;
+              yield* refuseIfBackgroundWorkRuns;
+              yield* existing.query.close.pipe(Effect.ignore);
+              return false;
+            });
+            const kept = yield* existing.stopping
+              ? closeUnlessWorkRuns
+              : sdkMessageLock.withPermits(1)(closeUnlessWorkRuns);
+            if (kept) return existing;
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
               yield* resetBackgroundTaskStateForNativeThreadProcess(existing.nativeThreadId, {
@@ -11148,6 +11184,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            // A continuation releases the request it started under, never one registered since.
+            const requestNativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
+            const continuationRequest =
+              isClaudeProviderContinuationTurn(turnInput) &&
+              typeof requestNativeThreadId === "string"
+                ? (yield* Ref.get(requestedContinuations)).get(requestNativeThreadId)
+                : undefined;
+            if (continuationRequest !== undefined && typeof requestNativeThreadId === "string") {
+              yield* Effect.addFinalizer(() =>
+                releaseContinuationRequest(requestNativeThreadId, continuationRequest),
+              );
+            }
             modelCatalog = yield* loadModelCatalog;
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
@@ -11366,11 +11414,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }
                 yield* attachTurn;
                 const drained = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
-                yield* Ref.update(requestedContinuations, (current) => {
-                  const updated = new Set(current);
-                  updated.delete(nativeThreadId);
-                  return updated;
-                });
+                yield* releaseContinuationRequest(nativeThreadId);
                 const wakeAbsorbed = (yield* Ref.get(absorbedWakes)).has(nativeThreadId);
                 yield* forgetAbsorbedWake(nativeThreadId);
                 if (drained.length === 0) {
