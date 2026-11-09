@@ -102,10 +102,10 @@ const READ_CACHE_CAPACITY = 256;
 /** A host's GitLab version only changes on upgrade. */
 const GRAPHQL_LIST_SUPPORT_TTL = Duration.hours(1);
 /**
- * gitlab.com takes at most 50 paths per `projects` read and cuts a query off at about 20 s; about
- * 200 rows over a dozen projects answer in well under half that.
+ * gitlab.com takes at most 50 paths per `projects` read and cuts a query off at about 20 s; 10
+ * projects of 20 rows answered in about 6 s, 25 of 20 sometimes timed out.
  */
-const PROJECTS_PER_READ = 12;
+const PROJECTS_PER_READ = 10;
 const ROWS_PER_READ = 200;
 const MIN_ROWS_PER_PROJECT = 20;
 const PROJECT_READ_CONCURRENCY = 4;

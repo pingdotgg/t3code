@@ -2424,8 +2424,8 @@ it.effect("lists many GitLab projects on one host in a few glab reads, not one p
 
     assert.deepStrictEqual(result.errors, []);
     // GitLab takes at most 50 project paths per GraphQL request; one read per project is what
-    // got gitlab.com to answer HTTP 429 on a large workspace.
-    expect(reads.length).toBeLessThanOrEqual(projects.length / 10);
+    // got gitlab.com to answer HTTP 429 on a large workspace. One more read is the version probe.
+    expect(reads.length).toBeLessThanOrEqual(projects.length / 10 + 1);
   }),
 );
 
