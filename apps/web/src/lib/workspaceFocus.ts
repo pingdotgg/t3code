@@ -21,7 +21,8 @@ export function workspaceAreaProps(name: string, order: number, label: string) {
 
 export interface WorkspaceFocusTarget {
   area: string;
-  selector?: string;
+  /** Tried in order; the first visible match that takes focus wins. */
+  selectors?: readonly string[];
   restore?: boolean;
 }
 
@@ -167,7 +168,7 @@ export function createWorkspaceFocusController(doc: Document) {
     }
     return false;
   };
-  const focus = (name: string, restore = true, selector?: string) => {
+  const focus = (name: string, restore = true, selectors?: readonly string[]) => {
     const areas = Array.from(doc.querySelectorAll<HTMLElement>(AREA_SELECTOR)).filter(
       isWorkspaceElementVisible,
     );
@@ -186,14 +187,21 @@ export function createWorkspaceFocusController(doc: Document) {
     // A lazy surface's Suspense fallback is empty. Wait for its content instead
     // of claiming focus on the tab strip before the useful controls mount.
     if (surface && !surface.hasChildNodes()) return false;
-    if (!selector && surface?.contains(doc.activeElement)) return true;
-    if (selector) {
-      const target = area.querySelector<HTMLElement>(selector);
-      if (!target || !isWorkspaceElementVisible(target)) return false;
-      target.focus({ preventScroll: true });
-      return doc.activeElement === target;
+    if (!selectors) {
+      if (surface?.contains(doc.activeElement)) return true;
+      return focusArea(area, restore);
     }
-    return focusArea(area, restore);
+    for (const selector of selectors) {
+      const target = Array.from(area.querySelectorAll<HTMLElement>(selector)).find(
+        isWorkspaceElementVisible,
+      );
+      if (!target) continue;
+      target.focus({ preventScroll: true });
+      if (doc.activeElement !== target) continue;
+      revealInScrollers(target);
+      return true;
+    }
+    return false;
   };
   const move = (direction: 1 | -1, fromArea?: string, closingPalette = false) => {
     // HTML context menus close on blur, unlike modal dialogs and Base UI popups.
@@ -268,11 +276,11 @@ export function createWorkspaceFocusController(doc: Document) {
   let pending: WorkspaceFocusTarget | undefined;
   let frame = 0;
   let deadline = 0;
-  let cancelOnInput = false;
+  let requestedAt = Infinity;
   const observer = new MutationObserver(() => schedule());
   const cancelRequest = () => {
     pending = undefined;
-    cancelOnInput = false;
+    requestedAt = Infinity;
     observer.disconnect();
     cancelAnimationFrame(frame);
     clearTimeout(deadline);
@@ -280,16 +288,14 @@ export function createWorkspaceFocusController(doc: Document) {
   const schedule = () => {
     cancelAnimationFrame(frame);
     frame = requestAnimationFrame(() => {
-      if (pending && focus(pending.area, pending.restore, pending.selector)) cancelRequest();
+      if (pending && focus(pending.area, pending.restore, pending.selectors)) cancelRequest();
     });
   };
   const request = (target: WorkspaceFocusTarget) => {
     cancelRequest();
     pending = target;
-    // The key or click that made the request may still be propagating.
-    queueMicrotask(() => {
-      if (pending === target) cancelOnInput = true;
-    });
+    // The key or click that made the request may still be propagating; only later input cancels.
+    requestedAt = performance.now();
     observer.observe(doc.body, {
       childList: true,
       subtree: true,
@@ -299,8 +305,8 @@ export function createWorkspaceFocusController(doc: Document) {
     deadline = window.setTimeout(cancelRequest, 2000);
     schedule();
   };
-  const onUserInput = () => {
-    if (cancelOnInput) cancelRequest();
+  const onUserInput = (event: Event) => {
+    if (event.timeStamp > requestedAt) cancelRequest();
   };
   doc.addEventListener("pointerdown", onUserInput, true);
   doc.addEventListener("keydown", onUserInput, true);

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { createWorkspaceFocusController } from "./workspaceFocus";
 
 function setup() {
@@ -255,6 +256,37 @@ describe("workspace area focus", () => {
     fixture.controller.request({ area: "pull-requests" });
     const list = fixture.area("pull-requests", 1);
     await vi.waitFor(() => expect(document.activeElement).toBe(list.button));
+  });
+
+  it("keeps a request made by a capturing window key handler past its own key", async () => {
+    using fixture = setup();
+    fixture.area("composer", 2).button.focus();
+    const requestOnE = (event: KeyboardEvent) => {
+      if (event.key === "e") fixture.controller.request({ area: "sidebar" });
+    };
+    window.addEventListener("keydown", requestOnE, true);
+    using _listener = {
+      [Symbol.dispose]: () => window.removeEventListener("keydown", requestOnE, true),
+    };
+    await userEvent.keyboard("e");
+    const sidebar = fixture.area("sidebar", 0);
+    await vi.waitFor(() => expect(document.activeElement).toBe(sidebar.button));
+  });
+
+  it("focuses the first selector that matches, in selector order", () => {
+    using fixture = setup();
+    const sidebar = fixture.area("sidebar", 0);
+    sidebar.element.insertAdjacentHTML(
+      "beforeend",
+      '<button data-sidebar-row="">First thread</button><button data-sidebar-row="" aria-current="page">Current thread</button>',
+    );
+    const [first, current] = sidebar.element.querySelectorAll<HTMLElement>("[data-sidebar-row]");
+    const selectors = ['[data-sidebar-row][aria-current="page"]', "[data-sidebar-row]"];
+    expect(fixture.controller.focus("sidebar", true, selectors)).toBe(true);
+    expect(document.activeElement).toBe(current);
+    current!.removeAttribute("aria-current");
+    expect(fixture.controller.focus("sidebar", true, selectors)).toBe(true);
+    expect(document.activeElement).toBe(first);
   });
 
   it("keeps focus on a control that React remounted elsewhere", async () => {
