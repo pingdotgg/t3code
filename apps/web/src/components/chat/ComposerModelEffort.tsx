@@ -97,7 +97,8 @@ export function describeComposerEffort(
     (descriptor) =>
       isReasoningControl(descriptor) ||
       descriptor.id === "serviceTier" ||
-      descriptor.id === "fastMode",
+      descriptor.id === "fastMode" ||
+      descriptor.id === "ultracode",
   );
   if (descriptors.length === 0) return { suffix: null, detail: null };
   const display = buildTraitsTriggerDisplay({
