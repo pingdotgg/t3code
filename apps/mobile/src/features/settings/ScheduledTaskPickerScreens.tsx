@@ -1,5 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
-import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destination";
+import { scheduledTaskDestinationRows } from "@t3tools/client-runtime/scheduled-task-destination";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
 import { FlatList, Platform } from "react-native";
@@ -205,18 +205,12 @@ export function ScheduledTaskThreadPickerRouteScreen() {
 
   if (!editor) return <MissingTaskDraft />;
 
-  const rows = [
-    ...(threadId !== null &&
-    currentLabel.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-      ? [{ id: threadId, title: currentLabel }]
-      : []),
-    ...scheduledTaskDestinationThreads(shells, {
-      environmentId,
-      projectId,
-      currentThreadId: threadId,
-      query,
-    }).map((thread) => ({ id: thread.id, title: thread.title.trim() || "Untitled thread" })),
-  ];
+  const rows = scheduledTaskDestinationRows(shells, {
+    environmentId,
+    projectId,
+    current: threadId === null ? null : { id: threadId, title: currentLabel },
+    query,
+  });
 
   return (
     <SettingsScreen title="Destination" search={search}>

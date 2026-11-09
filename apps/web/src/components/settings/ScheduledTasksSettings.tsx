@@ -93,7 +93,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
-import { scheduledTaskDestinationThreads } from "@t3tools/client-runtime/scheduled-task-destination";
+import { scheduledTaskDestinationRows } from "@t3tools/client-runtime/scheduled-task-destination";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
   changeDraftProject,
@@ -1229,19 +1229,13 @@ function ScheduledTaskDestination({
     titlesOnly: true,
     projectIds: [projectId as ProjectId],
   });
-  const threads = scheduledTaskDestinationThreads(shells, {
+  const rows = scheduledTaskDestinationRows(shells, {
     environmentId,
     projectId,
-    currentThreadId: threadId,
+    current: threadId === null ? null : { id: threadId, title: currentLabel },
     query,
   });
-  const items: ReadonlyArray<ThreadId> = [
-    ...(threadId !== null &&
-    currentLabel.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
-      ? [threadId]
-      : []),
-    ...threads.map((row) => row.id),
-  ];
+  const items = rows.map((row) => row.id);
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) setQuery("");
@@ -1313,13 +1307,9 @@ function ScheduledTaskDestination({
             />
             <ComboboxEmpty>No threads found.</ComboboxEmpty>
             <ComboboxList className="max-h-72">
-              {items.map((value, index) => (
-                <ComboboxItem key={value} index={index} value={value}>
-                  <span className="block truncate">
-                    {value === threadId
-                      ? currentLabel
-                      : threads.find((row) => row.id === value)?.title || "Untitled thread"}
-                  </span>
+              {rows.map((row, index) => (
+                <ComboboxItem key={row.id} index={index} value={row.id}>
+                  <span className="block truncate">{row.title}</span>
                 </ComboboxItem>
               ))}
             </ComboboxList>
